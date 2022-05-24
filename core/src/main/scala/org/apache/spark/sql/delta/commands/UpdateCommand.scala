@@ -265,8 +265,7 @@ object UpdateCommand {
    *
    * @param target target we are updating into
    * @param updateExpressions the update transformation to perform on the input DataFrame
-   * @param metrics transaction metrics
-   * @param dfWithEvaluatedCondition source DataFrame on which we will apply the update condition
+   * @param dfWithEvaluatedCondition source DataFrame on which we will apply the update expression
    *                                 with an additional column CONDITION_COLUMN_NAME which is the
    *                                 true/false value of if the update condition is satisfied
    * @param condition update condition
