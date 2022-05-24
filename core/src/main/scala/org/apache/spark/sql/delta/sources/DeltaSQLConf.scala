@@ -603,10 +603,10 @@ trait DeltaSQLConfBase {
       .createWithDefault(true)
 
   /**
-   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
-   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
-   * some of whom are Databricks customers, have to keep track of two different conf values for the
-   * same data skipping parameter.
+   * The below confs have a special prefix `spark.databricks.io` because this is the conf value
+   * already used by Databricks' data skipping implementation. There's no benefit to making OSS
+   * users, some of whom are Databricks customers, have to keep track of two different conf
+   * values for the same data skipping parameter.
    */
   val DATA_SKIPPING_STRING_PREFIX_LENGTH =
     SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
@@ -614,6 +614,24 @@ trait DeltaSQLConfBase {
       .doc("For string columns, how long prefix to store in the data skipping index.")
       .intConf
       .createWithDefault(32)
+
+  val MDC_NUM_RANGE_IDS =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.rangeId.max")
+      .internal()
+      .doc("This controls the domain of rangeId values to be interleaved. The bigger, the better " +
+         "granularity, but at the expense of performance (more data gets sampled).")
+      .intConf
+      .checkValue(_ > 1, "'spark.databricks.io.skipping.mdc.rangeId.max' must be greater than 1")
+      .createWithDefault(1000)
+
+  val MDC_ADD_NOISE =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.addNoise")
+      .internal()
+      .doc("Whether or not a random byte should be added as a suffix to the interleaved bits " +
+         "when computing the Z-order values for MDC. This can help deal with skew, but may " +
+         "have a negative impact on overall min/max skipping effectiveness.")
+      .booleanConf
+      .createWithDefault(true)
 
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
