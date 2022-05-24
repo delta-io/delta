@@ -561,6 +561,8 @@ case class MergeIntoCommand(
     }
 
     val joinedPlan = joinedDF.queryExecution.analyzed
+    val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
+    // TODO: add note about columns for below clause outputs
 
     def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {
       tryResolveReferencesForExpressions(spark, exprs, joinedPlan)
@@ -572,18 +574,26 @@ case class MergeIntoCommand(
           // Generate update expressions and set ROW_DELETED_COL = false
           val mainDataOutput = u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+
             incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
-          val preImageOutput = targetOutputCols :+ Literal.FalseLiteral :+ Literal.TrueLiteral :+
-            Literal(CDC_TYPE_UPDATE_PREIMAGE)
-          val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
-            Literal(CDC_TYPE_UPDATE_POSTIMAGE)
-          Seq(mainDataOutput, preImageOutput, postImageOutput)
+          if (cdcEnabled) {
+            val preImageOutput = targetOutputCols :+ Literal.FalseLiteral :+ Literal.TrueLiteral :+
+              Literal(CDC_TYPE_UPDATE_PREIMAGE)
+            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+              Literal(CDC_TYPE_UPDATE_POSTIMAGE)
+            Seq(mainDataOutput, preImageOutput, postImageOutput)
+          } else {
+            Seq(mainDataOutput)
+          }
         case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
           val mainDataOutput = targetOutputCols :+ Literal.TrueLiteral :+ incrDeletedCountExpr :+
             Literal(CDC_TYPE_NOT_CDC)
-          val deleteCdcOutput = mainDataOutput.dropRight(3) :+ Literal.FalseLiteral :+
-            Literal.TrueLiteral :+ Literal(CDC_TYPE_DELETE)
-          Seq(mainDataOutput, deleteCdcOutput)
+          if (cdcEnabled) {
+            val deleteCdcOutput = mainDataOutput.dropRight(3) :+ Literal.FalseLiteral :+
+              Literal.TrueLiteral :+ Literal(CDC_TYPE_DELETE)
+            Seq(mainDataOutput, deleteCdcOutput)
+          } else {
+            Seq(mainDataOutput)
+        }
       }
       exprs.map(resolveOnJoinedPlan)
     }
@@ -592,9 +602,13 @@ case class MergeIntoCommand(
       val mainDataOutput = resolveOnJoinedPlan(
         clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr :+
           Literal(CDC_TYPE_NOT_CDC))
-      val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
-        Literal(CDC_TYPE_INSERT)
-      Seq(mainDataOutput, insertCdcOutput)
+      if (cdcEnabled) {
+        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+          Literal(CDC_TYPE_INSERT)
+        Seq(mainDataOutput, insertCdcOutput)
+      } else {
+        Seq(mainDataOutput)
+      }
     }
 
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
