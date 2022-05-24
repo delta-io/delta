@@ -516,9 +516,8 @@ case class MergeIntoCommand(
    * query/table. This is implemented using a full|right-outer-join using the merge condition.
    *
    * TODO: return to this after investigating insert-only merges
-   * Note that unlike the insert-only code paths with just two control columns
-   * ROW_DROPPED_COL and INCR_ROW_COUNT_COL, this method has a third control column
-   * CDC_TYPE_COL_NAME used for handling CDC when enabled.
+   * Note that unlike the insert-only code paths with just one control columns INCR_ROW_COUNT_COL,
+   * this method has a second control column CDC_TYPE_COL_NAME used for handling CDC when enabled.
    */
   private def writeAllChanges(
     spark: SparkSession,
@@ -567,16 +566,15 @@ case class MergeIntoCommand(
     val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
 
     // ==== Generate the expressions to process full-outer join output and generate target rows ====
-    // If there are N columns in the target table, there will be N + 3 columns after processing
+    // If there are N columns in the target table, there will be N + 2 columns after processing
     // - N columns for target table
-    // - ROW_DROPPED_COL to define whether the generated row should dropped or written
     // - INCR_ROW_COUNT_COL containing a UDF to update the output row row counter
     // - CDC_TYPE_COLUMN_NAME containing the type of change being performed in a particular row
 
-    // To generate these N + 3 columns, we will generate N + 3 expressions and apply them to the
+    // To generate these N + 2 columns, we will generate N + 2 expressions and apply them to the
     // rows in the joinedDF. The CDC column will be either used for CDC generation or dropped before
-    // performing the final write, and the other two will always be dropped after executing the
-    // metrics UDF and filtering on ROW_DROPPED_COL.
+    // performing the final write, and the increment column will always be dropped after executing
+    // the metrics UDF.
 
     // We produce both rows for the CDC_TYPE_NOT_CDC partition to be written to the main table,
     // and rows for the CDC partitions to be written as CDC files.
@@ -589,21 +587,19 @@ case class MergeIntoCommand(
     def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
       val exprs = clause match {
         case u: DeltaMergeIntoUpdateClause =>
-          // Generate update expressions and set ROW_DELETED_COL = false and
-          // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
-          val mainDataOutput = u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+
-            incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+          // Generate update expressions and set CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
+          val mainDataOutput = u.resolvedActions.map(_.expr) :+ incrUpdatedCountExpr :+
+            Literal(CDC_TYPE_NOT_CDC)
           if (cdcEnabled) {
-            // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
+            // For update preimage, we have do a no-op copy with
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
             // (because the metric will be incremented in the main partition)
-            val preImageOutput = targetOutputCols :+ Literal.FalseLiteral :+ Literal.TrueLiteral :+
+            val preImageOutput = targetOutputCols :+ Literal.TrueLiteral :+
               Literal(CDC_TYPE_UPDATE_PREIMAGE)
             // For update postimage, we have the same expressions as for mainDataOutput but with
             // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
             // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
-            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
-              Literal(CDC_TYPE_UPDATE_POSTIMAGE)
+            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal(CDC_TYPE_UPDATE_POSTIMAGE)
             Seq(mainDataOutput, preImageOutput, postImageOutput)
           } else {
             Seq(mainDataOutput)
@@ -611,12 +607,11 @@ case class MergeIntoCommand(
         case _: DeltaMergeIntoDeleteClause =>
           // Since the row will be deleted we don't need an output expression for the main partition
           if (cdcEnabled) {
-            // For delete we do a no-op copy with ROW_DELETED_COL = false, and
-            // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
+            // For delete we do a no-op copy with CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
             // Since we don't write to the main partition, we need to increment the metric column
             // INCR_ROW_COUNT_COL here
-            val deleteCdcOutput = targetOutputCols :+ Literal.FalseLiteral :+
-              incrDeletedCountExpr :+ Literal(CDC_TYPE_DELETE)
+            val deleteCdcOutput = targetOutputCols :+ incrDeletedCountExpr :+
+              Literal(CDC_TYPE_DELETE)
             Seq(deleteCdcOutput)
           } else {
             Seq()
@@ -626,17 +621,14 @@ case class MergeIntoCommand(
     }
 
     def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Seq[Expression]] = {
-      // Generate insert expressions and set ROW_DELETED_COL = false and
-      // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
+      // Generate insert expressions and set CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
       val mainDataOutput = resolveOnJoinedPlan(
-        clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr :+
-          Literal(CDC_TYPE_NOT_CDC))
+        clause.resolvedActions.map(_.expr) :+ incrInsertedCountExpr :+ Literal(CDC_TYPE_NOT_CDC))
       if (cdcEnabled) {
         // For insert we have the same expressions as for mainDataOutput, but with
         // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
         // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_INSERT
-        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
-          Literal(CDC_TYPE_INSERT)
+        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal(CDC_TYPE_INSERT)
         Seq(mainDataOutput, insertCdcOutput)
       } else {
         Seq(mainDataOutput)
@@ -650,7 +642,6 @@ case class MergeIntoCommand(
     }
 
     val outputRowSchema = deltaTxn.metadata.schema
-      .add(ROW_DROPPED_COL, DataTypes.BooleanType)
       .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
       .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
 
@@ -665,18 +656,14 @@ case class MergeIntoCommand(
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.FalseLiteral :+ incrNoopCountExpr :+
-          Literal(CDC_TYPE_NOT_CDC)),
-      deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.TrueLiteral :+ Literal.TrueLiteral :+
-          Literal(CDC_TYPE_NOT_CDC)),
+        resolveOnJoinedPlan(targetOutputCols :+ incrNoopCountExpr :+ Literal(CDC_TYPE_NOT_CDC)),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
 
     val outputDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
-        .drop(ROW_DROPPED_COL, INCR_ROW_COUNT_COL)
+        .drop(INCR_ROW_COUNT_COL)
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
@@ -830,7 +817,6 @@ object MergeIntoCommand {
   val FILE_NAME_COL = "_file_name_"
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
   val TARGET_ROW_PRESENT_COL = "_target_row_present_"
-  val ROW_DROPPED_COL = "_row_dropped_"
   val INCR_ROW_COUNT_COL = "_incr_row_count_"
 
   class JoinedRowProcessor(
@@ -841,7 +827,6 @@ object MergeIntoCommand {
       notMatchedConditions: Seq[Expression],
       notMatchedOutputs: Seq[Seq[Seq[Expression]]],
       noopCopyOutput: Seq[Expression],
-      deleteRowOutput: Seq[Expression],
       joinedAttributes: Seq[Attribute],
       joinedRowEncoder: ExpressionEncoder[Row],
       outputRowEncoder: ExpressionEncoder[Row]) extends Serializable {
@@ -863,11 +848,7 @@ object MergeIntoCommand {
       val notMatchedPreds = notMatchedConditions.map(generatePredicate)
       val notMatchedProjs = notMatchedOutputs.map(_.map(generateProjection))
       val noopCopyProj = generateProjection(noopCopyOutput)
-      val deleteRowProj = generateProjection(deleteRowOutput)
       val outputProj = UnsafeProjection.create(outputRowEncoder.schema)
-
-      def shouldDeleteRow(row: InternalRow): Boolean =
-        row.getBoolean(outputRowEncoder.schema.fieldIndex(ROW_DROPPED_COL))
 
       def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
@@ -877,10 +858,10 @@ object MergeIntoCommand {
           // identify which set of clauses to execute: matched or not-matched ones
           val (predicates, projections, noopAction) = if (sourceRowHasNoMatchPred.eval(inputRow)) {
             // Source row did not match with any target row, so insert the new source row
-            (notMatchedPreds, notMatchedProjs, deleteRowProj)
+            (notMatchedPreds, notMatchedProjs, None)
           } else {
             // Source row matched with target row, so update the target row
-            (matchedPreds, matchedProjs, noopCopyProj)
+            (matchedPreds, matchedProjs, Some(noopCopyProj))
           }
 
           // find (predicate, projection) pair whose predicate satisfies inputRow
@@ -891,7 +872,7 @@ object MergeIntoCommand {
           pair match {
             case Some((_, projections)) =>
               projections.map(_.apply(inputRow)).iterator
-            case None => Iterator(noopAction.apply(inputRow))
+            case None => noopAction.map(_.apply(inputRow)).iterator
           }
         }
       }
@@ -901,7 +882,6 @@ object MergeIntoCommand {
       rowIterator
         .map(toRow)
         .flatMap(processRow)
-        .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
           fromRow(outputProj(notDeletedInternalRow))
         }
