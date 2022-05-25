@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
@@ -209,16 +210,20 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   def testNondeterministicOrder: Unit = {
     withTable("target") {
+      // For the spark sql random() function the seed is fixed for both invocations
+      val trueRandom = () => Math.random()
+      val trueRandomUdf = udf(trueRandom)
+      spark.udf.register("trueRandom", trueRandomUdf.asNondeterministic())
+
       sql("CREATE TABLE target(`trgKey` INT, `trgValue` INT) using delta")
       sql("INSERT INTO target VALUES (1,2), (3,4)")
-      // This generates two different data sets if the executions of the source view are within
-      // 100 seconds (100,000 milliseconds) apart.
+      // This generates different data sets on every execution
       val sourceSql =
       s"""
          |(SELECT r.id AS srcKey, r.id AS srcValue
-         |FROM range(1, 100000) as r
-         |     JOIN (SELECT unix_millis(current_timestamp()) % 100000 AS bound)
-         |       ON r.id < bound) AS source
+         | FROM range(1, 100000) as r
+         |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
+         |) AS source
          |""".stripMargin
 
       sql(
