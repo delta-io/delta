@@ -460,14 +460,13 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction
     ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
 
-    // TODO: insert
     // UDFs to update metrics
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
 
     val outputColNames = getTargetOutputCols(deltaTxn).map(_.name)
     // we use head here since we know there is only a single notMatchedClause
-    val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr) :+ incrInsertedCountExpr
+    val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
     val outputCols = outputExprs.zip(outputColNames).map { case (expr, name) =>
       new Column(Alias(expr, name)())
     }
@@ -489,6 +488,7 @@ case class MergeIntoCommand(
 
     val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
       .select(outputCols: _*)
+      .filter(new Column(incrInsertedCountExpr))
 
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, insertDf, deltaTxn.metadata.partitionColumns))
@@ -515,7 +515,6 @@ case class MergeIntoCommand(
    * Write new files by reading the touched files and updating/inserting data using the source
    * query/table. This is implemented using a full|right-outer-join using the merge condition.
    *
-   * TODO: return to this after investigating insert-only merges
    * Note that unlike the insert-only code paths with just one control columns INCR_ROW_COUNT_COL,
    * this method has a second control column CDC_TYPE_COL_NAME used for handling CDC when enabled.
    */
@@ -599,7 +598,8 @@ case class MergeIntoCommand(
             // For update postimage, we have the same expressions as for mainDataOutput but with
             // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
             // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
-            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal(CDC_TYPE_UPDATE_POSTIMAGE)
+            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+              Literal(CDC_TYPE_UPDATE_POSTIMAGE)
             Seq(mainDataOutput, preImageOutput, postImageOutput)
           } else {
             Seq(mainDataOutput)
@@ -628,7 +628,8 @@ case class MergeIntoCommand(
         // For insert we have the same expressions as for mainDataOutput, but with
         // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
         // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_INSERT
-        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal(CDC_TYPE_INSERT)
+        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+          Literal(CDC_TYPE_INSERT)
         Seq(mainDataOutput, insertCdcOutput)
       } else {
         Seq(mainDataOutput)
