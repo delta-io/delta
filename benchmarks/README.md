@@ -132,14 +132,20 @@ Navigate to your local copy of this repository and this benchmark directory. The
 
 #### Run simple test workload
 Verify that you have the following information
-  - <HOST_NAME>: EMR cluster master node host name
+  - <HOST_NAME>: Cluster master node host name
   - <PEM_FILE>: Local path to your PEM file for SSH into the master node.
-  - <BENCHMARK_PATH>: S3 path where tables will be created. Make sure your AWS credentials have read/write permission to that path.
+  - <BENCHMARK_PATH>: Path where tables will be created. Make sure your credentials have read/write permission to that path.
+  - <CLOUD_PROVIDER>: Currently either `gcp` or `aws`. For each storage type, different Delta properties might be added.
     
 Then run a simple table write-read test: Run the following in your shell.
  
 ```sh
-./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark test 
+./run-benchmark.py \
+    --cluster-hostname <HOSTNAME> \
+    -i <PEM_FILE> \
+    --benchmark-path <BENCHMARK_PATH> \
+    --cloud-provider <CLOUD_PROVIDER> \
+    --benchmark test
 ```
 
 If this works correctly, then you should see an output that look like this.
@@ -204,16 +210,68 @@ The above metrics are also written to a json file and uploaded to the given path
 Now that you are familiar with how the framework runs the workload, you can try running the small scale TPC-DS benchmark.
 
 
-1. Load data as Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-1gb-delta-load`
+1. Load data as Delta tables:
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --cloud-provider <CLOUD_PROVIDER> \
+        --benchmark tpcds-1gb-delta-load
+    ```
+   If you run the benchmark in GCP you should provide `--source-path <SOURCE_PATH>` parameter, where `<SOURCE_PATH>` is the location of the raw parquet input data files (see *Input data* section).
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --source-path <SOURCE_PATH> \
+        --cloud-provider gcp \
+        --benchmark tpcds-1gb-delta-load
+    ```
 
-2. Run queries on Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-1gb-delta`
+3. Run queries on Delta tables:
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --cloud-provider <CLOUD_PROVIDER> \
+        --benchmark tpcds-1gb-delta
+    ```
 
 ### Run 3TB TPC-DS
 Finally, you are all set up to run the full scale benchmark. Similar to the 1GB benchmark, run the following
 
-1. Load data as Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-3tb-delta-load`
+1. Load data as Delta tables:
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --cloud-provider <CLOUD_PROVIDER> \
+        --benchmark tpcds-3tb-delta-load
+    ```
+   If you run the benchmark in GCP you should provide `--source-path <SOURCE_PATH>` parameter, where `<SOURCE_PATH>` is the location of the raw parquet input data files (see *Input data* section).
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --source-path <SOURCE_PATH> \
+        --cloud-provider gcp \
+        --benchmark tpcds-3tb-delta-load
+    ```
 
-2. Run queries on Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-3tb-delta`
+2. Run queries on Delta tables:
+    ```bash
+    ./run-benchmark.py \
+        --cluster-hostname <HOSTNAME> \
+        -i <PEM_FILE> \
+        --benchmark-path <BENCHMARK_PATH> \
+        --cloud-provider <CLOUD_PROVIDER> \
+        --benchmark tpcds-3tb-delta
+    ```
 
 Compare the results using the generated JSON files.
 

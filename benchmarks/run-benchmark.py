@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
     Example usage:
 
-    ./run-benchmark.py -h <hostname> i <pem file> --benchmark test 
+    ./run-benchmark.py --cluster-hostname <hostname> -i <pem file>  --cloud-provider <cloud provider> --benchmark test
 
     """
 
