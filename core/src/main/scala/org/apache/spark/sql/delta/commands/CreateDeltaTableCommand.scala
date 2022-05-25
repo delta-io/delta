@@ -232,7 +232,8 @@ case class CreateDeltaTableCommand(
       description = table.comment.orNull,
       schemaString = schemaString,
       partitionColumns = table.partitionColumnNames,
-      configuration = table.properties)
+      configuration = table.properties,
+      createdTime = Some(System.currentTimeMillis()))
   }
 
   private def assertPathEmpty(

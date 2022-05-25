@@ -63,7 +63,8 @@ class Snapshot(
     val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
-    val minSetTransactionRetentionTimestamp: Option[Long] = None)
+    val minSetTransactionRetentionTimestamp: Option[Long] = None,
+    checkpointMetadataOpt: Option[CheckpointMetaData] = None)
   extends StateCache
   with StatisticsCollection
   with DataSkippingReader
@@ -327,6 +328,8 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+  def getCheckpointMetadataOpt: Option[CheckpointMetaData] = checkpointMetadataOpt
+
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
   def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
@@ -494,8 +497,10 @@ class InitialSnapshot(
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
     deltaLog,
-    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
-      SparkSession.active.sessionState.conf, Map.empty))
+    Metadata(
+      configuration = DeltaConfigs.mergeGlobalConfigs(
+        SparkSession.active.sessionState.conf, Map.empty),
+      createdTime = Some(System.currentTimeMillis()))
   )
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]

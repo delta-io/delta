@@ -180,6 +180,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_SAMPLE_ESTIMATOR_ENABLED =
+    buildConf("sampling.enabled")
+      .internal()
+      .doc("Enable sample based estimation.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -433,6 +440,14 @@ trait DeltaSQLConfBase {
       .doc("Write checkpoints where the partition values are parsed according to the data type.")
       .booleanConf
       .createWithDefault(true)
+
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
 
   val LAST_CHECKPOINT_CHECKSUM_ENABLED =
     buildConf("lastCheckpoint.checksum.enabled")

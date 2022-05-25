@@ -40,6 +40,26 @@ class CheckpointsSuite extends QueryTest
     super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
   }
 
+  test("checkpoint metadata - checkpoint schema above the configured threshold are not" +
+    " written to LAST_CHECKPOINT") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      deltaLog.checkpoint()
+      assert(deltaLog.lastCheckpoint.nonEmpty)
+      assert(deltaLog.lastCheckpoint.get.checkpointSchema.nonEmpty)
+      assert(deltaLog.lastCheckpoint.get.checkpointSchema.get.fieldNames.toSeq ===
+        Seq("txn", "add", "remove", "metaData", "protocol"))
+
+      spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
+      withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
+        deltaLog.checkpoint()
+        assert(deltaLog.lastCheckpoint.nonEmpty)
+        assert(deltaLog.lastCheckpoint.get.checkpointSchema.isEmpty)
+      }
+    }
+  }
+
   test("SC-86940: isGCSPath") {
     val conf = new Configuration()
     assert(Checkpoints.isGCSPath(conf, new Path("gs://foo/bar")))

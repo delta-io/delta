@@ -134,21 +134,23 @@ abstract class DeltaCDCSuiteBase
       ctas("src", "dst", disableCDC = true)
 
       // write some more data
-      val moreData = spark.range(20, 30)
-        .withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
-        .withColumn("_commit_version", lit(2L))
-        .withColumn("_commit_timestamp", current_timestamp)
-        .cache()
+      withTable("more_data") {
+        spark.range(20, 30)
+          .withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
+          .withColumn("_commit_version", lit(2L))
+          .withColumn("_commit_timestamp", current_timestamp)
+          .write.saveAsTable("more_data")
 
-      moreData.write.format("delta")
-        .mode("append")
-        .saveAsTable("dst")
+        spark.table("more_data").write.format("delta")
+          .mode("append")
+          .saveAsTable("dst")
 
-      checkAnswer(
-        spark.read.format("delta").table("dst"),
-        cdcRead(new TableName("src"), StartingVersion("0"), EndingVersion("1"))
-          .union(moreData)
-      )
+        checkAnswer(
+          spark.read.format("delta").table("dst"),
+          cdcRead(new TableName("src"), StartingVersion("0"), EndingVersion("1"))
+            .union(spark.table("more_data"))
+        )
+      }
 
       // re-enabling cdc should be disallowed, since the dst table already contains column that are
       // reserved for CDC only.
