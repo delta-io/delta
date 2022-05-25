@@ -57,7 +57,7 @@ class DeltaOptimizeBuilder private(
       .sessionState
       .sqlParser
       .parseTableIdentifier(tableIdentifier)
-    val optimize = OptimizeTableCommand(None, Some(tableId), partitionFilter)
+    val optimize = OptimizeTableCommand(None, Some(tableId), partitionFilter)(zOrderBy = None)
     toDataset(sparkSession, optimize)
   }
 }

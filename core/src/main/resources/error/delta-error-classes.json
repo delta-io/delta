@@ -818,5 +818,13 @@
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [ "", "The write contains reserved columns <columnList> that are used", "internally as metadata for Change Data Feed. To write to the table either rename/drop", "these columns or disable Change Data Feed on the table by setting", "<config> to false." ],
     "sqlState" : "42000"
+  },
+  "INTERLEAVING_COLUMN_DOES_NOT_EXIST" : {
+    "message" : [ "Interleaving column <columnName> does not exist in data schema." ],
+    "sqlState" : "22000"
+  },
+  "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS" : {
+    "message" : [ "Z-Ordering on <cols> will be", " ineffective, because we currently do not collect stats for these columns.", " You can disable", " this check by setting", " '%%sql set <zorderColStatKey> = false'" ],
+    "sqlState" : "42000"
   }
 }

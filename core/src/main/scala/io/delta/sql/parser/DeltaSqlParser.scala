@@ -56,7 +56,7 @@ import org.antlr.v4.runtime.tree._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
@@ -159,11 +159,18 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ctx.RUN != null)
   }
 
+  /** Provides a list of unresolved attributes for multi dimensional clustering. */
+  override def visitZorderSpec(ctx: ZorderSpecContext): Seq[UnresolvedAttribute] = {
+    ctx.interleave.asScala.map(_.getText).map(UnresolvedAttribute.apply).toSeq
+  }
+
   /**
    * Create a [[OptimizeTableCommand]] logical plan.
    * Syntax:
    * {{{
-   *    OPTIMIZE <table-identifier> [WHERE predicate-using-partition-columns]
+   *    OPTIMIZE <table-identifier>
+   *      [WHERE predicate-using-partition-columns]
+   *      [ZORDER BY [(] col1, col2 ..[)]]
    * }}}
    * Examples:
    * {{{
@@ -171,16 +178,18 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    *    OPTIMIZE delta_table_name;
    *    OPTIMIZE delta.`/path/to/delta/table`;
    *    OPTIMIZE delta_table_name WHERE partCol = 25;
+   *    OPTIMIZE delta_table_name WHERE partCol = 25 ZORDER BY col2, col2;
    * }}}
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.path == null && ctx.table == null) {
       throw new ParseException("OPTIMIZE command requires a file path or table name.", ctx)
     }
+    val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec)
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)))
+      Option(ctx.partitionPredicate).map(extractRawText(_)))(interleaveBy)
   }
 
   override def visitDescribeDeltaDetail(

@@ -643,6 +643,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
+    buildConf("optimize.zorder.checkStatsCollection.enabled")
+      .internal()
+      .doc(s"When enabled, we will check if the column we're actually collecting stats " +
+               "on the columns we are z-ordering on.")
+      .booleanConf
+      .createWithDefault(true)
+
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
       .internal()
