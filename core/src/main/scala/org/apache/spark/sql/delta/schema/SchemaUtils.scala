@@ -22,9 +22,10 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,7 +37,7 @@ import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-object SchemaUtils {
+object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
@@ -1111,6 +1112,27 @@ object SchemaUtils {
       dependentGenCols.toList
     } else {
       Seq.empty
+    }
+  }
+
+  /** Find all `UserDefinedType`s used in `dt` recursively */
+  def findUserDefinedTypes(dt: DataType): Seq[UserDefinedType[_]] = dt match {
+    case s: StructType => s.fields.flatMap(f => findUserDefinedTypes(f.dataType))
+    case a: ArrayType => findUserDefinedTypes(a.elementType)
+    case m: MapType => findUserDefinedTypes(m.keyType) ++ findUserDefinedTypes(m.valueType)
+    case udt: UserDefinedType[_] => Seq(udt)
+    case _ => Nil
+  }
+
+  /** Record all `UserDefinedType`s used in the `schema`. */
+  def recordUserDefinedTypes(deltaLog: DeltaLog, schema: StructType): Unit = {
+    try {
+      findUserDefinedTypes(schema).map(_.getClass.getName).toSet.foreach { udtTypeName: String =>
+        recordDeltaEvent(deltaLog, "delta.undefined.type", data = Map("name" -> udtTypeName))
+      }
+    } catch {
+      case NonFatal(e) =>
+        logWarning(s"Failed to log UserDefinedType for table ${deltaLog.logPath}", e)
     }
   }
 }
