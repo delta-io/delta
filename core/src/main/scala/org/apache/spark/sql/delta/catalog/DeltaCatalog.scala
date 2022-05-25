@@ -202,12 +202,13 @@ class DeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+      val catalogProperties = DeltaTableProperties(properties)
       createDeltaTable(
         ident,
         schema,
         partitions,
-        properties,
-        Map.empty,
+        catalogProperties.properties.asJava,
+        catalogProperties.options,
         sourceQuery = None,
         TableCreationModes.Create)
     } else {
@@ -353,42 +354,13 @@ class DeltaCatalog extends DelegatingCatalogExtension
     private var writeOptions: Map[String, String] = Map.empty
 
     override def commitStagedChanges(): Unit = {
-      val conf = spark.sessionState.conf
-      val props = new util.HashMap[String, String]()
-      // Options passed in through the SQL API will show up both with an "option." prefix and
-      // without in Spark 3.1, so we need to remove those from the properties
-      val optionsThroughProperties = properties.asScala.collect {
-        case (k, _) if k.startsWith("option.") => k.stripPrefix("option.")
-      }.toSet
-      val sqlWriteOptions = new util.HashMap[String, String]()
-      properties.asScala.foreach { case (k, v) =>
-        if (!k.startsWith("option.") && !optionsThroughProperties.contains(k)) {
-          // Do not add to properties
-          props.put(k, v)
-        } else if (optionsThroughProperties.contains(k)) {
-          sqlWriteOptions.put(k, v)
-        }
-      }
-      if (writeOptions.isEmpty && !sqlWriteOptions.isEmpty) {
-        writeOptions = sqlWriteOptions.asScala.toMap
-      }
-      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
-        // Legacy behavior
-        writeOptions.foreach { case (k, v) => props.put(k, v) }
-      } else {
-        writeOptions.foreach { case (k, v) =>
-          // Continue putting in Delta prefixed options to avoid breaking workloads
-          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
-            props.put(k, v)
-          }
-        }
-      }
+      val catalogProp = DeltaTableProperties(properties, writeOptions)
       createDeltaTable(
         ident,
         schema,
         partitions,
-        props,
-        writeOptions,
+        catalogProp.properties.asJava,
+        catalogProp.options,
         asSelectQuery,
         operation)
     }
