@@ -26,6 +26,7 @@ import io.delta.standalone.exceptions._
 import io.delta.standalone.types.{DataType, StructType}
 
 import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.JsonUtils
 
 /** A holder object for Delta errors. */
@@ -322,6 +323,13 @@ private[internal] object DeltaErrors {
       realTypes: String*): RuntimeException = {
     new IllegalArgumentException(
       s"$exprName expression requires $expectedType type. But found ${realTypes.mkString(", ")}");
+  }
+
+  def logStoreConfConflicts(schemeConf: Seq[String]): Throwable = {
+    val schemeConfStr = schemeConf.mkString(", ")
+    new IllegalArgumentException(
+      s"(`${StandaloneHadoopConf.LOG_STORE_CLASS_KEY}`) and (`${schemeConfStr}`)" +
+        " cannot be set at the same time. Please set only one group of them.")
   }
 
   ///////////////////////////////////////////////////////////////////////////
