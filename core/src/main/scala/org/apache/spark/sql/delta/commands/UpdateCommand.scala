@@ -16,14 +16,16 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -31,7 +33,7 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{input_file_name, udf}
+import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct, typedLit, udf}
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`
@@ -60,7 +62,9 @@ case class UpdateCommand(
     "numCopiedRows" -> createMetric(sc, "number of rows copied."),
     "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
+    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
+    "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -83,6 +87,8 @@ case class UpdateCommand(
 
     var numTouchedFiles: Long = 0
     var numRewrittenFiles: Long = 0
+    var numAddedChangeFiles: Long = 0
+    var changeFileBytes: Long = 0
     var scanTimeMs: Long = 0
     var rewriteTimeMs: Long = 0
 
@@ -136,7 +142,7 @@ case class UpdateCommand(
 
     numTouchedFiles = filesToRewrite.length
 
-    val newAddActions = if (filesToRewrite.isEmpty) {
+    val newActions = if (filesToRewrite.isEmpty) {
       // Do nothing if no row qualifies the UPDATE condition
       Nil
     } else {
@@ -148,7 +154,11 @@ case class UpdateCommand(
     }
 
     rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
-    numRewrittenFiles = newAddActions.size
+
+    val (changeActions, addActions) = newActions.partition(_.isInstanceOf[AddCDCFile])
+    numRewrittenFiles = addActions.size
+    numAddedChangeFiles = changeActions.size
+    changeFileBytes = changeActions.collect { case f: AddCDCFile => f.size }.sum
 
     val totalActions = if (filesToRewrite.isEmpty) {
       // Do nothing if no row qualifies the UPDATE condition
@@ -159,11 +169,13 @@ case class UpdateCommand(
       val operationTimestamp = System.currentTimeMillis()
       val deleteActions = filesToRewrite.map(_.removeWithTimestamp(operationTimestamp))
 
-      deleteActions ++ newAddActions
+      deleteActions ++ newActions
     }
 
     if (totalActions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
+      metrics("numAddedChangeFiles").set(numAddedChangeFiles)
+      metrics("changeFileBytes").set(changeFileBytes)
       metrics("numRemovedFiles").set(numTouchedFiles)
       metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
       metrics("scanTimeMs").set(scanTimeMs)
@@ -191,15 +203,20 @@ case class UpdateCommand(
         numFilesTotal,
         numTouchedFiles,
         numRewrittenFiles,
-        numAddedChangeFiles = 0,
-        changeFileBytes = 0,
+        numAddedChangeFiles,
+        changeFileBytes,
         scanTimeMs,
         rewriteTimeMs)
     )
   }
 
   /**
-   * Scan all the affected files and write out the updated files
+   * Scan all the affected files and write out the updated files.
+   *
+   * When CDF is enabled, includes the generation of CDC preimage and postimage columns for
+   * changed rows.
+   *
+   * @return the list of [[AddFile]]s and [[AddCDCFile]]s that have been written.
    */
   private def rewriteFiles(
       spark: SparkSession,
@@ -213,28 +230,103 @@ case class UpdateCommand(
       spark, txn, "update", rootPath, inputLeafFiles, nameToAddFileMap)
     val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
     val targetDf = Dataset.ofRows(spark, newTarget)
-    val updatedDataFrame = {
-      val updatedColumns = buildUpdatedColumns(condition)
-      targetDf.select(updatedColumns: _*)
-    }
+
+    val updatedDataFrame = UpdateCommand.withUpdatedColumns(
+      target,
+      updateExpressions,
+      condition,
+      targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition)),
+      UpdateCommand.shouldOutputCdc(txn))
 
     txn.writeFiles(updatedDataFrame)
-  }
-
-  /**
-   * Build the new columns. If the condition matches, generate the new value using
-   * the corresponding UPDATE EXPRESSION; otherwise, keep the original column value
-   */
-  private def buildUpdatedColumns(condition: Expression): Seq[Column] = {
-    updateExpressions.zip(target.output).map { case (update, original) =>
-      val updated = If(condition, update, original)
-      new Column(Alias(updated, original.name)())
-    }
   }
 }
 
 object UpdateCommand {
   val FILE_NAME_COLUMN = "_input_file_name_"
+  val CONDITION_COLUMN_NAME = "__condition__"
+
+  /**
+   * Whether or not CDC is enabled on this table and, thus, if we should output CDC data during this
+   * UPDATE operation.
+   */
+  def shouldOutputCdc(txn: OptimisticTransaction): Boolean = {
+    DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)
+  }
+
+  /**
+   * Build the new columns. If the condition matches, generate the new value using
+   * the corresponding UPDATE EXPRESSION; otherwise, keep the original column value.
+   *
+   * When CDC is enabled, includes the generation of CDC pre-image and post-image columns for
+   * changed rows.
+   *
+   * @param target target we are updating into
+   * @param updateExpressions the update transformation to perform on the input DataFrame
+   * @param dfWithEvaluatedCondition source DataFrame on which we will apply the update expressions
+   *                                 with an additional column CONDITION_COLUMN_NAME which is the
+   *                                 true/false value of if the update condition is satisfied
+   * @param condition update condition
+   * @param shouldOutputCdc if we should output CDC data during this UPDATE operation.
+   * @return the updated DataFrame, with extra CDC columns if CDC is enabled
+   */
+  def withUpdatedColumns(
+      target: LogicalPlan,
+      updateExpressions: Seq[Expression],
+      condition: Expression,
+      dfWithEvaluatedCondition: DataFrame,
+      shouldOutputCdc: Boolean): DataFrame = {
+    val resultDf = if (shouldOutputCdc) {
+      val namedUpdateCols = updateExpressions.zip(target.output).map {
+        case (expr, targetCol) => new Column(expr).as(targetCol.name)
+      }
+
+      // Build an array of output rows to be unpacked later. If the condition is matched, we
+      // generate CDC pre and postimages in addition to the final output row; if the condition
+      // isn't matched, we just generate a rewritten no-op row without any CDC events.
+      val preimageCols = target.output.map(new Column(_)) :+
+        lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
+      val postimageCols = namedUpdateCols :+
+        lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
+      val updatedDataCols = namedUpdateCols :+
+        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val noopRewriteCols = target.output.map(new Column(_)) :+
+        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val packedUpdates = array(
+        struct(preimageCols: _*),
+        struct(postimageCols: _*),
+        struct(updatedDataCols: _*)
+      ).expr
+
+      val packedData = if (condition == Literal.TrueLiteral) {
+        packedUpdates
+      } else {
+        If(
+          UnresolvedAttribute(CONDITION_COLUMN_NAME),
+          packedUpdates, // if it should be updated, then use `packagedUpdates`
+          array(struct(noopRewriteCols: _*)).expr) // else, this is a noop rewrite
+      }
+
+      // Explode the packed array, and project back out the final data columns.
+      val finalColNames = target.output.map(_.name) :+ CDC_TYPE_COLUMN_NAME
+      dfWithEvaluatedCondition
+        .select(explode(new Column(packedData)).as("packedData"))
+        .select(finalColNames.map { n => col(s"packedData.`$n`").as(s"$n") }: _*)
+    } else {
+      val finalCols = updateExpressions.zip(target.output).map { case (update, original) =>
+        val updated = if (condition == Literal.TrueLiteral) {
+          update
+        } else {
+          If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
+        }
+        new Column(Alias(updated, original.name)())
+      }
+
+      dfWithEvaluatedCondition.select(finalCols: _*)
+    }
+
+    resultDf.drop(CONDITION_COLUMN_NAME)
+  }
 }
 
 /**
