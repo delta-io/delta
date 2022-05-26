@@ -20,11 +20,9 @@ import java.util.Locale
 
 import scala.collection.mutable
 
+import io.delta.storage.{CloseableIterator, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-
-import io.delta.standalone.data.CloseableIterator
-import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.logging.Logging
 
@@ -108,13 +106,18 @@ class DelegatingLogStore(hadoopConf: Configuration)
 
 object DelegatingLogStore {
 
-  val defaultS3LogStoreClassName = classOf[S3SingleDriverLogStore].getName
-  val defaultAzureLogStoreClassName = classOf[AzureLogStore].getName
-  val defaultHDFSLogStoreClassName = classOf[HDFSLogStore].getName
+  /**
+   * Java LogStore (io.delta.storage) implementations are now the default.
+   */
+  val defaultS3LogStoreClassName = classOf[io.delta.storage.S3SingleDriverLogStore].getName
+  val defaultAzureLogStoreClassName = classOf[io.delta.storage.AzureLogStore].getName
+  val defaultHDFSLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
+  val defaultGCSLogStoreClassName = classOf[io.delta.storage.GCSLogStore].getName
 
   // Supported schemes with default.
   val s3Schemes = Set("s3", "s3a", "s3n")
   val azureSchemes = Set("abfs", "abfss", "adl", "wasb", "wasbs")
+  val gsSchemes = Set("gs")
 
   // Returns the default LogStore class name for `scheme`.
   // None if we do not have a default for it.
@@ -123,6 +126,8 @@ object DelegatingLogStore {
       return Some(defaultS3LogStoreClassName)
     } else if (DelegatingLogStore.azureSchemes(scheme: String)) {
       return Some(defaultAzureLogStoreClassName)
+    } else if (DelegatingLogStore.gsSchemes(scheme: String)) {
+      return Some(defaultGCSLogStoreClassName)
     }
     None
   }

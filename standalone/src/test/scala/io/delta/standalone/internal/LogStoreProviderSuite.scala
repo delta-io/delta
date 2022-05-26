@@ -81,7 +81,7 @@ class LogStoreProviderSuite extends FunSuite {
     ))
   }
 
-  test("Set scala class with class Conf") {
+  test("Set (deprecated) scala class with class Conf") {
     val hadoopConf = newHadoopConf(
       Seq((LogStoreProvider.logStoreClassConfKey,
         "io.delta.standalone.internal.storage.AzureLogStore")))
@@ -89,5 +89,11 @@ class LogStoreProviderSuite extends FunSuite {
       == "io.delta.standalone.internal.storage.AzureLogStore")
   }
 
-  // todo: set delta-storage class with class Conf
+  test("Set delta-storage class with class Conf") {
+    val hadoopConf = newHadoopConf(
+      Seq((LogStoreProvider.logStoreClassConfKey,
+        "io.delta.storage.AzureLogStore")))
+    assert(LogStoreProvider.createLogStore(hadoopConf).getClass.getName
+      == "io.delta.storage.AzureLogStore")
+  }
 }

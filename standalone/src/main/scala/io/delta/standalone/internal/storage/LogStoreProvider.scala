@@ -18,10 +18,10 @@ package io.delta.standalone.internal.storage
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 
 import io.delta.standalone.exceptions.DeltaStandaloneException
-import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.sources.StandaloneHadoopConf

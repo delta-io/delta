@@ -18,9 +18,8 @@ package io.delta.standalone.internal.storage
 
 import java.io.Reader
 
+import io.delta.storage.CloseableIterator
 import org.apache.commons.io.IOUtils
-
-import io.delta.standalone.data.CloseableIterator
 
 /**
  * Turn a `Reader` to `ClosableIterator` which can be read on demand. Each element is

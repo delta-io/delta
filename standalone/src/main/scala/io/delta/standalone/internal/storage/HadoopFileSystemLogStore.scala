@@ -23,11 +23,9 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.{CloseableIterator, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-
-import io.delta.standalone.data.CloseableIterator
-import io.delta.standalone.storage.LogStore
 
 /**
  * Default implementation of [[LogStore]] for Hadoop [[org.apache.hadoop.fs.FileSystem]]

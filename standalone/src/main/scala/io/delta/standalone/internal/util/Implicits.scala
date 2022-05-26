@@ -39,4 +39,23 @@ private[internal] object Implicits {
       }
     }
   }
+  implicit class DeltaStorageCloseableIteratorOps[T: ClassTag]
+      (private val iter: io.delta.storage.CloseableIterator[T]) {
+    import scala.collection.JavaConverters._
+
+    /**
+     * Convert the [[io.delta.storage.CloseableIterator]] (Java) to an in-memory [[Array]] (Scala).
+     *
+     * [[scala.collection.Iterator.toArray]] is used over [[scala.collection.Iterable.toSeq]]
+     * because `toSeq` is lazy, meaning `iter.close()` would be called before the Seq was actually
+     * generated.
+     */
+    def toArray: Array[T] = {
+      try {
+        iter.asScala.toArray
+      } finally {
+        iter.close()
+      }
+    }
+  }
 }

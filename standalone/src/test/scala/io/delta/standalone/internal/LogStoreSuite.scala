@@ -20,17 +20,16 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.{CloseableIterator, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.FunSuite
 
 import io.delta.standalone.Operation
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
-import io.delta.standalone.data.CloseableIterator
-import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
-import io.delta.standalone.internal.storage.{AzureLogStore, DelegatingLogStore, HDFSLogStore, LocalLogStore, LogStoreProvider, S3SingleDriverLogStore}
+import io.delta.standalone.internal.storage.{AzureLogStore, HDFSLogStore, LocalLogStore, LogStoreProvider, S3SingleDriverLogStore}
 import io.delta.standalone.internal.util.TestUtils._
 
 abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
@@ -195,6 +194,36 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
 class DefaultLogStoreSuite extends LogStoreSuiteBase {
   override def logStoreClassName: Option[String] = None
   override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class PublicHDFSLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] =
+    Some(classOf[io.delta.storage.HDFSLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class PublicS3SingleDriverLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] =
+    Some(classOf[io.delta.storage.S3SingleDriverLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
+class PublicAzureLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] =
+    Some(classOf[io.delta.storage.AzureLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class PublicLocalLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] =
+    Some(classOf[io.delta.storage.LocalLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class PublicGCSLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] =
+    Some(classOf[io.delta.storage.GCSLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
 /**

@@ -23,10 +23,9 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import com.github.mjakubowski84.parquet4s.ParquetWriter
+import io.delta.storage.CloseableIterator
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
-
-import io.delta.standalone.data.CloseableIterator
 
 import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.exception.DeltaErrors

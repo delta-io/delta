@@ -59,6 +59,9 @@ class DelegatingLogStoreSuite extends FunSuite {
     for (scheme <- DelegatingLogStore.azureSchemes) {
       testDelegatingLogStore(scheme, None, DelegatingLogStore.defaultAzureLogStoreClassName)
     }
+    for (scheme <- DelegatingLogStore.gsSchemes) {
+      testDelegatingLogStore(scheme, None, DelegatingLogStore.defaultGCSLogStoreClassName)
+    }
     testDelegatingLogStore(fakeSchemeWithNoDefault, None,
       DelegatingLogStore.defaultHDFSLogStoreClassName)
   }
@@ -68,11 +71,16 @@ class DelegatingLogStoreSuite extends FunSuite {
       fakeSchemeWithNoDefault
     for (scheme <- allTestSchemes) {
       for (store <- Seq(
+        // default (java) classes (in io.delta.storage)
         DelegatingLogStore.defaultS3LogStoreClassName,
         DelegatingLogStore.defaultAzureLogStoreClassName,
         DelegatingLogStore.defaultHDFSLogStoreClassName,
-        customLogStoreClassName
-      )) {
+        DelegatingLogStore.defaultGCSLogStoreClassName,
+        // deprecated (scala) classes
+        "io.delta.standalone.internal.storage.S3SingleDriverLogStore",
+        "io.delta.standalone.internal.storage.AzureLogStore",
+        "io.delta.standalone.internal.storage.HDFSLogStore",
+        customLogStoreClassName)) {
         // we set delta.logStore.${scheme}.impl -> $store
         testDelegatingLogStore(scheme, Some(store), store)
       }

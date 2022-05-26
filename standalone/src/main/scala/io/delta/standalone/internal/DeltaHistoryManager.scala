@@ -20,9 +20,8 @@ import java.sql.Timestamp
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.LogStore
 import org.apache.hadoop.fs.Path
-
-import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.actions.{Action, CommitInfo, CommitMarker}
 import io.delta.standalone.internal.exception.DeltaErrors

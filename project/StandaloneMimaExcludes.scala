@@ -33,6 +33,9 @@ object StandaloneMimaExcludes {
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.Snapshot.scan"),
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.tableExists"),
 
+    // Switch to using delta-storage LogStore API in 0.4.0 -> 0.5.0
+    ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.storage.LogStore"),
+
     // Ignore missing shaded attributes
     ProblemFilters.exclude[Problem]("shadedelta.*")
 

@@ -19,11 +19,9 @@ package io.delta.standalone.internal.actions
 import java.util.TimeZone
 
 import com.github.mjakubowski84.parquet4s.{ParquetIterable, ParquetReader}
+import io.delta.storage.{CloseableIterator, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
-import io.delta.standalone.data.CloseableIterator
-import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.util.JsonUtils
 
