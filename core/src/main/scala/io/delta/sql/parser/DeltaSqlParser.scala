@@ -301,6 +301,15 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ifExists = ctx.EXISTS != null)
   }
 
+  override def visitShowColumns(
+      ctx: showColumnsContext): LogicalPlan = withOrigin(ctx) {
+    ShowTableColumnsCommand(
+      Option(ctx.table).map(TableIdentifier),
+      Option(ctx.path).map(string),
+      Option(ctx.schema).map(TableIdentifier)
+    )
+  }
+
   protected def typedVisit[T](ctx: ParseTree): T = {
     ctx.accept(this).asInstanceOf[T]
   }

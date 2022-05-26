@@ -81,13 +81,15 @@ statement
     | CONVERT TO DELTA table=qualifiedName
         (PARTITIONED BY '(' colTypeList ')')?                           #convert
     | RESTORE TABLE? table=qualifiedName TO?
-            clause=temporalClause                                       #restore
+        clause=temporalClause                                           #restore
     | ALTER TABLE table=qualifiedName ADD CONSTRAINT name=identifier
-      constraint                                                        #addTableConstraint
+        constraint                                                      #addTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | OPTIMIZE (path=STRING | table=qualifiedName)
-        (WHERE partitionPredicate = exprToken)?                    #optimizeTable
+        (WHERE partitionPredicate = exprToken)?                         #optimizeTable
+    | SHOW COLUMNS (IN | FROM)? (path=STRING | table=qualifiedName
+        ((IN | FROM)? schema=identifier)?)                              #showColumns
     | .*?                                                               #passThrough
     ;
 
@@ -149,7 +151,7 @@ nonReserved
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
-    | RESTORE | AS | OF
+    | RESTORE | AS | OF | SHOW | COLUMNS | IN | FROM
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -191,6 +193,10 @@ TIMESTAMP: 'TIMESTAMP';
 VACUUM: 'VACUUM';
 WHERE: 'WHERE';
 VERSION: 'VERSION';
+SHOW: 'SHOW';
+COLUMNS: 'COLUMNS';
+FROM: 'FROM';
+IN: 'IN';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and
