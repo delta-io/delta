@@ -25,10 +25,10 @@ object TableColumns {
   def toRow(table: TableColumns): Row = converter(table)
 }
 
-class ShowTableColumnsCommand(
+case class ShowTableColumnsCommand(
     table: Option[TableIdentifier],
     path: Option[String],
-    schema: Option[TableIdentifier])
+    database: Option[TableIdentifier]) // TODO: add `database` support for the command
   extends LeafRunnableCommand with DeltaCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {

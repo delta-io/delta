@@ -89,7 +89,7 @@ statement
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate = exprToken)?                         #optimizeTable
     | SHOW COLUMNS (IN | FROM)? (path=STRING | table=qualifiedName
-        ((IN | FROM)? schema=identifier)?)                              #showColumns
+        ((IN | FROM)? database=identifier)?)                            #showColumns
     | .*?                                                               #passThrough
     ;
 

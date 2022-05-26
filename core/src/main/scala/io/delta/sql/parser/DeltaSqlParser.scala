@@ -306,7 +306,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ShowTableColumnsCommand(
       Option(ctx.table).map(TableIdentifier),
       Option(ctx.path).map(string),
-      Option(ctx.schema).map(TableIdentifier)
+      Option(ctx.database).map(TableIdentifier)
     )
   }
 
