@@ -122,6 +122,8 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
     .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
 
+  val readChangeFeed = options.get(CDC_READ_OPTION).exists(toBoolean(_, CDC_READ_OPTION)) ||
+    options.get(CDC_READ_OPTION_LEGACY).exists(toBoolean(_, CDC_READ_OPTION_LEGACY))
 
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
     case e: PatternSyntaxException =>
