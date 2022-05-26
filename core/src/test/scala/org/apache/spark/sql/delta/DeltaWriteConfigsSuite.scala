@@ -113,9 +113,9 @@ class DeltaWriteConfigsSuite extends QueryTest
   +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
   |Output Location|Output Mode|Contains No-Prefix Option|Contains Prefix-Option|Config                                                |
   +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
-  |path           |create     |false                    |false                 |                                                      |
-  |path           |overwrite  |false                    |false                 |                                                      |
-  |path           |append     |false                    |false                 |                                                      |
+  |path           |create     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |path           |overwrite  |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |path           |append     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
   |table          |create     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
   |table          |overwrite  |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
   |table          |append     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
@@ -150,8 +150,8 @@ class DeltaWriteConfigsSuite extends QueryTest
             val answer_prefix = config.contains(config_prefix)
 
             assert(!answer_no_prefix)
-            assert(answer_prefix == (outputLoc == "table"))
-            assert(config.size == (if (outputLoc == "table") 1 else 0))
+            assert(answer_prefix)
+            assert(config.size == 1)
 
             dfw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
               config.mkString(",")))

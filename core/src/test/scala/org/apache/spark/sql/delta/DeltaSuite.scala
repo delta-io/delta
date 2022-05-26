@@ -1645,6 +1645,28 @@ class DeltaSuite extends QueryTest
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 
+  test("set metadata upon write") {
+    withTempDir { inputDir =>
+      val testPath = inputDir.getCanonicalPath
+      spark.range(10)
+        .map(_.toInt)
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .option("delta.logRetentionDuration", "123 days")
+        .option("mergeSchema", "true")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      val deltaLog = DeltaLog.forTable(spark, testPath)
+      // We need to drop default properties set by subclasses to make this test pass in them
+      assert(deltaLog.snapshot.metadata.configuration
+        .filterKeys(!_.startsWith("delta.columnMapping.")).toMap ===
+        Map("delta.logRetentionDuration" -> "123 days"))
+    }
+  }
+
   test("idempotent Dataframe writes") {
     withTempDir{ dir =>
       val appId1 = "myAppId1"
