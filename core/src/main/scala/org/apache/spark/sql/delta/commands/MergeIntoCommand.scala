@@ -637,9 +637,13 @@ case class MergeIntoCommand(
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
-    val outputRowSchema = deltaTxn.metadata.schema
-      .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
-      .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
+    val outputRowSchema = if (!cdcEnabled) {
+      deltaTxn.metadata.schema
+    } else {
+      deltaTxn.metadata.schema
+        .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
+        .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
+    }
 
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
     val outputRowEncoder = RowEncoder(outputRowSchema).resolveAndBind()
@@ -660,6 +664,7 @@ case class MergeIntoCommand(
     val outputDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
         .drop(INCR_ROW_COUNT_COL)
+
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
