@@ -212,7 +212,8 @@ public class DeltaGlobalCommitter
         if (appId != null) { // means there are committables to process
             SortedMap<Long, List<DeltaCommittable>> committablesPerCheckpoint =
                 groupCommittablesByCheckpointInterval(globalCommittables);
-            DeltaLog deltaLog = DeltaLog.forTable(conf, basePath.getPath());
+            DeltaLog deltaLog = DeltaLog.forTable(conf,
+                    new org.apache.hadoop.fs.Path(basePath.toUri()));
 
             for (long checkpointId : committablesPerCheckpoint.keySet()) {
                 OptimisticTransaction transaction = deltaLog.startTransaction();

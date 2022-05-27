@@ -36,6 +36,9 @@ import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.connector.file.sink.utils.FileSinkTestUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileSystemTestHelper;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -388,6 +391,55 @@ public class DeltaGlobalCommitterTest {
         // THEN
         assertTrue(globalCommittable.getDeltaCommittables().isEmpty());
         assertTrue(deserialized.getDeltaCommittables().isEmpty());
+    }
+
+    @Test
+    public void testUseFullPathForDeltaLog() throws Exception {
+        //GIVEN
+        int numAddedFiles = 3;
+
+        assertEquals(tablePath.toUri().getScheme(), "file");
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
+        DeltaLog deltaLog = DeltaLog.forTable(
+                DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
+        assertEquals(deltaLog.snapshot().getVersion(), 0);
+        int initialTableFilesCount = deltaLog.snapshot().getAllFiles().size();
+
+        List<DeltaGlobalCommittable> globalCommittables =
+                DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
+                        numAddedFiles, DeltaSinkTestUtils.getTestPartitionSpec());
+        Configuration hadoopConfig = DeltaSinkTestUtils.getHadoopConf();
+
+        // set up a simple hdfs mock as default filesystem. This FS should not be
+        // used by the global committer below, as the path we are passing is from
+        // a local filesystem
+        hadoopConfig.set("fs.defaultFS", "mockfs:///");
+        hadoopConfig.setClass("fs.mockfs.impl",
+                FileSystemTestHelper.MockFileSystem.class, FileSystem.class);
+
+        // create a globalCommitter that points to a local FS path (file:/// scheme). If
+        // the path were to use the default filesystem (mockfs:///), it would return
+        // a null DeltaLog to write to, which will make operations in the global committer
+        // to fail. If it uses the full path correctly, it will open the already prepared
+        // delta log
+        DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
+                hadoopConfig,
+                tablePath,
+                DeltaSinkTestUtils.TEST_ROW_TYPE,
+                false // mergeSchema
+        );
+
+        // WHEN
+        globalCommitter.commit(globalCommittables);
+        deltaLog.update();
+
+        // THEN
+        // should have created the deltaLog files in the specified path regardless
+        // of the configured default filesystem
+        assertEquals(deltaLog.snapshot().getVersion(), 1);
+        assertEquals(
+                initialTableFilesCount + numAddedFiles,
+                deltaLog.snapshot().getAllFiles().size());
     }
 
     ///////////////////////////////////////////////////

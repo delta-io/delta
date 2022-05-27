@@ -703,6 +703,7 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
       "org.apache.flink" % ("flink-clients_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
       "org.apache.flink" % ("flink-test-utils_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "3.8.0" % "test",
       "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
       "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
