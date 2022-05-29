@@ -38,7 +38,7 @@ import org.apache.spark.sql.functions.{lit, typedLit, udf}
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
 
-  override lazy val metrics: Map[String, SQLMetric] = Map[String, SQLMetric](
+  def createMetrics: Map[String, SQLMetric] = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
@@ -78,6 +78,8 @@ case class DeleteCommand(
   extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
+
+  override lazy val metrics = createMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {

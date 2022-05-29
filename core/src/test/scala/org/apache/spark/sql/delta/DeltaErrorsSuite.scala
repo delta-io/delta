@@ -1340,6 +1340,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Not nullable column not found in struct: struct1")
     }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesOptionsException("reason")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Invalid options for idempotent Dataframe writes: reason")
+    }
   }
 }
 

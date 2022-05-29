@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
@@ -88,6 +89,7 @@ class Snapshot(
   /** Performs validations during initialization */
   protected def init(): Unit = {
     deltaLog.protocolRead(protocol)
+    SchemaUtils.recordUserDefinedTypes(deltaLog, metadata.schema)
   }
 
   // Reconstruct the state by applying deltas in order to the checkpoint.
@@ -497,8 +499,10 @@ class InitialSnapshot(
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
     deltaLog,
-    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
-      SparkSession.active.sessionState.conf, Map.empty))
+    Metadata(
+      configuration = DeltaConfigs.mergeGlobalConfigs(
+        SparkSession.active.sessionState.conf, Map.empty),
+      createdTime = Some(System.currentTimeMillis()))
   )
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]

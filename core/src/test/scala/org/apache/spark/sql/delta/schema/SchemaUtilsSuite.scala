@@ -1633,6 +1633,23 @@ class SchemaUtilsSuite extends QueryTest
       }
     }
   }
+
+  test("findUserDefinedTypes") {
+    val schema = StructType(Seq(
+      StructField("c1", new PointUDT),
+      StructField("c2", ArrayType(new PointUDT, true)),
+      StructField("c3", MapType(new PointUDT, new PointUDT, true)),
+      StructField("c4", StructType(Seq(
+        StructField("c1", new PointUDT),
+        StructField("c2", ArrayType(new PointUDT, true)),
+        StructField("c3", MapType(new PointUDT, new PointUDT, true))
+      )))
+    ))
+    val udts = findUserDefinedTypes(schema)
+    assert(udts.size == 8)
+    assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
+  }
+
 }
 
 object UnsupportedDataType extends DataType {

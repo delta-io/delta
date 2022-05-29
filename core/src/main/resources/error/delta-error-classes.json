@@ -253,6 +253,10 @@
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
   },
+  "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS" : {
+    "message" : [ "Invalid options for idempotent Dataframe writes: <reason>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [ "invalid isolation level '<isolationLevel>'" ],
     "sqlState" : "25000"

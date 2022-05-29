@@ -441,7 +441,7 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = Some(System.currentTimeMillis())) extends Action {
+    createdTime: Option[Long] = None) extends Action {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
