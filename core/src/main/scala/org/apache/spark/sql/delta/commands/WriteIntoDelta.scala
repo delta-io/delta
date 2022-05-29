@@ -189,8 +189,11 @@ case class WriteIntoDelta(
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
-          val newPartitions = addFiles.map(_.partitionValues).toSet
-          txn.filterFiles(newPartitions).map(_.remove)
+          // with dynamic partition overwrite for any partition that is being written to all
+          // existing data in that partition will be deleted.
+          // the selection what to delete is on the next two lines
+          val updatePartitions = addFiles.map(_.partitionValues).toSet
+          txn.filterFiles(updatePartitions).map(_.remove)
         } else {
           txn.filterFiles().map(_.remove)
         }

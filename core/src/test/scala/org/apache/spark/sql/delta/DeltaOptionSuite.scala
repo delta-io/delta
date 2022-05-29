@@ -27,6 +27,7 @@ import org.apache.parquet.format.CompressionCodec
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.delta.DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -242,7 +243,7 @@ class DeltaOptionSuite extends QueryTest
     }
   }
 
-  test("partitionOverwriteMode is set to invalid value") {
+  test("partitionOverwriteMode is set to invalid value in options") {
     withTempDir { tempDir =>
       val invalidMode = "ADAPTIVE"
       val e = intercept[IllegalArgumentException] {
@@ -256,7 +257,7 @@ class DeltaOptionSuite extends QueryTest
       }
       assert(e.getMessage ===
         DeltaErrors.illegalDeltaOptionException(
-          PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be either 'STATIC' or 'DYNAMIC'"
+          PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
         ).getMessage
       )
     }
