@@ -12,7 +12,6 @@ import io.delta.flink.source.internal.enumerator.processor.ChangesProcessor;
 import io.delta.flink.source.internal.enumerator.processor.ContinuousTableProcessor;
 import io.delta.flink.source.internal.enumerator.processor.SnapshotAndChangesTableProcessor;
 import io.delta.flink.source.internal.enumerator.processor.SnapshotProcessor;
-import io.delta.flink.source.internal.enumerator.supplier.ContinuousSourceSnapshotSupplier;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
@@ -23,6 +22,7 @@ import org.apache.flink.connector.file.src.FileSourceSplit;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
+import static io.delta.flink.source.internal.DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTAMP;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION;
 
@@ -63,12 +63,15 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
         DeltaLog deltaLog =
             DeltaLog.forTable(configuration, SourceUtils.pathToString(deltaTablePath));
 
-        Snapshot snapshot =
-            new ContinuousSourceSnapshotSupplier(deltaLog, sourceConfiguration).getSnapshot();
+        // Getting the same snapshot that was used for schema discovery in Source Builder.
+        // With this we are making sure that what we read from Delta will have the same schema
+        // that was discovered in Source builder.
+        Snapshot initSnapshot = deltaLog.getSnapshotForVersionAsOf(
+            sourceConfiguration.getValue(LOADED_SCHEMA_SNAPSHOT_VERSION));
 
         ContinuousTableProcessor tableProcessor =
             createTableProcessor(
-                deltaTablePath, enumContext, sourceConfiguration, deltaLog, snapshot);
+                deltaTablePath, enumContext, sourceConfiguration, deltaLog, initSnapshot);
 
         return new ContinuousDeltaSourceSplitEnumerator(
             deltaTablePath, tableProcessor, splitAssignerProvider.create(emptyList()), enumContext);

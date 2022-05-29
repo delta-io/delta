@@ -1,6 +1,7 @@
 package io.delta.flink.source.internal.builder;
 
 import io.delta.flink.source.internal.enumerator.ContinuousSplitEnumeratorProvider;
+import io.delta.flink.source.internal.enumerator.supplier.ContinuousSnapshotSupplierFactory;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.IGNORE_CHANGES;
@@ -31,11 +32,13 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
         new ContinuousSplitEnumeratorProvider(DEFAULT_SPLIT_ASSIGNER,
             DEFAULT_SPLITTABLE_FILE_ENUMERATOR);
 
-    public ContinuousDeltaSourceBuilder(Path tablePath,
-        FormatBuilder<T> formatBuilder, Configuration hadoopConfiguration) {
-        super(tablePath, formatBuilder, hadoopConfiguration);
+    public ContinuousDeltaSourceBuilder(
+            Path tablePath,
+            Configuration hadoopConfiguration,
+            ContinuousSnapshotSupplierFactory snapshotSupplierFactory) {
+        super(tablePath, hadoopConfiguration, snapshotSupplierFactory);
     }
-    // TODO PR 9.1 add tests for options.
+    // TODO PR 12 add tests for options.
     public SELF startingVersion(String startingVersion) {
         sourceConfiguration.addOption(STARTING_VERSION.key(), startingVersion);
         return self();

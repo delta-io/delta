@@ -2,7 +2,6 @@ package io.delta.flink.source.internal.enumerator.supplier;
 
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
-import org.apache.flink.configuration.ConfigOption;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -18,24 +17,15 @@ public abstract class SnapshotSupplier {
      */
     protected final DeltaLog deltaLog;
 
-    /**
-     * The {@link DeltaSourceConfiguration} with used
-     * {@link io.delta.flink.source.internal.DeltaSourceOptions}.
-     */
-    protected final DeltaSourceConfiguration sourceConfiguration;
-
-    protected SnapshotSupplier(
-        DeltaLog deltaLog,
-        DeltaSourceConfiguration sourceConfiguration) {
+    protected SnapshotSupplier(DeltaLog deltaLog) {
         this.deltaLog = deltaLog;
-        this.sourceConfiguration = sourceConfiguration;
     }
 
     /**
      * @return A {@link Snapshot} instance acquired from {@link #deltaLog}. Every implementation of
      * {@link SnapshotSupplier} class can have its own rules about how snapshot should be acquired.
      */
-    public abstract Snapshot getSnapshot();
+    public abstract Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration);
 
     /**
      * A helper method that returns the latest {@link Snapshot} at moment when this method was
@@ -47,13 +37,5 @@ public abstract class SnapshotSupplier {
      */
     protected TransitiveOptional<Snapshot> getHeadSnapshot() {
         return TransitiveOptional.ofNullable(deltaLog.snapshot());
-    }
-
-    /**
-     * A helper method to get the value of {@link io.delta.flink.source.internal.DeltaSourceOptions}
-     * from {@link #sourceConfiguration}.
-     */
-    protected <T> T getOptionValue(ConfigOption<T> option) {
-        return this.sourceConfiguration.getValue(option);
     }
 }

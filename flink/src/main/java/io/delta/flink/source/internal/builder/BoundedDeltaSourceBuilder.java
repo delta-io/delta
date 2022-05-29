@@ -1,6 +1,7 @@
 package io.delta.flink.source.internal.builder;
 
 import io.delta.flink.source.internal.enumerator.BoundedSplitEnumeratorProvider;
+import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.TIMESTAMP_AS_OF;
@@ -27,12 +28,14 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
         new BoundedSplitEnumeratorProvider(DEFAULT_SPLIT_ASSIGNER,
             DEFAULT_SPLITTABLE_FILE_ENUMERATOR);
 
-    public BoundedDeltaSourceBuilder(Path tablePath,
-        FormatBuilder<T> formatBuilder, Configuration hadoopConfiguration) {
-        super(tablePath, formatBuilder, hadoopConfiguration);
+    public BoundedDeltaSourceBuilder(
+            Path tablePath,
+            Configuration hadoopConfiguration,
+            BoundedSnapshotSupplierFactory snapshotSupplierFactory) {
+        super(tablePath, hadoopConfiguration, snapshotSupplierFactory);
     }
 
-    // TODO PR 9.1 add tests for options.
+    // TODO PR 12 add tests for options.
     public SELF versionAsOf(long snapshotVersion) {
         sourceConfiguration.addOption(VERSION_AS_OF.key(), snapshotVersion);
         return self();

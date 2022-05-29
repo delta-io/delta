@@ -5,7 +5,6 @@ import static java.util.Collections.emptyList;
 
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.enumerator.processor.SnapshotProcessor;
-import io.delta.flink.source.internal.enumerator.supplier.BoundedSourceSnapshotSupplier;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
@@ -15,8 +14,10 @@ import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
+import static io.delta.flink.source.internal.DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION;
 
 import io.delta.standalone.DeltaLog;
+import io.delta.standalone.Snapshot;
 
 /**
  * An implementation of {@link SplitEnumeratorProvider} that creates a {@code
@@ -37,26 +38,29 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
      *                               methods.
      */
     public BoundedSplitEnumeratorProvider(
-        FileSplitAssigner.Provider splitAssignerProvider,
-        AddFileEnumerator.Provider<DeltaSourceSplit> fileEnumeratorProvider) {
+            FileSplitAssigner.Provider splitAssignerProvider,
+            AddFileEnumerator.Provider<DeltaSourceSplit> fileEnumeratorProvider) {
         this.splitAssignerProvider = splitAssignerProvider;
         this.fileEnumeratorProvider = fileEnumeratorProvider;
     }
 
     @Override
     public BoundedDeltaSourceSplitEnumerator createInitialStateEnumerator(
-        Path deltaTablePath, Configuration configuration,
-        SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration) {
+            Path deltaTablePath, Configuration configuration,
+            SplitEnumeratorContext<DeltaSourceSplit> enumContext,
+            DeltaSourceConfiguration sourceConfiguration) {
 
         DeltaLog deltaLog =
             DeltaLog.forTable(configuration, SourceUtils.pathToString(deltaTablePath));
 
-        BoundedSourceSnapshotSupplier snapshotSupplier =
-            new BoundedSourceSnapshotSupplier(deltaLog, sourceConfiguration);
+        // Getting the same snapshot that was used for schema discovery in Source Builder.
+        // With this we are making sure that what we read from Delta will have the same schema
+        // that was discovered in Source builder.
+        Snapshot initSnapshot = deltaLog.getSnapshotForVersionAsOf(
+            sourceConfiguration.getValue(LOADED_SCHEMA_SNAPSHOT_VERSION));
 
         SnapshotProcessor snapshotProcessor =
-            new SnapshotProcessor(deltaTablePath, snapshotSupplier.getSnapshot(),
+            new SnapshotProcessor(deltaTablePath, initSnapshot,
                 fileEnumeratorProvider.create(), Collections.emptySet());
 
         return new BoundedDeltaSourceSplitEnumerator(
@@ -66,9 +70,10 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
 
     @Override
     public BoundedDeltaSourceSplitEnumerator createEnumeratorForCheckpoint(
-        DeltaEnumeratorStateCheckpoint<DeltaSourceSplit> checkpoint, Configuration configuration,
-        SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration) {
+            DeltaEnumeratorStateCheckpoint<DeltaSourceSplit> checkpoint,
+            Configuration configuration,
+            SplitEnumeratorContext<DeltaSourceSplit> enumContext,
+            DeltaSourceConfiguration sourceConfiguration) {
 
         DeltaLog deltaLog = DeltaLog.forTable(configuration,
             SourceUtils.pathToString(checkpoint.getDeltaTablePath()));

@@ -2,15 +2,14 @@ package io.delta.flink.source;
 
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.DeltaSourceInternal;
-import io.delta.flink.source.internal.builder.RowDataFormat;
-import io.delta.flink.source.internal.builder.RowDataFormatBuilder;
 import io.delta.flink.source.internal.enumerator.SplitEnumeratorProvider;
+import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
+import io.delta.flink.source.internal.enumerator.supplier.ContinuousSnapshotSupplierFactory;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import org.apache.flink.connector.file.src.reader.BulkFormat;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.standalone.actions.AddFile;
@@ -21,16 +20,14 @@ import io.delta.standalone.actions.AddFile;
  * <p>This source supports all (distributed) file systems and object stores that can be accessed
  * via the Flink's {@link FileSystem} class.
  * <p>
- * To create new instance of the source to a non-partitioned Delta table for stream of {@link
- * RowData}:
+ * To create a new instance of Delta source for a non-partitioned Delta table that will produce
+ * {@link RowData} records that will contain all columns from Delta table:
  * <pre>
  *     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
  *     ...
  *     // {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED} mode.
  *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.boundedRowDataSourceBuilder(
  *                new Path("s3://some/path"),
- *                new String[] {"name", "surname", "age"},
- *                new LogicalType[] {new CharType(), new CharType(), new IntType()},
  *                new Configuration()
  *             )
  *             .versionAsOf(10)
@@ -42,8 +39,6 @@ import io.delta.standalone.actions.AddFile;
  *     // {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode.
  *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.continuousRowDataSourceBuilder(
  *                new Path("s3://some/path"),
- *                new String[] {"name", "surname", "age"},
- *                new LogicalType[] {new CharType(), new CharType(), new IntType()},
  *                new Configuration()
  *               )
  *              .updateCheckIntervalMillis(1000)
@@ -52,6 +47,38 @@ import io.delta.standalone.actions.AddFile;
  *
  *     env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source")
  * </pre>
+ * <p>
+ * To create a new instance of Delta source for a non-partitioned Delta table that will produce
+ * {@link RowData} records with user selected columns:
+ * <pre>
+ *     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+ *     ...
+ *     // {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED} mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.boundedRowDataSourceBuilder(
+ *                new Path("s3://some/path"),
+ *                new Configuration()
+ *             )
+ *             .columnNames(Arrays.asList("col1", "col2"))
+ *             .versionAsOf(10)
+ *             .build();
+ *
+ *     env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source")
+ *
+ *     ..........
+ *     // {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.continuousRowDataSourceBuilder(
+ *                new Path("s3://some/path"),
+ *                new Configuration()
+ *               )
+ *               .columnNames(Arrays.asList("col1", "col2"))
+ *               .updateCheckIntervalMillis(1000)
+ *               .startingVersion(10)
+ *               .build();
+ *
+ *     env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source")
+ * </pre>
+ * When using {@code columnNames(...)} method, the source will discover data types for defined
+ * columns from Delta log.
  *
  * @param <T> The type of the events/records produced by this source.
  * @implNote <h2>Batch and Streaming</h2>
@@ -76,38 +103,31 @@ import io.delta.standalone.actions.AddFile;
 public class DeltaSource<T> extends DeltaSourceInternal<T> {
 
     DeltaSource(
-        Path tablePath,
-        BulkFormat<T, DeltaSourceSplit> readerFormat,
-        SplitEnumeratorProvider splitEnumeratorProvider,
-        Configuration configuration,
-        DeltaSourceConfiguration sourceConfiguration) {
+            Path tablePath,
+            BulkFormat<T, DeltaSourceSplit> readerFormat,
+            SplitEnumeratorProvider splitEnumeratorProvider,
+            Configuration configuration,
+            DeltaSourceConfiguration sourceConfiguration) {
         super(tablePath, readerFormat, splitEnumeratorProvider, configuration, sourceConfiguration);
     }
 
     public static RowDataBoundedDeltaSourceBuilder forBoundedRowData(
-        Path tablePath,
-        String[] columnNames,
-        LogicalType[] columnTypes,
-        Configuration hadoopConfiguration) {
+            Path tablePath,
+            Configuration hadoopConfiguration) {
 
-        RowDataFormatBuilder formatBuilder = RowDataFormat
-            .builder(columnNames, columnTypes, hadoopConfiguration);
-
-        return new RowDataBoundedDeltaSourceBuilder(tablePath, formatBuilder, hadoopConfiguration);
+        return new RowDataBoundedDeltaSourceBuilder(
+            tablePath,
+            hadoopConfiguration,
+            new BoundedSnapshotSupplierFactory());
     }
 
     public static RowDataContinuousDeltaSourceBuilder forContinuousRowData(
-        Path tablePath,
-        String[] columnNames,
-        LogicalType[] columnTypes,
-        Configuration hadoopConfiguration) {
-
-        RowDataFormatBuilder formatBuilder = RowDataFormat
-            .builder(columnNames, columnTypes, hadoopConfiguration);
+            Path tablePath,
+            Configuration hadoopConfiguration) {
 
         return new RowDataContinuousDeltaSourceBuilder(
-            tablePath,
-            formatBuilder,
-            hadoopConfiguration);
+                tablePath,
+                hadoopConfiguration,
+                new ContinuousSnapshotSupplierFactory());
     }
 }

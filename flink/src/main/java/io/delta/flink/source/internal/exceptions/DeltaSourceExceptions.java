@@ -7,6 +7,7 @@ import io.delta.flink.source.internal.file.AddFileEnumeratorContext;
 import org.apache.flink.core.fs.Path;
 
 import io.delta.standalone.actions.Action;
+import io.delta.standalone.types.StructType;
 
 /**
  * The utility class that provides a factory methods for various cases where {@link
@@ -134,8 +135,8 @@ public final class DeltaSourceExceptions {
     }
 
     public static DeltaSourceValidationException invalidOptionNameException(
-            String tablePath,
-            String invalidOption) {
+        String tablePath,
+        String invalidOption) {
 
         return new DeltaSourceValidationException(
             tablePath,
@@ -144,5 +145,21 @@ public final class DeltaSourceExceptions {
                     invalidOption)));
     }
 
-    // Add other methods in future PRs.
+    /**
+     * Creates instance of {@link DeltaSourceException} for case where {@link StructType} data was
+     * not found in Delta table log.
+     *
+     * @param tablePath       Path to Delta Table for which this exception occurred.
+     * @param snapshotVersion Delta Table Snapshot version for which this exception occurred.
+     * @return A {@link DeltaSourceException} object.
+     */
+    public static DeltaSourceException tableSchemaMissingException(
+            String tablePath,
+            long snapshotVersion) {
+        return new DeltaSourceException(
+            tablePath, snapshotVersion,
+            String.format(
+                "Unable to find Schema information in Delta log for table [%s] and version [%d]",
+                tablePath, snapshotVersion));
+    }
 }

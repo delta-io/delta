@@ -3,7 +3,6 @@ package io.delta.flink.source.internal.builder;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import org.apache.flink.formats.parquet.ParquetColumnarRowInputFormat;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 
@@ -19,8 +18,7 @@ public class RowDataFormat extends ParquetColumnarRowInputFormat<DeltaSourceSpli
         super(hadoopConfig, projectedType, batchSize, isUtcTimestamp, isCaseSensitive);
     }
 
-    public static RowDataFormatBuilder builder(
-        String[] columnNames, LogicalType[] columnTypes, Configuration hadoopConfiguration) {
-        return new RowDataFormatBuilder(columnNames, columnTypes, hadoopConfiguration);
+    public static RowDataFormatBuilder builder(RowType rowType, Configuration hadoopConfiguration) {
+        return new RowDataFormatBuilder(rowType, hadoopConfiguration);
     }
 }

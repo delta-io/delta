@@ -27,6 +27,21 @@ public class DeltaSourceConfiguration implements Serializable {
      */
     private final Map<String, Object> usedSourceOptions = new HashMap<>();
 
+    /**
+     * Creates {@link DeltaSourceConfiguration} instance without any options.
+     */
+    public DeltaSourceConfiguration() {
+
+    }
+
+    /**
+     * Creates an instance of {@link DeltaSourceConfiguration} using provided options.
+     * @param options options that should be added to {@link DeltaSourceConfiguration}.
+     */
+    public DeltaSourceConfiguration(Map<String, Object> options) {
+        this.usedSourceOptions.putAll(options);
+    }
+
     public DeltaSourceConfiguration addOption(String name, String value) {
         return addOptionObject(name, value);
     }

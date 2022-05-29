@@ -25,13 +25,26 @@ public class DeltaSourceOptions {
     public static final String STARTING_VERSION_LATEST = "latest";
 
     /**
-     * A map of all valid {@code DeltaSourceInternal} options. This map can be used for example by
+     * A map of all valid {@code DeltaSourceOptions}. This map can be used for example by
      * {@code BaseDeltaSourceStepBuilder} to do configuration sanity check.
      *
      * @implNote All {@code ConfigOption} defined in {@code DeltaSourceOptions} class must be added
      * to {@code VALID_SOURCE_OPTIONS} map.
      */
-    public static final Map<String, ConfigOption<?>> VALID_SOURCE_OPTIONS = new HashMap<>();
+    public static final Map<String, ConfigOption<?>> USER_FACING_SOURCE_OPTIONS = new HashMap<>();
+
+    /**
+     * A map of all {@code DeltaSourceOptions} that are internal only, meaning that they must not be
+     * used by end user through public API. This map can be used for example by {@code
+     * BaseDeltaSourceStepBuilder} to do configuration sanity check.
+     *
+     * @implNote All options categorized for "internal use only" defined in {@code
+     * DeltaSourceOptions} class must be added to {@code INNER_SOURCE_OPTIONS} map.
+     */
+    public static final Map<String, ConfigOption<?>> INNER_SOURCE_OPTIONS = new HashMap<>();
+
+    // ----- PUBLIC AND NONE-PUBLIC OPTIONS ----- //
+    // This options can be set/used by end user while configuring Flink Delta source.
 
     /**
      * An option that allow time travel to {@link io.delta.standalone.Snapshot} version to read
@@ -147,16 +160,54 @@ public class DeltaSourceOptions {
         ConfigOptions.key("parquetBatchSize").intType().defaultValue(2048)
             .withDescription("Number of rows read per batch by Parquet Reader from Parquet file.");
 
-    // TODO PR 9.1 test all allowed options
+    // ----- INNER ONLY OPTIONS ----- //
+    // Inner options should not be set by user, and they are used internally by Flin connector.
+
+    /**
+     * An option to set Delta table {@link io.delta.standalone.Snapshot} version that should be
+     * initialized during
+     * {@link io.delta.flink.source.internal.enumerator.DeltaSourceSplitEnumerator} first
+     * initialization.
+     *
+     * @implNote
+     * The {@link org.apache.flink.api.connector.source.SplitEnumerator} implementations for
+     * Delta source has to use the same Delta Snapshot that was used for schema discovery by
+     * source builder.
+     * This is needed to avoid anny issues caused by schema changes that might have happened between
+     * source initialization and enumerator initialization. The version of the snapshot used for
+     * schema discovery in Source builder is passed to the SplitEnumerator via
+     * {@link DeltaSourceConfiguration} using LOADED_SCHEMA_SNAPSHOT_VERSION option.
+     * <p>
+     * When the job is submitted to the Flink cluster, the entire job graph including operators,
+     * source and sink classes is serialized on a "client side" and deserialized back on a Job
+     * Manager node. Because both {@link io.delta.standalone.Snapshot} and
+     * {@link io.delta.standalone.DeltaLog} are not serializable, we cannot simply pass reference
+     * value to Delta Source instance, since this will throw an exception during job
+     * initialization, failing on the deserialization.
+     */
+    public static final ConfigOption<Long> LOADED_SCHEMA_SNAPSHOT_VERSION =
+        ConfigOptions.key("loadedSchemaSnapshotVersion").longType().noDefaultValue();
+
+    // ----------------------------- //
+
+    // TODO PR 12 test all allowed options
     static {
-        VALID_SOURCE_OPTIONS.put(VERSION_AS_OF.key(), VERSION_AS_OF);
-        VALID_SOURCE_OPTIONS.put(TIMESTAMP_AS_OF.key(), TIMESTAMP_AS_OF);
-        VALID_SOURCE_OPTIONS.put(STARTING_VERSION.key(), STARTING_VERSION);
-        VALID_SOURCE_OPTIONS.put(STARTING_TIMESTAMP.key(), STARTING_TIMESTAMP);
-        VALID_SOURCE_OPTIONS.put(UPDATE_CHECK_INTERVAL.key(), UPDATE_CHECK_INTERVAL);
-        VALID_SOURCE_OPTIONS.put(UPDATE_CHECK_INITIAL_DELAY.key(), UPDATE_CHECK_INITIAL_DELAY);
-        VALID_SOURCE_OPTIONS.put(IGNORE_DELETES.key(), IGNORE_DELETES);
-        VALID_SOURCE_OPTIONS.put(IGNORE_CHANGES.key(), IGNORE_CHANGES);
-        VALID_SOURCE_OPTIONS.put(PARQUET_BATCH_SIZE.key(), PARQUET_BATCH_SIZE);
+        USER_FACING_SOURCE_OPTIONS.put(VERSION_AS_OF.key(), VERSION_AS_OF);
+        USER_FACING_SOURCE_OPTIONS.put(TIMESTAMP_AS_OF.key(), TIMESTAMP_AS_OF);
+        USER_FACING_SOURCE_OPTIONS.put(STARTING_VERSION.key(), STARTING_VERSION);
+        USER_FACING_SOURCE_OPTIONS.put(STARTING_TIMESTAMP.key(), STARTING_TIMESTAMP);
+        USER_FACING_SOURCE_OPTIONS.put(UPDATE_CHECK_INTERVAL.key(), UPDATE_CHECK_INTERVAL);
+        USER_FACING_SOURCE_OPTIONS.put(
+            UPDATE_CHECK_INITIAL_DELAY.key(),
+            UPDATE_CHECK_INITIAL_DELAY);
+        USER_FACING_SOURCE_OPTIONS.put(IGNORE_DELETES.key(), IGNORE_DELETES);
+        USER_FACING_SOURCE_OPTIONS.put(IGNORE_CHANGES.key(), IGNORE_CHANGES);
+        USER_FACING_SOURCE_OPTIONS.put(PARQUET_BATCH_SIZE.key(), PARQUET_BATCH_SIZE);
+    }
+
+    // TODO PR 12 test all allowed options
+    static {
+        INNER_SOURCE_OPTIONS.put(LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
+            LOADED_SCHEMA_SNAPSHOT_VERSION);
     }
 }

@@ -8,12 +8,12 @@ import java.util.Optional;
 
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.file.AddFileEnumerator.SplitFilter;
 import io.delta.flink.source.internal.file.AddFileEnumeratorContext;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import io.delta.flink.source.internal.utils.SourceUtils;
 import org.apache.flink.api.connector.source.ReaderInfo;
 import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.connector.file.src.FileSourceSplit;
@@ -85,13 +85,17 @@ public abstract class DeltaSourceSplitEnumeratorTestBase {
 
     @Mock
     protected ReaderInfo readerInfo;
-    protected MockedStatic<SourceUtils> sourceUtils;
-    protected MockedStatic<DeltaLog> deltaLogStatic;
-    protected DeltaSourceConfiguration sourceConfiguration;
+
     @Mock
     private DeltaSourceSplit split;
+
     @Captor
     private ArgumentCaptor<List<FileSourceSplit>> splitsCaptor;
+
+    protected MockedStatic<DeltaLog> deltaLogStatic;
+
+    protected DeltaSourceConfiguration sourceConfiguration;
+
     private DeltaSourceSplitEnumerator enumerator;
 
     protected void setUp() throws URISyntaxException {
@@ -205,7 +209,10 @@ public abstract class DeltaSourceSplitEnumeratorTestBase {
 
     @SuppressWarnings("unchecked")
     protected <T> T setUpEnumeratorWithHeadSnapshot() {
-        when(deltaLog.snapshot()).thenReturn(headSnapshot);
+        when(deltaLog.getSnapshotForVersionAsOf(
+            headSnapshot.getVersion())).thenReturn(headSnapshot);
+        sourceConfiguration.addOption(
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(), headSnapshot.getVersion());
         return (T) spy(createEnumerator());
     }
 

@@ -16,9 +16,8 @@ import io.delta.standalone.Snapshot;
  */
 public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog,
-        DeltaSourceConfiguration sourceConfiguration) {
-        super(deltaLog, sourceConfiguration);
+    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog) {
+        super(deltaLog);
     }
 
     /**
@@ -37,15 +36,16 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
      * snapshot was found.
      */
     @Override
-    public Snapshot getSnapshot() {
-        return getSnapshotFromStartingVersionOption()
-            .or(this::getSnapshotFromStartingTimestampOption)
+    public Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration) {
+        return getSnapshotFromStartingVersionOption(sourceConfiguration)
+            .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration))
             .or(this::getHeadSnapshot)
             .get();
     }
 
-    private TransitiveOptional<Snapshot> getSnapshotFromStartingVersionOption() {
-        String startingVersion = getOptionValue(STARTING_VERSION);
+    private TransitiveOptional<Snapshot> getSnapshotFromStartingVersionOption(
+            DeltaSourceConfiguration sourceConfiguration) {
+        String startingVersion = sourceConfiguration.getValue(STARTING_VERSION);
         if (startingVersion != null) {
             if (startingVersion.equalsIgnoreCase(DeltaSourceOptions.STARTING_VERSION_LATEST)) {
                 return TransitiveOptional.ofNullable(deltaLog.snapshot());
@@ -59,8 +59,9 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
         return TransitiveOptional.empty();
     }
 
-    private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption() {
-        String startingTimestamp = getOptionValue(STARTING_TIMESTAMP);
+    private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption(
+            DeltaSourceConfiguration sourceConfiguration) {
+        String startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);
         if (startingTimestamp != null) {
             return TransitiveOptional.ofNullable(deltaLog.getSnapshotForTimestampAsOf(
                 TimestampFormatConverter.convertToTimestamp(startingTimestamp)));

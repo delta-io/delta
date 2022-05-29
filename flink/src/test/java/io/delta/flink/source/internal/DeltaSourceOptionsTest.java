@@ -15,13 +15,14 @@ public class DeltaSourceOptionsTest {
 
     /**
      * This test checks if all ConfigOption fields from DeltaSourceOptions class were added to
-     * {@link DeltaSourceOptions#VALID_SOURCE_OPTIONS} map.
+     * {@link DeltaSourceOptions#USER_FACING_SOURCE_OPTIONS} or
+     * {@link DeltaSourceOptions#INNER_SOURCE_OPTIONS} map.
      * <p>
      * This tests uses Java Reflection to get all static, public fields of type {@link ConfigOption}
      * from {@link DeltaSourceOptions}.
      */
     @Test
-    public void shouldHaveAllowedOptions() {
+    public void testAllOptionsAreCategorized() {
         Field[] declaredFields = DeltaSourceOptions.class.getDeclaredFields();
         Set<Field> configOptionFields = new HashSet<>();
         for (Field field : declaredFields) {
@@ -31,10 +32,12 @@ public class DeltaSourceOptionsTest {
         }
 
         assertThat(
-            "Probably not all ConfigOption Fields were added to DeltaSourceOptions"
-                + ".VALID_SOURCE_OPTIONS map",
+            "Probably not all ConfigOption Fields were added to DeltaSourceOptions "
+                + "VALID_SOURCE_OPTIONS or INNER_SOURCE_OPTIONS map",
             configOptionFields.size(),
-            equalTo(DeltaSourceOptions.VALID_SOURCE_OPTIONS.size()));
+            equalTo(
+                DeltaSourceOptions.USER_FACING_SOURCE_OPTIONS.size()
+                + DeltaSourceOptions.INNER_SOURCE_OPTIONS.size()));
     }
 
     private boolean isConfigOptionField(Field field) {

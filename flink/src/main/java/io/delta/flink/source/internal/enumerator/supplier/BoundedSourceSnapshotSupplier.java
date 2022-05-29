@@ -14,9 +14,8 @@ import io.delta.standalone.Snapshot;
  */
 public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog,
-        DeltaSourceConfiguration sourceConfiguration) {
-        super(deltaLog, sourceConfiguration);
+    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog) {
+        super(deltaLog);
     }
 
     /**
@@ -35,23 +34,25 @@ public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
      * snapshot was found.
      */
     @Override
-    public Snapshot getSnapshot() {
-        return getSnapshotFromVersionAsOfOption()
-            .or(this::getSnapshotFromTimestampAsOfOption)
+    public Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration) {
+        return getSnapshotFromVersionAsOfOption(sourceConfiguration)
+            .or(() -> getSnapshotFromTimestampAsOfOption(sourceConfiguration))
             .or(this::getHeadSnapshot)
             .get();
     }
 
-    private TransitiveOptional<Snapshot> getSnapshotFromVersionAsOfOption() {
-        Long versionAsOf = getOptionValue(DeltaSourceOptions.VERSION_AS_OF);
+    private TransitiveOptional<Snapshot> getSnapshotFromVersionAsOfOption(
+            DeltaSourceConfiguration sourceConfiguration) {
+        Long versionAsOf = sourceConfiguration.getValue(DeltaSourceOptions.VERSION_AS_OF);
         if (versionAsOf != null) {
             return TransitiveOptional.ofNullable(deltaLog.getSnapshotForVersionAsOf(versionAsOf));
         }
         return TransitiveOptional.empty();
     }
 
-    private TransitiveOptional<Snapshot> getSnapshotFromTimestampAsOfOption() {
-        String timestampAsOf = getOptionValue(DeltaSourceOptions.TIMESTAMP_AS_OF);
+    private TransitiveOptional<Snapshot> getSnapshotFromTimestampAsOfOption(
+        DeltaSourceConfiguration sourceConfiguration) {
+        String timestampAsOf = sourceConfiguration.getValue(DeltaSourceOptions.TIMESTAMP_AS_OF);
         if (timestampAsOf != null) {
             return TransitiveOptional.ofNullable(
                 deltaLog.getSnapshotForTimestampAsOf(
