@@ -1,16 +1,16 @@
 package org.apache.spark.sql.delta.expressions
 
 import org.apache.spark.benchmark.{Benchmark, BenchmarkBase}
-import org.apache.spark.sql.catalyst.expressions.{BoundReference, Expression, ExpressionEvalHelper, Literal}
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.types.IntegerType
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 
 /**
- * @time 2022/5/25 4:12 PM
- * @author fchen <cloud.chenfu@gmail.com>
+ * Benchmark to measure performance for interleave bits.
+ * To run this benchmark:
+ * {{{
+ *   build/sbt "core/test:runMain org.apache.spark.sql.delta.expressions.InterleaveBitsBenchmark"
+ * }}}
  */
 object InterleaveBitsBenchmark extends BenchmarkBase {
 
@@ -24,8 +24,7 @@ object InterleaveBitsBenchmark extends BenchmarkBase {
     }
   }
 
-  def createExpression(numColumns: Int): Expression = {
-
+  private def createExpression(numColumns: Int): Expression = {
     val inputs = (0 until numColumns).map { i =>
       $"c_$i".int.at(i)
     }

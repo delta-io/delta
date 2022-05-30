@@ -52,9 +52,8 @@ case class InterleaveBits(children: Seq[Expression])
 
   private val childrenArray: Array[Expression] = children.toArray
 
-  private val ints = new Array[Int](n)
-
   override def eval(input: InternalRow): Any = {
+    val ints = new Array[Int](n)
     var i = 0
     while (i < n) {
       val int = childrenArray(i).eval(input) match {
@@ -70,7 +69,7 @@ case class InterleaveBits(children: Seq[Expression])
     interleaveBits(ints)
   }
 
-  def defaultInterleaveBits(): Array[Byte] = {
+  def defaultInterleaveBits(inputs: Array[Int]): Array[Byte] = {
     val ret = new Array[Byte](n * 4)
     var ret_idx: Int = 0
     var ret_bit: Int = 7
@@ -80,7 +79,7 @@ case class InterleaveBits(children: Seq[Expression])
     while (bit >= 0) {
       var idx = 0
       while (idx < n) {
-        ret_byte = (ret_byte | (((ints(idx) >> bit) & 1) << ret_bit)).toByte
+        ret_byte = (ret_byte | (((inputs(idx) >> bit) & 1) << ret_bit)).toByte
         ret_bit -= 1
         if (ret_bit == -1) {
           // finished processing a byte
@@ -100,7 +99,7 @@ case class InterleaveBits(children: Seq[Expression])
 
   def interleaveBits(inputs: Array[Int]): Array[Byte] = {
     inputs.length match {
-      // it's a more fast approach
+      // it's a more fast approach, use O(4 * 8)
       // can see http://graphics.stanford.edu/~seander/bithacks.html#InterleaveTableObvious
       case 0 => Array.empty
       case 1 => intToByte(inputs(0))
@@ -113,7 +112,7 @@ case class InterleaveBits(children: Seq[Expression])
         inputs(0))
       case 8 => interleave8Ints(inputs(7), inputs(6), inputs(5), inputs(4), inputs(3), inputs(2),
         inputs(1), inputs(0))
-      case _ => defaultInterleaveBits()
+      case _ => defaultInterleaveBits(inputs)
     }
   }
 
