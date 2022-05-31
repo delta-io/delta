@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
@@ -497,6 +498,13 @@ case class DeltaSource(
       if (!startOffset.isStartingVersion) {
         // unpersist `snapshot` because it won't be used any more.
         cleanUpSnapshotResources()
+      }
+      if (startOffset == endOffset) {
+        // This happens only if we recover from a failure and `MicroBatchExecution` tries to call
+        // us with the previous offsets. The returned DataFrame will be dropped immediately, so we
+        // can return any DataFrame.
+        return spark.sqlContext.internalCreateDataFrame(
+          spark.sparkContext.emptyRDD[InternalRow], schema, isStreaming = true)
       }
       (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
     }

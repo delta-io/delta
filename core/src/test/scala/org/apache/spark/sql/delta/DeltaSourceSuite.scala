@@ -1707,6 +1707,58 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+
+  test("should not attempt to read a non exist version") {
+    withTempDirs { (inputDir1, inputDir2, checkpointDir) =>
+      spark.range(1, 2).write.format("delta").save(inputDir1.getCanonicalPath)
+      spark.range(1, 2).write.format("delta").save(inputDir2.getCanonicalPath)
+
+      def startQuery(): StreamingQuery = {
+        val df1 = spark.readStream
+          .format("delta")
+          .load(inputDir1.getCanonicalPath)
+        val df2 = spark.readStream
+          .format("delta")
+          .load(inputDir2.getCanonicalPath)
+        df1.union(df2).writeStream
+          .format("noop")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start()
+      }
+
+      var q = startQuery()
+      try {
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // Note: version 2 doesn't exist in source1
+
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // Note: version 2 doesn't exist in source1
+
+        q.stop()
+        // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // As version 2 doesn't exist, we should not try to load version 2 in this case.
+        q = startQuery()
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+    }
+  }
 }
 
 abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
