@@ -702,6 +702,13 @@ trait DeltaSQLConfBase {
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
 
+  val DELTA_OPTIMIZE_USE_REPARTITON =
+    buildConf("optimize.repartition.enabled")
+      .internal()
+      .doc("Use repartition(1) instead of coalesce(1) to merge small files.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()
