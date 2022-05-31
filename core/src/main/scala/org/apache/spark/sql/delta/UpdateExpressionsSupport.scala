@@ -105,8 +105,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   // This shouldn't be possible - if all columns aren't present when struct
                   // evolution is disabled, we should have thrown an error earlier.
                   if (!allowStructEvolution) {
-                    throw new IllegalStateException(
-                      s"Field $field could not be found when extracting references.",
+                    throw DeltaErrors.extractReferencesFieldNotFound(s"$field",
                       DeltaErrors.updateSchemaMismatchExpression(from, to))
                   }
                   Literal(null)

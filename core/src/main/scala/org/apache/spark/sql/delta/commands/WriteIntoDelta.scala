@@ -76,6 +76,11 @@ case class WriteIntoDelta(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
+      // If this batch has already been executed within this query, then return.
+      var skipExecution = hasBeenExecuted(txn)
+      if (skipExecution) {
+        return Seq.empty
+      }
 
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
@@ -195,7 +200,8 @@ case class WriteIntoDelta(
     } else {
       newFiles ++ deletedFiles
     }
-    fileActions
+    var setTxns = createSetTransaction()
+    setTxns.toSeq ++ fileActions
   }
 
   private def extractConstraints(
@@ -228,5 +234,37 @@ case class WriteIntoDelta(
     val command = spark.sessionState.analyzer.execute(DeleteFromTable(relation, processedCondition))
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+  }
+
+  /**
+   * Returns true if there is information in the spark session that indicates that this write, which
+   * is part of a streaming query and a batch, has already been successfully written.
+   */
+  private def hasBeenExecuted(txn: OptimisticTransaction): Boolean = {
+    val txnVersion = options.txnVersion
+    val txnAppId = options.txnAppId
+    for (v <- txnVersion; a <- txnAppId) {
+      val currentVersion = txn.txnVersion(a)
+      if (currentVersion >= v) {
+        logInfo(s"Transaction write of version $v for application id $a " +
+          s"has already been committed in Delta table id ${txn.deltaLog.tableId}. " +
+          s"Skipping this write.")
+        return true
+      }
+    }
+    false
+  }
+
+  /**
+   * Returns SetTransaction if a valid app ID and version are present. Otherwise returns
+   * an empty list.
+   */
+  private def createSetTransaction(): Option[SetTransaction] = {
+    val txnVersion = options.txnVersion
+    val txnAppId = options.txnAppId
+    for (v <- txnVersion; a <- txnAppId) {
+      return Some(SetTransaction(a, v, Some(deltaLog.clock.getTimeMillis())))
+    }
+    None
   }
 }

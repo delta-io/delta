@@ -22,6 +22,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
@@ -31,13 +32,13 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.functions.to_json
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.functions.{col, to_json}
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -216,21 +217,39 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
+   * Returns a tuple of (data, partition schema). For CDC writes, a `__is_cdc` column is added to
+   * the data and `__is_cdc=true/false` is added to the front of the partition schema.
+   */
+  protected def performCDCPartition(inputData: Dataset[_]): (DataFrame, StructType) = {
+    // If this is a CDC write, we need to generate the CDC_PARTITION_COL in order to properly
+    // dispatch rows between the main table and CDC event records. This is a virtual partition
+    // and will be stripped out later in [[DelayedCommitProtocolEdge]].
+    // Note that the ordering of the partition schema is relevant - CDC_PARTITION_COL must
+    // come first in order to ensure CDC data lands in the right place.
+    if (CDCReader.isCDCEnabledOnTable(metadata) &&
+      inputData.schema.fieldNames.contains(CDCReader.CDC_TYPE_COLUMN_NAME)) {
+      val augmentedData = inputData.withColumn(
+        CDCReader.CDC_PARTITION_COL, col(CDCReader.CDC_TYPE_COLUMN_NAME).isNotNull)
+      val partitionSchema = StructType(
+        StructField(CDCReader.CDC_PARTITION_COL, StringType) +: metadata.physicalPartitionSchema)
+      (augmentedData, partitionSchema)
+    } else {
+      (inputData.toDF(), metadata.physicalPartitionSchema)
+    }
+  }
+
+  /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
   def writeFiles(
-      data: Dataset[_],
+      inputData: Dataset[_],
       writeOptions: Option[DeltaOptions],
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
-    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
-      throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
-    }
-
     hasWritten = true
 
-    val spark = data.sparkSession
-    val partitionSchema = metadata.physicalPartitionSchema
+    val spark = inputData.sparkSession
+    val (data, partitionSchema) = performCDCPartition(inputData)
     val outputPath = deltaLog.dataPath
 
     val (queryExecution, output, generatedColumnConstraints, _) =
@@ -300,9 +319,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       val options = writeOptions match {
         case None => Map.empty[String, String]
         case Some(writeOptions) =>
-          writeOptions.options.filterKeys(key =>
-            key.equalsIgnoreCase("maxRecordsPerFile")
-          ).toMap
+          writeOptions.options.filterKeys { key =>
+            key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
+              key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
+          }.toMap
       }
 
       try {
@@ -337,6 +357,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
     }
 
-    resultFiles.toSeq
+    resultFiles.toSeq ++ committer.changeFiles
   }
 }

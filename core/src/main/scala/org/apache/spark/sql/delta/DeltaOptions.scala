@@ -93,6 +93,26 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     options.get(DATA_CHANGE_OPTION).exists(!toBoolean(_, DATA_CHANGE_OPTION))
   }
 
+  val txnVersion = options.get(TXN_VERSION).map { str =>
+    Try(str.toLong).toOption.filter(_ >= 0).getOrElse {
+      throw DeltaErrors.illegalDeltaOptionException(
+        TXN_VERSION, str, "must be a non-negative integer")
+    }
+  }
+
+  val txnAppId = options.get(TXN_APP_ID)
+
+  private def validateIdempotentWriteOptions(): Unit = {
+    // Either both txnVersion and txnAppId must be specified to get idempotent writes or
+    // neither must be given. In all other cases, throw an exception.
+    val numOptions = txnVersion.size + txnAppId.size
+    if (numOptions != 0 && numOptions != 2) {
+      throw DeltaErrors.invalidIdempotentWritesOptionsException("Both txnVersion and txnAppId " +
+      "must be specified for idempotent data frame writes")
+    }
+  }
+
+  validateIdempotentWriteOptions()
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -187,6 +207,16 @@ object DeltaOptions extends DeltaLogging {
   val DATA_CHANGE_OPTION = "dataChange"
   val STARTING_VERSION_OPTION = "startingVersion"
   val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
+  val CDC_START_VERSION = "startingVersion"
+  val CDC_START_TIMESTAMP = "startingTimestamp"
+  val CDC_END_VERSION = "endingVersion"
+  val CDC_END_TIMESTAMP = "endingTimestamp"
+  val CDC_READ_OPTION = "readChangeFeed"
+  val CDC_READ_OPTION_LEGACY = "readChangeData"
+  val COMPRESSION = "compression"
+  val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
+  val TXN_APP_ID = "txnAppId"
+  val TXN_VERSION = "txnVersion"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -203,6 +233,16 @@ object DeltaOptions extends DeltaLogging {
     DATA_CHANGE_OPTION,
     STARTING_TIMESTAMP_OPTION,
     STARTING_VERSION_OPTION,
+    CDC_READ_OPTION,
+    CDC_READ_OPTION_LEGACY,
+    CDC_START_TIMESTAMP,
+    CDC_END_TIMESTAMP,
+    CDC_START_VERSION,
+    CDC_END_VERSION,
+    COMPRESSION,
+    MAX_RECORDS_PER_FILE,
+    TXN_APP_ID,
+    TXN_VERSION,
     "queryName",
     "checkpointLocation",
     "path",

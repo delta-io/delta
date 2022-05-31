@@ -39,6 +39,7 @@ import org.apache.spark.util.ThreadUtils
  */
 case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
 
+
 /**
  * Manages the creation, computation, and access of Snapshot's for Delta tables. Responsibilities
  * include:
@@ -264,7 +265,8 @@ trait SnapshotManagement { self: DeltaLog =>
         logInfo(s"Loading version ${segment.version}$startCheckpoint")
         val snapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp)
+          minFileRetentionTimestamp = minFileRetentionTimestamp,
+          checkpointMetadataOptHint = lastCheckpointOpt)
 
         logInfo(s"Returning initial snapshot $snapshot")
         CapturedSnapshot(snapshot, currentTimestamp)
@@ -280,7 +282,8 @@ trait SnapshotManagement { self: DeltaLog =>
 
   protected def createSnapshot(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long): Snapshot = {
+      minFileRetentionTimestamp: Long,
+      checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
     val checksumOpt = readChecksum(initSegment.version)
     createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
       new Snapshot(
@@ -291,8 +294,25 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt,
-        minSetTransactionRetentionTimestamp = None)
+        minSetTransactionRetentionTimestamp = None,
+        checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
+  }
+
+  /**
+   * Returns the [[CheckpointMetaData]] for the given [[LogSegment]].
+   * If the passed `checkpointMetadataOptHint` matches the `segment`, then it is returned
+   * directly.
+   */
+  protected def getCheckpointMetadataForSegment(
+      segment: LogSegment,
+      checkpointMetadataOptHint: Option[CheckpointMetaData]): Option[CheckpointMetaData] = {
+    // validate that `checkpointMetadataOptHint` and `segment` has same info regarding the
+    // checkpoint version and parts.
+    val checkpointMatches =
+      (segment.checkpointVersionOpt == checkpointMetadataOptHint.map(_.version)) &&
+        (segment.checkpoint.size == checkpointMetadataOptHint.flatMap(_.parts).getOrElse(1))
+    if (checkpointMatches) checkpointMetadataOptHint else CheckpointMetaData.fromLogSegment(segment)
   }
 
   /**
@@ -480,7 +500,7 @@ trait SnapshotManagement { self: DeltaLog =>
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(capturedSnapshot.snapshot, isAsync = false)
+          updateInternal(isAsync = false)
         }
       }
     } else {
@@ -492,7 +512,7 @@ trait SnapshotManagement { self: DeltaLog =>
             jobGroup,
             s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
             interruptOnCancel = true)
-          tryUpdate(capturedSnapshot.snapshot, isAsync = true)
+          tryUpdate(isAsync = true)
         }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
       }
       currentSnapshot.snapshot
@@ -503,10 +523,10 @@ trait SnapshotManagement { self: DeltaLog =>
    * Try to update ActionLog. If another thread is updating ActionLog, then this method returns
    * at once and return the current snapshot. The return snapshot may be stale.
    */
-  private def tryUpdate(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot = {
+  private def tryUpdate(isAsync: Boolean): Snapshot = {
     if (deltaLogLock.tryLock()) {
       try {
-        updateInternal(previousSnapshot, isAsync)
+        updateInternal(isAsync)
       } finally {
         deltaLogLock.unlock()
       }
@@ -518,11 +538,11 @@ trait SnapshotManagement { self: DeltaLog =>
   /**
    * Queries the store for new delta files and applies them to the current state.
    * Note: the caller should hold `deltaLogLock` before calling this method.
-   * previousSnapshot refers to the snapshot at the start of the update() call.
    */
-  protected def updateInternal(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot =
+  protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
       val updateTimestamp = clock.getTimeMillis()
+      val previousSnapshot = currentSnapshot.snapshot
       val segmentOpt =
         getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
       installSnapshotInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
@@ -546,7 +566,8 @@ trait SnapshotManagement { self: DeltaLog =>
 
         val newSnapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp)
+          minFileRetentionTimestamp = minFileRetentionTimestamp,
+          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt)
 
         if (previousSnapshot.version > -1 &&
           previousSnapshot.metadata.id != newSnapshot.metadata.id) {
@@ -595,7 +616,8 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp)
+        minFileRetentionTimestamp = minFileRetentionTimestamp,
+        checkpointMetadataOptHint = None)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)

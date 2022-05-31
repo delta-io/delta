@@ -180,6 +180,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_SAMPLE_ESTIMATOR_ENABLED =
+    buildConf("sampling.enabled")
+      .internal()
+      .doc("Enable sample based estimation.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -291,6 +298,16 @@ trait DeltaSQLConfBase {
       .doc("If true, enables schema merging on appends and on overwrites.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_SCHEMA_TYPE_CHECK =
+    buildConf("schema.typeCheck.enabled")
+      .doc(
+        """Enable the data type check when updating the table schema. Disabling this flag may
+          | allow users to create unsupported Delta tables and should only be used when trying to
+          | read/write legacy tables.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -423,6 +440,31 @@ trait DeltaSQLConfBase {
       .doc("Write checkpoints where the partition values are parsed according to the data type.")
       .booleanConf
       .createWithDefault(true)
+
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
+
+  val LAST_CHECKPOINT_CHECKSUM_ENABLED =
+    buildConf("lastCheckpoint.checksum.enabled")
+      .internal()
+      .doc("Controls whether to write the checksum while writing the LAST_CHECKPOINT file and" +
+        " whether to validate it while reading the LAST_CHECKPOINT file")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_PART_SIZE =
+    buildConf("checkpoint.partSize")
+        .internal()
+        .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
+                 "write a maximum of this many actions per checkpoint file.")
+        .longConf
+        .checkValue(_ > 0, "partSize has to be positive")
+        .createOptional
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -561,10 +603,10 @@ trait DeltaSQLConfBase {
       .createWithDefault(true)
 
   /**
-   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
-   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
-   * some of whom are Databricks customers, have to keep track of two different conf values for the
-   * same data skipping parameter.
+   * The below confs have a special prefix `spark.databricks.io` because this is the conf value
+   * already used by Databricks' data skipping implementation. There's no benefit to making OSS
+   * users, some of whom are Databricks customers, have to keep track of two different conf
+   * values for the same data skipping parameter.
    */
   val DATA_SKIPPING_STRING_PREFIX_LENGTH =
     SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
@@ -572,6 +614,24 @@ trait DeltaSQLConfBase {
       .doc("For string columns, how long prefix to store in the data skipping index.")
       .intConf
       .createWithDefault(32)
+
+  val MDC_NUM_RANGE_IDS =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.rangeId.max")
+      .internal()
+      .doc("This controls the domain of rangeId values to be interleaved. The bigger, the better " +
+         "granularity, but at the expense of performance (more data gets sampled).")
+      .intConf
+      .checkValue(_ > 1, "'spark.databricks.io.skipping.mdc.rangeId.max' must be greater than 1")
+      .createWithDefault(1000)
+
+  val MDC_ADD_NOISE =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.addNoise")
+      .internal()
+      .doc("Whether or not a random byte should be added as a suffix to the interleaved bits " +
+         "when computing the Z-order values for MDC. This can help deal with skew, but may " +
+         "have a negative impact on overall min/max skipping effectiveness.")
+      .booleanConf
+      .createWithDefault(true)
 
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
@@ -643,10 +703,11 @@ trait DeltaSQLConfBase {
     buildConf("alterTable.dropColumn.enabled")
       .internal()
       .doc(
-        "Whether to enable the drop column feature. This feature is behind this flag with default" +
-          " off until the physical deletion of dropped columns is supported")
+        """Whether to enable the drop column feature for Delta.
+          |This is a safety switch - we should only turn this off when there is an issue.
+          |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

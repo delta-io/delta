@@ -9,6 +9,7 @@
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
     - [Last Checkpoint File](#last-checkpoint-file)
+      - [JSON checksum](#json-checksum)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -156,6 +157,54 @@ size | The number of actions that are stored in the checkpoint.
 parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
 sizeInBytes | The number of bytes of the checkpoint. This field is optional.
 numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
+checkpointSchema | The schema of the checkpoint file. This field is optional.
+checksum | The checksum of the last checkpoint JSON. This field is optional.
+
+The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
+Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
+while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
+for the last checkpoint JSON.
+
+#### JSON checksum
+To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
+the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
+
+1. Literal values (`true`, `false`, and `null`) are their own canonical form
+2. Numeric values (e.g. `42` or `3.14`) are their own canonical form
+3. String values (e.g. `"hello world"`) are canonicalized by preserving the surrounding quotes and [URL-encoding](#how-to-url-encode-keys-and-string-values)
+their content, e.g. `"hello%20world"`
+4. Object values (e.g. `{"a": 10, "b": {"y": null, "x": "https://delta.io"} }` are canonicalized by:
+   * Canonicalize each scalar (leaf) value following the rule for its type (literal, numeric, string)
+   * Canonicalize each (string) name along the path to that value
+   * Connect path segments by `+`, e.g. `"b"+"y"`
+   * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
+   * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
+    and then comparing them, e.g. `"a" < "b"."x" < "b"."y"`
+   * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
+
+5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based) 
+position of the corresponding array element, e.g. `0=null,1="hi%20ho",2=2.71`
+
+6. Top level `checksum` key is ignored in the canonicalization process. e.g. 
+`{"k1": "v1", "checksum": "<anything>", "k3": 23}` is canonicalized to `"k1"="v1","k3"=23`
+
+7. Duplicate keys are not allowed in the last checkpoint JSON and such JSON is considered invalid.
+
+Given the following test sample JSON, a correct implementation of JSON canonicalization should produce the corresponding canonicalized form and checksum value:
+e.g.
+Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["v3", [1, 2], {"k4": "v4", "k5": ["v5", "v6", "v7"]}]}}`\
+Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
+Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
+
+##### How to URL encode keys and string values
+The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
+uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
+
+1. The string to be encoded must be represented as octets according to the UTF-8 character encoding
+2. All octets except a-z / A-Z / 0-9 / "-" / "." / "_" / "~" are reserved
+3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
+4. Never percent-encode non-reserved octets
+5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.

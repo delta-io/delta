@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -1448,40 +1449,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("change data capture not implemented") {
-    withTable("tbl") {
-      sql("CREATE TABLE tbl(id INT) USING DELTA")
-      val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
-      }
-
-      assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
-    }
-  }
-
-  test("change data capture write not implemented") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      spark.range(10).write.format("delta").save(path)
-
-      // Side channel since the config can't normally be set.
-      val log = DeltaLog.forTable(spark, path)
-      log.store.write(
-        deltaFile(log.logPath, 1),
-        Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json),
-        overwrite = false,
-        log.newDeltaHadoopConf())
-      log.update()
-
-      val ex = intercept[AnalysisException] {
-        spark.range(10).write.mode("append").format("delta").save(path)
-      }
-
-      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataFeed set"))
-    }
-  }
-
   test("An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -1676,6 +1643,149 @@ class DeltaSuite extends QueryTest
     // rename dir2 to dir1 then read
     dir2.renameTo(dir1)
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
+  }
+
+  test("set metadata upon write") {
+    withTempDir { inputDir =>
+      val testPath = inputDir.getCanonicalPath
+      spark.range(10)
+        .map(_.toInt)
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .option("delta.logRetentionDuration", "123 days")
+        .option("mergeSchema", "true")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      val deltaLog = DeltaLog.forTable(spark, testPath)
+      // We need to drop default properties set by subclasses to make this test pass in them
+      assert(deltaLog.snapshot.metadata.configuration
+        .filterKeys(!_.startsWith("delta.columnMapping.")).toMap ===
+        Map("delta.logRetentionDuration" -> "123 days"))
+    }
+  }
+
+  test("idempotent Dataframe writes") {
+    withTempDir{ dir =>
+      val appId1 = "myAppId1"
+      val appId2 = "myAppId2"
+      def runQuery(appId: String, seq: Seq[Int], version: Long, expectedCount: Long): Unit = {
+        seq.toDF().write.format("delta")
+          .option(DeltaOptions.TXN_VERSION, version)
+          .option(DeltaOptions.TXN_APP_ID, appId)
+          .mode("append")
+          .save(dir.getCanonicalPath)
+        val i = spark.read.format("delta").load(dir.getCanonicalPath).count()
+        assert(i == expectedCount)
+      }
+      var s = Seq(1, 2, 3)
+      // The first 2 runs must succeed increasing the expected count.
+      runQuery(appId1, s, 1, 3)
+      runQuery(appId1, s, 2, 6)
+
+      // Even if the version is not consecutive, higher versions should commit successfully.
+      runQuery(appId1, s, 5, 9)
+
+      // This run should be ignored because it uses an older version.
+      runQuery(appId1, s, 5, 9)
+
+      // Use a different app ID, but same version. This should succeed.
+      runQuery(appId2, s, 5, 12)
+
+      // Verify that specifying only one of the options -- either appId or version -- fails.
+      val e1 = intercept[Exception] {
+        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_APP_ID, 1)
+          .mode("append").save(dir.getCanonicalPath)
+      }
+      assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+      val e2 = intercept[Exception] {
+        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_VERSION, 1)
+          .mode("append").save(dir.getCanonicalPath)
+      }
+      assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+    }
+  }
+
+  test("idempotent writes in streaming foreachBatch") {
+    // Function to get a checkpoint location and 2 table locations.
+    def withTempDirs(f: (File, File, File) => Unit): Unit = {
+      withTempDir { file1 =>
+        withTempDir { file2 =>
+          withTempDir { file3 =>
+            f(file1, file2, file3)
+          }
+        }
+      }
+    }
+
+    // In this test, we are going to run a streaming query in a deterministic way.
+    // This streaming query uses foreachBatch to append data to two tables, and
+    // depending on a boolean flag, the query can fail between the two table writes.
+    // By setting this flag, we will test whether both tables are consistenly updated
+    // when query resumes after failure - no duplicates, no data missing.
+
+    withTempDirs { (checkpointDir, table1Dir, table2Dir) =>
+      @volatile var shouldFail = false
+
+      /* Function to write a batch's data to 2 tables */
+      def runBatch(batch: DataFrame, appId: String, batchId: Long): Unit = {
+        // Append to table 1
+        batch.write.format("delta")
+          .option(DeltaOptions.TXN_VERSION, batchId)
+          .option(DeltaOptions.TXN_APP_ID, appId)
+          .mode("append").save(table1Dir.getCanonicalPath)
+        if (shouldFail) {
+          throw new Exception("Terminating execution")
+        } else {
+          // Append to table 2
+          batch.write.format("delta")
+            .option(DeltaOptions.TXN_VERSION, batchId)
+            .option(DeltaOptions.TXN_APP_ID, appId)
+            .mode("append").save(table2Dir.getCanonicalPath)
+        }
+      }
+
+      @volatile var query: StreamingQuery = null
+
+      // Prepare a streaming query
+      val inputData = MemoryStream[Int]
+      val df = inputData.toDF()
+      val streamWriter = df.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .foreachBatch { (batch: DataFrame, id: Long) => {
+          runBatch(batch, query.id.toString, id) }
+        }
+
+      /* Add data and run streaming query, then verify # rows in 2 tables */
+      def runQuery(dataToAdd: Int, expectedTable1Count: Int, expectedTable2Count: Int): Unit = {
+        inputData.addData(dataToAdd)
+        query = streamWriter.start()
+        try {
+          query.processAllAvailable()
+        } catch {
+          case e: Exception =>
+            assert(e.getMessage.contains("Terminating execution"))
+        } finally {
+          query.stop()
+        }
+        val t1Count = spark.read.format("delta").load(table1Dir.getCanonicalPath).count()
+        assert(t1Count == expectedTable1Count)
+        val t2Count = spark.read.format("delta").load(table2Dir.getCanonicalPath).count()
+        assert(t2Count == expectedTable2Count)
+      }
+
+      // Run the query 3 times. First time without failure, both the output tables are updated.
+      shouldFail = false
+      runQuery(dataToAdd = 0, expectedTable1Count = 1, expectedTable2Count = 1)
+      // Second time with failure. Only one of the tables should be updated.
+      shouldFail = true
+      runQuery(dataToAdd = 1, expectedTable1Count = 2, expectedTable2Count = 1)
+      // Third time without failure. Both the tables should be consistently updated.
+      shouldFail = false
+      runQuery(dataToAdd = 2, expectedTable1Count = 3, expectedTable2Count = 3)
+    }
   }
 }
 

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.constraints
 
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
-import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{AttributeSeq, BindReferences, Expression, NonSQLExpression, UnaryExpression}
@@ -54,12 +54,12 @@ case class CheckDeltaInvariant(
   private def assertRule(input: InternalRow): Unit = constraint match {
     case n: NotNull =>
       if (child.eval(input) == null) {
-        throw InvariantViolationException(n)
+        throw DeltaInvariantViolationException(n)
       }
     case c: Check =>
       val result = child.eval(input)
       if (result == null || result == false) {
-        throw InvariantViolationException(c, columnExtractors.mapValues(_.eval(input)).toMap)
+        throw DeltaInvariantViolationException(c, columnExtractors.mapValues(_.eval(input)).toMap)
       }
   }
 
@@ -74,7 +74,7 @@ case class CheckDeltaInvariant(
     code"""${childGen.code}
        |
        |if (${childGen.isNull}) {
-       |  throw org.apache.spark.sql.delta.schema.InvariantViolationException.apply(
+       |  throw org.apache.spark.sql.delta.schema.DeltaInvariantViolationException.apply(
        |    $invariantField);
        |}
      """.stripMargin
@@ -121,7 +121,7 @@ case class CheckDeltaInvariant(
        |
        |if (${elementValue.isNull} || ${elementValue.value} == false) {
        |  ${generateColumnValuesCode(colListName, valListName, ctx)}
-       |  throw org.apache.spark.sql.delta.schema.InvariantViolationException.apply(
+       |  throw org.apache.spark.sql.delta.schema.DeltaInvariantViolationException.apply(
        |     $invariantField, $colListName, $valListName);
        |}
      """.stripMargin

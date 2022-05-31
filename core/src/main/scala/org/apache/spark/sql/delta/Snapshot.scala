@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
@@ -63,7 +64,8 @@ class Snapshot(
     val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
-    val minSetTransactionRetentionTimestamp: Option[Long] = None)
+    val minSetTransactionRetentionTimestamp: Option[Long] = None,
+    checkpointMetadataOpt: Option[CheckpointMetaData] = None)
   extends StateCache
   with StatisticsCollection
   with DataSkippingReader
@@ -87,6 +89,7 @@ class Snapshot(
   /** Performs validations during initialization */
   protected def init(): Unit = {
     deltaLog.protocolRead(protocol)
+    SchemaUtils.recordUserDefinedTypes(deltaLog, metadata.schema)
   }
 
   // Reconstruct the state by applying deltas in order to the checkpoint.
@@ -138,16 +141,17 @@ class Snapshot(
               col("add.modificationTime"),
               col("add.dataChange"),
               col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
-              col("add.tags"))))
+              col("add.tags")
+            )))
           .withColumn("remove", when(
             col("remove.path").isNotNull,
             col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
           .as[SingleAction]
           .mapPartitions { iter =>
-            val state = new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
-              localMinSetTransactionRetentionTimestamp)
-
+            val state: LogReplay =
+                new InMemoryLogReplay(
+                  localMinFileRetentionTimestamp,
+                  localMinSetTransactionRetentionTimestamp)
             state.append(0, iter.map(_.unwrap))
             state.checkpoint.map(_.wrap)
           }
@@ -326,6 +330,8 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+  def getCheckpointMetadataOpt: Option[CheckpointMetaData] = checkpointMetadataOpt
+
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
   def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
@@ -493,8 +499,10 @@ class InitialSnapshot(
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
     deltaLog,
-    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
-      SparkSession.active.sessionState.conf, Map.empty))
+    Metadata(
+      configuration = DeltaConfigs.mergeGlobalConfigs(
+        SparkSession.active.sessionState.conf, Map.empty),
+      createdTime = Some(System.currentTimeMillis()))
   )
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]

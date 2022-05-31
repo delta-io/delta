@@ -30,14 +30,15 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude}
-import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
-import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
+import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, NullType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -55,10 +56,30 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 }
 
 object Action {
-  /** The maximum version of the protocol that this version of Delta understands. */
-  val readerVersion = 2
-  val writerVersion = 6
-  val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
+  /**
+   * The maximum version of the protocol that this version of Delta understands by default.
+   *
+   * Use [[supportedProtocolVersion()]] instead, except to define new feature-gated versions.
+   */
+  private[actions] val readerVersion = 2
+  private[actions] val writerVersion = 6
+  private[actions] val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
+
+  /**
+   * The maximum protocol version we are currently allowed to use based on `conf`.
+   *
+   * This is used to feature-gate certain protocol versions using config values.
+   * If no `conf` is given, then this is the same all feature-gated versions being disabled and
+   * we return [[protocolVersion]].
+   *
+   * Feature-gated versions will always be the same or newer than [[protocolVersion]].
+   *
+   * In all places in the code where we are validating which version can be read, or which version
+   * we are currently writing, pass in `conf` so that features are correctly enabled.
+   */
+  private[delta] def supportedProtocolVersion(conf: Option[SQLConf] = None): Protocol = {
+      protocolVersion
+  }
 
   def fromJson(json: String): Action = {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
@@ -158,7 +179,6 @@ object Protocol {
     if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
-      throw DeltaErrors.cdcNotAllowedInThisVersion()
     }
 
     if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
@@ -173,6 +193,7 @@ object Protocol {
     if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
+
 
     minimumRequired -> featuresUsed.toSeq
   }
@@ -243,7 +264,8 @@ case class AddFile(
     dataChange: Boolean,
     @JsonRawValue
     stats: String = null,
-    tags: Map[String, String] = null) extends FileAction {
+    tags: Map[String, String] = null
+) extends FileAction {
   require(path.nonEmpty)
 
   override def wrap: SingleAction = SingleAction(add = this)
@@ -257,7 +279,8 @@ case class AddFile(
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
+    )
     // scalastyle:on
   }
 
@@ -266,9 +289,6 @@ case class AddFile(
     // From modification time in milliseconds to microseconds.
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
-
-  @JsonIgnore
-  lazy val numAutoCompactions: Int = tag(AddFile.Tags.NUM_AUTO_COMPACTIONS).getOrElse("0").toInt
 
   def optimizedTargetSize: Option[Long] =
     tag(AddFile.Tags.OPTIMIZE_TARGET_SIZE).map(_.toLong)
@@ -322,16 +342,6 @@ object AddFile {
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
 
-    /**
-     * [[NUM_AUTO_COMPACTIONS]]: The number of times Auto Compaction is applied to the content of
-     * a file.
-     *
-     * Note: 'NUM_AUTO_OPTIMIZES' is used externally since Compaction is one of Optimize
-     * command. By using 'NUM_AUTO_OPTIMIZES', it hides detail and can support other
-     * optimize than Compaction. 'NUM_AUTO_COMPACTIONS' is used internally before current
-     * only Auto Compaction is using it.
-     */
-    object NUM_AUTO_COMPACTIONS extends AddFile.Tags.KeyType("NUM_AUTO_OPTIMIZES")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
@@ -362,12 +372,15 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     tags: Map[String, String] = null,
-    numRecords: Option[Long] = None) extends FileAction {
+    numRecords: Option[Long] = None
+) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
+
+  @JsonIgnore
   def optimizedTargetSize: Option[Long] =
     getTag(AddFile.Tags.OPTIMIZE_TARGET_SIZE.name).map(_.toLong)
 
@@ -428,7 +441,7 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = Some(System.currentTimeMillis())) extends Action {
+    createdTime: Option[Long] = None) extends Action {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has

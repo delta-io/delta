@@ -74,11 +74,13 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
   }
 }
 
-/** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
-trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
+trait ConvertToDeltaSuiteBaseCommons extends ConvertToDeltaTestUtils
   with SharedSparkSession  with SQLTestUtils
-  with ConvertToDeltaHiveTableTests
-  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
+  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+
+/** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
+trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
+  with ConvertToDeltaHiveTableTests {
 
   import org.apache.spark.sql.functions._
   import testImplicits._

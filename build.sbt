@@ -57,6 +57,7 @@ lazy val core = (project in file("core"))
 
       // Test deps
       "org.scalatest" %% "scalatest" % "3.2.9" % "test",
+      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",

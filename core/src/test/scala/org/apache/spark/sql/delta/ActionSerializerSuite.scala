@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -219,20 +221,27 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   {
     val schemaStr = new StructType().add("a", "long").json
+    val metadata = Metadata(
+      name = "t1",
+      description = "desc",
+      format = Format(provider = "parquet", options = Map("o1" -> "v1")),
+      partitionColumns = Seq("a"),
+      createdTime = Some(2222),
+      configuration = Map("delta.enableXyz" -> "true"),
+      schemaString = schemaStr)
     testActionSerDe(
-      "Metadata - json serialization/deserialization",
-      Metadata(
-        name = "t1",
-        description = "desc",
-        format = Format(provider = "parquet", options = Map("o1" -> "v1")),
-        partitionColumns = Seq("a"),
-        createdTime = Some(2222),
-        configuration = Map("delta.enableXyz" -> "true"),
-        schemaString = schemaStr),
+      "Metadata - json serialization/deserialization", metadata,
       expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
         """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
         s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
         """"configuration":{"delta.enableXyz":"true"},"createdTime":2222}}""".stripMargin)
+    testActionSerDe(
+      "Metadata with empty createdTime- json serialization/deserialization",
+      metadata.copy(createdTime = None),
+      expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
+        """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
+        s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
+        """"configuration":{"delta.enableXyz":"true"}}}""".stripMargin)
   }
 
   {
@@ -304,16 +313,21 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   }
 
   /** Test serialization/deserialization of [[Action]] by doing an actual commit */
-  private def testActionSerDe(name: String, action: Action, expectedJson: String): Unit = {
+  private def testActionSerDe(
+      name: String,
+      action: Action,
+      expectedJson: String,
+    extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
     test(name) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
-        withSQLConf(
+        val settings = Seq(
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
+        withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
           deltaLog.startTransaction().commit(Seq(), ManualUpdate)

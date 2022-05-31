@@ -199,13 +199,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("can create table using the latest protocol with conf") {
+    val readerVersion = Action.supportedProtocolVersion().minReaderVersion
+    val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { dir =>
       withSQLConf(
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> Action.writerVersion.toString,
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> Action.readerVersion.toString) {
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> writerVersion.toString,
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> readerVersion.toString) {
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
         val deltaLog = DeltaLog.forTable(spark, dir)
-        assert(deltaLog.snapshot.protocol === Action.protocolVersion)
+        assert(deltaLog.snapshot.protocol === Action.supportedProtocolVersion())
       }
     }
   }
@@ -350,16 +352,18 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("bad inputs for default protocol versions") {
+    val readerVersion = Action.supportedProtocolVersion().minReaderVersion
+    val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { path =>
       val dir = path.getCanonicalPath
-      Seq("abc", "", "0", (Action.readerVersion + 1).toString).foreach { conf =>
+      Seq("abc", "", "0", (readerVersion + 1).toString).foreach { conf =>
         val e = intercept[IllegalArgumentException] {
           withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> conf) {
             spark.range(10).write.format("delta").save(dir)
           }
         }
       }
-      Seq("abc", "", "0", (Action.writerVersion + 1).toString).foreach { conf =>
+      Seq("abc", "", "0", (writerVersion + 1).toString).foreach { conf =>
         intercept[IllegalArgumentException] {
           withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> conf) {
             spark.range(10).write.format("delta").save(dir)

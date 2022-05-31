@@ -31,6 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -289,13 +290,14 @@ class DeltaLog private(
    * allowed to read the table that is using the given `protocol`.
    */
   def protocolRead(protocol: Protocol): Unit = {
-    if (protocol != null &&
-        Action.readerVersion < protocol.minReaderVersion) {
+    val supportedReaderVersion =
+      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
+    if (protocol != null && supportedReaderVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
         data = Map(
-          "clientVersion" -> Action.readerVersion,
+          "clientVersion" -> supportedReaderVersion,
           "minReaderVersion" -> protocol.minReaderVersion))
       throw new InvalidProtocolVersionException
     }
@@ -306,12 +308,14 @@ class DeltaLog private(
    * allowed to write to the table that is using the given `protocol`.
    */
   def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
-    if (protocol != null && Action.writerVersion < protocol.minWriterVersion) {
+    val supportedWriterVersion =
+      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
+    if (protocol != null && supportedWriterVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
         data = Map(
-          "clientVersion" -> Action.writerVersion,
+          "clientVersion" -> supportedWriterVersion,
           "minWriterVersion" -> protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
     }
@@ -396,6 +400,15 @@ class DeltaLog private(
       // out in this case.
       throw DeltaErrors.pathNotExistsException(dataPath.toString)
     }
+
+    // For CDC we have to return the relation that represents the change data instead of actual
+    // data.
+    if (!cdcOptions.isEmpty) {
+      recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
+      return CDCReader.getCDCRelation(spark,
+        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+    }
+
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None

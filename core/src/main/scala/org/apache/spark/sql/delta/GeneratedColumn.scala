@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
 import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -269,6 +269,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
   }
 
+  private def createFieldPath(nameParts: Seq[String]): String = {
+    nameParts.map(quoteIfNeeded _).mkString(".")
+  }
+
   /**
    * Try to get `OptimizablePartitionExpression`s of a data column when a partition column is
    * defined as a generated column and refers to this data column.
@@ -291,28 +295,21 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
 
     val spark = SparkSession.active
-    val nameEquality = spark.sessionState.analyzer.resolver
+    val resolver = spark.sessionState.analyzer.resolver
+
+    // `a.name` comes from the generation expressions which users may use different cases. We
+    // need to normalize it to the same case so that we can group expressions for the same
+    // column name together.
     val nameNormalizer: String => String =
       if (spark.sessionState.conf.caseSensitiveAnalysis) x => x else _.toLowerCase(Locale.ROOT)
 
     /**
-     * If the column `a`'s type matches the expected type, call `func` to create
-     * `OptimizablePartitionExpression`. Returns a normalized column name with its
-     * `OptimizablePartitionExpression`
+     * Returns a normalized column name with its `OptimizablePartitionExpression`
      */
-    def checkTypeAndCreateExpr(
-        a: AttributeReference,
-        expectedType: DataType)(
-        func: => OptimizablePartitionExpression):
+    def createExpr(nameParts: Seq[String])(func: => OptimizablePartitionExpression):
       Option[(String, OptimizablePartitionExpression)] = {
-      // Technically, we should only refer to a column in the table schema. Check the column name
-      // here just for safety.
-      if (a.dataType == expectedType &&
-          schema.exists(f => nameEquality(f.name, a.name) && f.dataType == expectedType)) {
-        // `a.name` comes from the generation expressions which users may use different cases. We
-        // need to normalize it to the same case so that we can group expressions for the same
-        // column name together.
-        Some(nameNormalizer(a.name) -> func)
+      if (schema.findNestedField(nameParts, resolver = resolver).isDefined) {
+        Some(nameNormalizer(createFieldPath(nameParts)) -> func)
       } else {
         None
       }
@@ -325,42 +322,48 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           exprs.flatMap {
             case Alias(expr, partColName) =>
               expr match {
-                case Cast(a: AttributeReference, DateType, _, _) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(DatePartitionExpr(partColName)).orElse(
-                    checkTypeAndCreateExpr(a, DateType)(DatePartitionExpr(partColName)))
-                case Year(a: AttributeReference) =>
-                  checkTypeAndCreateExpr(a, DateType)(YearPartitionExpr(partColName))
-                case Year(Cast(a: AttributeReference, DateType, _, _)) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(
-                    YearPartitionExpr(partColName)).orElse(
-                    checkTypeAndCreateExpr(a, DateType)(YearPartitionExpr(partColName)))
-                case Month(Cast(a: AttributeReference, DateType, _, _)) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(MonthPartitionExpr(partColName))
+                case Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _) =>
+                  createExpr(name)(DatePartitionExpr(partColName))
+                case Cast(ExtractBaseColumn(name, DateType), DateType, _, _) =>
+                  createExpr(name)(DatePartitionExpr(partColName))
+                case Year(ExtractBaseColumn(name, DateType)) =>
+                  createExpr(name)(YearPartitionExpr(partColName))
+                case Year(Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _)) =>
+                  createExpr(name)(YearPartitionExpr(partColName))
+                case Year(Cast(ExtractBaseColumn(name, DateType), DateType, _, _)) =>
+                  createExpr(name)(YearPartitionExpr(partColName))
+                case Month(Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _)) =>
+                  createExpr(name)(MonthPartitionExpr(partColName))
                 case DateFormatClass(
-                  Cast(a: AttributeReference, TimestampType, _, _), StringLiteral(format), _) =>
+                  Cast(ExtractBaseColumn(name, DateType), TimestampType, _, _),
+                      StringLiteral(format), _) =>
                     format match {
                       case DATE_FORMAT_YEAR_MONTH =>
-                        checkTypeAndCreateExpr(a, DateType)(
+                        createExpr(name)(
                           DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                       case _ => None
                     }
-                case DateFormatClass(a: AttributeReference, StringLiteral(format), _) =>
+                case DateFormatClass(ExtractBaseColumn(name, TimestampType),
+                    StringLiteral(format), _) =>
                   format match {
                     case DATE_FORMAT_YEAR_MONTH =>
-                      checkTypeAndCreateExpr(a, TimestampType)(
+                      createExpr(name)(
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                     case DATE_FORMAT_YEAR_MONTH_DAY_HOUR =>
-                      checkTypeAndCreateExpr(a, TimestampType)(
+                      createExpr(name)(
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
                     case _ => None
                   }
-                case DayOfMonth(Cast(a: AttributeReference, DateType, _, _)) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(DayPartitionExpr(partColName))
-                case Hour(a: AttributeReference, _) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(HourPartitionExpr(partColName))
-                case Substring(a: AttributeReference, IntegerLiteral(pos), IntegerLiteral(len)) =>
-                  checkTypeAndCreateExpr(a, StringType)(
-                    SubstringPartitionExpr(partColName, pos, len))
+                case DayOfMonth(Cast(ExtractBaseColumn(name, TimestampType),
+                    DateType, _, _)) =>
+                  createExpr(name)(DayPartitionExpr(partColName))
+                case Hour(ExtractBaseColumn(name, TimestampType), _) =>
+                  createExpr(name)(HourPartitionExpr(partColName))
+                case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
+                    IntegerLiteral(len)) =>
+                  createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
+                case ExtractBaseColumn(name, _) =>
+                  createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
               }
             case other =>
@@ -457,16 +460,16 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
      * and the literal appears on the right.
      */
     def preprocess(filter: Expression): Expression = filter match {
-      case LessThan(lit: Literal, a: AttributeReference) =>
-        GreaterThan(a, lit)
-      case LessThanOrEqual(lit: Literal, a: AttributeReference) =>
-        GreaterThanOrEqual(a, lit)
-      case EqualTo(lit: Literal, a: AttributeReference) =>
-        EqualTo(a, lit)
-      case GreaterThan(lit: Literal, a: AttributeReference) =>
-        LessThan(a, lit)
-      case GreaterThanOrEqual(lit: Literal, a: AttributeReference) =>
-        LessThanOrEqual(a, lit)
+      case LessThan(lit: Literal, e: Expression) =>
+        GreaterThan(e, lit)
+      case LessThanOrEqual(lit: Literal, e: Expression) =>
+        GreaterThanOrEqual(e, lit)
+      case EqualTo(lit: Literal, e: Expression) =>
+        EqualTo(e, lit)
+      case GreaterThan(lit: Literal, e: Expression) =>
+        LessThan(e, lit)
+      case GreaterThanOrEqual(lit: Literal, e: Expression) =>
+        LessThanOrEqual(e, lit)
       case e => e
     }
 
@@ -475,27 +478,27 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
      * filters.
      */
     def toPartitionFilter(
-        a: AttributeReference,
+        nameParts: Seq[String],
         func: (OptimizablePartitionExpression) => Option[Expression]): Seq[Expression] = {
-      optimizablePartitionExpressions.get(a.name).toSeq.flatMap { exprs =>
+      optimizablePartitionExpressions.get(createFieldPath(nameParts)).toSeq.flatMap { exprs =>
         exprs.flatMap(expr => func(expr))
       }
     }
 
     val partitionFilters = dataFilters.flatMap { filter =>
       preprocess(filter) match {
-        case LessThan(a: AttributeReference, lit: Literal) =>
-          toPartitionFilter(a, _.lessThan(lit))
-        case LessThanOrEqual(a: AttributeReference, lit: Literal) =>
-          toPartitionFilter(a, _.lessThanOrEqual(lit))
-        case EqualTo(a: AttributeReference, lit: Literal) =>
-          toPartitionFilter(a, _.equalTo(lit))
-        case GreaterThan(a: AttributeReference, lit: Literal) =>
-          toPartitionFilter(a, _.greaterThan(lit))
-        case GreaterThanOrEqual(a: AttributeReference, lit: Literal) =>
-          toPartitionFilter(a, _.greaterThanOrEqual(lit))
-        case IsNull(a: AttributeReference) =>
-          toPartitionFilter(a, _.isNull)
+        case LessThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.lessThan(lit))
+        case LessThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.lessThanOrEqual(lit))
+        case EqualTo(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.equalTo(lit))
+        case GreaterThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.greaterThan(lit))
+        case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
+        case IsNull(ExtractBaseColumn(nameParts, _)) =>
+          toPartitionFilter(nameParts, _.isNull)
         case _ => Nil
       }
     }
@@ -526,4 +529,21 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"
   private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
+}
+
+/**
+ * Finds the full dot-separated path to a field and the data type of the field. This unifies
+ * handling of nested and non-nested fields, and allows pattern matching on the data type.
+ */
+object ExtractBaseColumn {
+  def unapply(e: Expression): Option[(Seq[String], DataType)] = e match {
+    case AttributeReference(name, dataType, _, _) =>
+      Some(Seq(name), dataType)
+    case g: GetStructField => g.child match {
+      case ExtractBaseColumn(nameParts, _) =>
+        Some(nameParts :+ g.extractFieldName, g.dataType)
+      case _ => None
+    }
+    case _ => None
+  }
 }

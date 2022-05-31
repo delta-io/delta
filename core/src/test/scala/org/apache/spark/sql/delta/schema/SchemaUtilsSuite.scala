@@ -20,11 +20,16 @@ package org.apache.spark.sql.delta.schema
 import java.util.Locale
 import java.util.regex.Pattern
 
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.DeltaTable
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -33,7 +38,8 @@ import org.apache.spark.sql.types._
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils {
+  with SQLTestUtils
+  with DeltaSQLCommandTest {
   import SchemaUtils._
   import testImplicits._
 
@@ -997,6 +1003,15 @@ class SchemaUtilsSuite extends QueryTest
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a", "b"))
   }
 
+  test("can normalize CDC type column") {
+    val df = Seq((1, 2, 3, 4)).toDF("Abc", "def", "gHi", CDCReader.CDC_TYPE_COLUMN_NAME)
+    val schema = new StructType()
+      .add("abc", IntegerType)
+      .add("Def", IntegerType)
+      .add("ghi", IntegerType)
+    assert(normalizeColumnNames(schema, df).schema.fieldNames ===
+      schema.fieldNames :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+  }
 
   ////////////////////////////
   // mergeSchemas
@@ -1515,4 +1530,153 @@ class SchemaUtilsSuite extends QueryTest
     }
 
   }
+
+  test("findUnsupportedDataTypes") {
+    def assertUnsupportedDataType(
+        dataType: DataType,
+        expected: Seq[UnsupportedDataTypeInfo]): Unit = {
+      val schema = StructType(Seq(StructField("col", dataType)))
+      assert(findUnsupportedDataTypes(schema) == expected)
+    }
+
+    assertUnsupportedDataType(NullType, Nil)
+    assertUnsupportedDataType(BooleanType, Nil)
+    assertUnsupportedDataType(ByteType, Nil)
+    assertUnsupportedDataType(ShortType, Nil)
+    assertUnsupportedDataType(IntegerType, Nil)
+    assertUnsupportedDataType(YearMonthIntervalType.DEFAULT, Nil)
+    assertUnsupportedDataType(LongType, Nil)
+    assertUnsupportedDataType(DayTimeIntervalType.DEFAULT, Nil)
+    assertUnsupportedDataType(FloatType, Nil)
+    assertUnsupportedDataType(DoubleType, Nil)
+    assertUnsupportedDataType(StringType, Nil)
+    assertUnsupportedDataType(DateType, Nil)
+    assertUnsupportedDataType(TimestampType, Nil)
+    assertUnsupportedDataType(
+      TimestampNTZType,
+      Seq(UnsupportedDataTypeInfo("col", TimestampNTZType)))
+    assertUnsupportedDataType(
+      CalendarIntervalType,
+      Seq(UnsupportedDataTypeInfo("col", CalendarIntervalType)))
+    assertUnsupportedDataType(BinaryType, Nil)
+    assertUnsupportedDataType(DataTypes.createDecimalType(), Nil)
+    assertUnsupportedDataType(
+      UnsupportedDataType,
+      Seq(UnsupportedDataTypeInfo("col", UnsupportedDataType)))
+
+    // array
+    assertUnsupportedDataType(ArrayType(IntegerType, true), Nil)
+    assertUnsupportedDataType(
+      ArrayType(UnsupportedDataType, true),
+      Seq(UnsupportedDataTypeInfo("col[]", UnsupportedDataType)))
+
+    // map
+    assertUnsupportedDataType(MapType(IntegerType, IntegerType, true), Nil)
+    assertUnsupportedDataType(
+      MapType(UnsupportedDataType, IntegerType, true),
+      Seq(UnsupportedDataTypeInfo("col[key]", UnsupportedDataType)))
+    assertUnsupportedDataType(
+      MapType(IntegerType, UnsupportedDataType, true),
+      Seq(UnsupportedDataTypeInfo("col[value]", UnsupportedDataType)))
+    assertUnsupportedDataType(
+      MapType(UnsupportedDataType, UnsupportedDataType, true),
+      Seq(
+        UnsupportedDataTypeInfo("col[key]", UnsupportedDataType),
+        UnsupportedDataTypeInfo("col[value]", UnsupportedDataType)))
+
+    // struct
+    assertUnsupportedDataType(StructType(StructField("f", LongType) :: Nil), Nil)
+    assertUnsupportedDataType(
+      StructType(StructField("a", LongType) :: StructField("dot.name", UnsupportedDataType) :: Nil),
+      Seq(UnsupportedDataTypeInfo("col.`dot.name`", UnsupportedDataType)))
+    val nestedStructType = StructType(Seq(
+      StructField("a", LongType),
+      StructField("b", StructType(Seq(
+        StructField("c", LongType),
+        StructField("d", UnsupportedDataType)
+      ))),
+      StructField("e", StructType(Seq(
+        StructField("f", LongType),
+        StructField("g", UnsupportedDataType)
+      )))
+    ))
+    assertUnsupportedDataType(
+      nestedStructType,
+      Seq(
+        UnsupportedDataTypeInfo("col.b.d", UnsupportedDataType),
+        UnsupportedDataTypeInfo("col.e.g", UnsupportedDataType)))
+
+    // udt
+    assertUnsupportedDataType(new PointUDT, Nil)
+    assertUnsupportedDataType(
+      new UnsupportedUDT,
+      Seq(UnsupportedDataTypeInfo("col", UnsupportedDataType)))
+  }
+
+  test("unsupported data type check") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      def createTableUsingTimestampNTZType(): Unit = {
+        DeltaTable.create().addColumn("t", TimestampNTZType, true).location(path).execute()
+      }
+
+      val e = intercept[AnalysisException] {
+        createTableUsingTimestampNTZType()
+      }
+      assert(
+        e.getMessage.contains("Found columns using unsupported data types: [t: TimestampNTZType]"))
+      assert(e.getMessage.contains(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key -> "false") {
+        createTableUsingTimestampNTZType()
+      }
+    }
+  }
+
+  test("findUserDefinedTypes") {
+    val schema = StructType(Seq(
+      StructField("c1", new PointUDT),
+      StructField("c2", ArrayType(new PointUDT, true)),
+      StructField("c3", MapType(new PointUDT, new PointUDT, true)),
+      StructField("c4", StructType(Seq(
+        StructField("c1", new PointUDT),
+        StructField("c2", ArrayType(new PointUDT, true)),
+        StructField("c3", MapType(new PointUDT, new PointUDT, true))
+      )))
+    ))
+    val udts = findUserDefinedTypes(schema)
+    assert(udts.size == 8)
+    assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
+  }
+
+}
+
+object UnsupportedDataType extends DataType {
+  override def defaultSize: Int = throw new UnsupportedOperationException("defaultSize")
+  override def asNullable: DataType = throw new UnsupportedOperationException("asNullable")
+  override def toString: String = "UnsupportedDataType"
+}
+
+@SQLUserDefinedType(udt = classOf[PointUDT])
+case class Point(x: Int, y: Int)
+
+class PointUDT extends UserDefinedType[Point] {
+  override def sqlType: DataType = StructType(Array(
+    StructField("x", IntegerType, nullable = false),
+    StructField("y", IntegerType, nullable = false)))
+
+  override def serialize(obj: Point): Any = InternalRow(obj.x, obj.y)
+
+  override def deserialize(datum: Any): Point = datum match {
+    case row: InternalRow => Point(row.getInt(0), row.getInt(1))
+  }
+
+  override def userClass: Class[Point] = classOf[Point]
+
+  override def toString: String = "PointUDT"
+}
+
+class UnsupportedUDT extends PointUDT {
+  override def sqlType: DataType = UnsupportedDataType
 }
