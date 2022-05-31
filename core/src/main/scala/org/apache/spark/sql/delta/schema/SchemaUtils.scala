@@ -557,16 +557,9 @@ object SchemaUtils extends DeltaLogging {
         case (Seq("value"), MapType(_, _, _)) =>
           (Seq(MAP_VALUE_INDEX), 0)
         case (_, MapType(_, _, _)) =>
-          throw new AnalysisException(
-            s"""A MapType was found. In order to access the key or value of a MapType, specify one
-               |of:
-               |${prettyFieldName(stack ++ Seq(thisCol, "key"))} or
-               |${prettyFieldName(stack ++ Seq(thisCol, "value"))}
-               |followed by the name of the column (only if that column is a struct type).
-               |e.g. mymap.key.mykey
-               |If the column is a basic type, mymap.key or mymap.value is sufficient.
-              """.stripMargin
-          )
+          throw DeltaErrors.foundMapTypeColumnException(
+            prettyFieldName(stack ++ Seq(thisCol, "key")),
+            prettyFieldName(stack ++ Seq(thisCol, "value")))
         case (_, o) =>
           if (column.length > 1) {
             throw new AnalysisException(

@@ -218,10 +218,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
           // then throw exception as there must be an expression to set every target column.
-          throw new AnalysisException(
-            s"Unable to find the column '${targetAttrib.name}' of the target table from " +
-              s"the INSERT columns: ${targetColNames.mkString(", ")}. " +
-              s"INSERT clause must specify value for all the columns of the target table.")
+          throw DeltaErrors.columnOfTargetTableNotFoundInMergeException(
+            targetAttrib.name, targetColNames.mkString(", "))
         }
       }
 

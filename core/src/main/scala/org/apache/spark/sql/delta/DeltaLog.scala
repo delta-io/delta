@@ -148,7 +148,7 @@ class DeltaLog private(
    */
   def assertRemovable(): Unit = {
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
-      throw DeltaErrors.modifyAppendOnlyTableException
+      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
     }
   }
 
