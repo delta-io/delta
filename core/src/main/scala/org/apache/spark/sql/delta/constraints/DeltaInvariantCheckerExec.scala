@@ -53,7 +53,7 @@ case class DeltaInvariantChecker(
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case DeltaInvariantChecker(child, constraints) =>
-      DeltaInvariantCheckerExec(planLater(child), constraints) :: Nil
+      DeltaInvariantCheckerExec(planLater(child), constraints, None) :: Nil
     case _ => Nil
   }
 }
@@ -64,7 +64,8 @@ object DeltaInvariantCheckerStrategy extends SparkStrategy {
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[Constraint]) extends UnaryExecNode {
+    constraints: Seq[Constraint],
+    childOrdering: Option[Seq[SortOrder]]) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
@@ -83,7 +84,7 @@ case class DeltaInvariantCheckerExec(
     }
   }
 
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+  override def outputOrdering: Seq[SortOrder] = childOrdering.getOrElse(child.outputOrdering)
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
 

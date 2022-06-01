@@ -34,9 +34,9 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
+import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, HadoopFsRelation, LogicalRelation, WriteJobStatsTracker}
 import org.apache.spark.sql.functions.{col, to_json}
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
@@ -348,6 +348,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
+    val isOptimize = isOptimizeCommand(queryExecution.analyzed)
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
@@ -355,9 +356,14 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         Map.empty,
         output)
 
+      val sortOrder = if (isOptimize && partitioningColumns.nonEmpty) {
+        Some(partitioningColumns.map(SortOrder(_, Ascending)))
+      } else {
+        None
+      }
       val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
         partitioningColumns, constraints)
-      val physicalPlan = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      val physicalPlan = DeltaInvariantCheckerExec(empty2NullPlan, constraints, sortOrder)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
@@ -413,5 +419,14 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
 
     resultFiles.toSeq ++ committer.changeFiles
+  }
+
+  private[sql] def isOptimizeCommand(plan: LogicalPlan): Boolean = {
+    val leaves = plan.collectLeaves()
+    leaves.size == 1 && leaves.head.collect {
+      case LogicalRelation(HadoopFsRelation(
+      index: TahoeBatchFileIndex, _, _, _, _, _), _, _, _) =>
+        index.actionType.equals("Optimize")
+    }.headOption.getOrElse(false)
   }
 }

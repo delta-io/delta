@@ -32,8 +32,12 @@ import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.rand
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.util.QueryExecutionListener
 
 /**
  * Base class containing tests for Delta table Optimize (file compaction)
@@ -560,6 +564,55 @@ class OptimizeCompactionScalaSuite extends OptimizeCompactionSuiteBase
       DeltaTable.forPath(path).optimize().where(condition.get).executeCompaction()
     } else {
       DeltaTable.forPath(path).optimize().executeCompaction()
+    }
+  }
+
+  test("test optimize plan for isOptimizeCommand") {
+    class TestQueryListener extends QueryExecutionListener {
+      override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = {
+        assert(false, "execution failure")
+      }
+      var plan: Option[LogicalPlan] = None
+      override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
+        if (funcName.equals("deltaTransactionalWrite")) {
+          plan = Some(qe.analyzed)
+        }
+      }
+    }
+
+    val listener = new TestQueryListener
+    spark.listenerManager.register(listener)
+
+    val numPartitions = 2
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(100)
+        .withColumn("pCol", rand() % numPartitions)
+        .repartition(10)
+        .write
+        .format("delta")
+        .partitionBy("pCol")
+        .save(path)
+
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val txn = deltaLog.startTransaction()
+
+      {
+        val df = spark.read.format("delta").load(path).limit(10)
+        df.write.format("delta")
+          .partitionBy("pCol")
+          .mode("append")
+          .save(path)
+        val plan = listener.plan
+        assert(plan.isDefined && !txn.isOptimizeCommand(plan.get))
+      }
+
+      {
+        DeltaTable.forPath(path).optimize().executeCompaction()
+        val plan = listener.plan
+        assert(plan.isDefined && txn.isOptimizeCommand(plan.get))
+      }
+      spark.listenerManager.unregister(listener)
     }
   }
 }
