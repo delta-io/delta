@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.storage
 import java.io.{IOException, _}
 import java.lang.reflect.InvocationTargetException
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.FileAlreadyExistsException
 import java.util.{EnumSet, UUID}
 
 import scala.util.control.NonFatal
@@ -94,7 +93,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
     }
     if (!overwrite && fc.util.exists(path)) {
       // This is needed for the tests to throw error with local file system
-      throw new FileAlreadyExistsException(path.toString)
+      throw DeltaErrors.fileAlreadyExists(path.toString)
     }
 
     val tempPath = createTempPath(path)
@@ -115,7 +114,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
         tryRemoveCrcFile(fc, tempPath)
       } catch {
         case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
-          throw new FileAlreadyExistsException(path.toString)
+          throw DeltaErrors.fileAlreadyExists(path.toString)
       }
     } finally {
       if (!streamClosed) {

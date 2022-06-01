@@ -39,6 +39,10 @@
     "message" : [ "'provider' is a reserved table property, and cannot be altered." ],
     "sqlState" : "2F000"
   },
+  "DELTA_CANNOT_CONVERT_TO_FILEFORMAT" : {
+    "message" : [ "Can not convert<className> to FileFormat." ],
+    "sqlState" : "22000"
+  },
   "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL" : {
     "message" : [ "Cannot create bloom filter indices for the following non-existent column(s): <unknownCols>" ],
     "sqlState" : "42000"
@@ -111,6 +115,14 @@
     "message" : [ "Cannot update <tableName> field <fieldName> type: update struct by adding, deleting, or updating its fields" ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION" : {
+    "message" : [ "Cannot use all columns for partition columns" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
+    "message" : [ "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [ "Unable to find the column `<columnName>` given [<columnList>]" ],
     "sqlState" : "26000"
@@ -131,6 +143,10 @@
     "message" : [ " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types." ],
     "sqlState" : "22005"
   },
+  "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG" : {
+    "message" : [ "This Delta operation requires the SparkSession to be configured with the", "DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary", "configurations when creating the SparkSession as shown below.", "", "  SparkSession.builder()", "    .option(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")", "    .option(\"<catalogKey>\", \"<catalogClassName>\")", "    ...", "    .build()", "" ],
+    "sqlState" : "42000"
+  },
   "DELTA_CONFLICT_SET_COLUMN" : {
     "message" : [ "There is a conflict from these SET columns: <columnList>." ],
     "sqlState" : "42000"
@@ -145,6 +161,10 @@
   },
   "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING" : {
     "message" : [ "The configuration '<config>' cannot be set to `<mode>` when using CONVERT TO DELTA." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CONVERT_NON_PARQUET_TABLE" : {
+    "message" : [ "CONVERT TO DELTA only supports parquet tables, but you are trying to convert a <sourceName> source: <tableId>" ],
     "sqlState" : "0A000"
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA" : {
@@ -183,6 +203,10 @@
     "message" : [ "Failed to cast partition value `<value>` to <dataType>" ],
     "sqlState" : "22000"
   },
+  "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS" : {
+    "message" : [ "Could not find <newAttributeName> among the existing target output <targetOutputCollumns>" ],
+    "sqlState" : "22000"
+  },
   "DELTA_FAILED_INFER_SCHEMA" : {
     "message" : [ "Failed to infer schema from the given list of files." ],
     "sqlState" : "22000"
@@ -191,9 +215,25 @@
     "message" : [ "Failed to merge schema of file <file>:", "<schema>" ],
     "sqlState" : "42000"
   },
+  "DELTA_FAILED_READ_FILE_FOOTER" : {
+    "message" : [ "Could not read footer for file: <currentFile>" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FAILED_RECOGNIZE_PREDICATE" : {
+    "message" : [ "Cannot recognize the predicate '<predicate>'" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION" : {
+    "message" : [ "Expect a full scan of the latest version of the Delta source, but found a historical scan of version <historicalVersion>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [ "Failed to merge fields '<field>' and '<fieldRoot>'. <fieldChild>" ],
     "sqlState" : "22005"
+  },
+  "DELTA_FILE_ALREADY_EXISTS" : {
+    "message" : [ "Existing file path <path>" ],
+    "sqlState" : "22000"
   },
   "DELTA_FILE_LIST_AND_PATTERN_STRING_CONFLICT" : {
     "message" : [ "Cannot specify both file list and pattern string." ]
@@ -337,6 +377,10 @@
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
   },
+  "DELTA_METADATA_ABSENT" : {
+    "message" : [ "Couldn't find Metadata while committing the first version of the Delta table. To disable", "this check set <deltaCommitValidationEnabled> to \"false\"", "" ],
+    "sqlState" : "42000"
+  },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [ "Error getting change data for range [<startVersion> , <endVersion>] as change data was not", "recorded for version [<version>]. If you've enabled change data feed on this table,", "use `DESCRIBE HISTORY` to see when it was first enabled.", "Otherwise, to start recording change data, use `ALTER TABLE table_name SET TBLPROPERTIES", "(<key>=true)`." ],
     "sqlState" : "42000"
@@ -395,6 +439,10 @@
   },
   "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR" : {
     "message" : [ "<columnName> is not a generated column but is missing its update expression" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" : {
+    "message" : [ "When there are more than one MATCHED clauses in a MERGE statement, only the last MATCHED clause can omit the condition." ],
     "sqlState" : "42000"
   },
   "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION" : {
@@ -504,6 +552,10 @@
     "message" : [ "Table <tableName> already exists." ],
     "sqlState" : "42000"
   },
+  "DELTA_TABLE_FOUND_IN_EXECUTOR" : {
+    "message" : [ "DeltaTable cannot be used in executors" ],
+    "sqlState" : "42000"
+  },
   "DELTA_TABLE_NOT_FOUND" : {
     "message" : [ "Delta table <tableName> doesn't exist. Please delete your streaming query checkpoint and restart." ],
     "sqlState" : "42000"
@@ -519,6 +571,10 @@
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [ "The provided timestamp (<providedTimestamp>) is after the latest version available to this", "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>." ],
     "sqlState" : "42000"
+  },
+  "DELTA_TRUNCATED_TRANSACTION_LOG" : {
+    "message" : [ "<path>: Unable to reconstruct state at version <version> as the transaction log has been truncated due to manual deletion or the log retention policy (<logRetentionKey>=<logRetention>) and checkpoint retention policy (<checkpointRetentionKey>=<checkpointRetention>)" ],
+    "sqlState" : "22000"
   },
   "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE" : {
     "message" : [ "Expected AttributeReference but got <ref>" ],
@@ -650,6 +706,10 @@
   "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE" : {
     "message" : [ "Table implementation does not support writes: <tableName>" ],
     "sqlState" : "0A000"
+  },
+  "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
+    "message" : [ "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match." ],
+    "sqlState" : "42000"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [ "Versions (<versionList>) are not contiguous." ],

@@ -390,7 +390,7 @@ object DeltaFileOperations extends DeltaLogging {
           logWarning(s"Skipped the footer in the corrupted file: $currentFile", e)
           None
         } else {
-          throw new IOException(s"Could not read footer for file: $currentFile", e)
+          throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
         }
       }
     }.flatten

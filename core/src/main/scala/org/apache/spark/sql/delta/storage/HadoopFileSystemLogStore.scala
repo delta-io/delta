@@ -131,7 +131,7 @@ abstract class HadoopFileSystemLogStore(
       }
     } else {
       if (fs.exists(path)) {
-        throw new FileAlreadyExistsException(path.toString)
+        throw DeltaErrors.fileAlreadyExists(path.toString)
       }
       val tempPath = createTempPath(path)
       var streamClosed = false // This flag is to avoid double close
@@ -146,14 +146,14 @@ abstract class HadoopFileSystemLogStore(
             renameDone = true
           } else {
             if (fs.exists(path)) {
-              throw new FileAlreadyExistsException(path.toString)
+              throw DeltaErrors.fileAlreadyExists(path.toString)
             } else {
               throw DeltaErrors.cannotRenamePath(tempPath.toString, path.toString)
             }
           }
         } catch {
           case _: org.apache.hadoop.fs.FileAlreadyExistsException =>
-            throw new FileAlreadyExistsException(path.toString)
+            throw DeltaErrors.fileAlreadyExists(path.toString)
         }
       } finally {
         if (!streamClosed) {

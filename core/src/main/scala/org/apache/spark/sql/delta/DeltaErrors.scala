@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
 import java.net.URI
+import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, FileAction, Metadata, Protocol}
@@ -155,7 +156,7 @@ object DeltaErrors
 
   def columnNotFound(path: Seq[String], schema: StructType): Throwable = {
     val name = UnresolvedAttribute(path).name
-    new AnalysisException(s"Can't resolve column ${name} in ${schema.treeString}")
+    cannotResolveColumn(name, schema)
   }
 
   def failedMergeSchemaFile(file: String, schema: String, cause: Throwable): Throwable = {
@@ -610,8 +611,10 @@ object DeltaErrors
   }
 
   def cdcNotAllowedInThisVersion(): Throwable = {
-    new AnalysisException("Configuration delta.enableChangeDataFeed cannot be set. Change " +
-      "data feed from Delta is not yet available.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION",
+      messageParameters = Array.empty
+    )
   }
 
   def cdcWriteNotAllowedInThisVersion(): Throwable = {
@@ -642,10 +645,16 @@ object DeltaErrors
       metadata: Metadata): Throwable = {
     val logRetention = DeltaConfigs.LOG_RETENTION.fromMetaData(metadata)
     val checkpointRetention = DeltaConfigs.CHECKPOINT_RETENTION_DURATION.fromMetaData(metadata)
-    new FileNotFoundException(s"$path: Unable to reconstruct state at version $version as the " +
-      s"transaction log has been truncated due to manual deletion or the log retention policy " +
-      s"(${DeltaConfigs.LOG_RETENTION.key}=$logRetention) and checkpoint retention policy " +
-      s"(${DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key}=$checkpointRetention)")
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_TRUNCATED_TRANSACTION_LOG",
+      messageParameters = Array(
+        path.toString,
+        version.toString,
+        DeltaConfigs.LOG_RETENTION.key,
+        logRetention.toString,
+        DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
+        checkpointRetention.toString)
+    )
   }
 
   def logFileNotFoundExceptionForStreamingSource(e: FileNotFoundException): Throwable = {
@@ -1220,8 +1229,10 @@ object DeltaErrors
   }
 
   def convertNonParquetTablesException(ident: TableIdentifier, sourceName: String): Throwable = {
-    new AnalysisException("CONVERT TO DELTA only supports parquet tables, but you are trying to " +
-      s"convert a $sourceName source: $ident")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONVERT_NON_PARQUET_TABLE",
+      messageParameters = Array(sourceName, ident.toString)
+    )
   }
 
   def unexpectedPartitionColumnFromFileNameException(
@@ -1344,16 +1355,15 @@ object DeltaErrors
   }
 
   def metadataAbsentException(): Throwable = {
-    new IllegalStateException(
-      s"""
-         |Couldn't find Metadata while committing the first version of the Delta table. To disable
-         |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
-       """.stripMargin)
+    new DeltaIllegalStateException(errorClass = "DELTA_METADATA_ABSENT",
+      messageParameters = Array(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key))
   }
 
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
-    new AnalysisException(s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
-      s"columns must match.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",
+      messageParameters = Array(from.catalogString, to.catalogString)
+    )
   }
 
   def extractReferencesFieldNotFound(field: String, exception: Throwable): Throwable = {
@@ -1396,18 +1406,12 @@ object DeltaErrors
 
   def configureSparkSessionWithExtensionAndCatalog(originalException: Throwable): Throwable = {
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
-    new AnalysisException(
-      s"""This Delta operation requires the SparkSession to be configured with the
-         |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
-         |configurations when creating the SparkSession as shown below.
-         |
-         |  SparkSession.builder()
-         |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-         |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
-         |    ...
-         |    .build()
-      """.stripMargin,
-      cause = Some(originalException))
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
+      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
+        catalogImplConfig, classOf[DeltaCatalog].getName),
+      cause = Some(originalException)
+    )
   }
 
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
@@ -1559,10 +1563,10 @@ object DeltaErrors
     )
   }
 
-  def cannotResolveColumn(field: StructField, schema: StructType): Throwable = {
+  def cannotResolveColumn(fieldName: String, schema: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
-      messageParameters = Array(field.name, schema.treeString)
+      messageParameters = Array(fieldName, schema.treeString)
     )
   }
 
@@ -1934,6 +1938,50 @@ object DeltaErrors
   def failedInferSchema: Throwable = {
     new DeltaRuntimeException("DELTA_FAILED_INFER_SCHEMA")
   }
+
+  def failedReadFileFooter(file: String, e: Throwable): Throwable = {
+    new DeltaIOException(
+      errorClass = "DELTA_FAILED_READ_FILE_FOOTER",
+      messageParameters = Array(file),
+      cause = e
+    )
+  }
+
+  def failedScanWithHistoricalVersion(historicalVersion: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION",
+      messageParameters = Array(historicalVersion.toString)
+    )
+  }
+
+  def failedRecognizePredicate(predicate: String, cause: Throwable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_FAILED_RECOGNIZE_PREDICATE", messageParameters = Array(predicate),
+      cause = Some(cause)
+    )
+  }
+
+  def failedFindAttributeInOutputCollumns(newAttrName: String, targetCollNames: String): Throwable =
+  {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS",
+      messageParameters = Array(newAttrName, targetCollNames)
+    )
+  }
+
+  def deltaTableFoundInExecutor(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_FOUND_IN_EXECUTOR",
+      messageParameters = Array.empty
+    )
+  }
+
+  def fileAlreadyExists(file: String): Throwable = {
+    new DeltaFileAlreadyExistsException(
+      errorClass = "DELTA_FILE_ALREADY_EXISTS",
+      messageParameters = Array(file)
+    )
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
@@ -2120,6 +2168,15 @@ class DeltaFileNotFoundException(
   errorClass: String,
   messageParameters: Array[String] = Array.empty)
   extends FileNotFoundException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+class DeltaFileAlreadyExistsException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends FileAlreadyExistsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass

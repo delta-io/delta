@@ -217,7 +217,7 @@ object SchemaUtils extends DeltaLogging {
           // in the table schema.
           case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
           case None =>
-            throw DeltaErrors.cannotResolveColumn(field, baseSchema)
+            throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
         }
         if (originalCase != field.name) {
           fieldToColumn(field).as(originalCase)

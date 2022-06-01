@@ -49,7 +49,7 @@ class DeltaTable private[tables](
   protected def deltaLog: DeltaLog = {
     /** Assert the codes run in the driver. */
     if (table == null) {
-      throw new IllegalStateException("DeltaTable cannot be used in executors")
+      throw DeltaErrors.deltaTableFoundInExecutor()
     }
 
     table.deltaLog
@@ -58,7 +58,7 @@ class DeltaTable private[tables](
   protected def df: Dataset[Row] = {
     /** Assert the codes run in the driver. */
     if (_df == null) {
-      throw new IllegalStateException("DeltaTable cannot be used in executors")
+      throw DeltaErrors.deltaTableFoundInExecutor()
     }
 
     _df

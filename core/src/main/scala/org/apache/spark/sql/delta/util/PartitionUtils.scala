@@ -46,7 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaRuntimeException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException
@@ -609,7 +609,9 @@ private[delta] object PartitionUtils {
     }
 
     if (partitionColumns.nonEmpty && partitionColumns.size == schema.fields.length) {
-      throw new AnalysisException(s"Cannot use all columns for partition columns")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION",
+        Array.empty)
     }
   }
 

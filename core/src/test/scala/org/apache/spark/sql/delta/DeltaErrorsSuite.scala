@@ -26,6 +26,8 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -36,6 +38,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
@@ -50,6 +53,7 @@ import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType, TimestampNTZType}
 
@@ -698,7 +702,7 @@ trait DeltaErrorsSuiteBase
       val baseSchema = StructType(Seq(StructField("c0", StringType)))
       val field = StructField("id", IntegerType)
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.cannotResolveColumn(field, baseSchema)
+        throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_RESOLVE_COLUMN")
       assert(e.getSqlState == "42000")
@@ -1501,6 +1505,134 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage ==
         "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.metadataAbsentException()
+      }
+      assert(e.getErrorClass == "DELTA_METADATA_ABSENT")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""Couldn't find Metadata while committing the first version of the Delta table. To disable
+           |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(errorClass = "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION",
+          Array.empty)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot use all columns for partition columns")
+    }
+    {
+      val e = intercept[DeltaIOException] {
+        throw DeltaErrors.failedReadFileFooter("test.txt", null)
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_READ_FILE_FOOTER")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Could not read footer for file: test.txt")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedScanWithHistoricalVersion(123)
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Expect a full scan of the latest version of the Delta source, " +
+        "but found a historical scan of version 123")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedRecognizePredicate("select ALL", new Throwable())
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_RECOGNIZE_PREDICATE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot recognize the predicate 'select ALL'")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedFindAttributeInOutputCollumns("col1",
+          "col2,col3,col4")
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS")
+      assert(e.getSqlState == "22000")
+
+      val msg = "Could not find col1 among the existing target output col2,col3,col4"
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.deltaTableFoundInExecutor()
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_FOUND_IN_EXECUTOR")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "DeltaTable cannot be used in executors")
+    }
+    {
+      val e = intercept[DeltaFileAlreadyExistsException] {
+        throw DeltaErrors.fileAlreadyExists("file.txt")
+      }
+      assert(e.getErrorClass == "DELTA_FILE_ALREADY_EXISTS")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Existing file path file.txt")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(new Throwable())
+      }
+      assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+      assert(e.getSqlState == "42000")
+
+      val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+      val msg =
+        s"""This Delta operation requires the SparkSession to be configured with the
+          |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
+          |configurations when creating the SparkSession as shown below.
+          |
+          |  SparkSession.builder()
+          |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+          |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+          |    ...
+          |    .build()
+          |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cdcNotAllowedInThisVersion()
+      }
+      assert(e.getErrorClass == "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Configuration delta.enableChangeDataFeed cannot be set." +
+          " Change data feed from Delta is not yet available.")
+    }
+    {
+      val ident = TableIdentifier("view1")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertNonParquetTablesException(ident, "source1")
+      }
+      assert(e.getErrorClass == "DELTA_CONVERT_NON_PARQUET_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "CONVERT TO DELTA only supports parquet tables, but you are trying to " +
+        s"convert a source1 source: $ident")
+    }
+    {
+      val from = StructType(Seq(StructField("c0", IntegerType)))
+      val to = StructType(Seq(StructField("c1", IntegerType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.updateSchemaMismatchExpression(from, to)
+      }
+      assert(e.getErrorClass == "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
+        "columns must match.")
     }
   }
 }
