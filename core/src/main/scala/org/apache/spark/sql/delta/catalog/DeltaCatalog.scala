@@ -581,7 +581,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = table match {
       case supportsWrite: SupportsWrite => supportsWrite.newWriteBuilder(info)
-      case _ => throw new AnalysisException(s"Table implementation does not support writes: $name")
+      case _ => throw DeltaErrors.unsupportedWriteStagedTable(name)
     }
   }
 }

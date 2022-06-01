@@ -39,6 +39,10 @@
     "message" : [ "'provider' is a reserved table property, and cannot be altered." ],
     "sqlState" : "2F000"
   },
+  "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL" : {
+    "message" : [ "Cannot create bloom filter indices for the following non-existent column(s): <unknownCols>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_CREATE_LOG_PATH" : {
     "message" : [ "Cannot create <path>" ],
     "sqlState" : "42000"
@@ -65,6 +69,10 @@
   },
   "DELTA_CANNOT_GENERATE_UPDATE_EXPRESSIONS" : {
     "message" : [ "Calling without generated columns should always return a update expression for each column" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CANNOT_MODIFY_APPEND_ONLY" : {
+    "message" : [ "This table is configured to only allow appends. If you would like to permit updates or deletes, use 'ALTER TABLE <table_name> SET TBLPROPERTIES (<config>=false)'." ],
     "sqlState" : "42000"
   },
   "DELTA_CANNOT_RENAME_PATH" : {
@@ -107,6 +115,10 @@
     "message" : [ "Unable to find the column `<columnName>` given [<columnList>]" ],
     "sqlState" : "26000"
   },
+  "DELTA_COLUMN_NOT_FOUND_IN_MERGE" : {
+    "message" : [ "Unable to find the column '<targetCol>' of the target table from the INSERT columns: <colNames>. INSERT clause must specify value for all the columns of the target table." ],
+    "sqlState" : "42000"
+  },
   "DELTA_COLUMN_NOT_FOUND_IN_SCHEMA" : {
     "message" : [ "Couldn't find column <columnName> in:\n<tableSchema>" ],
     "sqlState" : "42000"
@@ -145,6 +157,10 @@
   },
   "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
     "message" : [ "The specified schema does not match the existing schema at <path>.", "", "== Specified ==", "<specifiedSchema>", "", "== Existing ==", "<existingSchema>", "", "== Differences ==", "<schemaDifferences>", "", "If your intention is to keep the existing schema, you can omit the", "schema from the create table command. Otherwise please ensure that", "the schema matches." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_DUPLICATE_COLUMNS_FOUND" : {
+    "message" : [ "Found duplicate column(s) <coltype>: <duplicateCols>" ],
     "sqlState" : "42000"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
@@ -192,6 +208,10 @@
   },
   "DELTA_FILE_TO_OVERWRITE_NOT_FOUND" : {
     "message" : [ "File (<path>) to be rewritten not found among candidate files:\n<pathList>" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FOUND_MAP_TYPE_COLUMN" : {
+    "message" : [ "A MapType was found. In order to access the key or value of a MapType, specify one", "of:", "<key> or", "<value>", "followed by the name of the column (only if that column is a struct type).", "e.g. mymap.key.mykey", "If the column is a basic type, mymap.key or mymap.value is sufficient." ],
     "sqlState" : "42000"
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
@@ -365,6 +385,10 @@
     "message" : [ "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)" ],
     "sqlState" : "42000"
   },
+  "DELTA_NEW_NOT_NULL_VIOLATION" : {
+    "message" : [ "<numRows> rows in <tableName> violate the new NOT NULL constraint on <colName>" ],
+    "sqlState" : "23001"
+  },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
     "message" : [ "Non-deterministic functions are not supported in the <operation> <expression>" ],
     "sqlState" : "0A000"
@@ -414,6 +438,10 @@
     "sqlState" : "42000"
   },
   "DELTA_OPERATION_NOT_ALLOWED" : {
+    "message" : [ "Operation not allowed: `<operation>` is not supported for Delta tables" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_OPERATION_NOT_ALLOWED_DETAIL" : {
     "message" : [ "Operation not allowed: `<operation>` is not supported for Delta tables: <tableName>" ],
     "sqlState" : "42000"
   },
@@ -449,8 +477,20 @@
     "message" : [ "Data written out does not match replaceWhere '<replaceWhere>'.", "<message>" ],
     "sqlState" : "22000"
   },
+  "DELTA_SCHEMA_NOT_CONSISTENT_WITH_TARGET" : {
+    "message" : [ "The table schema <tableSchema> is not consistent with the target attributes: <targetAttrs>" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_SET_LOCATION_SCHEMA_MISMATCH" : {
+    "message" : [ "", "The schema of the new Delta location is different than the current table schema.", "original schema:", "<original>", "destination schema:", "<destination>", "", "If this is an intended change, you may turn this check off by running:", "%%sql set <config> = true" ],
+    "sqlState" : "22000"
+  },
   "DELTA_SPARK_SESSION_NOT_SET" : {
     "message" : [ "Active SparkSession not set." ]
+  },
+  "DELTA_SPARK_THREAD_NOT_FOUND" : {
+    "message" : [ "Not running on a Spark task thread" ],
+    "sqlState" : "42000"
   },
   "DELTA_STATE_RECOVER_ERROR" : {
     "message" : [ "The <operation> of your Delta table could not be recovered while Reconstructing", "version: <version>. Did you manually delete files in the _delta_log directory?", "Set <config> to \"false\"", "to skip validation." ],
@@ -559,6 +599,10 @@
     "message" : [ "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Delta documentation for more details." ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE" : {
+    "message" : [ "Multi-column In predicates are not supported in the <operation> condition." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Creating a bloom filer index on a nested column is currently unsupported: <columnName>" ],
     "sqlState" : "0A000"
@@ -583,12 +627,28 @@
     "message" : [ "<operation> destination only supports Delta sources.\n<plan>" ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_STATIC_PARTITIONS" : {
+    "message" : [ "Specifying static partitions in the partition spec is currently not supported during inserts" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_SUBQUERY" : {
+    "message" : [ "Subqueries are not supported in the <operation> (condition = <cond>)." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
     "message" : [ "Cannot specify time travel in multiple formats." ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [ "Cannot time travel views, subqueries or streams." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
+    "message" : [ "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE" : {
+    "message" : [ "Table implementation does not support writes: <tableName>" ],
     "sqlState" : "0A000"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {

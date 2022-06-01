@@ -752,7 +752,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.operationNotSupportedException("op", id)
       }
-      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
+      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED_DETAIL")
       assert(e.getMessage == s"Operation not allowed: `op` is not supported " +
         s"for Delta tables: $id")
     }
@@ -1347,6 +1347,160 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Invalid options for idempotent Dataframe writes: reason")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.operationNotSupportedException("dummyOp")
+      }
+      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Operation not allowed: `dummyOp` is not supported for Delta tables")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val s1 = StructType(Seq(StructField("c0", IntegerType)))
+        val s2 = StructType(Seq(StructField("c0", StringType)))
+        throw DeltaErrors.alterTableSetLocationSchemaMismatchException(s1, s2)
+      }
+      assert(e.getErrorClass == "DELTA_SET_LOCATION_SCHEMA_MISMATCH")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        s"""
+           |The schema of the new Delta location is different than the current table schema.
+           |original schema:
+           |root
+           | |-- c0: integer (nullable = true)
+           |
+           |destination schema:
+           |root
+           | |-- c0: string (nullable = true)
+           |
+           |
+           |If this is an intended change, you may turn this check off by running:
+           |%sql set ${DeltaSQLConf.DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK.key}""".stripMargin +
+          " = true")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundDuplicateColumnsException("integer", "col1")
+      }
+      assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Found duplicate column(s) integer: col1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.subqueryNotSupportedException("dummyOp", "col1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SUBQUERY")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Subqueries are not supported in the dummyOp (condition = 'col1').")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundMapTypeColumnException("dummyKey", "dummyVal")
+      }
+      assert(e.getErrorClass == "DELTA_FOUND_MAP_TYPE_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """A MapType was found. In order to access the key or value of a MapType, specify one
+          |of:
+          |dummyKey or
+          |dummyVal
+          |followed by the name of the column (only if that column is a struct type).
+          |e.g. mymap.key.mykey
+          |If the column is a basic type, mymap.key or mymap.value is sufficient.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnOfTargetTableNotFoundInMergeException("target", "dummyCol")
+      }
+      assert(e.getErrorClass == "DELTA_COLUMN_NOT_FOUND_IN_MERGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unable to find the column 'target' of the target table from " +
+        "the INSERT columns: dummyCol. " +
+        "INSERT clause must specify value for all the columns of the target table."
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.multiColumnInPredicateNotSupportedException("dummyOp")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Multi-column In predicates are not supported in the dummyOp condition.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.newNotNullViolated(10L, "table1", UnresolvedAttribute("col1"))
+      }
+      assert(e.getErrorClass == "DELTA_NEW_NOT_NULL_VIOLATION")
+      assert(e.getSqlState == "23001")
+      assert(e.getMessage == "10 rows in table1 violate the new NOT NULL constraint on col1")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.modifyAppendOnlyTableException("dummyTable")
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_MODIFY_APPEND_ONLY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "This table is configured to only allow appends. If you would like to permit " +
+          "updates or deletes, use 'ALTER TABLE dummyTable SET TBLPROPERTIES " +
+          s"(${DeltaConfigs.IS_APPEND_ONLY.key}=false)'.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.schemaNotConsistentWithTarget("dummySchema", "targetAttr")
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_NOT_CONSISTENT_WITH_TARGET")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "The table schema dummySchema is not consistent with " +
+        "the target attributes: targetAttr")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.sparkTaskThreadNotFound
+      }
+      assert(e.getErrorClass == "DELTA_SPARK_THREAD_NOT_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Not running on a Spark task thread")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.staticPartitionsNotSupportedException
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATIC_PARTITIONS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Specifying static partitions in the partition spec is" +
+        " currently not supported during inserts")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedWriteStagedTable("table1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Table implementation does not support writes: table1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.vacuumBasePathMissingException(new Path("path-1"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Please provide the base path (path-1) when Vacuuming Delta tables. " +
+        "Vacuuming specific partitions is currently not supported.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterCreateOnNonExistingColumnsException(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
     }
   }
 }

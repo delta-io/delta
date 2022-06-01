@@ -264,8 +264,7 @@ class DeltaAnalysis(session: SparkSession)
       if (tableSchema.length != targetAttrs.length) {
         // The target attributes may contain the metadata columns by design. Throwing an exception
         // here in case target attributes may have the metadata columns for Delta in future.
-        throw new IllegalStateException(s"The table schema $tableSchema is not consistent with " +
-          s"the target attributes: $targetAttrs")
+        throw DeltaErrors.schemaNotConsistentWithTarget(s"$tableSchema", s"$targetAttrs")
       }
       deltaTable.snapshot.metadata.schema.foreach { col =>
         if (!userSpecifiedNames.contains(col.name) &&

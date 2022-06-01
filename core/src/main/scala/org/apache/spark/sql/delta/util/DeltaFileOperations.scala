@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.util.Random
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -353,7 +354,7 @@ object DeltaFileOperations extends DeltaLogging {
       tempPath: Path): Unit = {
     val tc = TaskContext.get
     if (tc == null) {
-      throw new IllegalStateException("Not running on a Spark task thread")
+      throw DeltaErrors.sparkTaskThreadNotFound
     }
     tc.addTaskFailureListener { (_, _) =>
       // Best effort to delete the temp file

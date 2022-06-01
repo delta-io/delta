@@ -92,8 +92,9 @@ object SchemaMergingUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"$x"
       }
-      throw new AnalysisException(
-        s"Found duplicate column(s) $colType: ${duplicateColumns.mkString(", ")}")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
+        messageParameters = Array(colType, duplicateColumns.mkString(", ")))
     }
   }
 
