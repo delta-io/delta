@@ -675,6 +675,7 @@ case class MergeIntoCommand(
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
     metrics("numTargetFilesAdded") += newFiles.count(_.isInstanceOf[AddFile])
     metrics("numTargetChangeFilesAdded") += newFiles.count(_.isInstanceOf[AddCDCFile])
+    metrics("numTargetChangeFileBytes") += newFiles.collect{ case f: AddCDCFile => f.size }.sum
     metrics("numTargetBytesAdded") += addedBytes
     metrics("numTargetPartitionsAddedTo") += addedPartitions
 

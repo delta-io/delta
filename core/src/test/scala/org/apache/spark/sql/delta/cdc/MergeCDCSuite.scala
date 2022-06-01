@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 /**
  * Tests for MERGE INTO in CDC output mode. In addition to the ones explicitly defined here, we run
  * all the normal merge tests to verify that CDC writing mode doesn't break existing functionality.
- * This suite tests with Legacy Merge implementation.
+ *
  */
 class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   import testImplicits._
