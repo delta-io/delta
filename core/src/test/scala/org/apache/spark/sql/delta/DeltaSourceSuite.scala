@@ -1764,7 +1764,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
   import testImplicits._
 
-  testQuietly("drop column from source disallowed by MicroBatchExecution") {
+  ignore("drop column from source disallowed by MicroBatchExecution") {
     withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
       withTempDir { inputDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
