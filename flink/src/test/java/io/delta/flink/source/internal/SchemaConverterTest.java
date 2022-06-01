@@ -29,7 +29,6 @@ import io.delta.standalone.types.DataType;
 import io.delta.standalone.types.StructField;
 import io.delta.standalone.types.StructType;
 
-// TODO PR 10.1 add type conversion test Delta -> Flink -> Delta using Source and Sink converters.
 public class SchemaConverterTest {
 
     /**

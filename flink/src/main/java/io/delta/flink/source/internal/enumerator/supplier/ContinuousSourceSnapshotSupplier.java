@@ -45,6 +45,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
     private TransitiveOptional<Snapshot> getSnapshotFromStartingVersionOption(
             DeltaSourceConfiguration sourceConfiguration) {
+
         String startingVersion = sourceConfiguration.getValue(STARTING_VERSION);
         if (startingVersion != null) {
             if (startingVersion.equalsIgnoreCase(DeltaSourceOptions.STARTING_VERSION_LATEST)) {

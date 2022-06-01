@@ -224,13 +224,6 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
         return option;
     }
 
-    // TODO PR 10.1 add tests:
-    //  SnapshotSupplier implementations, previously they were tested in tests
-    //  for SplitEnumeratorProvider implementations.
-
-    // TODO PR 10.1 Tests for getSourceSchema(..) to check basic logic and edge case when
-    //  StructType is null. In that case we should throw DeltaSourceException - needs to be
-    //  implemented.
     /**
      * Extracts Delta table schema from DeltaLog {@link io.delta.standalone.actions.Metadata}
      * including column names and column types converted to
@@ -253,7 +246,16 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
             throw DeltaSourceExceptions.tableSchemaMissingException(
                 SourceUtils.pathToString(tablePath), snapshot.getVersion());
         }
-        return SourceUtils.buildSourceSchema(userColumnNames, tableSchema, snapshot.getVersion());
+        try {
+            return SourceUtils.buildSourceSchema(userColumnNames, tableSchema,
+                snapshot.getVersion());
+        } catch (IllegalArgumentException e) {
+            throw DeltaSourceExceptions.generalSourceException(
+                SourceUtils.pathToString(tablePath),
+                snapshot.getVersion(),
+                e
+            );
+        }
     }
 
     @SuppressWarnings("unchecked")

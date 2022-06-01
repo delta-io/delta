@@ -30,11 +30,6 @@ public final class SourceUtils {
         return path.toUri().normalize().toString();
     }
 
-    // TODO PR 10.1 add tests:
-    //  1. no column defined by user -> all should be taken from Delta schema.
-    //  2. user columns were defined, then we should take only Data types from Delta.
-    //  3. User columns were defined but they are missing in Delta Schema -> should throw
-    //  DeltaSourceException. Has to be implemented.
     /**
      * Method to extract schema from Delta's table and convert it to {@link SourceSchema}.
      * <p>
