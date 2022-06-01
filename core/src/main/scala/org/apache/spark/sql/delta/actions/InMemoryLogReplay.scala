@@ -72,7 +72,13 @@ class InMemoryLogReplay(
   }
 
   private def getTransactions: Iterable[SetTransaction] = {
-    transactions.values
+    if (minSetTransactionRetentionTimestamp.isEmpty) {
+      transactions.values
+    } else {
+      transactions.values.filter { txn =>
+        txn.lastUpdated.exists(_ > minSetTransactionRetentionTimestamp.get)
+      }
+    }
   }
 
   /** Returns the current state of the Table as an iterator of actions. */

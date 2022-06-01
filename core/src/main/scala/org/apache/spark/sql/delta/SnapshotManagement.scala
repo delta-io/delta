@@ -294,7 +294,7 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt,
-        minSetTransactionRetentionTimestamp = None,
+        minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
         checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
   }
