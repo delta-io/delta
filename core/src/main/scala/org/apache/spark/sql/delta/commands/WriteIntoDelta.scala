@@ -154,8 +154,17 @@ case class WriteIntoDelta(
       }
     }
 
-    val useDynamicPartitionOverwriteMode =
-      txn.metadata.partitionColumns.nonEmpty && options.isDynamicPartitionOverwriteMode
+    val useDynamicPartitionOverwriteMode = {
+      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
+        options.isDynamicPartitionOverwriteMode
+      replaceWhere.foreach { replace =>
+        if (useDynamic) {
+          throw new AnalysisException("'replaceWhere' cannot be used when " +
+            "'partitionOverwriteMode' is set to 'DYNAMIC'")
+        }
+      }
+      useDynamic
+    }
 
     if (txn.readVersion < 0) {
       // Initialize the log path

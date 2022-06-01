@@ -116,7 +116,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   validateIdempotentWriteOptions()
 
   /** Whether to only overwrite partitions that have data written into it at runtime. */
-  val isDynamicPartitionOverwriteMode: Boolean = {
+  def isDynamicPartitionOverwriteMode: Boolean = {
     val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
       .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
     val acceptable = Seq("STATIC", "DYNAMIC")

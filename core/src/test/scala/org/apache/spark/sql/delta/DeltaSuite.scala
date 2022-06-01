@@ -716,25 +716,27 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
-      Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "sub")
-        .withColumn("part", $"value" % 2)
+      Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+        .withColumn("part1", $"value" % 2)
         .write
         .format("delta")
-        .partitionBy("part", "sub")
+        .partitionBy("part1", "part2")
         .mode("append")
         .save(tempDir.getCanonicalPath)
 
-      Seq((3, "x"), (5, "x")).toDF("value", "sub")
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .partitionBy("part", "sub")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
-        .option("partitionOverwriteMode", "dynamic")
-        .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.select("value", "sub").as[(Int, String)],
-        (2, "y"), (3, "x"), (5, "x"))
+      val e = intercept[AnalysisException] {
+        Seq((3, "x"), (5, "x")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
+          .option("partitionOverwriteMode", "dynamic")
+          .save(tempDir.getCanonicalPath)
+      }
+      assert(e.getMessage ===
+        "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
     }
   }
 
