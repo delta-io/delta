@@ -70,7 +70,7 @@ trait DeltaCommand extends DeltaLogging {
 
     predicates.foreach { pred =>
       if (SubqueryExpression.hasSubquery(pred)) {
-        throw new AnalysisException("Subquery is not supported in partition predicates.")
+        throw DeltaErrors.unsupportSubqueryInPartitionPredicates()
       }
 
       pred.references.foreach { col =>

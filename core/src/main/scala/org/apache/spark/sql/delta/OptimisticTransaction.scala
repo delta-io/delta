@@ -932,9 +932,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "committedVersion" -> attemptVersion,
         "currentVersion" -> postCommitSnapshot.version
       ))
-      throw new IllegalStateException(
-        s"The committed version is $attemptVersion " +
-          s"but the current version is ${postCommitSnapshot.version}.")
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, postCommitSnapshot.version)
     }
 
     // Post stats

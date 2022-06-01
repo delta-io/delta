@@ -1505,6 +1505,148 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage ==
         "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
+
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.schemaNotSetException
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_NOT_SET")
+      assert(e.getMessage ==
+        "Table schema is not set.  Write data into it or use CREATE TABLE to set the schema.")
+      assert(e.getSqlState == "22000")
+    }
+    {
+      val st1 = StructType(Seq(StructField("a0", IntegerType)))
+      val st2 = StructType(Seq(StructField("b0", IntegerType)))
+      val schemaDiff = SchemaUtils.reportDifferences(st1, st2)
+        .map(_.replace("Specified", "Latest"))
+
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.schemaChangedSinceAnalysis(st1, st2)
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+
+      val msg =
+        s"""The schema of your Delta table has changed in an incompatible way since your DataFrame
+        |or DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
+        |Changes:
+        |${schemaDiff.mkString("\n")}""".stripMargin
+      assert(e.getMessage == msg)
+      assert(e.getSqlState == "22000")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsAggregateExpression("1".expr)
+      }
+      assert(e.getErrorClass == "DELTA_AGGREGATE_IN_GENERATED_COLUMN")
+      assert(e.getSqlState == "42000")
+
+      assert(e.getMessage == s"Found ${"1".expr.sql}. " +
+        "A generated column cannot use an aggregate expression")
+    }
+    {
+      val path = new Path("a/b")
+      val smaps = Map("abc" -> "xyz")
+      val emaps = Map("def" -> "hjk")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithDifferentPropertiesException(path, smaps, emaps)
+      }
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""The specified properties do not match the existing properties at $path.
+           |
+           |== Specified ==
+           |${smaps.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+           |
+           |== Existing ==
+           |${emaps.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportSubqueryInPartitionPredicates()
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Subquery is not supported in partition predicates.")
+    }
+    {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.emptyDirectoryException("dir")
+      }
+      assert(e.getErrorClass == "DELTA_EMPTY_DIRECTORY")
+      assert(e.getMessage == "No file found in the directory: dir.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereUsedInOverwrite()
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_IN_OVERWRITE")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "You can't use replaceWhere in conjunction with an overwrite by filter")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.incorrectArrayAccessByName("rightName", "wrongName")
+      }
+      assert(e.getErrorClass == "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""An ArrayType was found. In order to access elements of an ArrayType, specify
+          |rightName
+          |Instead of wrongName
+          |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      }
+      assert(e.getErrorClass == "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE")
+      assert(e.getSqlState == "21000")
+
+      val docLink = generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#upsert-into-a-table-using-merge", skipValidation = true)
+      val msg =
+        s"""Cannot perform Merge as multiple source rows matched and attempted to modify the same
+           |target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,
+           |when multiple source rows match on the same target row, the result may be ambiguous
+           |as it is unclear which source row should be used to update or delete the matching
+           |target row. You can preprocess the source table to eliminate the possibility of
+           |multiple matches. Please refer to
+           |${docLink}""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.showPartitionInNotPartitionedTable("table")
+      }
+      assert(e.getErrorClass == "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "SHOW PARTITIONS is not allowed on a table that is not partitioned: table")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.duplicateColumnOnInsert()
+      }
+      assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_ON_INSERT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Duplicate column names in INSERT clause")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.timeTravelInvalidBeginValue("key", new Throwable)
+      }
+      assert(e.getErrorClass == "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "key needs to be a valid begin value.")
     }
     {
       val e = intercept[DeltaIllegalStateException] {

@@ -385,8 +385,8 @@ object DeltaDataSource extends DatabricksLogging {
     } else if (versionOpt.isDefined) {
       val version = Try(versionOpt.get.toLong) match {
         case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
+        case Failure(t) =>
+          throw DeltaErrors.timeTravelInvalidBeginValue(DeltaDataSource.TIME_TRAVEL_VERSION_KEY, t)
       }
       Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
     } else {

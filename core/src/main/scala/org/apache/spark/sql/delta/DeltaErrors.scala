@@ -452,10 +452,10 @@ object DeltaErrors
     } else {
       ""
     }
-    new AnalysisException(
-      s"""The schema of your Delta table has changed in an incompatible way since your DataFrame or
-         |DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
-         |Changes:\n${schemaDiff.mkString("\n")}$legacyFlagMessage""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+      messageParameters = Array(schemaDiff.mkString("\n"), legacyFlagMessage)
+    )
   }
 
   def incorrectArrayAccess(): Throwable = {
@@ -802,8 +802,10 @@ object DeltaErrors
   }
 
   def schemaNotSetException: Throwable = {
-    new AnalysisException(
-      "Table schema is not set.  Write data into it or use CREATE TABLE to set the schema.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_SCHEMA_NOT_SET",
+      messageParameters = Array.empty
+    )
   }
 
   def specifySchemaAtReadTimeException: Throwable = {
@@ -923,15 +925,10 @@ object DeltaErrors
 
 
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
-    new UnsupportedOperationException(
-      s"""Cannot perform Merge as multiple source rows matched and attempted to modify the same
-         |target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,
-         |when multiple source rows match on the same target row, the result may be ambiguous
-         |as it is unclear which source row should be used to update or delete the matching
-         |target row. You can preprocess the source table to eliminate the possibility of
-         |multiple matches. Please refer to
-         |${generateDocsLink(spark.sparkContext.getConf,
-        "/delta-update.html#upsert-into-a-table-using-merge")}""".stripMargin
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
+      messageParameters = Array(generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#upsert-into-a-table-using-merge"))
     )
   }
 
@@ -1057,15 +1054,12 @@ object DeltaErrors
       path: Path,
       specifiedProperties: Map[String, String],
       existingProperties: Map[String, String]): Throwable = {
-    new AnalysisException(
-      s"""The specified properties do not match the existing properties at $path.
-         |
-         |== Specified ==
-         |${specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
-         |
-         |== Existing ==
-         |${existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
-        """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY",
+      messageParameters = Array(path.toString,
+        specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"),
+        existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"))
+    )
   }
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
@@ -1255,7 +1249,10 @@ object DeltaErrors
   }
 
   def emptyDirectoryException(directory: String): Throwable = {
-    new FileNotFoundException(s"No file found in the directory: $directory.")
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_EMPTY_DIRECTORY",
+      messageParameters = Array(directory)
+    )
   }
 
   def alterTableSetLocationSchemaMismatchException(
@@ -1460,8 +1457,10 @@ object DeltaErrors
   }
 
   def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"Found ${expr.sql}. A generated column cannot use an aggregate expression")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AGGREGATE_IN_GENERATED_COLUMN",
+      messageParameters = Array(expr.sql.toString)
+    )
   }
 
   def generatedColumnsUnsupportedExpression(expr: Expression): Throwable = {
@@ -1976,10 +1975,52 @@ object DeltaErrors
     )
   }
 
+  def unsupportSubqueryInPartitionPredicates(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES",
+      messageParameters = Array.empty
+    )
+  }
+
   def fileAlreadyExists(file: String): Throwable = {
     new DeltaFileAlreadyExistsException(
       errorClass = "DELTA_FILE_ALREADY_EXISTS",
       messageParameters = Array(file)
+    )
+  }
+
+  def replaceWhereUsedInOverwrite(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
+    )
+  }
+
+  def incorrectArrayAccessByName(rightName: String, wrongName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
+      messageParameters = Array(rightName, wrongName)
+    )
+  }
+
+  def showPartitionInNotPartitionedTable(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE",
+      messageParameters = Array(tableName)
+    )
+  }
+
+  def duplicateColumnOnInsert(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DUPLICATE_COLUMNS_ON_INSERT",
+      messageParameters = Array.empty
+    )
+  }
+
+  def timeTravelInvalidBeginValue(timeTravelKey: String, cause: Throwable): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE",
+      messageParameters = Array(timeTravelKey),
+      cause = cause
     )
   }
 }

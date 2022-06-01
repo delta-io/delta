@@ -538,12 +538,9 @@ object SchemaUtils extends DeltaLogging {
         case (Seq(), ArrayType(_, _)) =>
           (Nil, 0)
         case (_, ArrayType(_, _)) =>
-          throw new AnalysisException(
-            s"""An ArrayType was found. In order to access elements of an ArrayType, specify
-               |${prettyFieldName(stack ++ Seq(thisCol, "element"))}
-               |Instead of ${prettyFieldName(stack ++ Seq(thisCol))}
-               """.stripMargin
-          )
+          throw DeltaErrors.incorrectArrayAccessByName(
+            prettyFieldName(stack ++ Seq(thisCol, "element")),
+            prettyFieldName(stack ++ Seq(thisCol)))
         case (Seq(), MapType(_, _, _)) =>
           (Nil, 2)
         case (Seq("key", _ @ _*), MapType(keyType: StructType, _, _)) =>

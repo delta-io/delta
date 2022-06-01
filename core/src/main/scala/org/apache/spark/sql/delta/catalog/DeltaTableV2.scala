@@ -245,8 +245,7 @@ private class WriteIntoDeltaBuilder(
 
   override def overwrite(filters: Array[Filter]): WriteBuilder = {
     if (writeOptions.containsKey("replaceWhere")) {
-      throw new AnalysisException(
-        "You can't use replaceWhere in conjunction with an overwrite by filter")
+      throw DeltaErrors.replaceWhereUsedInOverwrite()
     }
     options.put("replaceWhere", DeltaSourceUtils.translateFilters(filters).sql)
     forceOverwrite = true

@@ -15,6 +15,10 @@
     "message" : [ "Struct not found at position <position>" ],
     "sqlState" : "2F000"
   },
+  "DELTA_AGGREGATE_IN_GENERATED_COLUMN" : {
+    "message" : [ "Found <sqlExpr>. A generated column cannot use an aggregate expression" ],
+    "sqlState" : "42000"
+  },
   "DELTA_AGGREGATION_NOT_SUPPORTED" : {
     "message" : [ "Aggregate functions are not supported in the <operation> <predicate>." ],
     "sqlState" : "0A000"
@@ -179,13 +183,25 @@
     "message" : [ "The specified schema does not match the existing schema at <path>.", "", "== Specified ==", "<specifiedSchema>", "", "== Existing ==", "<existingSchema>", "", "== Differences ==", "<schemaDifferences>", "", "If your intention is to keep the existing schema, you can omit the", "schema from the create table command. Otherwise please ensure that", "the schema matches." ],
     "sqlState" : "42000"
   },
+  "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY" : {
+    "message" : [ "The specified properties do not match the existing properties at <path>.", "", "== Specified ==", "<specificiedProperties>", "", "== Existing ==", "<existingProperties>", "" ],
+    "sqlState" : "42000"
+  },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [ "Found duplicate column(s) <coltype>: <duplicateCols>" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {
+    "message" : [ "Duplicate column names in INSERT clause" ],
     "sqlState" : "42000"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
     "message" : [ "<message>\nPlease remove duplicate columns before you update your table." ],
     "sqlState" : "42000"
+  },
+  "DELTA_EMPTY_DIRECTORY" : {
+    "message" : [ "No file found in the directory: <directory>." ],
+    "sqlState" : "25000"
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [ "Exceeds char/varchar type length limitation" ],
@@ -271,6 +287,10 @@
   },
   "DELTA_INCORRECT_ARRAY_ACCESS" : {
     "message" : [ "Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to", "add to an array." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME" : {
+    "message" : [ "An ArrayType was found. In order to access elements of an ArrayType, specify", "<rightName>", "Instead of <wrongName>", "" ],
     "sqlState" : "42000"
   },
   "DELTA_INCORRECT_LOG_STORE_IMPLEMENTATION" : {
@@ -425,6 +445,10 @@
     "message" : [ "Multiple bloom filter index configurations passed to command for column: <columnName>" ],
     "sqlState" : "0A000"
   },
+  "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE" : {
+    "message" : [ "Cannot perform Merge as multiple source rows matched and attempted to modify the same", "target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,", "when multiple source rows match on the same target row, the result may be ambiguous", "as it is unclear which source row should be used to update or delete the matching", "target row. You can preprocess the source table to eliminate the possibility of", "multiple matches. Please refer to", "<usageReference>" ],
+    "sqlState" : "21000"
+  },
   "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
     "message" : [ "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)" ],
     "sqlState" : "42000"
@@ -521,17 +545,33 @@
     "message" : [ "Please recheck your syntax for '<regExpOption>'" ],
     "sqlState" : "42000"
   },
+  "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
+    "message" : [ "You can't use replaceWhere in conjunction with an overwrite by filter" ],
+    "sqlState" : "22000"
+  },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [ "Data written out does not match replaceWhere '<replaceWhere>'.", "<message>" ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" : {
+    "message" : [ "The schema of your Delta table has changed in an incompatible way since your DataFrame", "or DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.", "Changes:", "<schemaDiff><legacyFlagMessage>" ],
     "sqlState" : "22000"
   },
   "DELTA_SCHEMA_NOT_CONSISTENT_WITH_TARGET" : {
     "message" : [ "The table schema <tableSchema> is not consistent with the target attributes: <targetAttrs>" ],
     "sqlState" : "42000"
   },
+  "DELTA_SCHEMA_NOT_SET" : {
+    "message" : [ "Table schema is not set.  Write data into it or use CREATE TABLE to set the schema." ],
+    "sqlState" : "22000"
+  },
   "DELTA_SET_LOCATION_SCHEMA_MISMATCH" : {
     "message" : [ "", "The schema of the new Delta location is different than the current table schema.", "original schema:", "<original>", "destination schema:", "<destination>", "", "If this is an intended change, you may turn this check off by running:", "%%sql set <config> = true" ],
     "sqlState" : "22000"
+  },
+  "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE" : {
+    "message" : [ "SHOW PARTITIONS is not allowed on a table that is not partitioned: <tableName>" ],
+    "sqlState" : "42000"
   },
   "DELTA_SPARK_SESSION_NOT_SET" : {
     "message" : [ "Active SparkSession not set." ]
@@ -570,6 +610,10 @@
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [ "The provided timestamp (<providedTimestamp>) is after the latest version available to this", "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE" : {
+    "message" : [ "<timeTravelKey> needs to be a valid begin value." ],
     "sqlState" : "42000"
   },
   "DELTA_TRUNCATED_TRANSACTION_LOG" : {
@@ -689,6 +733,10 @@
   },
   "DELTA_UNSUPPORTED_SUBQUERY" : {
     "message" : [ "Subqueries are not supported in the <operation> (condition = <cond>)." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES" : {
+    "message" : [ "Subquery is not supported in partition predicates." ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
