@@ -19,20 +19,22 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
-import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException}
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{And, Expression}
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
+import org.apache.spark.sql.types.{StringType, StructType}
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -130,6 +132,7 @@ case class WriteIntoDelta(
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
 
     // Validate partition predicates
+    var containsDataFilters = false
     val replaceWhere = options.replaceWhere.flatMap { replace =>
       val parsed = parsePredicates(sparkSession, replace)
       if (replaceOnDataColsEnabled) {
@@ -140,6 +143,7 @@ case class WriteIntoDelta(
           throw new AnalysisException("'replaceWhere' cannot be used with data filters when " +
             s"'dataChange' is set to false. Filters: ${dataFilters.mkString(",")}")
         }
+        containsDataFilters = dataFilters.nonEmpty
         Some(metadataPredicates ++ dataFilters)
       } else if (mode == SaveMode.Overwrite) {
         verifyPartitionPredicates(sparkSession, txn.metadata.partitionColumns, parsed)
@@ -173,7 +177,37 @@ case class WriteIntoDelta(
         (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
       case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
         val constraints = extractConstraints(sparkSession, condition)
-        val newFiles = try txn.writeFiles(data, Some(options), constraints) catch {
+
+        // If replaceWhere contains data Filters and CDC is enabled, cdc data should be
+        // written too to produce CDC properly because DeleteCommand rewrites files to delete.
+        val dataToWrite =
+          if (containsDataFilters && CDCReader.isCDCEnabledOnTable(txn.metadata) &&
+              sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED)) {
+            var dataWithDefaultExprs = data
+
+            // pack new data and cdc data into an array of structs and unpack them into rows
+            // to share values in outputCols on both branches, avoiding re-evaluating
+            // non-deterministic expression twice.
+            val outputCols = dataWithDefaultExprs.schema.map(SchemaUtils.fieldToColumn(_))
+            val insertCols = outputCols :+
+              lit(CDCReader.CDC_TYPE_INSERT).as(CDCReader.CDC_TYPE_COLUMN_NAME)
+            val insertDataCols = outputCols :+
+              new Column(Literal.create(CDCReader.CDC_TYPE_NOT_CDC, StringType))
+                .as(CDCReader.CDC_TYPE_COLUMN_NAME)
+            val packedInserts = array(
+              struct(insertCols: _*),
+              struct(insertDataCols: _*)
+            ).expr
+
+            dataWithDefaultExprs
+              .select(explode(new Column(packedInserts)).as("packedData"))
+              .select(
+                (dataWithDefaultExprs.schema.map(_.name) :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+                  .map { n => col(s"packedData.`$n`").as(n) }: _*)
+          } else {
+            data
+          }
+        val newFiles = try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
           case e: InvariantViolationException =>
             throw DeltaErrors.replaceWhereMismatchException(
               options.replaceWhere.get,

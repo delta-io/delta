@@ -570,6 +570,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED =
+    buildConf("replaceWhere.dataColumnsWithCDF.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns will produce
+          |results for CDF. If disabled, it will fall back to the old behavior.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val LOG_SIZE_IN_MEMORY_THRESHOLD =
     buildConf("streaming.logSizeInMemoryThreshold")
       .internal()

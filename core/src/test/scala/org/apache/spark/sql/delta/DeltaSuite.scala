@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -436,6 +437,75 @@ class DeltaSuite extends QueryTest
                 )
               }
             }
+          }
+        }
+      }
+    }
+  }
+
+  test("valid replaceWhere with cdf enabled") {
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(
+        DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString,
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+        withTempDir { dir =>
+          Seq(1, 2, 3, 4).map(i => (i, i + 2)).toDF("key", "value.1")
+            .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+            .withColumn("is_even", $"`value.1`" % 2 === 0)
+            .coalesce(1)
+            .write
+            .format("delta")
+            .partitionBy("is_odd").save(dir.toString)
+
+          checkAnswer(
+            CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 0, 0, spark)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+            Row(1, 3, true, false, "insert", 0) :: Row(3, 5, true, false, "insert", 0) ::
+              Row(2, 4, false, true, "insert", 0) :: Row(4, 6, false, true, "insert", 0) :: Nil)
+
+          def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+          Seq(5, 7).map(i => (i, i + 2)).toDF("key", "value.1")
+            .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+            .withColumn("is_even", $"`value.1`" % 2 === 0)
+            .coalesce(1)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(dir.toString)
+          checkAnswer(
+            data,
+            Seq(2, 4, 5, 7).map(i => (i, i + 2)).toDF("key", "value.1")
+              .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+              .withColumn("is_even", $"`value.1`" % 2 === 0))
+
+          checkAnswer(
+            CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 1, 1, spark)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+            Row(1, 3, true, false, "delete", 1) :: Row(3, 5, true, false, "delete", 1) ::
+              Row(5, 7, true, false, "insert", 1) :: Row(7, 9, true, false, "insert", 1) :: Nil)
+
+          if (enabled) {
+            // replaceWhere on non-partitioning columns if enabled.
+            Seq((4, 8)).toDF("key", "value.1")
+              .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+              .withColumn("is_even", $"`value.1`" % 2 === 0)
+              .write
+              .format("delta")
+              .mode("overwrite")
+              .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 4")
+              .save(dir.toString)
+            checkAnswer(
+              data,
+              Seq((2, 4), (4, 8), (5, 7), (7, 9)).toDF("key", "value.1")
+                .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+                .withColumn("is_even", $"`value.1`" % 2 === 0))
+
+            checkAnswer(
+              CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 2, 2, spark)
+                .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+              Row(4, 6, false, true, "delete", 2) :: Row(4, 8, false, true, "insert", 2) :: Nil)
           }
         }
       }
