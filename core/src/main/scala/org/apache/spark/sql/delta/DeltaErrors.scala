@@ -126,10 +126,10 @@ object DeltaErrors
      """.stripMargin
 
   def deltaSourceIgnoreDeleteError(version: Long, removedFile: String): Throwable = {
-    new UnsupportedOperationException(
-      s"Detected deleted data (for example $removedFile) from streaming source at " +
-        s"version $version. This is currently not supported. If you'd like to ignore deletes, " +
-        "set the option 'ignoreDeletes' to 'true'.")
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_SOURCE_IGNORE_DELETE",
+      messageParameters = Array(removedFile, version.toString)
+    )
   }
 
   def deltaSourceIgnoreChangesError(version: Long, removedFile: String): Throwable = {
@@ -382,8 +382,8 @@ object DeltaErrors
   }
 
   def emptyDataException: Throwable = {
-    new AnalysisException(
-      "Data used in creating the Delta table doesn't have any columns.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_EMPTY_DATA", messageParameters = Array.empty)
   }
 
   def fileNotFoundException(path: String): Throwable = {
@@ -572,17 +572,13 @@ object DeltaErrors
     )
   }
 
-  def unsetNonExistentPropertyException(
-      propertyKey: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new AnalysisException(
-      s"Attempted to unset non-existent property '$propertyKey' in table $deltaTableIdentifier")
-  }
-
   def ambiguousPartitionColumnException(
       columnName: String, colMatches: Seq[StructField]): Throwable = {
-    new AnalysisException(
-      s"Ambiguous partition column ${formatColumn(columnName)} can be" +
-        s" ${formatColumnList(colMatches.map(_.name))}.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AMBIGUOUS_PARTITION_COLUMN",
+      messageParameters = Array(formatColumn(columnName).toString,
+        formatColumnList(colMatches.map(_.name)))
+    )
   }
 
   def tableNotSupportedException(operation: String): Throwable = {
@@ -845,9 +841,9 @@ object DeltaErrors
   }
 
   def truncateTablePartitionNotSupportedException: Throwable = {
-    new AnalysisException(
-      s"Operation not allowed: TRUNCATE TABLE on Delta tables does not support" +
-        " partition predicates; use DELETE to delete specific partitions or rows.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED", messageParameters = Array.empty
+    )
   }
 
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
@@ -892,9 +888,10 @@ object DeltaErrors
   }
 
   def bloomFilterDropOnNonExistingColumnsException(unknownColumns: Seq[String]): Throwable = {
-    new AnalysisException(
-      "Cannot drop bloom filter indices for the following non-existent column(s): "
-        + unknownColumns.mkString(", "))
+    new DeltaAnalysisException(
+      errorClass = "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS",
+      messageParameters = Array(unknownColumns.mkString(", "))
+    )
   }
 
   def cannotRenamePath(tempPath: String, path: String): Throwable = {
@@ -1237,9 +1234,15 @@ object DeltaErrors
 
   def unexpectedNumPartitionColumnsFromFileNameException(
       path: String, parsedCols: Seq[String], expectedCols: Seq[String]): Throwable = {
-    new AnalysisException(s"Expecting ${expectedCols.size} partition column(s): " +
-      s"${formatColumnList(expectedCols)}, but found ${parsedCols.size} partition column(s): " +
-      s"${formatColumnList(parsedCols)} from parsing the file name: $path")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME",
+      messageParameters = Array(
+        expectedCols.size.toString,
+        formatColumnList(expectedCols),
+        parsedCols.size.toString,
+        formatColumnList(parsedCols),
+        path)
+    )
   }
 
   def castPartitionValueException(partitionValue: String, dataType: DataType): Throwable = {
@@ -2021,6 +2024,46 @@ object DeltaErrors
       errorClass = "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE",
       messageParameters = Array(timeTravelKey),
       cause = cause
+    )
+  }
+
+  def removeFileCDCMissingExtendedMetadata(fileName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA",
+      messageParameters = Array(fileName)
+    )
+  }
+
+  def failRelativizePath(pathName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_FAIL_RELATIVIZE_PATH", messageParameters = Array(pathName, pathName)
+    )
+  }
+
+  def invalidFormatFromSourceVersion(wrongVersion: Long, expectedVersion: Integer): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION",
+      messageParameters = Array(expectedVersion.toString, wrongVersion.toString)
+    )
+  }
+
+  def createTableWithNonEmptyLocation(tableId: String, tableLocation: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION",
+      messageParameters = Array(tableId, tableLocation)
+    )
+  }
+
+  def maxArraySizeExceeded(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_MAX_ARRAY_SIZE_EXCEEDED", messageParameters = Array.empty
+    )
+  }
+
+  def replaceWhereWithFilterDataChangeUnset(dataFilters: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET",
+      messageParameters = Array(dataFilters)
     )
   }
 }

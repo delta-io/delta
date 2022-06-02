@@ -27,8 +27,16 @@
     "message" : [ "ALTER TABLE CHANGE COLUMN is not supported for changing column <currentType> to <newType>" ],
     "sqlState" : "0A000"
   },
+  "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
+    "message" : [ "Ambiguous partition column <column> can be <colMatches>." ],
+    "sqlState" : "42000"
+  },
   "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE" : {
     "message" : [ "CREATE TABLE contains two different locations: <identifier> and <location>.", "You can remove the LOCATION clause from the CREATE TABLE statement, or set", "<config> to true to skip this check.", "" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS" : {
+    "message" : [ "Cannot drop bloom filter indices for the following non-existent column(s): <unknownColumns>" ],
     "sqlState" : "42000"
   },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
@@ -187,6 +195,10 @@
     "message" : [ "The specified properties do not match the existing properties at <path>.", "", "== Specified ==", "<specificiedProperties>", "", "== Existing ==", "<existingProperties>", "" ],
     "sqlState" : "42000"
   },
+  "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION" : {
+    "message" : [ "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty but it's not a Delta table" ],
+    "sqlState" : "42000"
+  },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [ "Found duplicate column(s) <coltype>: <duplicateCols>" ],
     "sqlState" : "42000"
@@ -197,6 +209,10 @@
   },
   "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
     "message" : [ "<message>\nPlease remove duplicate columns before you update your table." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_EMPTY_DATA" : {
+    "message" : [ "Data used in creating the Delta table doesn't have any columns." ],
     "sqlState" : "42000"
   },
   "DELTA_EMPTY_DIRECTORY" : {
@@ -246,6 +262,10 @@
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [ "Failed to merge fields '<field>' and '<fieldRoot>'. <fieldChild>" ],
     "sqlState" : "22005"
+  },
+  "DELTA_FAIL_RELATIVIZE_PATH" : {
+    "message" : [ "Failed to relativize the path (<path>). This can happen when absolute paths make", "it into the transaction log, which start with the scheme", "s3://, wasbs:// or adls://. This is a bug that has existed before DBR 5.0.", "To fix this issue, please upgrade your writer jobs to DBR 5.0 and please run:", "%%scala delta.Delta.fixAbsolutePathsInLog(\"<path>\").", "", "If this table was created with a shallow clone across file systems", "(different buckets/containers) and this table is NOT USED IN PRODUCTION, you can", "set the SQL configuration delta.vacuum.relativize.ignoreError", "to true. Using this SQL configuration could lead to accidental data loss,", "therefore we do not recommend the use of this flag unless", "this is a shallow clone for testing purposes." ],
+    "sqlState" : "42000"
   },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [ "Existing file path <path>" ],
@@ -329,6 +349,10 @@
     "message" : [ "The committed version is <committedVersion> but the current version is <currentVersion>." ],
     "sqlState" : "25000"
   },
+  "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
+    "message" : [ "Unsupported format. Expected version is <expectedVersion> but was <realVersion>. Please upgrade your Spark." ],
+    "sqlState" : "42000"
+  },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
@@ -379,6 +403,10 @@
   },
   "DELTA_ITERATOR_ALREADY_CLOSED" : {
     "message" : [ "Iterator is closed" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_MAX_ARRAY_SIZE_EXCEEDED" : {
+    "message" : [ "Please use a limit less than Int.MaxValue - 8." ],
     "sqlState" : "42000"
   },
   "DELTA_MAX_COMMIT_RETRIES_EXCEEDED" : {
@@ -545,12 +573,20 @@
     "message" : [ "Please recheck your syntax for '<regExpOption>'" ],
     "sqlState" : "42000"
   },
+  "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA" : {
+    "message" : [ "RemoveFile created without extended metadata is ineligible for CDC:", "<file>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [ "You can't use replaceWhere in conjunction with an overwrite by filter" ],
     "sqlState" : "22000"
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [ "Data written out does not match replaceWhere '<replaceWhere>'.", "<message>" ],
+    "sqlState" : "22000"
+  },
+  "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET" : {
+    "message" : [ "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false. Filters: <dataFilters>" ],
     "sqlState" : "22000"
   },
   "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" : {
@@ -572,6 +608,10 @@
   "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE" : {
     "message" : [ "SHOW PARTITIONS is not allowed on a table that is not partitioned: <tableName>" ],
     "sqlState" : "42000"
+  },
+  "DELTA_SOURCE_IGNORE_DELETE" : {
+    "message" : [ "Detected deleted data (for example <removedFile>) from streaming source at version <version>. This is currently not supported. If you'd like to ignore deletes, set the option 'ignoreDeletes' to 'true'." ],
+    "sqlState" : "0A000"
   },
   "DELTA_SPARK_SESSION_NOT_SET" : {
     "message" : [ "Active SparkSession not set." ]
@@ -620,8 +660,16 @@
     "message" : [ "<path>: Unable to reconstruct state at version <version> as the transaction log has been truncated due to manual deletion or the log retention policy (<logRetentionKey>=<logRetention>) and checkpoint retention policy (<checkpointRetentionKey>=<checkpointRetention>)" ],
     "sqlState" : "22000"
   },
+  "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED" : {
+    "message" : [ "Operation not allowed: TRUNCATE TABLE on Delta tables does not support partition predicates; use DELETE to delete specific partitions or rows." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE" : {
     "message" : [ "Expected AttributeReference but got <ref>" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME" : {
+    "message" : [ "Expecting <expectedColsSize> partition column(s): <expectedCols>, but found <parsedColsSize> partition column(s): <parsedCols> from parsing the file name: <path>" ],
     "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_PARTIAL_SCAN" : {

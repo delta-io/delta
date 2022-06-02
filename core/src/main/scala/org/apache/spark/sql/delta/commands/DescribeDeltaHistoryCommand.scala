@@ -80,7 +80,7 @@ case class DescribeDeltaHistoryCommand(
 
     // Max array size
     if (limit.exists(_ > Int.MaxValue - 8)) {
-      throw new IllegalArgumentException("Please use a limit less than Int.MaxValue - 8.")
+      throw DeltaErrors.maxArraySizeExceeded()
     }
 
     val deltaLog = DeltaLog.forTable(sparkSession, basePath)

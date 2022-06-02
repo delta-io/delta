@@ -100,9 +100,7 @@ object DeltaSourceOffset {
       throw DeltaErrors.cannotFindSourceVersionException(json)
     }
     if (versionOpt.get > VERSION) {
-      throw new IllegalStateException(
-        s"Unsupported format. Expected version is $VERSION " +
-            s"but was ${versionOpt.get}. Please upgrade your Spark.")
+      throw DeltaErrors.invalidFormatFromSourceVersion(versionOpt.get, VERSION)
     }
   }
 

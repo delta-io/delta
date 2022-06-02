@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -52,8 +52,7 @@ class TahoeRemoveFileIndex(
             // extended metadata, so all removes in a table with CDC enabled should have it. (The
             // only exception is FSCK removes, which we screen out separately because they have
             // dataChange set to false.)
-            throw new IllegalStateException(
-              s"RemoveFile created without extended metadata is ineligible for CDC:\n$r")
+            throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
           }
           // We add the metadata as faked partition columns in order to attach it on a per-file
           // basis.

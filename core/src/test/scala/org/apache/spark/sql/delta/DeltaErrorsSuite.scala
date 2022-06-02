@@ -1505,8 +1505,11 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage ==
         "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
-
     }
+  }
+
+  // Complier complains the lambda function is too large if we put all tests in one lambda
+  test("test DeltaErrors OSS methods more") {
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.schemaNotSetException
@@ -1529,9 +1532,9 @@ trait DeltaErrorsSuiteBase
 
       val msg =
         s"""The schema of your Delta table has changed in an incompatible way since your DataFrame
-        |or DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
-        |Changes:
-        |${schemaDiff.mkString("\n")}""".stripMargin
+           |or DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
+           |Changes:
+           |${schemaDiff.mkString("\n")}""".stripMargin
       assert(e.getMessage == msg)
       assert(e.getSqlState == "22000")
     }
@@ -1599,9 +1602,9 @@ trait DeltaErrorsSuiteBase
 
       val msg =
         s"""An ArrayType was found. In order to access elements of an ArrayType, specify
-          |rightName
-          |Instead of wrongName
-          |""".stripMargin
+           |rightName
+           |Instead of wrongName
+           |""".stripMargin
       assert(e.getMessage == msg)
     }
     {
@@ -1732,15 +1735,15 @@ trait DeltaErrorsSuiteBase
       val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
       val msg =
         s"""This Delta operation requires the SparkSession to be configured with the
-          |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
-          |configurations when creating the SparkSession as shown below.
-          |
-          |  SparkSession.builder()
-          |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-          |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
-          |    ...
-          |    .build()
-          |""".stripMargin
+           |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
+           |configurations when creating the SparkSession as shown below.
+           |
+           |  SparkSession.builder()
+           |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+           |    ...
+           |    .build()
+           |""".stripMargin
       assert(e.getMessage == msg)
     }
     {
@@ -1762,7 +1765,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "0A000")
       assert(e.getMessage ==
         "CONVERT TO DELTA only supports parquet tables, but you are trying to " +
-        s"convert a source1 source: $ident")
+          s"convert a source1 source: $ident")
     }
     {
       val from = StructType(Seq(StructField("c0", IntegerType)))
@@ -1774,7 +1777,139 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage ==
         s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
-        "columns must match.")
+          "columns must match.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.removeFileCDCMissingExtendedMetadata("file")
+      }
+      assert(e.getErrorClass == "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """RemoveFile created without extended metadata is ineligible for CDC:
+          |file""".stripMargin)
+    }
+    {
+      val columnName = "c0"
+      val colMatches = Seq(StructField("c0", IntegerType))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.ambiguousPartitionColumnException(columnName, colMatches)
+      }
+      assert(e.getErrorClass == "DELTA_AMBIGUOUS_PARTITION_COLUMN")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Ambiguous partition column ${DeltaErrors.formatColumn(columnName)} can be" +
+          s" ${DeltaErrors.formatColumnList(colMatches.map(_.name))}."
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.truncateTablePartitionNotSupportedException
+      }
+      assert(e.getErrorClass == "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Operation not allowed: TRUNCATE TABLE on Delta tables does not support" +
+          " partition predicates; use DELETE to delete specific partitions or rows.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidFormatFromSourceVersion(100, 10)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Unsupported format. Expected version is 10 but was 100. Please upgrade your Spark.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.emptyDataException
+      }
+      assert(e.getErrorClass == "DELTA_EMPTY_DATA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Data used in creating the Delta table doesn't have any columns.")
+    }
+    {
+      val path = "path"
+      val parsedCols = Seq("col1", "col2")
+      val expectedCols = Seq("col3", "col4")
+
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(path, parsedCols,
+          expectedCols)
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Expecting ${expectedCols.size} partition column(s): " +
+          s"${DeltaErrors.formatColumnList(expectedCols)}," +
+          s" but found ${parsedCols.size} partition column(s): " +
+          s"${DeltaErrors.formatColumnList(parsedCols)} from parsing the file name: $path"
+      assert(e.getMessage == msg)
+    }
+    {
+      val version = 100L
+      val removedFile = "file"
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removedFile)
+      }
+      assert(e.getErrorClass == "DELTA_SOURCE_IGNORE_DELETE")
+      assert(e.getSqlState == "0A000")
+
+      val msg =
+        s"Detected deleted data (for example $removedFile) from streaming source at " +
+          s"version $version. This is currently not supported. If you'd like to ignore deletes, " +
+          "set the option 'ignoreDeletes' to 'true'."
+      assert(e.getMessage == msg)
+    }
+    {
+      val tableId = "tableId"
+      val tableLocation = "path"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithNonEmptyLocation(tableId, tableLocation)
+      }
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Cannot create table ('${tableId}')." +
+          s" The associated location ('${tableLocation}') is not empty but " +
+          "it's not a Delta table"
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.maxArraySizeExceeded()
+      }
+      assert(e.getErrorClass == "DELTA_MAX_ARRAY_SIZE_EXCEEDED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Please use a limit less than Int.MaxValue - 8.")
+    }
+    {
+      val unknownColumns = Seq("col1", "col2")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterDropOnNonExistingColumnsException(unknownColumns)
+      }
+      assert(e.getErrorClass == "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Cannot drop bloom filter indices for the following non-existent column(s): "
+          + unknownColumns.mkString(", "))
+    }
+    {
+      val dataFilters = "filters"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters)
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET")
+      assert(e.getSqlState == "22000")
+
+      val msg =
+        "'replaceWhere' cannot be used with data filters when " +
+          s"'dataChange' is set to false. Filters: ${dataFilters}"
+      assert(e.getMessage == msg)
     }
   }
 }

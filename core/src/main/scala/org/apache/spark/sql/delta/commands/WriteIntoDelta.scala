@@ -140,8 +140,7 @@ case class WriteIntoDelta(
         val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
           parsed.head, txn.metadata.partitionColumns, sparkSession)
         if (rearrangeOnly && dataFilters.nonEmpty) {
-          throw new AnalysisException("'replaceWhere' cannot be used with data filters when " +
-            s"'dataChange' is set to false. Filters: ${dataFilters.mkString(",")}")
+          throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters.mkString(","))
         }
         containsDataFilters = dataFilters.nonEmpty
         Some(metadataPredicates ++ dataFilters)
