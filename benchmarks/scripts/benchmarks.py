@@ -324,7 +324,8 @@ else echo "Failed to install packages: Package manager not found. You must manua
             )
             print(scp_cmd)
             run_cmd(scp_cmd, stream_output=True)
-            run_cmd(f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} chmod +x {script_file_name}")
+            run_cmd_over_ssh(f"chmod +x {script_file_name}", cluster_hostname, ssh_id_file, ssh_user,
+                             throw_on_error=False)
         finally:
             if os.path.exists(script_file_name):
                 os.remove(script_file_name)
