@@ -28,7 +28,7 @@ limitations under the License.-->
         <maven.compiler.target>1.8</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
         <scala.main.version>2.12</scala.main.version>
-        <connectors.version>0.4.0</connectors.version>
+        <connectors.version>0.4.1</connectors.version>
         <flink-version>1.12.0</flink-version>
         <hadoop-version>3.1.0</hadoop-version>
     </properties>

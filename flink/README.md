@@ -19,7 +19,7 @@ utilizing [Delta Standalone JVM library](https://github.com/delta-io/connectors#
   
   | connector's version  | Flink's version |
   | :---: | :---: |
-  |    0.4.0    |    >= 1.12.0    |
+  |    0.4.x    |    >= 1.12.0    |
   
 #### Known limitations:
 
@@ -71,12 +71,12 @@ Scala 2.12:
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-flink</artifactId>
-            <version>0.4.0</version>
+            <version>0.4.1</version>
         </dependency>
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-standalone_${scala.main.version}</artifactId>
-            <version>0.4.0</version>
+            <version>0.4.1</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -115,8 +115,8 @@ Please replace the versions of the dependencies with the ones you are using.
 
 ```
 libraryDependencies ++= Seq(
-  "io.delta" %% "delta-flink" % "0.4.0",
-  "io.delta" %% "delta-standalone" % "0.4.0",  
+  "io.delta" %% "delta-flink" % "0.4.1",
+  "io.delta" %% "delta-standalone" % "0.4.1",  
   "org.apache.flink" %% "flink-clients" % flinkVersion,
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
   "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
