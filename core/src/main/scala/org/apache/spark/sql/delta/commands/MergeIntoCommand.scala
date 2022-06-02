@@ -873,9 +873,14 @@ object MergeIntoCommand {
       val deleteRowProj = generateProjection(deleteRowOutput)
       val outputProj = UnsafeProjection.create(outputRowEncoder.schema)
 
+      // this is accessing ROW_DROPPED_COL. If ROW_DROPPED_COL is not in outputRowEncoder.schema
+      // then CDC must be disabled and it's the column after our output cols
       def shouldDeleteRow(row: InternalRow): Boolean =
-        row.getBoolean(outputRowEncoder.schema.fieldIndex(ROW_DROPPED_COL))
-
+        row.getBoolean(
+          outputRowEncoder.schema.getFieldIndex(ROW_DROPPED_COL)
+            .getOrElse(outputRowEncoder.schema.fields.size)
+        )
+        
       def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
           // Target row did not match any source row, so just copy it to the output
