@@ -134,6 +134,8 @@ Navigate to your local copy of this repository and this benchmark directory. The
 Verify that you have the following information
   - <HOST_NAME>: Cluster master node host name
   - <PEM_FILE>: Local path to your PEM file for SSH into the master node.
+  - <SSH_USER>: The username that will be used to SSH into the master node. The username is tied to the SSH key you
+    have imported into the cloud. It defaults to `hadoop`.
   - <BENCHMARK_PATH>: Path where tables will be created. Make sure your credentials have read/write permission to that path.
   - <CLOUD_PROVIDER>: Currently either `gcp` or `aws`. For each storage type, different Delta properties might be added.
     
@@ -143,6 +145,7 @@ Then run a simple table write-read test: Run the following in your shell.
 ./run-benchmark.py \
     --cluster-hostname <HOSTNAME> \
     -i <PEM_FILE> \
+    --ssh-user <SSH_USER> \
     --benchmark-path <BENCHMARK_PATH> \
     --cloud-provider <CLOUD_PROVIDER> \
     --benchmark test
@@ -215,6 +218,7 @@ Now that you are familiar with how the framework runs the workload, you can try 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --cloud-provider <CLOUD_PROVIDER> \
         --benchmark tpcds-1gb-delta-load
@@ -224,6 +228,7 @@ Now that you are familiar with how the framework runs the workload, you can try 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --source-path <SOURCE_PATH> \
         --cloud-provider gcp \
@@ -235,6 +240,7 @@ Now that you are familiar with how the framework runs the workload, you can try 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --cloud-provider <CLOUD_PROVIDER> \
         --benchmark tpcds-1gb-delta
@@ -248,6 +254,7 @@ Finally, you are all set up to run the full scale benchmark. Similar to the 1GB 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --cloud-provider <CLOUD_PROVIDER> \
         --benchmark tpcds-3tb-delta-load
@@ -257,6 +264,7 @@ Finally, you are all set up to run the full scale benchmark. Similar to the 1GB 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --source-path <SOURCE_PATH> \
         --cloud-provider gcp \
@@ -268,6 +276,7 @@ Finally, you are all set up to run the full scale benchmark. Similar to the 1GB 
     ./run-benchmark.py \
         --cluster-hostname <HOSTNAME> \
         -i <PEM_FILE> \
+        --ssh-user <SSH_USER> \
         --benchmark-path <BENCHMARK_PATH> \
         --cloud-provider <CLOUD_PROVIDER> \
         --benchmark tpcds-3tb-delta
