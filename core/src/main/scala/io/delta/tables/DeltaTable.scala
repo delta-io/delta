@@ -680,12 +680,15 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table using the given SparkSession.
+   * Check if the provided `identifier` string represents a Delta table.
+   * Identifier strings can be either a path or a table name.
+   * In the case of a file path, it checks if it is the root of a Delta
+   * table using the given SparkSession.
    *
-   * An example would be
+   * Examples are as follows:
    * {{{
    *   DeltaTable.isDeltaTable(spark, "path/to/table")
+   *   DeltaTable.isDeltaTable(spark, "MyDeltaTable")
    * }}}
    *
    * @since 0.4.0
@@ -695,8 +698,11 @@ object DeltaTable {
     if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
       val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
       rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
+    } else if (DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)) {
+      true
     } else {
-      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
+      DeltaTableUtils.isDeltaTable(sparkSession,
+        sparkSession.sessionState.sqlParser.parseTableIdentifier(identifier))
     }
   }
 
