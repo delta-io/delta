@@ -669,7 +669,7 @@ class DeltaMergeBuilder(object):
     """
     Builder to specify how to merge data from source DataFrame into the target Delta table.
     Use :py:meth:`delta.tables.DeltaTable.merge` to create an object of this class.
-    Using this builder, you can specify any number of ``whenMatched`` and ``whenNotMatched`` 
+    Using this builder, you can specify any number of ``whenMatched`` and ``whenNotMatched``
     clauses. Here are the constraints on these clauses.
 
     - Constraints in the ``whenMatched`` clauses:
