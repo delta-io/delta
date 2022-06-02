@@ -1820,7 +1820,8 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
       assert(e.getSqlState == "42000")
       assert(e.getMessage ==
-        "Unsupported format. Expected version is 10 but was 100. Please upgrade your Spark.")
+        "Unsupported format. Expected version should be smaller than or equal to 10 but was 100. " +
+          "Please upgrade to newer version of Delta.")
     }
     {
       val e = intercept[DeltaAnalysisException] {

@@ -532,10 +532,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
   }
 
   test("unknown sourceVersion value") {
+    // Set unknown sourceVersion as the max allowed version plus 1.
+    var unknownVersion = 2
+
     val json =
       s"""
          |{
-         |  "sourceVersion": ${Long.MaxValue},
+         |  "sourceVersion": $unknownVersion,
          |  "reservoirVersion": 1,
          |  "index": 1,
          |  "isStartingVersion": true
@@ -544,7 +547,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     val e = intercept[IllegalStateException] {
       DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
     }
-    assert(e.getMessage.contains("Please upgrade your Spark"))
+    assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
   }
 
   test("invalid sourceVersion value") {
@@ -1463,9 +1466,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             .map(_.sources(0).endOffset)
             .map(offsetJson => DeltaSourceOffset(id, SerializedOffset(offsetJson)))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 1, 0, isStartingVersion = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 2, -1, isStartingVersion = false)
+              :: DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 2, -1,
+                isStartingVersion = false)
               :: Nil)
         } finally {
           q.stop()

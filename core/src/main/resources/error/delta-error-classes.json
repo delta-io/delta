@@ -350,7 +350,7 @@
     "sqlState" : "25000"
   },
   "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
-    "message" : [ "Unsupported format. Expected version is <expectedVersion> but was <realVersion>. Please upgrade your Spark." ],
+    "message" : [ "Unsupported format. Expected version should be smaller than or equal to <expectedVersion> but was <realVersion>. Please upgrade to newer version of Delta." ],
     "sqlState" : "42000"
   },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
