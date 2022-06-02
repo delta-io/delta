@@ -160,14 +160,6 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("isDeltaTable - with table name") {
-    withTempDir { dir =>
-      withTable("anotherDeltaTable") {
-        testData.write.format("delta").saveAsTable("anotherDeltaTable")
-      }
-    }
-  }
-
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
