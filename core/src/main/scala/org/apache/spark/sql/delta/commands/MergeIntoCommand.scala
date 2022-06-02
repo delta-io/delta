@@ -880,7 +880,7 @@ object MergeIntoCommand {
           outputRowEncoder.schema.getFieldIndex(ROW_DROPPED_COL)
             .getOrElse(outputRowEncoder.schema.fields.size)
         )
-        
+
       def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
           // Target row did not match any source row, so just copy it to the output
