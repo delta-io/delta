@@ -54,8 +54,8 @@ import org.apache.spark.sql.types.StructType
  *
  * In combination with `Overwrite` dynamic partition overwrite mode (option `partitionOverwriteMode`
  * set to `dynamic`, or in spark conf `spark.sql.sources.partitionOverwriteMode` set to `dynamic`)
- * is also supported. However a `replaceWhere` will always take precedent over dynamic partition
- * overwrite mode (and effectively disable it).
+ * is also supported. However a `replaceWhere` option can not be used while dynamic partition mode
+ * is enabled.
  *
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
@@ -134,6 +134,18 @@ case class WriteIntoDelta(
     val replaceOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
 
+    val useDynamicPartitionOverwriteMode = {
+      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
+        options.isDynamicPartitionOverwriteMode
+      options.replaceWhere.foreach { _ =>
+        if (useDynamic) {
+          throw new AnalysisException(s"'${DeltaOptions.REPLACE_WHERE_OPTION}' cannot be used" +
+            s" when '${DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION}' is set to 'DYNAMIC'")
+        }
+      }
+      useDynamic
+    }
+
     // Validate partition predicates
     val replaceWhere = options.replaceWhere.flatMap { replace =>
       val parsed = parsePredicates(sparkSession, replace)
@@ -152,18 +164,6 @@ case class WriteIntoDelta(
       } else {
         None
       }
-    }
-
-    val useDynamicPartitionOverwriteMode = {
-      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
-        options.isDynamicPartitionOverwriteMode
-      replaceWhere.foreach { replace =>
-        if (useDynamic) {
-          throw new AnalysisException("'replaceWhere' cannot be used when " +
-            "'partitionOverwriteMode' is set to 'DYNAMIC'")
-        }
-      }
-      useDynamic
     }
 
     if (txn.readVersion < 0) {

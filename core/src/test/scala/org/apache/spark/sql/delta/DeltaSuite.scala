@@ -615,7 +615,7 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("part")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
     }
@@ -637,7 +637,7 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("part")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("value").as[String], "a", "b", "d")
     }
@@ -659,7 +659,7 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("part")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
         ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
@@ -682,7 +682,7 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("part1", "part2")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("part1", "part2", "value").as[(String, String, Int)],
         ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
@@ -706,13 +706,13 @@ class DeltaSuite extends QueryTest
         .write
         .format("delta")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
     }
   }
 
-  test("batch write: append, dynamic partition overwrite with replaceWhere") {
+  test("batch write: append, dynamic partition overwrite not supported with replaceWhere") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
@@ -732,11 +732,62 @@ class DeltaSuite extends QueryTest
           .partitionBy("part1", "part2")
           .mode("overwrite")
           .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
-          .option("partitionOverwriteMode", "dynamic")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
           .save(tempDir.getCanonicalPath)
       }
       assert(e.getMessage ===
         "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite set via conf") {
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+      }
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite set via conf and overridden via option") {
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "static")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
+      }
     }
   }
 
@@ -756,7 +807,7 @@ class DeltaSuite extends QueryTest
         .write
         .format("delta")
         .mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
     }
