@@ -559,6 +559,10 @@ case class MergeIntoCommand(
     val joinedPlan = joinedDF.queryExecution.analyzed
     val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
 
+    def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {
+      tryResolveReferencesForExpressions(spark, exprs, joinedPlan)
+    }
+
     // ==== Generate the expressions to process full-outer join output and generate target rows ====
     // If there are N columns in the target table, there will be N + 2 columns after processing
     // - N columns for target table
@@ -570,13 +574,14 @@ case class MergeIntoCommand(
     // performing the final write, and the increment column will always be dropped after executing
     // the metrics UDF.
 
-    // We produce both rows for the CDC_TYPE_NOT_CDC partition to be written to the main table,
-    // and rows for the CDC partitions to be written as CDC files.
+    // We produce rows for both the main table data (with CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC),
+    // and rows for the CDC data which will be output to CDCReader.CDC_LOCATION.
     // See [[CDCReader]] for general details on how partitioning on the CDC type column works.
 
-    def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {
-      tryResolveReferencesForExpressions(spark, exprs, joinedPlan)
-    }
+    // In the following two functions `matchedClauseOutput` and `notMatchedClauseOutput`, we
+    // produce a Seq[Expression] for each intended output row.
+    // Depending on the clause and whether CDC is enabled, we output between 0 and 3 rows, as a
+    // Seq[Seq[Expression]]
 
     def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
       val exprs = clause match {
@@ -587,12 +592,12 @@ case class MergeIntoCommand(
           if (cdcEnabled) {
             // For update preimage, we have do a no-op copy with
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
-            // (because the metric will be incremented in the main partition)
+            // (because the metric will be incremented in `mainDataOutput`)
             val preImageOutput = targetOutputCols :+ Literal.TrueLiteral :+
               Literal(CDC_TYPE_UPDATE_PREIMAGE)
             // For update postimage, we have the same expressions as for mainDataOutput but with
-            // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
-            // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
+            // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
+            // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
             val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
               Literal(CDC_TYPE_UPDATE_POSTIMAGE)
             Seq(mainDataOutput, preImageOutput, postImageOutput)
@@ -600,10 +605,10 @@ case class MergeIntoCommand(
             Seq(mainDataOutput)
           }
         case _: DeltaMergeIntoDeleteClause =>
-          // Since the row will be deleted we don't need an output expression for the main partition
+          // Since the row will be deleted we don't need an output expression for the main table
           if (cdcEnabled) {
             // For delete we do a no-op copy with CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
-            // Since we don't write to the main partition, we need to increment the metric column
+            // Since we don't write to the main table, we need to increment the metric column
             // INCR_ROW_COUNT_COL here
             val deleteCdcOutput = targetOutputCols :+ incrDeletedCountExpr :+
               Literal(CDC_TYPE_DELETE)
@@ -621,8 +626,8 @@ case class MergeIntoCommand(
         clause.resolvedActions.map(_.expr) :+ incrInsertedCountExpr :+ Literal(CDC_TYPE_NOT_CDC))
       if (cdcEnabled) {
         // For insert we have the same expressions as for mainDataOutput, but with
-        // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in the main
-        // partition), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_INSERT
+        // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
+        // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_INSERT
         val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
           Literal(CDC_TYPE_INSERT)
         Seq(mainDataOutput, insertCdcOutput)

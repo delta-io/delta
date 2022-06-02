@@ -37,7 +37,6 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
-
   /**
    * Utility method for simpler test writing when there's at most clause of each type.
    */
@@ -227,5 +226,4 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       .toDF("key", "targetVal", "srcVal", "_change_type", "_commit_version"),
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
-
 }
