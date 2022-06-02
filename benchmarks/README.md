@@ -11,7 +11,7 @@ This TPC-DS benchmark is constructed such that you have to run the following two
 
 The next section will provide the detailed steps of how to setup the necessary Hive Metastore and a cluster, how to test the setup with small-scale data, and then finally run the full scale benchmark.
 
-### Amazon Web Services
+### Configure cluster with Amazon Web Services
 
 #### Prerequisites
 - An AWS account with necessary permissions to do the following:
@@ -51,7 +51,7 @@ Create a new S3 bucket (or use an existing one) which is in the same region as y
 
 _________________
 
-### Google Cloud Platform
+### Configure cluster with Google Cloud Platform
 
 #### Prerequisites
 - A GCP account with necessary permissions to do the following:
