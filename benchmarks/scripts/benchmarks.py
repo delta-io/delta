@@ -269,10 +269,24 @@ touch {self.completed_file}
         script_file_name = f"{self.benchmark_id}-install-deps.sh"
         script_file_text = """
 #!/bin/bash
-packagesNeeded='screen'
-if [ -x "$(command -v yum)" ]; then sudo yum install $packagesNeeded
-elif [ -x "$(command -v apt)" ]; then sudo apt install $packagesNeeded
-else echo "Failed to install packages: Package manager not found. You must manually install: $packagesNeeded">&2; exit 1; fi
+package='screen'
+if [ -x "$(command -v yum)" ]; then
+    if rpm -q $package; then
+        echo "$package has already been installed"
+    else	    
+        sudo yum -y install $package
+    fi
+elif [ -x "$(command -v apt)" ]; then 
+    if dpkg -s $package; then
+        echo "$package has already been installed"
+    else
+        sudo apt install $package
+    fi
+else
+    echo "Failed to install packages: Package manager not found. You must manually install: $package">&2; exit 1;
+fi
+
+
         """.strip()
         self.copy_script_via_ssh(cluster_hostname, ssh_id_file, ssh_user, script_file_name, script_file_text)
         print(">>> Install dependencies script generated and uploaded\n")
