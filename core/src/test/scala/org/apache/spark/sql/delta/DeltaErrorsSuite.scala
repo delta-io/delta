@@ -1912,6 +1912,14 @@ trait DeltaErrorsSuiteBase
           s"'dataChange' is set to false. Filters: ${dataFilters}"
       assert(e.getMessage == msg)
     }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.missingTableIdentifierException("read")
+      }
+      assert(e.getErrorClass == "DELTA_OPERATION_MISSING_PATH")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Please provide the path or table identifier for read.")
+    }
   }
 }
 

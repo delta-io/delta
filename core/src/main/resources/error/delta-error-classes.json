@@ -537,6 +537,10 @@
     "message" : [ "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel." ],
     "sqlState" : "42000"
   },
+  "DELTA_OPERATION_MISSING_PATH" : {
+    "message" : [ "Please provide the path or table identifier for <operation>." ],
+    "sqlState" : "42000"
+  },
   "DELTA_OPERATION_NOT_ALLOWED" : {
     "message" : [ "Operation not allowed: `<operation>` is not supported for Delta tables" ],
     "sqlState" : "42000"

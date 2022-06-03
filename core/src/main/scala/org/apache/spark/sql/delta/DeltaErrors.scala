@@ -501,8 +501,10 @@ object DeltaErrors
   }
 
   def missingTableIdentifierException(operationName: String): Throwable = {
-    new AnalysisException(
-      s"Please provide the path or table identifier for $operationName.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_MISSING_PATH",
+      messageParameters = Array(operationName)
+    )
   }
 
   def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
