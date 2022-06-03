@@ -519,6 +519,8 @@ case class MergeIntoCommand(
     deltaTxn: OptimisticTransaction,
     filesToRewrite: Seq[AddFile]
   ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
+    import org.apache.spark.sql.catalyst.expressions.Literal.{TrueLiteral, FalseLiteral}
+
     val targetOutputCols = getTargetOutputCols(deltaTxn)
 
     // Generate a new logical plan that has same output attributes exprIds as the target plan.
@@ -590,18 +592,18 @@ case class MergeIntoCommand(
         case u: DeltaMergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false and
           // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
-          val mainDataOutput = u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+
+          val mainDataOutput = u.resolvedActions.map(_.expr) :+ FalseLiteral :+
             incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
           if (cdcEnabled) {
             // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
             // (because the metric will be incremented in `mainDataOutput`)
-            val preImageOutput = targetOutputCols :+ Literal.FalseLiteral :+ Literal.TrueLiteral :+
+            val preImageOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
               Literal(CDC_TYPE_UPDATE_PREIMAGE)
             // For update postimage, we have the same expressions as for mainDataOutput but with
             // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
             // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
-            val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+            val postImageOutput = mainDataOutput.dropRight(2) :+ TrueLiteral :+
               Literal(CDC_TYPE_UPDATE_POSTIMAGE)
             Seq(mainDataOutput, preImageOutput, postImageOutput)
           } else {
@@ -610,14 +612,14 @@ case class MergeIntoCommand(
         case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
           // CDC_TYPE_NOT_CDC
-          val mainDataOutput = targetOutputCols :+ Literal.TrueLiteral :+ incrDeletedCountExpr :+
+          val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
             Literal(CDC_TYPE_NOT_CDC)
           if (cdcEnabled) {
             // For delete we do a no-op copy with ROW_DELETED_COL = false, INCR_ROW_COUNT_COL as a
             // no-op (because the metric will be incremented in `mainDataOutput`) and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
-            val deleteCdcOutput = targetOutputCols :+ Literal.FalseLiteral :+
-              Literal.TrueLiteral :+ Literal(CDC_TYPE_DELETE)
+            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
+              Literal(CDC_TYPE_DELETE)
             Seq(mainDataOutput, deleteCdcOutput)
           } else {
             Seq(mainDataOutput)
@@ -630,14 +632,13 @@ case class MergeIntoCommand(
       // Generate insert expressions and set ROW_DELETED_COL = false and
       // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
       val mainDataOutput = resolveOnJoinedPlan(
-        clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr :+
+        clause.resolvedActions.map(_.expr) :+ FalseLiteral :+ incrInsertedCountExpr :+
           Literal(CDC_TYPE_NOT_CDC))
       if (cdcEnabled) {
         // For insert we have the same expressions as for mainDataOutput, but with
         // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
         // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_INSERT
-        val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
-          Literal(CDC_TYPE_INSERT)
+        val insertCdcOutput = mainDataOutput.dropRight(2) :+ TrueLiteral :+ Literal(CDC_TYPE_INSERT)
         Seq(mainDataOutput, insertCdcOutput)
       } else {
         Seq(mainDataOutput)
@@ -646,7 +647,7 @@ case class MergeIntoCommand(
 
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
       // if condition is None, then expression always evaluates to true
-      val condExpr = clause.condition.getOrElse(Literal.TrueLiteral)
+      val condExpr = clause.condition.getOrElse(TrueLiteral)
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
@@ -670,10 +671,10 @@ case class MergeIntoCommand(
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.FalseLiteral :+ incrNoopCountExpr :+
+        resolveOnJoinedPlan(targetOutputCols :+ FalseLiteral :+ incrNoopCountExpr :+
           Literal(CDC_TYPE_NOT_CDC)),
       deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.TrueLiteral :+ Literal.TrueLiteral :+
+        resolveOnJoinedPlan(targetOutputCols :+ TrueLiteral :+ TrueLiteral :+
           Literal(CDC_TYPE_NOT_CDC)),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
@@ -840,6 +841,26 @@ object MergeIntoCommand {
   val ROW_DROPPED_COL = "_row_dropped_"
   val INCR_ROW_COUNT_COL = "_incr_row_count_"
 
+  /**
+   * @param targetRowHasNoMatch   whether a joined row is a target row with no match in the source
+   *                              table
+   * @param sourceRowHasNoMatch   whether a joined row is a source row with no match in the target
+   *                              table
+   * @param matchedConditions     condition for each match clause
+   * @param matchedOutputs        corresponding output for each match clause. for each clause, we
+   *                              have 1-3 output rows, each of which is a sequence of expressions
+   *                              to apply to the joined row
+   * @param notMatchedConditions  condition for each not-matched clause
+   * @param notMatchedOutputs     corresponding output for each not-matched clause. for each clause,
+   *                              we have 1-2 output rows, each of which is a sequence of
+   *                              expressions to apply to the joined row
+   * @param noopCopyOutput        no-op expression to copy a target row to the output
+   * @param deleteRowOutput       expression to drop a row from the final output. this is used for
+   *                              source rows that don't match any not-matched clauses
+   * @param joinedAttributes      schema of our outer-joined dataframe
+   * @param joinedRowEncoder      joinedDF row encoder
+   * @param outputRowEncoder      final output row encoder
+   */
   class JoinedRowProcessor(
       targetRowHasNoMatch: Expression,
       sourceRowHasNoMatch: Expression,
@@ -875,11 +896,12 @@ object MergeIntoCommand {
 
       // this is accessing ROW_DROPPED_COL. If ROW_DROPPED_COL is not in outputRowEncoder.schema
       // then CDC must be disabled and it's the column after our output cols
-      def shouldDeleteRow(row: InternalRow): Boolean =
+      def shouldDeleteRow(row: InternalRow): Boolean = {
         row.getBoolean(
           outputRowEncoder.schema.getFieldIndex(ROW_DROPPED_COL)
             .getOrElse(outputRowEncoder.schema.fields.size)
         )
+      }
 
       def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
