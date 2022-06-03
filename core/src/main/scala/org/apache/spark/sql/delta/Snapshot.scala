@@ -89,7 +89,7 @@ class Snapshot(
   /** Performs validations during initialization */
   protected def init(): Unit = {
     deltaLog.protocolRead(protocol)
-    SchemaUtils.recordUserDefinedTypes(deltaLog, metadata.schema)
+    SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
   }
 
   // Reconstruct the state by applying deltas in order to the checkpoint.

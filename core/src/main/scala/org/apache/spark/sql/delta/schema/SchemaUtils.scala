@@ -1105,24 +1105,32 @@ object SchemaUtils extends DeltaLogging {
     }
   }
 
-  /** Find all `UserDefinedType`s used in `dt` recursively */
-  def findUserDefinedTypes(dt: DataType): Seq[UserDefinedType[_]] = dt match {
-    case s: StructType => s.fields.flatMap(f => findUserDefinedTypes(f.dataType))
-    case a: ArrayType => findUserDefinedTypes(a.elementType)
-    case m: MapType => findUserDefinedTypes(m.keyType) ++ findUserDefinedTypes(m.valueType)
-    case udt: UserDefinedType[_] => Seq(udt)
-    case _ => Nil
+  /** Recursively find all types not defined in Delta protocol but used in `dt` */
+  def findUndefinedTypes(dt: DataType): Seq[DataType] = dt match {
+    // Types defined in Delta protocol
+    case NullType => Nil
+    case BooleanType => Nil
+    case ByteType | ShortType | IntegerType | LongType => Nil
+    case FloatType | DoubleType | _: DecimalType => Nil
+    case StringType | BinaryType => Nil
+    case DateType | TimestampType => Nil
+    // Recursively search complex data types
+    case s: StructType => s.fields.flatMap(f => findUndefinedTypes(f.dataType))
+    case a: ArrayType => findUndefinedTypes(a.elementType)
+    case m: MapType => findUndefinedTypes(m.keyType) ++ findUndefinedTypes(m.valueType)
+    // Other types are not defined in Delta protocol
+    case undefinedType => Seq(undefinedType)
   }
 
-  /** Record all `UserDefinedType`s used in the `schema`. */
-  def recordUserDefinedTypes(deltaLog: DeltaLog, schema: StructType): Unit = {
+  /** Record all types not defined in Delta protocol but used in the `schema`. */
+  def recordUndefinedTypes(deltaLog: DeltaLog, schema: StructType): Unit = {
     try {
-      findUserDefinedTypes(schema).map(_.getClass.getName).toSet.foreach { udtTypeName: String =>
-        recordDeltaEvent(deltaLog, "delta.undefined.type", data = Map("name" -> udtTypeName))
+      findUndefinedTypes(schema).map(_.getClass.getName).toSet.foreach { className: String =>
+        recordDeltaEvent(deltaLog, "delta.undefined.type", data = Map("className" -> className))
       }
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Failed to log UserDefinedType for table ${deltaLog.logPath}", e)
+        logWarning(s"Failed to log undefined types for table ${deltaLog.logPath}", e)
     }
   }
 }
