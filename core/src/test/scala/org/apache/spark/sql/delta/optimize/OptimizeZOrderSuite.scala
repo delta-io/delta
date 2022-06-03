@@ -60,7 +60,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
       val e = intercept[IllegalArgumentException] {
         spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (id, id2)")
       }
-      assert(e.getMessage === DeltaErrors.zorderingOnPartitionColumnException("id").getMessage)
+      assert(e.getMessage === DeltaErrors.zOrderingOnPartitionColumnException("id").getMessage)
     }
   }
 
@@ -164,19 +164,19 @@ trait OptimizeZOrderSuiteBase extends QueryTest
           sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.b")
         }
         assert(e1.getMessage == DeltaErrors
-          .zorderingOnColumnWithNoStatsException(Seq[String]("nested.b"), spark)
+          .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.b"), spark)
           .getMessage)
         val e2 = intercept[AnalysisException] {
           sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.a.p1 ")
         }
         assert(e2.getMessage == DeltaErrors
-          .zorderingOnColumnWithNoStatsException(Seq[String]("nested.a.p1"), spark)
+          .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.a.p1"), spark)
           .getMessage)
         val e3 = intercept[AnalysisException] {
           sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.a.p1, nested.b")
         }
         assert(e3.getMessage == DeltaErrors
-          .zorderingOnColumnWithNoStatsException(
+          .zOrderingOnColumnWithNoStatsException(
             Seq[String]("nested.a.p1", "nested.b"), spark)
           .getMessage)
       }

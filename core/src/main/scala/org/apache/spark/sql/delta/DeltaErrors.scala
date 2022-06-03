@@ -309,12 +309,12 @@ object DeltaErrors
     )
   }
 
-  def zorderingOnPartitionColumnException(colName: String): Throwable = {
+  def zOrderingOnPartitionColumnException(colName: String): Throwable = {
     new IllegalArgumentException(s"$colName is a partition column." +
       s" Z-Ordering can only be performed on data columns")
   }
 
-  def zorderingOnColumnWithNoStatsException(
+  def zOrderingOnColumnWithNoStatsException(
       colNames: Seq[String],
       spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
@@ -324,12 +324,11 @@ object DeltaErrors
     )
   }
 
-  def interleavingColumnDoesNotExistException(colName: String): Throwable = {
+  def zOrderingColumnDoesNotExistException(colName: String): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "INTERLEAVING_COLUMN_DOES_NOT_EXIST",
+      errorClass = "DELTA_ZORDERING_COLUMN_DOES_NOT_EXIST",
       messageParameters = Array(colName))
   }
-
 
   /**
    * Throwable used when CDC options contain no 'start'.

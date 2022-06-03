@@ -1508,14 +1508,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.interleavingColumnDoesNotExistException("colName")
+        throw DeltaErrors.zOrderingColumnDoesNotExistException("colName")
       }
-      assert(e.getMessage == "Interleaving column colName does not exist in data schema.")
+      assert(e.getMessage == "Z-Ordering column colName does not exist in data schema.")
     }
     {
       val colNames = Seq("col1", "col2")
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.zorderingOnColumnWithNoStatsException(colNames, spark)
+        throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colNames, spark)
       }
       assert(e.getErrorClass == "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS")
       assert(e.getSqlState == "42000")

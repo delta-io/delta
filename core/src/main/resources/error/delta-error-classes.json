@@ -819,8 +819,8 @@
     "message" : [ "", "The write contains reserved columns <columnList> that are used", "internally as metadata for Change Data Feed. To write to the table either rename/drop", "these columns or disable Change Data Feed on the table by setting", "<config> to false." ],
     "sqlState" : "42000"
   },
-  "INTERLEAVING_COLUMN_DOES_NOT_EXIST" : {
-    "message" : [ "Interleaving column <columnName> does not exist in data schema." ],
+  "DELTA_ZORDERING_COLUMN_DOES_NOT_EXIST" : {
+    "message" : [ "Z-Ordering column <columnName> does not exist in data schema." ],
     "sqlState" : "22000"
   },
   "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS" : {

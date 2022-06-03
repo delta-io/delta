@@ -50,6 +50,54 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
   override val output: Seq[Attribute] = Seq(
     AttributeReference("path", StringType)(),
     AttributeReference("metrics", Encoders.product[OptimizeMetrics].schema)())
+
+  /**
+   * Validates ZOrderBy columns
+   * - validates that partitions columns are not used in `unresolvedZOrderByCols`
+   * - validates that we already collect stats for all the columns used in `unresolvedZOrderByCols`
+   *
+   * @param spark [[SparkSession]] to use
+   * @param deltaLog [[DeltaLog]] corresponding to the table
+   * @param unresolvedZOrderByCols Seq of [[UnresolvedAttribute]] corresponding to zOrderBy columns
+   */
+  def validateZorderByColumns(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      unresolvedZOrderByCols: Seq[UnresolvedAttribute]): Unit = {
+    if (unresolvedZOrderByCols.isEmpty) return
+    val metadata = deltaLog.snapshot.metadata
+    val partitionColumns = metadata.partitionColumns.toSet
+    val dataSchema =
+      StructType(metadata.schema.filterNot(c => partitionColumns.contains(c.name)))
+    val df = spark.createDataFrame(new java.util.ArrayList[Row](), dataSchema)
+    val checkColStat = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK)
+    val statCollectionSchema = deltaLog.snapshot.statCollectionSchema
+    val colsWithoutStats = ArrayBuffer[String]()
+
+    unresolvedZOrderByCols.foreach { colAttribute =>
+      val colName = colAttribute.name
+      if (checkColStat) {
+        try {
+          SchemaUtils.findColumnPosition(colAttribute.nameParts, statCollectionSchema)
+        } catch {
+          case e: AnalysisException if e.getMessage.contains("Couldn't find column") =>
+            colsWithoutStats.append(colName)
+        }
+      }
+      val isNameEqual = spark.sessionState.conf.resolver
+      if (partitionColumns.find(isNameEqual(_, colName)).nonEmpty) {
+        throw DeltaErrors.zOrderingOnPartitionColumnException(colName)
+      }
+      if (df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).isEmpty) {
+        throw DeltaErrors.zOrderingColumnDoesNotExistException(colName)
+      }
+    }
+    if (checkColStat && colsWithoutStats.nonEmpty) {
+      throw DeltaErrors.zOrderingOnColumnWithNoStatsException(
+        colsWithoutStats.toSeq, spark)
+    }
+  }
 }
 
 /**
@@ -61,7 +109,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
 case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
-    partitionPredicate: Option[String])(val zOrderBy: Option[Seq[UnresolvedAttribute]])
+    partitionPredicate: Option[String])(val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase with LeafRunnableCommand {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
@@ -81,53 +129,8 @@ case class OptimizeTableCommand(
       predicates
     }).getOrElse(Seq.empty)
 
-    val zOrderByColumns = if (zOrderBy.isEmpty) {
-      Seq.empty
-    } else {
-      // Create a `DataFrame` for the table schema without partition columns
-      val dataSchema =
-        StructType(deltaLog.snapshot.schema.filterNot(c => partitionColumns.contains(c.name)))
-      val df = sparkSession.createDataFrame(new java.util.ArrayList[Row](), dataSchema)
-
-      // Find the list of columns that have statistics
-      val statCollectionSchema = deltaLog.snapshot.statCollectionSchema
-
-      val checkColStat = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK)
-      val colsWithoutStats = ArrayBuffer[String]()
-
-      // Fetch session specific column name comparator
-      val nameEquality = sparkSession.sessionState.conf.resolver
-
-      val resolvedColumns = zOrderBy.get.map(unresolvedAttribute => {
-        val colName = unresolvedAttribute.name
-
-        if (checkColStat) {
-          try {
-            SchemaUtils.findColumnPosition(unresolvedAttribute.nameParts, statCollectionSchema)
-          } catch {
-            case e: AnalysisException if e.getMessage.contains("Couldn't find column") =>
-              colsWithoutStats.append(colName)
-          }
-        }
-
-        if (partitionColumns.find(nameEquality(_, colName)).nonEmpty) {
-          throw DeltaErrors.zorderingOnPartitionColumnException(colName)
-        }
-
-        if (df.queryExecution.analyzed.resolve(
-          unresolvedAttribute.nameParts, nameEquality).isEmpty) {
-          throw DeltaErrors.interleavingColumnDoesNotExistException(colName)
-        }
-
-        colName
-      })
-      if (checkColStat && colsWithoutStats.nonEmpty) {
-        throw DeltaErrors.zorderingOnColumnWithNoStatsException(
-          colsWithoutStats.toSeq, sparkSession)
-      }
-      resolvedColumns
-    }
+    validateZorderByColumns(sparkSession, deltaLog, zOrderBy)
+    val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
     new OptimizeExecutor(sparkSession, deltaLog, partitionPredicates, zOrderByColumns)
         .optimize()

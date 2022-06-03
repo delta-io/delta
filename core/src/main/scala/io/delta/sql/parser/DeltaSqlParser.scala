@@ -185,7 +185,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     if (ctx.path == null && ctx.table == null) {
       throw new ParseException("OPTIMIZE command requires a file path or table name.", ctx)
     }
-    val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec)
+    val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
