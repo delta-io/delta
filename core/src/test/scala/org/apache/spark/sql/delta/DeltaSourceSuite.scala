@@ -28,9 +28,10 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, Dataset, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
@@ -1768,7 +1769,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
   import testImplicits._
 
-  ignore("drop column from source disallowed by MicroBatchExecution") {
+  testQuietly("drop column from source disallowed by MicroBatchExecution") {
     withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
       withTempDir { inputDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -1777,18 +1778,52 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
           v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
         }
 
-        val df = spark.readStream
+        val checkpointDir = new File(inputDir, "_checkpoint")
+
+        // reinitialize stream after restart
+        def df: DataFrame = spark.readStream
           .format("delta")
           .load(inputDir.getCanonicalPath)
 
         testStream(df)(
-          AssertOnQuery { _ =>
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswerRows((0 until 5).map(i => Row(i.toString, i.toString)), false, false),
+          Execute { _ =>
             sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value")
-            true
           },
-          // Failed MicroBatchExecution's assertion that number of batch schema fields must match
-          // with source schema fields
+          Execute { _ =>
+            // write more data
+            (5 until 10).foreach { i =>
+              val v = Seq(i.toString).toDF("id")
+              v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+            }
+          },
+          // should have another batch with diff schema and should fail
           ExpectFailure[AssertionError](t => assert(t.getMessage.contains("Invalid batch")))
+        )
+
+        // Restart the stream from the same checkpoint should pick up the new schema
+        // Since `testStream` creates a new sink every time, the rows for the new data will
+        // be refreshed as well.
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          // 5-10 is recovered due to the previous failure, and is the only data in the sink
+          // note they only have one item, which is the new schema
+          CheckAnswerRows((5 until 10).map(i => Row(i.toString)), false, false),
+          Execute { _ =>
+            // write more data
+            (10 until 15)
+              .map(i => i.toString)
+              .toDF("id")
+              .write
+              .format("delta")
+              .mode("append")
+              .save(deltaLog.dataPath.toString)
+          },
+          ProcessAllAvailable(),
+          CheckAnswerRows((5 until 15).map(i => Row(i.toString)), false, false)
         )
       }
     }
@@ -1802,27 +1837,51 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val df = spark.readStream
+      val checkpointDir = new File(inputDir, "_checkpoint")
+
+      // reinitialize stream after restart
+      def df: DataFrame = spark.readStream
         .format("delta")
         .load(inputDir.getCanonicalPath)
 
       testStream(df)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
-        AssertOnQuery { _ =>
+        Execute { _ =>
           sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` " +
             s"RENAME COLUMN value TO new_value")
-          true
         },
-        AssertOnQuery { _ =>
-          (6 until 10).foreach { i =>
+        Execute { _ =>
+          (5 until 10).foreach { i =>
             val v = Seq((i.toString, i.toString)).toDF("id", "new_value")
             v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
           }
-          true
         },
         ExpectFailure[IllegalStateException](t =>
           assert(t.getMessage.contains("Detected schema change")))
+      )
+
+      // Restart the stream from the same checkpoint should pick up the new schema
+      // Since `testStream` creates a new sink every time, the rows for the new data will
+      // be refreshed as well.
+      testStream(df)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        // 5-10 is recovered due to the previous failure, and is the only data in the sink
+        CheckAnswerRows((5 until 10).map(i => Row(i.toString, i.toString)), false, false),
+        Execute { _ =>
+          // write more data
+          (10 until 15)
+            .map(i => (i.toString, i.toString))
+            .toDF("id", "new_value")
+            .write
+            .format("delta")
+            .mode("append")
+            .save(deltaLog.dataPath.toString)
+        },
+        ProcessAllAvailable(),
+        CheckAnswerRows((5 until 15).map(i => Row(i.toString, i.toString)), false, false)
       )
     }
   }
