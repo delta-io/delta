@@ -46,7 +46,7 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
 
-  protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
+  protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
   // scalastyle:off deltahadoopconfiguration
   protected def sessionHadoopConf = spark.sessionState.newHadoopConf

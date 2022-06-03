@@ -52,7 +52,6 @@ import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Sp
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType, TimestampNTZType}
@@ -1919,6 +1918,121 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_OPERATION_MISSING_PATH")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Please provide the path or table identifier for read.")
+    }
+    {
+      val column = StructField("c0", IntegerType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(column)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_PARTITION_COLUMN_TYPE")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Using column c0 of type IntegerType as a partition column is not supported.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidInterval("interval1")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_INTERVAL")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "interval1 is not a valid INTERVAL.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cdcWriteNotAllowedInThisVersion
+      }
+      assert(e.getErrorClass == "DELTA_CHANGE_TABLE_FEED_DISABLED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot write to table with delta.enableChangeDataFeed set. " +
+        "Change data feed from Delta is not available.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.specifySchemaAtReadTimeException
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SCHEMA_DURING_READ")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Delta does not support specifying the schema at read time.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedDataChangeException("operation1")
+      }
+      assert(e.getErrorClass == "DELTA_DATA_CHANGE_FALSE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot change table metadata because the 'dataChange' option is " +
+        "set to false. Attempted operation: 'operation1'.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.noStartVersionForCDC
+      }
+      assert(e.getErrorClass == "DELTA_NO_START_FOR_CDC_READ")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "No startingVersion or startingTimestamp provided for CDC read.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unrecognizedColumnChange("change1")
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_COLUMN_CHANGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Unrecognized column change change1. You may be running an out-of-date Delta Lake version.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.endBeforeStartVersionInCDC(2, 1)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_CDC_RANGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "CDC range from start 2 to end 1 was invalid. End cannot be before start.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.logFailedIntegrityCheck(2, "option1")
+      }
+      assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==  "The transaction log has failed integrity checks. Failed " +
+        "verification at version 2 of:\noption1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.viewInDescribeDetailException(TableIdentifier("customer"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==  "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.pathAlreadyExistsException(new Path(path))
+      }
+      assert(e.getErrorClass == "DELTA_PATH_EXISTS")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Cannot write to already existent path /sample/path without setting OVERWRITE = 'true'.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "DELTA_MERGE_MISSING_WHEN",
+          messageParameters = Array.empty
+        )
+      }
+      assert(e.getErrorClass == "DELTA_MERGE_MISSING_WHEN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "There must be at least one WHEN clause in a MERGE statement.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unrecognizedFileAction("invalidAction", "invalidClass")
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_FILE_ACTION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unrecognized file action invalidAction with type invalidClass.")
     }
   }
 }

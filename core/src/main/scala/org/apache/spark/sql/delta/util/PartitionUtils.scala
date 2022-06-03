@@ -604,7 +604,7 @@ private[delta] object PartitionUtils {
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
         case _: AtomicType => // OK
-        case _ => throw new AnalysisException(s"Cannot use ${field.dataType} for partition column")
+        case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }
 

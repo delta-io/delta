@@ -706,7 +706,7 @@ class DeltaSuite extends QueryTest
           .mode("error")
           .save(tempDir.getCanonicalPath)
       }
-      assert(e.getMessage.contains("already exists"))
+      assert(e.getMessage.contains("Cannot write to already existent path"))
     }
   }
 

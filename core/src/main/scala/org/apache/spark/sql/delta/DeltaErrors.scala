@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.connector.catalog.{Identifier, TableChange}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -314,7 +314,10 @@ object DeltaErrors
    * Throwable used when CDC options contain no 'start'.
    */
   def noStartVersionForCDC(): Throwable = {
-    new AnalysisException(s"No startingVersion or startingTimestamp provided for CDC read.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NO_START_FOR_CDC_READ",
+      messageParameters = Array.empty
+    )
   }
 
   /**
@@ -331,8 +334,10 @@ object DeltaErrors
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
   def endBeforeStartVersionInCDC(start: Long, end: Long): Throwable = {
-    new IllegalArgumentException(
-      s"CDC range from start $start to end $end was invalid. End cannot be before start.")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_CDC_RANGE",
+      messageParameters = Array(start.toString, end.toString)
+    )
   }
 
   /**
@@ -508,8 +513,10 @@ object DeltaErrors
   }
 
   def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
-    new AnalysisException(
-      s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW",
+      messageParameters = Array(s"$view")
+    )
   }
 
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
@@ -598,8 +605,10 @@ object DeltaErrors
   }
 
   def unexpectedDataChangeException(op: String): Throwable = {
-    new AnalysisException(s"Attempting to change metadata when 'dataChange' option is set" +
-      s" to false during $op")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DATA_CHANGE_FALSE",
+      messageParameters = Array(op)
+    )
   }
 
   def unknownConfigurationKeyException(confKey: String): Throwable = {
@@ -616,8 +625,10 @@ object DeltaErrors
   }
 
   def cdcWriteNotAllowedInThisVersion(): Throwable = {
-    new AnalysisException("Cannot write to table with delta.enableChangeDataFeed set. Change " +
-      "data feed from Delta is not yet available.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGE_TABLE_FEED_DISABLED",
+      messageParameters = Array.empty
+    )
   }
 
   def pathNotSpecifiedException: Throwable = {
@@ -634,7 +645,10 @@ object DeltaErrors
   }
 
   def pathAlreadyExistsException(path: Path): Throwable = {
-    new AnalysisException(s"$path already exists.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_PATH_EXISTS",
+      messageParameters = Array(s"$path")
+    )
   }
 
   def logFileNotFoundException(
@@ -662,6 +676,13 @@ object DeltaErrors
       "policy of your Delta table").initCause(e)
   }
 
+  def logFailedIntegrityCheck(version: Long, mismatchOption: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TXN_LOG_FAILED_INTEGRITY",
+      messageParameters = Array(version.toString, mismatchOption)
+    )
+  }
+
   def checkpointNonExistTable(path: Path): Throwable = {
     new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
       s"delete files in the _delta_log directory?")
@@ -687,9 +708,10 @@ object DeltaErrors
 
   def partitionPathInvolvesNonPartitionColumnException(
       badColumns: Seq[String], fragment: String): Throwable = {
-
-    new AnalysisException(
-      s"Non-partitioning column(s) ${formatColumnList(badColumns)} are specified: $fragment")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_PARTITION_COLUMN_SPECIFIED",
+      messageParameters = Array(formatColumnList(badColumns), fragment)
+    )
   }
 
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
@@ -735,6 +757,20 @@ object DeltaErrors
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
       messageParameters = Array(explain))
+  }
+
+  def invalidInterval(interval: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_INTERVAL",
+      messageParameters = Array(interval)
+      )
+  }
+
+  def invalidTableValueFunction(function: String) : Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_TABLE_VALUE_FUNCTION",
+      messageParameters = Array(function)
+    )
   }
 
   def startingVersionAndTimestampBothSetException(
@@ -807,7 +843,10 @@ object DeltaErrors
   }
 
   def specifySchemaAtReadTimeException: Throwable = {
-    new AnalysisException("Delta does not support specifying the schema at read time.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_SCHEMA_DURING_READ",
+      messageParameters = Array.empty
+    )
   }
 
   def schemaNotProvidedException: Throwable = {
@@ -920,6 +959,13 @@ object DeltaErrors
   def cannotUpdateStructField(table: String, field: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_STRUCT_FIELD",
       messageParameters = Array(table, field))
+  }
+
+  def cannotUseDataTypeForPartitionColumnError(field: StructField): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_PARTITION_COLUMN_TYPE",
+      messageParameters = Array(s"${field.name}", s"${field.dataType}")
+    )
   }
 
 
@@ -1553,6 +1599,13 @@ object DeltaErrors
     )
   }
 
+  def unrecognizedColumnChange(otherClass: String) : Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNRECOGNIZED_COLUMN_CHANGE",
+      messageParameters = Array(otherClass)
+    )
+  }
+
   def notNullColumnNotFoundInStruct(struct: String): Throwable = {
     new DeltaIndexOutOfBoundsException(
       errorClass = "DELTA_NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT",
@@ -1574,6 +1627,20 @@ object DeltaErrors
     )
   }
 
+
+  def unsupportedTruncateSampleTables: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TRUNCATE_SAMPLE_TABLES",
+      messageParameters = Array.empty
+    )
+  }
+
+  def unrecognizedFileAction(otherAction: String, otherClass: String) : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNRECOGNIZED_FILE_ACTION",
+      messageParameters = Array(otherAction, otherClass)
+    )
+  }
 
   def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
     new DeltaAnalysisException(

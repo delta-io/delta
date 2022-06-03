@@ -281,7 +281,10 @@ object DeltaMergeInto {
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
-      throw new AnalysisException("There must be at least one WHEN clause in a MERGE statement")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_MERGE_MISSING_WHEN",
+        messageParameters = Array.empty
+      )
     }
 
     // check that only last MATCHED clause omits the condition

@@ -47,7 +47,7 @@ class DeltaConfigSuite extends SparkFunSuite
       val e = intercept[IllegalArgumentException] {
         parseCalendarInterval(input)
       }
-      assert(e.getMessage.contains("Invalid interval"))
+      assert(e.getMessage.contains("not a valid INTERVAL"))
     }
   }
 
@@ -113,7 +113,7 @@ class DeltaConfigSuite extends SparkFunSuite
              |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 foo')
              |""".stripMargin)
       }
-      assert(e.getMessage.contains("Invalid interval"))
+      assert(e.getMessage.contains("not a valid INTERVAL"))
     }
   }
 }

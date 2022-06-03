@@ -81,8 +81,7 @@ class DelayedCommitProtocol(
         case _: AddFile => true
         case _: AddCDCFile => false
         case other =>
-          throw new IllegalStateException(
-            s"Unrecognized file action $other with type ${other.getClass}")
+          throw DeltaErrors.unrecognizedFileAction(s"$other", s"${other.getClass}")
       }
 
     // we cannot add type information above because of type erasure

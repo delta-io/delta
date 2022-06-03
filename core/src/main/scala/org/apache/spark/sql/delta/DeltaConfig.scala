@@ -100,7 +100,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
     val cal = IntervalUtils.safeStringToInterval(UTF8String.fromString(interval))
     if (cal == null) {
-      throw new IllegalArgumentException("Invalid interval: " + s)
+      throw DeltaErrors.invalidInterval(s)
     }
     cal
   }

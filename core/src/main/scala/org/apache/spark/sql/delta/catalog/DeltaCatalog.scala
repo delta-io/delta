@@ -520,8 +520,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
 
           case other =>
-            throw new UnsupportedOperationException("Unrecognized column change " +
-              s"${other.getClass}. You may be running an out of date Delta Lake version.")
+            throw DeltaErrors.unrecognizedColumnChange(s"${other.getClass}")
         }
 
       case (t, locations) if t == classOf[SetLocation] =>

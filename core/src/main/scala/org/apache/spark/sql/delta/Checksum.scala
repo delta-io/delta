@@ -172,11 +172,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
       }
       val conf = DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL
       if (spark.sessionState.conf.getConf(conf)) {
-        throw new IllegalStateException(
-          "The transaction log has failed integrity checks. We recommend you contact " +
-            s"Databricks support for assistance. To disable this check, set ${conf.key} to " +
-            s"false. Failed verification at version $version of:\n${mismatchStringOpt.get}"
-        )
+        throw DeltaErrors.logFailedIntegrityCheck(version, mismatchStringOpt.get)
       }
     }
   }
