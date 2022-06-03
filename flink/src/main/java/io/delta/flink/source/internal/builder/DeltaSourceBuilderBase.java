@@ -25,7 +25,6 @@ import org.apache.hadoop.conf.Configuration;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-import io.delta.standalone.types.StructType;
 
 /**
  * The base class for {@link io.delta.flink.source.DeltaSource} builder.
@@ -241,14 +240,8 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
         SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog);
         Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
 
-        StructType tableSchema = snapshot.getMetadata().getSchema();
-        if (tableSchema == null) {
-            throw DeltaSourceExceptions.tableSchemaMissingException(
-                SourceUtils.pathToString(tablePath), snapshot.getVersion());
-        }
         try {
-            return SourceUtils.buildSourceSchema(userColumnNames, tableSchema,
-                snapshot.getVersion());
+            return SourceSchema.fromSnapshot(userColumnNames, snapshot);
         } catch (IllegalArgumentException e) {
             throw DeltaSourceExceptions.generalSourceException(
                 SourceUtils.pathToString(tablePath),

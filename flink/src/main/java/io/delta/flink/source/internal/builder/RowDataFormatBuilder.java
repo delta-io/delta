@@ -2,24 +2,24 @@ package io.delta.flink.source.internal.builder;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
+import io.delta.flink.source.internal.DeltaPartitionFieldExtractor;
 import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
+import io.delta.flink.source.internal.state.DeltaSourceSplit;
+import org.apache.flink.formats.parquet.vector.ColumnBatchFactory;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.util.StringUtils;
 import org.apache.hadoop.conf.Configuration;
-import static org.apache.flink.util.Preconditions.checkArgument;
-import static org.apache.flink.util.Preconditions.checkNotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Builder for {@link RowData} implementation io {@link FormatBuilder}
  */
 public class RowDataFormatBuilder implements FormatBuilder<RowData> {
 
-    /**
-     * Message prefix for validation exceptions.
-     */
-    private static final String EXCEPTION_PREFIX = "RowDataFormatBuilder - ";
+    private static final Logger LOG = LoggerFactory.getLogger(RowDataFormatBuilder.class);
 
     // -------------- Hardcoded Non Public Options ----------
     /**
@@ -47,7 +47,7 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     /**
      * An array with Delta table partition columns.
      */
-    private List<String> partitionColumns;
+    private List<String> partitionColumns; // partitionColumn is validated in DeltaSourceBuilder.
 
     RowDataFormatBuilder(RowType rowType, Configuration hadoopConfiguration) {
         this.rowType = rowType;
@@ -55,16 +55,8 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
         this.partitionColumns = Collections.emptyList();
     }
 
-    /**
-     * Set list of partition columns.
-     */
+    @Override
     public RowDataFormatBuilder partitionColumns(List<String> partitionColumns) {
-        checkNotNull(partitionColumns, EXCEPTION_PREFIX + "partition column list cannot be null.");
-        checkArgument(partitionColumns.stream().noneMatch(StringUtils::isNullOrWhitespaceOnly),
-            EXCEPTION_PREFIX
-                + "List with partition columns contains at least one element that is null, "
-                + "empty, or contains only whitespace characters.");
-
         this.partitionColumns = partitionColumns;
         return this;
     }
@@ -78,13 +70,16 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     public RowDataFormat build() {
 
         if (partitionColumns.isEmpty()) {
+            LOG.info("Building format data for non-partitioned Delta table.");
             return buildFormatWithoutPartitions();
         } else {
-            // TODO PR 11
-            throw new UnsupportedOperationException("Partition support will be added later.");
-            /* return
-                buildPartitionedFormat(columnNames, columnTypes, configuration, partitions,
-                    sourceConfiguration);*/
+            LOG.info("Building format data for partitioned Delta table.");
+            return
+                buildFormatWithPartitionColumns(
+                    rowType,
+                    hadoopConfiguration,
+                    partitionColumns
+                );
         }
     }
 
@@ -93,6 +88,37 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
         return new RowDataFormat(
             hadoopConfiguration,
             rowType,
+            BATCH_SIZE,
+            PARQUET_UTC_TIMESTAMP,
+            PARQUET_CASE_SENSITIVE);
+    }
+
+    private RowDataFormat buildFormatWithPartitionColumns(
+        RowType producedRowType,
+        Configuration hadoopConfig,
+        List<String> partitionColumns) {
+
+        RowType projectedRowType =
+            new RowType(
+                producedRowType.getFields().stream()
+                    .filter(field -> !partitionColumns.contains(field.getName()))
+                    .collect(Collectors.toList()));
+
+        List<String> projectedNames = projectedRowType.getFieldNames();
+
+        ColumnBatchFactory<DeltaSourceSplit> factory =
+            RowBuilderUtils.createPartitionedColumnFactory(
+                producedRowType,
+                projectedNames,
+                partitionColumns,
+                new DeltaPartitionFieldExtractor<>(),
+                BATCH_SIZE);
+
+        return new RowDataFormat(
+            hadoopConfig,
+            projectedRowType,
+            producedRowType,
+            factory,
             BATCH_SIZE,
             PARQUET_UTC_TIMESTAMP,
             PARQUET_CASE_SENSITIVE);

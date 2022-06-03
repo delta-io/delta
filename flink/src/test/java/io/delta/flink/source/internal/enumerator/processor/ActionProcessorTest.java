@@ -179,7 +179,7 @@ public class ActionProcessorTest extends ActionProcessorParameterizedTestBase {
         // THEN
         assertThat(caughtException, notNullValue());
         assertThat(caughtException.getSnapshotVersion().orElse(null), equalTo(SNAPSHOT_VERSION));
-        assertThat(caughtException.getTablePath(), equalTo(TABLE_PATH));
+        assertThat(caughtException.getTablePath().orElse(null), equalTo(TABLE_PATH));
     }
 
     @Test

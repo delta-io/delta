@@ -96,11 +96,10 @@ class DeltaSourceBuilderBaseTest {
                 (Supplier<Throwable>) () -> new AssertionError(
                     "Exception is missing snapshot version")),
             equalTo(SNAPSHOT_VERSION));
-        assertThat(exception.getTablePath(), equalTo(TABLE_PATH));
-        assertThat(exception.getMessage(),
+        assertThat(exception.getTablePath().orElse(null), equalTo(TABLE_PATH));
+        assertThat(exception.getCause().getMessage(),
             equalTo(
-                "Unable to find Schema information in Delta log for table [s3://some/path] and "
-                    + "version [10]")
+                "Unable to find Schema information in Delta log for Snapshot version [10]")
         );
     }
 

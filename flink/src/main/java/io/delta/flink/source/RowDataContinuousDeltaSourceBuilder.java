@@ -252,6 +252,7 @@ public class RowDataContinuousDeltaSourceBuilder
         DeltaBulkFormat<RowData> format = RowDataFormat.builder(
                 RowType.of(sourceSchema.getColumnTypes(), sourceSchema.getColumnNames()),
                 hadoopConfiguration)
+            .partitionColumns(sourceSchema.getPartitionColumns())
             .build();
 
         return new DeltaSource<>(

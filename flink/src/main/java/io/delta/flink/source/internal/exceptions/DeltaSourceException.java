@@ -20,6 +20,12 @@ public class DeltaSourceException extends RuntimeException {
      */
     private final Long snapshotVersion;
 
+    public DeltaSourceException(String message) {
+        super(message);
+        this.tablePath = null;
+        this.snapshotVersion = null;
+    }
+
     public DeltaSourceException(String tablePath, Long snapshotVersion, Throwable cause) {
         super(cause);
         this.tablePath = String.valueOf(tablePath);
@@ -42,8 +48,8 @@ public class DeltaSourceException extends RuntimeException {
     /**
      * @return Delta table path for which this exception was thrown.
      */
-    public String getTablePath() {
-        return tablePath;
+    public Optional<String> getTablePath() {
+        return Optional.ofNullable(tablePath);
     }
 
     /**
