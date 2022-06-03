@@ -161,7 +161,9 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
   override def visitZorderSpec(ctx: ZorderSpecContext): Seq[UnresolvedAttribute] = {
-    ctx.interleave.asScala.map(_.getText).map(UnresolvedAttribute.apply).toSeq
+    ctx.interleave.asScala
+      .map(_.identifier.asScala.map(_.getText).toSeq)
+      .map(new UnresolvedAttribute(_)).toSeq
   }
 
   /**
