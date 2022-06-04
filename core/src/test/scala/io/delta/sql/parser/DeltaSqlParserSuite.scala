@@ -20,6 +20,8 @@ import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 
 class DeltaSqlParserSuite extends SparkFunSuite {
 
@@ -38,5 +40,59 @@ class DeltaSqlParserSuite extends SparkFunSuite {
       VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
       VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+  }
+
+  test("OPTIMIZE command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    assert(parser.parsePlan("OPTIMIZE tbl") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE db.tbl") ===
+      OptimizeTableCommand(None, Some(tblId("tbl", "db")), None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE '/path/to/tbl'") ===
+      OptimizeTableCommand(Some("/path/to/tbl"), None, None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`") ===
+      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Some("part = 1"))(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (col1)") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq(unresolvedAttr("col1"))))
+
+    assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY col1, col2.subcol") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Some("part = 1"))(
+        Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
+  }
+
+  test("OPTIMIZE command new tokens are non-reserved keywords") {
+    // new keywords: OPTIMIZE, ZORDER
+    val parser = new DeltaSqlParser(null)
+
+    // Use the new keywords in table name
+    assert(parser.parsePlan("OPTIMIZE optimize") ===
+      OptimizeTableCommand(None, Some(tblId("optimize")), None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE zorder") ===
+      OptimizeTableCommand(None, Some(tblId("zorder")), None)(Seq()))
+
+    // Use the new keywords in column name
+    assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Some("zorder = 1 and optimize = 2"))(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), None)(
+        Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
+    new UnresolvedAttribute(colName)
+  }
+
+  private def tblId(tblName: String, schema: String = null): TableIdentifier = {
+    if (schema == null) new TableIdentifier(tblName)
+    else new TableIdentifier(tblName, Some(schema))
   }
 }

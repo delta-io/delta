@@ -243,10 +243,6 @@ trait OptimizeZOrderSuiteBase extends QueryTest
 class OptimizeZOrderSuite extends OptimizeZOrderSuiteBase
   with DeltaSQLCommandTest
 
-class OptimizeZOrderIdColumnMappingSuite extends OptimizeZOrderSuite
-    with DeltaColumnMappingEnableIdMode
-    with DeltaColumnMappingTestUtils
-
 class OptimizeZOrderNameColumnMappingSuite extends OptimizeZOrderSuite
     with DeltaColumnMappingEnableNameMode
     with DeltaColumnMappingTestUtils
