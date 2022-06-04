@@ -23,20 +23,22 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.functions.{col, expr, lit}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -617,6 +619,157 @@ trait DeltaVacuumSuiteBase extends QueryTest
       spark.range(1, 10).write.parquet(tempDir.getCanonicalPath)
       assertNotADeltaTableException(tempDir.getCanonicalPath)
     }
+  }
+
+  /**
+   * Helper method to tell us if the given filePath exists. Thus, it can be used to detect if a
+   * file has been deleted.
+   */
+  protected def pathExists(deltaLog: DeltaLog, filePath: String): Boolean = {
+    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+    fs.exists(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, filePath))
+  }
+
+  /**
+   * Helper method to get all of the [[AddCDCFile]]s that exist in the delta table
+   */
+  protected def getCDCFiles(deltaLog: DeltaLog): Seq[AddCDCFile] = {
+    val changes = deltaLog.getChanges(startVersion = 0, failOnDataLoss = true)
+    changes.flatMap(_._2).collect { case a: AddCDCFile => a }.toList
+  }
+
+  protected def testCDCVacuumForUpdateMerge(): Unit = {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
+    ) {
+      withTempDir { dir =>
+        // create table - version 0
+        spark.range(10)
+          .repartition(1)
+          .write
+          .format("delta")
+          .save(dir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+
+        // update table - version 1
+        deltaTable.update(expr("id == 0"), Map("id" -> lit("11")))
+
+        // merge table - version 2
+        deltaTable.as("target")
+          .merge(
+            spark.range(0, 12).toDF().as("src"),
+            "src.id = target.id")
+          .whenMatched()
+          .updateAll()
+          .whenNotMatched()
+          .insertAll()
+          .execute()
+
+        val df1 = sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`").collect()
+
+        val changes = getCDCFiles(deltaLog)
+        var numExpectedChangeFiles = 2
+
+        assert(changes.size == numExpectedChangeFiles)
+
+        // vacuum will not delete the cdc files if they are within retention
+        sql(s"VACUUM '${dir.getAbsolutePath}' RETAIN 100 HOURS")
+        changes.foreach { change =>
+          assert(pathExists(deltaLog, change.path)) // cdc file exists
+        }
+
+        // vacuum will delete the cdc files if they are outside retention
+        sql(s"VACUUM '${dir.getAbsolutePath}' RETAIN 0 HOURS")
+        changes.foreach { change =>
+          assert(!pathExists(deltaLog, change.path)) // cdc file has been removed
+        }
+
+        // try reading the table
+        checkAnswer(sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`"), df1)
+
+        // try reading cdc data
+        val e = intercept[SparkException] {
+          spark.read
+            .format("delta")
+            .option(DeltaOptions.CDC_READ_OPTION, "true")
+            .option("startingVersion", 1)
+            .option("endingVersion", 2)
+            .load(dir.getAbsolutePath)
+            .count()
+        }
+        // QueryExecutionErrors.readCurrentFileNotFoundError
+        var expectedErrorMessage = "It is possible the underlying files have been updated."
+        assert(e.getMessage.contains(expectedErrorMessage))
+      }
+    }
+  }
+
+  protected def testCDCVacuumForTombstones(): Unit = {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
+    ) {
+      withTempDir { dir =>
+        // create table - version 0
+        spark.range(0, 10, 1, 1)
+          .withColumn("part", col("id") % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .save(dir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+
+        // create version 1 - delete single row should generate one cdc file
+        deltaTable.delete(col("id") === lit(9))
+        val changes = getCDCFiles(deltaLog)
+        assert(changes.size === 1)
+        val cdcPath = changes.head.path
+        assert(pathExists(deltaLog, cdcPath))
+        val df1 = sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`").collect()
+
+        // vacuum will not delete the cdc files if they are within retention
+        sql(s"VACUUM '${dir.getAbsolutePath}' RETAIN 100 HOURS")
+        assert(pathExists(deltaLog, cdcPath)) // cdc path exists
+
+        // vacuum will delete the cdc files when they are outside retention
+        // one cdc file and one RemoveFile should be deleted by vacuum
+        sql(s"VACUUM '${dir.getAbsolutePath}' RETAIN 0 HOURS")
+        assert(!pathExists(deltaLog, cdcPath)) // cdc file is removed
+
+        // try reading the table
+        checkAnswer(sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`"), df1)
+
+        // create version 2 - partition delete - does not create new cdc files
+        deltaTable.delete(col("part") === lit(0))
+
+        assert(getCDCFiles(deltaLog).size == 1) // still just the one cdc file from before.
+
+        // try reading cdc data
+        val e = intercept[SparkException] {
+          spark.read
+            .format("delta")
+            .option(DeltaOptions.CDC_READ_OPTION, "true")
+            .option("startingVersion", 1)
+            .option("endingVersion", 2)
+            .load(dir.getAbsolutePath)
+            .count()
+        }
+        // QueryExecutionErrors.readCurrentFileNotFoundError
+        var expectedErrorMessage = "It is possible the underlying files have been updated."
+        assert(e.getMessage.contains(expectedErrorMessage))
+      }
+    }
+  }
+
+  test("vacuum for cdc - update/merge") {
+    testCDCVacuumForUpdateMerge()
+  }
+
+  test("vacuum for cdc - delete tombstones") {
+    testCDCVacuumForTombstones()
   }
 }
 
