@@ -89,9 +89,9 @@ object ChangeDataFeed {
 
     readCDCByPath(1).show()
 
-    val table = io.delta.tables.DeltaTable.forPath(path)
-
     spark.read.format("delta").load(path).orderBy("id").show()
+
+    val table = io.delta.tables.DeltaTable.forPath(path)
 
     table.update(Map("id" -> expr("id + 1"))) // v2
 
