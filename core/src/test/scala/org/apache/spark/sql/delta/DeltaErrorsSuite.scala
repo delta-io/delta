@@ -1505,6 +1505,29 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage ==
         "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
     }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.zOrderingColumnDoesNotExistException("colName")
+      }
+      assert(e.getMessage == "Z-Ordering column colName does not exist in data schema.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.zOrderingOnPartitionColumnException("column1")
+      }
+      assert(e.getErrorClass == "DELTA_ZORDERING_ON_PARTITION_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+                 "column1 is a partition column. Z-Ordering can only be performed on data columns")
+    }
+    {
+      val colNames = Seq("col1", "col2")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colNames, spark)
+      }
+      assert(e.getErrorClass == "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS")
+      assert(e.getSqlState == "42000")
+    }
   }
 
   // Complier complains the lambda function is too large if we put all tests in one lambda

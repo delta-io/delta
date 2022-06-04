@@ -309,6 +309,28 @@ object DeltaErrors
     )
   }
 
+  def zOrderingOnPartitionColumnException(colName: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_ZORDERING_ON_PARTITION_COLUMN",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def zOrderingOnColumnWithNoStatsException(
+      colNames: Seq[String],
+      spark: SparkSession): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS",
+      messageParameters = Array(colNames.mkString("[", ", ", "]"),
+        DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK.key)
+    )
+  }
+
+  def zOrderingColumnDoesNotExistException(colName: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_ZORDERING_COLUMN_DOES_NOT_EXIST",
+      messageParameters = Array(colName))
+  }
 
   /**
    * Throwable used when CDC options contain no 'start'.
