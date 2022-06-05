@@ -54,6 +54,11 @@ import org.apache.spark.sql.types.{StringType, StructType}
  * In combination with `Overwrite`, a `replaceWhere` option can be used to transactionally
  * replace data that matches a predicate.
  *
+ * In combination with `Overwrite` dynamic partition overwrite mode (option `partitionOverwriteMode`
+ * set to `dynamic`, or in spark conf `spark.sql.sources.partitionOverwriteMode` set to `dynamic`)
+ * is also supported. However a `replaceWhere` option can not be used while dynamic partition mode
+ * is enabled.
+ *
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
  */
@@ -130,6 +135,18 @@ case class WriteIntoDelta(
 
     val replaceOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
+
+    val useDynamicPartitionOverwriteMode = {
+      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
+        options.isDynamicPartitionOverwriteMode
+      options.replaceWhere.foreach { _ =>
+        if (useDynamic) {
+          throw new AnalysisException(s"'${DeltaOptions.REPLACE_WHERE_OPTION}' cannot be used" +
+            s" when '${DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION}' is set to 'DYNAMIC'")
+        }
+      }
+      useDynamic
+    }
 
     // Validate partition predicates
     var containsDataFilters = false
@@ -217,7 +234,17 @@ case class WriteIntoDelta(
           removeFiles(sparkSession, txn, condition))
       case (SaveMode.Overwrite, None) =>
         val newFiles = txn.writeFiles(data, Some(options))
-        (newFiles, newFiles.collect { case a: AddFile => a }, txn.filterFiles().map(_.remove))
+        val addFiles = newFiles.collect { case a: AddFile => a }
+        val deletedFiles = if (useDynamicPartitionOverwriteMode) {
+          // with dynamic partition overwrite for any partition that is being written to all
+          // existing data in that partition will be deleted.
+          // the selection what to delete is on the next two lines
+          val updatePartitions = addFiles.map(_.partitionValues).toSet
+          txn.filterFiles(updatePartitions).map(_.remove)
+        } else {
+          txn.filterFiles().map(_.remove)
+        }
+        (newFiles, addFiles, deletedFiles)
       case _ =>
         val newFiles = txn.writeFiles(data, Some(options))
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)

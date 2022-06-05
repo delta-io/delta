@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -238,6 +239,26 @@ class DeltaOptionSuite extends QueryTest
         val expectedMessage = "Codec [???] is not available. Available codecs are "
         assert(e.getMessage.startsWith(expectedMessage))
       }
+    }
+  }
+
+  test("partitionOverwriteMode is set to invalid value in options") {
+    withTempDir { tempDir =>
+      val invalidMode = "ADAPTIVE"
+      val e = intercept[IllegalArgumentException] {
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option("partitionOverwriteMode", invalidMode)
+          .save(tempDir.getAbsolutePath)
+      }
+      assert(e.getMessage ===
+        DeltaErrors.illegalDeltaOptionException(
+          PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
+        ).getMessage
+      )
     }
   }
 }

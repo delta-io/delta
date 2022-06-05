@@ -26,18 +26,13 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
-import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
-import org.apache.spark.sql.delta.constraints.Invariants
-import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
@@ -54,7 +49,7 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType, TimestampNTZType}
+import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -146,8 +141,7 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-
-  test("test DeltaErrors OSS methods") {
+  test("test DeltaErrors methods") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
