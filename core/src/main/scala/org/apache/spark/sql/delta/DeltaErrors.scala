@@ -18,11 +18,10 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
-import java.net.URI
 import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{CommitInfo, FileAction, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
@@ -38,12 +37,11 @@ import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.{Identifier, TableChange}
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 
@@ -106,11 +104,12 @@ trait DocsPath {
 /**
  * A holder object for Delta errors.
  *
+ *
  * IMPORTANT: Any time you add a test that references the docs, add to the Seq defined in
  * DeltaErrorsSuite so that the doc links that are generated can be verified to work in
  * docs.delta.io
  */
-object DeltaErrors
+trait DeltaErrorsBase
     extends DocsPath
     with DeltaLogging {
 
@@ -175,7 +174,6 @@ object DeltaErrors
       errorClass = "DELTA_CANNOT_RENAME_PATH",
       messageParameters = Array(s"$src", s"$dest"))
   }
-
 
   /**
    * Thrown when main table data contains columns that are reserved for CDF, such as `_change_type`.
@@ -990,7 +988,6 @@ object DeltaErrors
     )
   }
 
-
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
@@ -1028,7 +1025,6 @@ object DeltaErrors
       messageParameters = Array(operation)
     )
   }
-
 
   def nestedFieldNotSupported(operation: String, field: String): Throwable = {
     new DeltaAnalysisException(
@@ -1381,7 +1377,6 @@ object DeltaErrors
     new AnalysisException(s"Operation $operationName can not be performed on a view")
   }
 
-
   def postCommitHookFailedException(
       failedHook: PostCommitHook,
       failedOnCommitVersion: Long,
@@ -1649,7 +1644,6 @@ object DeltaErrors
     )
   }
 
-
   def unsupportedTruncateSampleTables: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TRUNCATE_SAMPLE_TABLES",
@@ -1806,7 +1800,6 @@ object DeltaErrors
          |""".stripMargin)
   }
 
-
   def missingColumnsInInsertInto(column: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INSERT_COLUMN_MISMATCH",
@@ -1943,7 +1936,6 @@ object DeltaErrors
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
-
   def identityColumnNotSupported(): Throwable = {
     new AnalysisException("IDENTITY column is not supported")
   }
@@ -1968,7 +1960,6 @@ object DeltaErrors
   def iteratorAlreadyClosed(): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_ITERATOR_ALREADY_CLOSED")
   }
-
 
   def activeTransactionAlreadySet(): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
@@ -2159,6 +2150,7 @@ object DeltaErrors
   }
 }
 
+object DeltaErrors extends DeltaErrorsBase
 /** The basic class for all Tahoe commit conflict exceptions. */
 abstract class DeltaConcurrentModificationException(message: String)
   extends ConcurrentModificationException(message) {
@@ -2328,7 +2320,6 @@ class MetadataMismatchErrorBuilder {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }
-
 
 class DeltaColumnMappingUnsupportedException(
     errorClass: String,
