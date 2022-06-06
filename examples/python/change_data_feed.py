@@ -20,10 +20,8 @@ from delta.tables import DeltaTable
 import shutil
 
 
-path = "/tmp/delta-change-data-feed"
-
-# Clear any previous runs
-shutil.rmtree(path, ignore_errors=True)
+path = "/tmp/delta-change-data-feed/student"
+otherPath = "/tmp/delta-change-data-feed/student_source"
 
 # Enable SQL commands and Update/Delete/Merge for the current spark session.
 # we need to set the following configs
@@ -33,6 +31,13 @@ spark = SparkSession.builder \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
+
+
+def cleanup():
+    shutil.rmtree(path, ignore_errors=True)
+    shutil.rmtree(otherPath, ignore_errors=True)
+    spark.sql("DROP TABLE IF EXISTS student")
+    spark.sql("DROP TABLE IF EXISTS student_source")
 
 
 def read_cdc_by_path(starting_version):
@@ -72,51 +77,55 @@ def stream_cdc_by_table_name(starting_version):
         .option("numRows", 1000) \
         .start()
 
-spark.sql('''CREATE TABLE student (id INT, name STRING, age INT)
-             USING DELTA
-             PARTITIONED BY (age)
-             TBLPROPERTIES (delta.enableChangeDataFeed = true)
-             LOCATION '{0}'
-         '''.format(path))
 
-spark.range(0, 10) \
-    .selectExpr(
-        "CAST(id as INT) as id",
-        "CAST(id as STRING) as name",
-        "CAST(id % 4 + 18 as INT) as age") \
-    .write.format("delta").mode("append").save(path)  # v1
+cleanup()
 
-print("(v1) Initial Table")
-spark.read.format("delta").load(path).orderBy("id").show()
+try:
+    spark.sql('''CREATE TABLE student (id INT, name STRING, age INT)
+                 USING DELTA
+                 PARTITIONED BY (age)
+                 TBLPROPERTIES (delta.enableChangeDataFeed = true)
+                 LOCATION '{0}'
+             '''.format(path))
 
-print("(v1) CDC changes")
-read_cdc_by_path(1).show()
+    spark.range(0, 10) \
+        .selectExpr(
+            "CAST(id as INT) as id",
+            "CAST(id as STRING) as name",
+            "CAST(id % 4 + 18 as INT) as age") \
+        .write.format("delta").mode("append").save(path)  # v1
 
-table = DeltaTable.forPath(spark, path)
+    print("(v1) Initial Table")
+    spark.read.format("delta").load(path).orderBy("id").show()
 
-print("(v2) Updated id -> id + 1")
-table.update(set={"id": expr("id + 1")})  # v2
-read_cdc_by_path(2).show()
+    print("(v1) CDC changes")
+    read_cdc_by_path(1).show()
 
-print("(v3) Deleted where id >= 7")
-table.delete(condition=expr("id >= 7"))  # v3
-read_cdc_by_table_name(3).show()
+    table = DeltaTable.forPath(spark, path)
 
-print("(v4) Deleted where age = 18")
-table.delete(condition=expr("age = 18"))  # v4, partition delete
-read_cdc_by_table_name(4).show()
+    print("(v2) Updated id -> id + 1")
+    table.update(set={"id": expr("id + 1")})  # v2
+    read_cdc_by_path(2).show()
 
-# TODO merge
+    print("(v3) Deleted where id >= 7")
+    table.delete(condition=expr("id >= 7"))  # v3
+    read_cdc_by_table_name(3).show()
 
-print("Streaming by path")
-cdfStream1 = stream_cdc_by_path(0)
-cdfStream1.awaitTermination(10)
-cdfStream1.stop()
+    print("(v4) Deleted where age = 18")
+    table.delete(condition=expr("age = 18"))  # v4, partition delete
+    read_cdc_by_table_name(4).show()
 
-print("Streaming by table name")
-cdfStream2 = stream_cdc_by_table_name(0)
-cdfStream2.awaitTermination(10)
-cdfStream2.stop()
+    # TODO merge
 
-# cleanup
-shutil.rmtree(path, ignore_errors=True)
+    print("Streaming by path")
+    cdfStream1 = stream_cdc_by_path(0)
+    cdfStream1.awaitTermination(10)
+    cdfStream1.stop()
+
+    print("Streaming by table name")
+    cdfStream2 = stream_cdc_by_table_name(0)
+    cdfStream2.awaitTermination(10)
+    cdfStream2.stop()
+finally:
+    cleanup()
+    spark.stop()
