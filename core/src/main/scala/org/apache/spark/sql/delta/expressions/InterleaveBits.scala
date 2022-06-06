@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.expressions
 
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType}
 
 
@@ -36,7 +37,7 @@ import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType}
  * @note Only supports input expressions of type Int for now.
  */
 case class InterleaveBits(children: Seq[Expression])
-  extends Expression with ExpectsInputTypes
+  extends Expression with ExpectsInputTypes with SQLConfHelper
     with CodegenFallback /* TODO: implement doGenCode() */ {
 
   private val n: Int = children.size
@@ -52,6 +53,8 @@ case class InterleaveBits(children: Seq[Expression])
 
   private val childrenArray: Array[Expression] = children.toArray
 
+  private val fastInterleaveBitsEnabled = conf.getConf(DeltaSQLConf.FAST_INTERLEAVE_BITS_ENABLED)
+
   override def eval(input: InternalRow): Any = {
     val ints = new Array[Int](n)
     var i = 0
@@ -66,11 +69,40 @@ case class InterleaveBits(children: Seq[Expression])
       ints.update(i, int)
       i += 1
     }
-    interleaveBits(ints)
+    InterleaveBits.interleaveBits(ints, fastInterleaveBitsEnabled)
   }
 
-  def defaultInterleaveBits(inputs: Array[Int]): Array[Byte] = {
-    val ret = new Array[Byte](n * 4)
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): InterleaveBits = copy(children = newChildren)
+}
+
+object InterleaveBits {
+
+  def interleaveBits(inputs: Array[Int], fastInterleaveBitsEnabled: Boolean): Array[Byte] = {
+    if (fastInterleaveBitsEnabled) {
+      inputs.length match {
+        // it's a more fast approach, use O(4 * 8)
+        // can see http://graphics.stanford.edu/~seander/bithacks.html#InterleaveTableObvious
+        case 0 => Array.empty
+        case 1 => intToByte(inputs(0))
+        case 2 => interleave2Ints(inputs(1), inputs(0))
+        case 3 => interleave3Ints(inputs(2), inputs(1), inputs(0))
+        case 4 => interleave4Ints(inputs(3), inputs(2), inputs(1), inputs(0))
+        case 5 => interleave5Ints(inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
+        case 6 => interleave6Ints(inputs(5), inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
+        case 7 => interleave7Ints(inputs(6), inputs(5), inputs(4), inputs(3), inputs(2), inputs(1),
+          inputs(0))
+        case 8 => interleave8Ints(inputs(7), inputs(6), inputs(5), inputs(4), inputs(3), inputs(2),
+          inputs(1), inputs(0))
+        case _ => defaultInterleaveBits(inputs, inputs.length)
+      }
+    } else {
+      defaultInterleaveBits(inputs, inputs.length)
+    }
+  }
+
+  def defaultInterleaveBits(inputs: Array[Int], numCols: Int): Array[Byte] = {
+    val ret = new Array[Byte](numCols * 4)
     var ret_idx: Int = 0
     var ret_bit: Int = 7
     var ret_byte: Byte = 0
@@ -78,7 +110,7 @@ case class InterleaveBits(children: Seq[Expression])
     var bit = 31 /* going from most to least significant bit */
     while (bit >= 0) {
       var idx = 0
-      while (idx < n) {
+      while (idx < numCols) {
         ret_byte = (ret_byte | (((inputs(idx) >> bit) & 1) << ret_bit)).toByte
         ret_bit -= 1
         if (ret_bit == -1) {
@@ -92,28 +124,9 @@ case class InterleaveBits(children: Seq[Expression])
       }
       bit -= 1
     }
-    assert(ret_idx == n * 4)
+    assert(ret_idx == numCols * 4)
     assert(ret_bit == 7)
     ret
-  }
-
-  def interleaveBits(inputs: Array[Int]): Array[Byte] = {
-    inputs.length match {
-      // it's a more fast approach, use O(4 * 8)
-      // can see http://graphics.stanford.edu/~seander/bithacks.html#InterleaveTableObvious
-      case 0 => Array.empty
-      case 1 => intToByte(inputs(0))
-      case 2 => interleave2Ints(inputs(1), inputs(0))
-      case 3 => interleave3Ints(inputs(2), inputs(1), inputs(0))
-      case 4 => interleave4Ints(inputs(3), inputs(2), inputs(1), inputs(0))
-      case 5 => interleave5Ints(inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
-      case 6 => interleave6Ints(inputs(5), inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
-      case 7 => interleave7Ints(inputs(6), inputs(5), inputs(4), inputs(3), inputs(2), inputs(1),
-        inputs(0))
-      case 8 => interleave8Ints(inputs(7), inputs(6), inputs(5), inputs(4), inputs(3), inputs(2),
-        inputs(1), inputs(0))
-      case _ => defaultInterleaveBits(inputs)
-    }
   }
 
   private def interleave2Ints(i1: Int, i2: Int): Array[Byte] = {
@@ -222,11 +235,11 @@ case class InterleaveBits(children: Seq[Expression])
       var z = 0L
       var j = 0
       while (j < 8) {
-        val r1_mask = tmp1 & (1 << j)
-        val r2_mask = tmp2 & (1 << j)
-        val r3_mask = tmp3 & (1 << j)
-        val r4_mask = tmp4 & (1 << j)
-        val r5_mask = tmp5 & (1 << j)
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
         z |= (r1_mask << (4 * j)) | (r2_mask << (4 * j + 1)) | (r3_mask << (4 * j + 2)) |
           (r4_mask << (4 * j + 3)) | (r5_mask << (4 * j + 4))
         j = j + 1
@@ -261,12 +274,12 @@ case class InterleaveBits(children: Seq[Expression])
       var z = 0L
       var j = 0
       while (j < 8) {
-        val r1_mask = tmp1 & (1 << j)
-        val r2_mask = tmp2 & (1 << j)
-        val r3_mask = tmp3 & (1 << j)
-        val r4_mask = tmp4 & (1 << j)
-        val r5_mask = tmp5 & (1 << j)
-        val r6_mask = tmp6 & (1 << j)
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
         z |= (r1_mask << (5 * j)) | (r2_mask << (5 * j + 1)) | (r3_mask << (5 * j + 2)) |
           (r4_mask << (5 * j + 3)) | (r5_mask << (5 * j + 4)) | (r6_mask << (5 * j + 5))
         j = j + 1
@@ -304,13 +317,13 @@ case class InterleaveBits(children: Seq[Expression])
       var z = 0L
       var j = 0
       while (j < 8) {
-        val r1_mask = tmp1 & (1 << j)
-        val r2_mask = tmp2 & (1 << j)
-        val r3_mask = tmp3 & (1 << j)
-        val r4_mask = tmp4 & (1 << j)
-        val r5_mask = tmp5 & (1 << j)
-        val r6_mask = tmp6 & (1 << j)
-        val r7_mask = tmp7 & (1 << j)
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
+        val r7_mask = tmp7 & (1 << j).toLong
         z |= (r1_mask << (6 * j)) | (r2_mask << (6 * j + 1)) | (r3_mask << (6 * j + 2)) |
           (r4_mask << (6 * j + 3)) | (r5_mask << (6 * j + 4)) | (r6_mask << (6 * j + 5)) |
           (r7_mask << (6 * j + 6))
@@ -352,14 +365,14 @@ case class InterleaveBits(children: Seq[Expression])
       var z = 0L
       var j = 0
       while (j < 8) {
-        val r1_mask = tmp1 & (1 << j)
-        val r2_mask = tmp2 & (1 << j)
-        val r3_mask = tmp3 & (1 << j)
-        val r4_mask = tmp4 & (1 << j)
-        val r5_mask = tmp5 & (1 << j)
-        val r6_mask = tmp6 & (1 << j)
-        val r7_mask = tmp7 & (1 << j)
-        val r8_mask = tmp8 & (1 << j)
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
+        val r7_mask = tmp7 & (1 << j).toLong
+        val r8_mask = tmp8 & (1 << j).toLong
         z |= (r1_mask << (7 * j)) | (r2_mask << (7 * j + 1)) | (r3_mask << (7 * j + 2)) |
           (r4_mask << (7 * j + 3)) | (r5_mask << (7 * j + 4)) | (r6_mask << (7 * j + 5)) |
           (r7_mask << (7 * j + 6)) | (r8_mask << (7 * j + 7))
@@ -377,7 +390,4 @@ case class InterleaveBits(children: Seq[Expression])
     }
     result
   }
-
-  override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[Expression]): InterleaveBits = copy(children = newChildren)
 }
