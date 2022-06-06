@@ -115,7 +115,27 @@ try:
     table.delete(condition=expr("age = 18"))  # v4, partition delete
     read_cdc_by_table_name(4).show()
 
-    # TODO merge
+    spark.sql('''CREATE TABLE student_source (id INT, name STRING, age INT)
+                 USING DELTA
+                 LOCATION '{0}'
+             '''.format(otherPath))
+    spark.range(0, 3) \
+        .selectExpr(
+            "CAST(id as INT) as id",
+            "CAST(id as STRING) as name",
+            "CAST(id % 4 + 18 as INT) as age") \
+        .write.format("delta").mode("append").saveAsTable("student_source")
+    source = spark.sql("SELECT * FROM student_source")
+
+    table.alias("target") \
+        .merge(
+            source.alias("source"),
+            "target.id = source.id")\
+        .whenMatchedUpdate(set={"id": "source.id", "age": "source.age + 10"}) \
+        .whenNotMatchedInsertAll() \
+        .execute() # v5
+    print("(v5) Merged with a source table")
+    read_cdc_by_path(5).show()
 
     print("Streaming by path")
     cdfStream1 = stream_cdc_by_path(0)
