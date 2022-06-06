@@ -1,12 +1,14 @@
 package io.delta.flink.source;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 import io.delta.flink.source.internal.DeltaSourceOptions;
+import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
-import org.apache.flink.configuration.ConfigOption;
 import org.apache.hadoop.conf.Configuration;
 import org.codehaus.janino.util.Producer;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -163,7 +166,6 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
 
     @Test
     public void shouldThrowWhenSettingInternalOption() {
-        DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key();
 
         DeltaSourceValidationException exception =
             assertThrows(DeltaSourceValidationException.class,
@@ -173,14 +175,54 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
         assertThat(exception.getMessage().contains("Invalid option"), equalTo(true));
     }
 
-    protected abstract <T> DeltaSourceBuilderBase<?, ?> getBuilderWithOption(
-        ConfigOption<T> option,
-        T value
+    @Test
+    public void shouldThrowWhenInapplicableOptionUsed() {
+        assertAll(() -> {
+            for (DeltaSourceBuilderBase<?, ?> builder : initBuildersWithInapplicableOptions()) {
+                assertThrows(DeltaSourceValidationException.class, builder::build,
+                    "Builder should throw when inapplicable option was used. Config: "
+                        + builder.getSourceConfiguration());
+            }
+        });
+    }
+
+    /**
+     * @return A collection of Delta source builders where each has inapplicable option set.
+     * <p>
+     * Inapplicable option is an option that is not suited for given
+     * {@link DeltaSourceBuilderBase} implementation. For example incompatible
+     * {@link org.apache.flink.api.connector.source.Boundedness} mode.
+     */
+    protected abstract Collection<? extends DeltaSourceBuilderBase<?,?>>
+        initBuildersWithInapplicableOptions();
+
+    /**
+     * Creates a Delta source builder with option set via DeltaSourceBuilderBase#option(key, value)
+     * method.
+     * @param optionName {@link DeltaConfigOption} to set.
+     * @param value value for option.
+     */
+    protected abstract DeltaSourceBuilderBase<?, ?> getBuilderWithOption(
+        DeltaConfigOption<?> optionName,
+        Object value
     );
 
+    /**
+     * @return A Delta source builder implementation with null values for mandatory fields.
+     */
     protected abstract DeltaSourceBuilderBase<?, ?> getBuilderWithNulls();
 
+    /**
+     * Creates a Delta source builder for given array of columnNames that are passed to
+     * {@link DeltaSourceBuilderBase#columnNames(List)} method.
+     * @param columnNames Column names that should be read from Delta table by created source.
+     */
     protected abstract DeltaSourceBuilderBase<?, ?> getBuilderForColumns(String[] columnNames);
+
+    /**
+     * @return most basic builder configuration, no options, no columns defined.
+     */
+    protected abstract DeltaSourceBuilderBase<?, ?> getBuilderAllColumns();
 
     /**
      * @return Delta source builder that uses invalid combination od mutually excluded options set
@@ -194,6 +236,9 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
      */
     protected abstract DeltaSourceBuilderBase<?, ?> getBuilderWithGenericMutuallyExcludedOptions();
 
+    /**
+     * @return Builder that has null values for mandatory fields and used mutually excluded options.
+     */
     protected abstract DeltaSourceBuilderBase<?, ?>
         getBuilderWithNullMandatoryFieldsAndExcludedOption();
 
@@ -219,28 +264,26 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             );
     }
 
-    protected  <T> DeltaSourceBuilderBase<?, ?> setOptionOnBuilder(
-            ConfigOption<T> option,
-            T value,
+    protected  <T> DeltaSourceBuilderBase<?, ?> setOptionOnBuilder(String optionName, T value,
             DeltaSourceBuilderBase<?, ?> builder) {
         if (value instanceof String) {
-            return (DeltaSourceBuilderBase<?, ?>) builder.option(option.key(), (String) value);
+            return (DeltaSourceBuilderBase<?, ?>) builder.option(optionName, (String) value);
         }
 
         if (value instanceof Integer) {
-            return (DeltaSourceBuilderBase<?, ?>) builder.option(option.key(), (Integer) value);
+            return (DeltaSourceBuilderBase<?, ?>) builder.option(optionName, (Integer) value);
         }
 
         if (value instanceof Long) {
-            return (DeltaSourceBuilderBase<?, ?>) builder.option(option.key(), (Long) value);
+            return (DeltaSourceBuilderBase<?, ?>) builder.option(optionName, (Long) value);
         }
 
         if (value instanceof Boolean) {
-            return (DeltaSourceBuilderBase<?, ?>) builder.option(option.key(), (Boolean) value);
+            return (DeltaSourceBuilderBase<?, ?>) builder.option(optionName, (Boolean) value);
         }
 
         throw new IllegalArgumentException(
-            "Used unsupported value type for Builder option - " + value.getClass());
+            "Used unsupported value type for Builder optionName - " + value.getClass());
     }
 
 }

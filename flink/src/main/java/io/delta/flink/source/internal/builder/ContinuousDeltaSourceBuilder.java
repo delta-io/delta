@@ -1,13 +1,21 @@
 package io.delta.flink.source.internal.builder;
 
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
 import io.delta.flink.source.internal.enumerator.ContinuousSplitEnumeratorProvider;
 import io.delta.flink.source.internal.enumerator.supplier.ContinuousSnapshotSupplierFactory;
+import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.IGNORE_CHANGES;
 import static io.delta.flink.source.internal.DeltaSourceOptions.IGNORE_DELETES;
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTAMP;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION;
+import static io.delta.flink.source.internal.DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY;
 import static io.delta.flink.source.internal.DeltaSourceOptions.UPDATE_CHECK_INTERVAL;
 
 /**
@@ -32,15 +40,27 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
         new ContinuousSplitEnumeratorProvider(DEFAULT_SPLIT_ASSIGNER,
             DEFAULT_SPLITTABLE_FILE_ENUMERATOR);
 
+    protected static final List<String> APPLICABLE_OPTIONS = Collections.unmodifiableList(
+        Arrays.asList(
+            STARTING_VERSION.key(),
+            STARTING_TIMESTAMP.key(),
+            IGNORE_CHANGES.key(),
+            IGNORE_DELETES.key(),
+            UPDATE_CHECK_INTERVAL.key(),
+            UPDATE_CHECK_INITIAL_DELAY.key(),
+            PARQUET_BATCH_SIZE.key()
+        )
+    );
+
     public ContinuousDeltaSourceBuilder(
             Path tablePath,
             Configuration hadoopConfiguration,
             ContinuousSnapshotSupplierFactory snapshotSupplierFactory) {
         super(tablePath, hadoopConfiguration, snapshotSupplierFactory);
     }
-    // TODO PR 12 add tests for options.
+
     public SELF startingVersion(String startingVersion) {
-        sourceConfiguration.addOption(STARTING_VERSION.key(), startingVersion);
+        sourceConfiguration.addOption(STARTING_VERSION, startingVersion);
         return self();
     }
 
@@ -50,22 +70,23 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
     }
 
     public SELF startingTimestamp(String startingTimestamp) {
-        sourceConfiguration.addOption(STARTING_TIMESTAMP.key(), startingTimestamp);
+        long toTimestamp = TimestampFormatConverter.convertToTimestamp(startingTimestamp);
+        sourceConfiguration.addOption(STARTING_TIMESTAMP, toTimestamp);
         return self();
     }
 
     public SELF updateCheckIntervalMillis(long updateCheckInterval) {
-        sourceConfiguration.addOption(UPDATE_CHECK_INTERVAL.key(), updateCheckInterval);
+        sourceConfiguration.addOption(UPDATE_CHECK_INTERVAL, updateCheckInterval);
         return self();
     }
 
     public SELF ignoreDeletes(boolean ignoreDeletes) {
-        sourceConfiguration.addOption(IGNORE_DELETES.key(), ignoreDeletes);
+        sourceConfiguration.addOption(IGNORE_DELETES, ignoreDeletes);
         return self();
     }
 
     public SELF ignoreChanges(boolean ignoreChanges) {
-        sourceConfiguration.addOption(IGNORE_CHANGES.key(), ignoreChanges);
+        sourceConfiguration.addOption(IGNORE_CHANGES, ignoreChanges);
         return self();
     }
 
@@ -79,5 +100,10 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
                 !sourceConfiguration.hasOption(STARTING_TIMESTAMP)
                     || !sourceConfiguration.hasOption(STARTING_VERSION),
                 prepareOptionExclusionMessage(STARTING_VERSION.key(), STARTING_TIMESTAMP.key()));
+    }
+
+    @Override
+    protected Collection<String> getApplicableOptions() {
+        return APPLICABLE_OPTIONS;
     }
 }

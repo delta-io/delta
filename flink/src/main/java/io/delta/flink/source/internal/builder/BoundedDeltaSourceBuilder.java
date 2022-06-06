@@ -1,9 +1,16 @@
 package io.delta.flink.source.internal.builder;
 
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
 import io.delta.flink.source.internal.enumerator.BoundedSplitEnumeratorProvider;
 import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
+import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
 import static io.delta.flink.source.internal.DeltaSourceOptions.TIMESTAMP_AS_OF;
 import static io.delta.flink.source.internal.DeltaSourceOptions.VERSION_AS_OF;
 
@@ -28,6 +35,14 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
         new BoundedSplitEnumeratorProvider(DEFAULT_SPLIT_ASSIGNER,
             DEFAULT_SPLITTABLE_FILE_ENUMERATOR);
 
+    protected static final List<String> APPLICABLE_OPTIONS = Collections.unmodifiableList(
+        Arrays.asList(
+            VERSION_AS_OF.key(),
+            TIMESTAMP_AS_OF.key(),
+            PARQUET_BATCH_SIZE.key()
+        )
+    );
+
     public BoundedDeltaSourceBuilder(
             Path tablePath,
             Configuration hadoopConfiguration,
@@ -35,14 +50,14 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
         super(tablePath, hadoopConfiguration, snapshotSupplierFactory);
     }
 
-    // TODO PR 12 add tests for options.
     public SELF versionAsOf(long snapshotVersion) {
-        sourceConfiguration.addOption(VERSION_AS_OF.key(), snapshotVersion);
+        sourceConfiguration.addOption(VERSION_AS_OF, snapshotVersion);
         return self();
     }
 
     public SELF timestampAsOf(String snapshotTimestamp) {
-        sourceConfiguration.addOption(TIMESTAMP_AS_OF.key(), snapshotTimestamp);
+        long toTimestamp = TimestampFormatConverter.convertToTimestamp(snapshotTimestamp);
+        sourceConfiguration.addOption(TIMESTAMP_AS_OF, toTimestamp);
         return self();
     }
 
@@ -56,5 +71,10 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
                 !sourceConfiguration.hasOption(VERSION_AS_OF)
                     || !sourceConfiguration.hasOption(TIMESTAMP_AS_OF),
                 prepareOptionExclusionMessage(VERSION_AS_OF.key(), TIMESTAMP_AS_OF.key()));
+    }
+
+    @Override
+    protected Collection<String> getApplicableOptions() {
+        return APPLICABLE_OPTIONS;
     }
 }

@@ -246,8 +246,10 @@ public class RowDataContinuousDeltaSourceBuilder
         // We are using this snapshot to extract the metadata and discover table's column names
         // and data types.
         SourceSchema sourceSchema = getSourceSchema();
-        sourceConfiguration.addOption(LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
-            sourceSchema.getSnapshotVersion());
+        sourceConfiguration.addOption(
+            LOADED_SCHEMA_SNAPSHOT_VERSION,
+            sourceSchema.getSnapshotVersion()
+        );
 
         DeltaBulkFormat<RowData> format = RowDataFormat.builder(
                 RowType.of(sourceSchema.getColumnTypes(), sourceSchema.getColumnNames()),

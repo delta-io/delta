@@ -1,5 +1,6 @@
 package io.delta.flink.source.internal.builder;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.function.Supplier;
 
@@ -177,6 +178,11 @@ class DeltaSourceBuilderBaseTest {
         @Override
         protected Validator validateOptionExclusions() {
             return null;
+        }
+
+        @Override
+        protected Collection<String> getApplicableOptions() {
+            return Collections.emptyList();
         }
     }
 

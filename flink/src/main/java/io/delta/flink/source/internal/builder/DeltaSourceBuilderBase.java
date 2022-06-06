@@ -1,6 +1,7 @@
 package io.delta.flink.source.internal.builder;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -16,7 +17,6 @@ import io.delta.flink.source.internal.file.DeltaFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import io.delta.flink.source.internal.utils.SourceSchema;
 import io.delta.flink.source.internal.utils.SourceUtils;
-import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.connector.file.src.assigners.LocalityAwareSplitAssigner;
 import org.apache.flink.core.fs.Path;
@@ -75,11 +75,13 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * instance.
      */
     protected final DeltaSourceConfiguration sourceConfiguration = new DeltaSourceConfiguration();
+
     /**
      * A {@link Path} to Delta table that should be read by created {@link
      * io.delta.flink.source.DeltaSource}.
      */
     protected final Path tablePath;
+
     /**
      * The Hadoop's {@link Configuration} for this Source.
      */
@@ -114,8 +116,8 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, String optionValue) {
-        ConfigOption<?> configOption = validateOptionName(optionName);
-        sourceConfiguration.addOption(configOption.key(), optionValue);
+        DeltaConfigOption<?> configOption = validateOptionName(optionName);
+        configOption.setOnConfig(sourceConfiguration, optionValue);
         return self();
     }
 
@@ -123,8 +125,8 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, boolean optionValue) {
-        ConfigOption<?> configOption = validateOptionName(optionName);
-        sourceConfiguration.addOption(configOption.key(), optionValue);
+        DeltaConfigOption<?> configOption = validateOptionName(optionName);
+        configOption.setOnConfig(sourceConfiguration, optionValue);
         return self();
     }
 
@@ -132,8 +134,8 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, int optionValue) {
-        ConfigOption<?> configOption = validateOptionName(optionName);
-        sourceConfiguration.addOption(configOption.key(), optionValue);
+        DeltaConfigOption<?> configOption = validateOptionName(optionName);
+        configOption.setOnConfig(sourceConfiguration, optionValue);
         return self();
     }
 
@@ -141,9 +143,18 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, long optionValue) {
-        ConfigOption<?> configOption = validateOptionName(optionName);
-        sourceConfiguration.addOption(configOption.key(), optionValue);
+        DeltaConfigOption<?> configOption = validateOptionName(optionName);
+        configOption.setOnConfig(sourceConfiguration, optionValue);
         return self();
+    }
+
+    // TODO PR 12.1 test immutability
+    /**
+     * @return A copy of {@link DeltaSourceConfiguration} used by builder. The changes made on
+     * returned copy do not change the state of builder's configuration.
+     */
+    public DeltaSourceConfiguration getSourceConfiguration() {
+        return sourceConfiguration.copy();
     }
 
     public abstract <V extends DeltaSource<T>> V build();
@@ -155,12 +166,15 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      */
     protected abstract Validator validateOptionExclusions();
 
+    protected abstract Collection<String> getApplicableOptions();
+
     /**
      * Validate definition of Delta source builder including mandatory and optional options.
      */
     protected void validate() {
         Validator mandatoryValidator = validateMandatoryOptions();
         Validator exclusionsValidator = validateOptionExclusions();
+        Validator inapplicableOptionValidator = validateInapplicableOptions();
         Validator optionalValidator = validateOptionalParameters();
 
         List<String> validationMessages = new LinkedList<>();
@@ -168,6 +182,7 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
         validationMessages.addAll(mandatoryValidator.getValidationMessages());
         validationMessages.addAll(exclusionsValidator.getValidationMessages());
         validationMessages.addAll(optionalValidator.getValidationMessages());
+        validationMessages.addAll(inapplicableOptionValidator.getValidationMessages());
 
         if (!validationMessages.isEmpty()) {
             String tablePathString =
@@ -207,15 +222,48 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
         return validator;
     }
 
+    /**
+     * Validated builder options that were used but they might be not applicable for given builder
+     * type, for example using options from bounded mode like "versionAsOf" for continuous mode
+     * builder.
+     *
+     * @return The {@link Validator} object with all (if any) validation error messages.
+     */
+    protected Validator validateInapplicableOptions() {
+
+        Validator validator = new Validator();
+        sourceConfiguration.getUsedOptions()
+            .stream()
+            .filter(DeltaSourceOptions::isUserFacingOption)
+            .forEach(usedOption ->
+                validator.checkArgument(getApplicableOptions().contains(usedOption),
+                prepareInapplicableOptionMessage(
+                    sourceConfiguration.getUsedOptions(),
+                    getApplicableOptions())
+            ));
+
+        return validator;
+    }
+
     protected String prepareOptionExclusionMessage(String... mutualExclusiveOptions) {
         return String.format(
             "Used mutually exclusive options for Source definition. Invalid options [%s]",
             String.join(",", mutualExclusiveOptions));
     }
 
-    // TODO Refactor Option name validation in PR 12
-    protected ConfigOption<?> validateOptionName(String optionName) {
-        ConfigOption<?> option = DeltaSourceOptions.USER_FACING_SOURCE_OPTIONS.get(optionName);
+    protected String prepareInapplicableOptionMessage(
+            Collection<String> usedOptions,
+            Collection<String> applicableOptions) {
+        return String.format(
+            "Used inapplicable option for source configuration. Used options [%s], applicable "
+                + "options [%s]",
+            usedOptions, applicableOptions);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected <TYPE> DeltaConfigOption<TYPE> validateOptionName(String optionName) {
+        DeltaConfigOption<TYPE> option =
+            (DeltaConfigOption<TYPE>) DeltaSourceOptions.USER_FACING_SOURCE_OPTIONS.get(optionName);
         if (option == null) {
             throw DeltaSourceExceptions.invalidOptionNameException(
                 SourceUtils.pathToString(tablePath), optionName);

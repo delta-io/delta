@@ -60,9 +60,9 @@ public class BoundedDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEnume
         when(deltaLog.getSnapshotForVersionAsOf(versionAsOf)).thenReturn(versionAsOfSnapshot);
         when(versionAsOfSnapshot.getVersion()).thenReturn(versionAsOf);
 
-        sourceConfiguration.addOption(DeltaSourceOptions.VERSION_AS_OF.key(), versionAsOf);
+        sourceConfiguration.addOption(DeltaSourceOptions.VERSION_AS_OF, versionAsOf);
         sourceConfiguration.addOption(
-            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
             versionAsOfSnapshot.getVersion()
         );
 
@@ -88,18 +88,18 @@ public class BoundedDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEnume
 
     @Test
     public void shouldUseTimestampAsOfSnapshot() {
-        String timestampAsOfString = "2022-02-24T04:55:00.001Z";
+        long timestampAsOfString = System.currentTimeMillis();
         long timestampAsOfVersion = 10;
 
         when(deltaLog.getSnapshotForVersionAsOf(timestampAsOfVersion)).thenReturn(
             timestampAsOfSnapshot);
         when(timestampAsOfSnapshot.getVersion()).thenReturn(timestampAsOfVersion);
 
-        sourceConfiguration.addOption(DeltaSourceOptions.TIMESTAMP_AS_OF.key(),
-            timestampAsOfString);
+        sourceConfiguration.addOption(DeltaSourceOptions.TIMESTAMP_AS_OF, timestampAsOfString);
         sourceConfiguration.addOption(
-            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
-            timestampAsOfSnapshot.getVersion());
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
+            timestampAsOfSnapshot.getVersion()
+        );
 
         enumerator = setUpEnumerator();
         enumerator.start();

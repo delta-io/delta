@@ -162,10 +162,13 @@ public class ContinuousDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEn
         when(startingVersionSnapshot.getVersion()).thenReturn(startingVersion);
 
         sourceConfiguration.addOption(
-            DeltaSourceOptions.STARTING_VERSION.key(), String.valueOf(startingVersion));
+            DeltaSourceOptions.STARTING_VERSION,
+            String.valueOf(startingVersion)
+        );
         sourceConfiguration.addOption(
-            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
-            startingVersionSnapshot.getVersion());
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
+            startingVersionSnapshot.getVersion())
+        ;
 
         enumerator = setUpEnumerator();
         enumerator.start();
@@ -191,7 +194,7 @@ public class ContinuousDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEn
     @Test
     public void shouldOnlyReadChangesWhenLatestStartingVersionOption() {
         long startingVersion = 10;
-        sourceConfiguration.addOption(DeltaSourceOptions.STARTING_VERSION.key(), "latest");
+        sourceConfiguration.addOption(DeltaSourceOptions.STARTING_VERSION, "latest");
 
         List<VersionLog> changes = mockEnumContextAndTableChange(startingVersion);
         long nextMonitoringVersion = changes.get(changes.size() - 1).getVersion() + 1;
@@ -218,7 +221,7 @@ public class ContinuousDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEn
 
     @Test
     public void shouldOnlyReadChangesWhenStartingTimestampOption() {
-        String startingTimestampString = "2022-02-24T04:55:00.001Z";
+        long startingTimestampString = System.currentTimeMillis();
         long startingVersion = 10;
 
         List<VersionLog> changes = mockEnumContextAndTableChange(startingVersion);
@@ -232,10 +235,12 @@ public class ContinuousDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEn
             startingVersionSnapshot);
 
         sourceConfiguration.addOption(
-            DeltaSourceOptions.STARTING_TIMESTAMP.key(), startingTimestampString);
+            DeltaSourceOptions.STARTING_TIMESTAMP,
+            startingTimestampString);
         sourceConfiguration.addOption(
-            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
-            startingVersionSnapshot.getVersion());
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
+            startingVersionSnapshot.getVersion()
+        );
 
         enumerator = setUpEnumerator();
         enumerator.start();

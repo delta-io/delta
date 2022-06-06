@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import io.delta.flink.source.internal.DeltaPartitionFieldExtractor;
+import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import org.apache.flink.formats.parquet.vector.ColumnBatchFactory;
@@ -34,9 +35,6 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     private static final boolean PARQUET_CASE_SENSITIVE = true;
     // ------------------------------------------------------
 
-    // TODO PR 12 get this from options.
-    private static final int BATCH_SIZE = 2048;
-
     private final RowType rowType;
 
     /**
@@ -47,7 +45,9 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     /**
      * An array with Delta table partition columns.
      */
-    private List<String> partitionColumns; // partitionColumn is validated in DeltaSourceBuilder.
+    private List<String> partitionColumns; // partitionColumns are validated in DeltaSourceBuilder.
+
+    private int batchSize = DeltaSourceOptions.PARQUET_BATCH_SIZE.defaultValue();
 
     RowDataFormatBuilder(RowType rowType, Configuration hadoopConfiguration) {
         this.rowType = rowType;
@@ -61,12 +61,19 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
         return this;
     }
 
+    @Override
+    public FormatBuilder<RowData> parquetBatchSize(int size) {
+        this.batchSize = size;
+        return this;
+    }
+
     /**
      * Creates an instance of {@link RowDataFormat}.
      *
      * @throws DeltaSourceValidationException if invalid arguments were passed to {@link
      *                                        RowDataFormatBuilder}. For example null arguments.
      */
+    @Override
     public RowDataFormat build() {
 
         if (partitionColumns.isEmpty()) {
@@ -88,7 +95,7 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
         return new RowDataFormat(
             hadoopConfiguration,
             rowType,
-            BATCH_SIZE,
+            batchSize,
             PARQUET_UTC_TIMESTAMP,
             PARQUET_CASE_SENSITIVE);
     }
@@ -112,14 +119,14 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
                 projectedNames,
                 partitionColumns,
                 new DeltaPartitionFieldExtractor<>(),
-                BATCH_SIZE);
+                batchSize);
 
         return new RowDataFormat(
             hadoopConfig,
             projectedRowType,
             producedRowType,
             factory,
-            BATCH_SIZE,
+            batchSize,
             PARQUET_UTC_TIMESTAMP,
             PARQUET_CASE_SENSITIVE);
     }

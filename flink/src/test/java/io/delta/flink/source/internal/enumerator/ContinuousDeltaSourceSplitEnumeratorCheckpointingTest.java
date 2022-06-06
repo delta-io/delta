@@ -199,9 +199,11 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
             new TestingSplitEnumeratorContext<>(1);
 
         DeltaSourceConfiguration sourceConfiguration = new DeltaSourceConfiguration();
-        sourceConfiguration.addOption(DeltaSourceOptions.STARTING_VERSION.key(), "latest");
-        sourceConfiguration.addOption(DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
-            headSnapshot.getVersion());
+        sourceConfiguration.addOption(DeltaSourceOptions.STARTING_VERSION, "latest");
+        sourceConfiguration.addOption(
+            DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
+            headSnapshot.getVersion()
+        );
 
         ContinuousDeltaSourceSplitEnumerator enumerator =
             splitEnumeratorProvider.createInitialStateEnumerator(tablePath,

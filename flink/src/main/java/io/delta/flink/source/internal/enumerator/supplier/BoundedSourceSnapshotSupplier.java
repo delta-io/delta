@@ -52,11 +52,10 @@ public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
 
     private TransitiveOptional<Snapshot> getSnapshotFromTimestampAsOfOption(
         DeltaSourceConfiguration sourceConfiguration) {
-        String timestampAsOf = sourceConfiguration.getValue(DeltaSourceOptions.TIMESTAMP_AS_OF);
+        Long timestampAsOf = sourceConfiguration.getValue(DeltaSourceOptions.TIMESTAMP_AS_OF);
         if (timestampAsOf != null) {
             return TransitiveOptional.ofNullable(
-                deltaLog.getSnapshotForTimestampAsOf(
-                    TimestampFormatConverter.convertToTimestamp(timestampAsOf))
+                deltaLog.getSnapshotForTimestampAsOf(timestampAsOf)
             );
         }
         return TransitiveOptional.empty();

@@ -1,16 +1,8 @@
 package io.delta.flink.source.internal;
 
-import java.util.UUID;
-
-import org.apache.flink.configuration.ConfigOption;
-import org.apache.flink.configuration.ConfigOptions;
 import org.junit.Before;
 import org.junit.Test;
-import static io.delta.flink.source.internal.DeltaSourceConfigurationTest.TestOptions.BOOLEAN_OPTION;
-import static io.delta.flink.source.internal.DeltaSourceConfigurationTest.TestOptions.INT_OPTION;
-import static io.delta.flink.source.internal.DeltaSourceConfigurationTest.TestOptions.LONG_OPTION;
-import static io.delta.flink.source.internal.DeltaSourceConfigurationTest.TestOptions.NO_DEFAULT_VALUE;
-import static io.delta.flink.source.internal.DeltaSourceConfigurationTest.TestOptions.STRING_OPTION;
+import static io.delta.flink.source.internal.utils.TestOptions.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.hamcrest.core.IsNull.nullValue;
@@ -31,10 +23,10 @@ public class DeltaSourceConfigurationTest {
         int intValue = Integer.MIN_VALUE;
         boolean booleanValue = true;
 
-        configuration.addOption(LONG_OPTION.key(), longValue);
-        configuration.addOption(INT_OPTION.key(), intValue);
-        configuration.addOption(STRING_OPTION.key(), stringValue);
-        configuration.addOption(BOOLEAN_OPTION.key(), booleanValue);
+        configuration.addOption(LONG_OPTION, longValue);
+        configuration.addOption(INT_OPTION, intValue);
+        configuration.addOption(STRING_OPTION, stringValue);
+        configuration.addOption(BOOLEAN_OPTION, booleanValue);
 
         assertThat(configuration.hasOption(LONG_OPTION), equalTo(true));
         assertThat(configuration.hasOption(INT_OPTION), equalTo(true));
@@ -65,24 +57,4 @@ public class DeltaSourceConfigurationTest {
         assertThat(configuration.hasOption(NO_DEFAULT_VALUE), equalTo(false));
         assertThat(configuration.getValue(NO_DEFAULT_VALUE), nullValue());
     }
-
-    static class TestOptions {
-
-        static final ConfigOption<Long> LONG_OPTION =
-            ConfigOptions.key("longOption").longType().defaultValue(Long.MAX_VALUE);
-
-        static final ConfigOption<Integer> INT_OPTION =
-            ConfigOptions.key("intOption").intType().defaultValue(Integer.MAX_VALUE);
-
-        static final ConfigOption<String> STRING_OPTION =
-            ConfigOptions.key("stringOption").stringType()
-                .defaultValue(UUID.randomUUID().toString());
-
-        static final ConfigOption<Boolean> BOOLEAN_OPTION =
-            ConfigOptions.key("booleanOption").booleanType().defaultValue(false);
-
-        static final ConfigOption<Boolean> NO_DEFAULT_VALUE =
-            ConfigOptions.key("noDefault").booleanType().noDefaultValue();
-    }
-
 }

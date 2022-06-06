@@ -62,10 +62,10 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
     private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption(
             DeltaSourceConfiguration sourceConfiguration) {
-        String startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);
+        Long startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);
         if (startingTimestamp != null) {
-            return TransitiveOptional.ofNullable(deltaLog.getSnapshotForTimestampAsOf(
-                TimestampFormatConverter.convertToTimestamp(startingTimestamp)));
+            return TransitiveOptional.ofNullable(
+                deltaLog.getSnapshotForTimestampAsOf(startingTimestamp));
         }
         return TransitiveOptional.empty();
     }

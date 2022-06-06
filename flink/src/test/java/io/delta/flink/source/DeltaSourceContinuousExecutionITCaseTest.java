@@ -139,7 +139,7 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
     @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
     @EnumSource(FailoverType.class)
-    // This test updates Delta Table 5 times, so it will take some time to finish. About 1 minute.
+    // This test updates Delta Table 5 times, so it will take some time to finish.
     public void shouldReadDeltaTableFromSnapshotAndUpdatesUsingUserSchema(FailoverType failoverType)
         throws Exception {
 
@@ -270,7 +270,7 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         DeltaSourceConfiguration sourceConfiguration = source.getSourceConfiguration();
         // Main thread waits some time. To stay on a safe side, we wait doubled time of update
         // check interval. So source will have time to check table twice for updates.
-        int testTimeout =
+        long testTimeout =
             sourceConfiguration.getValue(DeltaSourceOptions.UPDATE_CHECK_INTERVAL) * 2;
         List<RowData> results = dataFuture.get(testTimeout, TimeUnit.MILLISECONDS);
 

@@ -6,6 +6,7 @@ import java.util.Set;
 import static java.lang.reflect.Modifier.isPublic;
 import static java.lang.reflect.Modifier.isStatic;
 
+import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import org.apache.flink.configuration.ConfigOption;
 import org.junit.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -41,7 +42,7 @@ public class DeltaSourceOptionsTest {
     }
 
     private boolean isConfigOptionField(Field field) {
-        return field.getType().equals(ConfigOption.class);
+        return field.getType().equals(DeltaConfigOption.class);
     }
 
     private boolean isPublicStatic(Field field) {

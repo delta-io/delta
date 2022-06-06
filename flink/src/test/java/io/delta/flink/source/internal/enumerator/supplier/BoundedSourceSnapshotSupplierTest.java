@@ -70,7 +70,7 @@ class BoundedSourceSnapshotSupplierTest {
     @Test
     public void shouldGetSnapshotFromTimestampAsOfOption() {
 
-        String dateTime = "2022-02-24 04:55:00";
+        long dateTime = TimestampFormatConverter.convertToTimestamp("2022-02-24 04:55:00");
         long timestamp = 1645678500000L;
 
         DeltaSourceConfiguration sourceConfig = new DeltaSourceConfiguration(
