@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.commands.VacuumCommand.logInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
+import org.apache.spark.sql.functions.col
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -132,44 +133,55 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
-      val validFiles = snapshot.stateDS
+      val allTrackedFiles = snapshot.stateDS
         .mapPartitions { actions =>
           val reservoirBase = new Path(basePath)
           val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-          actions.flatMap {
-            _.unwrap match {
+          actions.flatMap { action =>
+            val files = action.unwrap match {
               case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-                Nil
+                getFilePath(tombstone, fs, reservoirBase, isRemoveFile = true,
+                  relativizeIgnoreError)
+                  .map(f => TrackedFile(null, f))
               case fa: FileAction =>
-                val filePath = stringToPath(fa.path)
-                val validFileOpt = if (filePath.isAbsolute) {
-                  val maybeRelative =
-                    DeltaFileOperations.tryRelativizePath(fs, reservoirBase,
-                      filePath, relativizeIgnoreError)
-                  if (maybeRelative.isAbsolute) {
-                    // This file lives outside the directory of the table
-                    None
-                  } else {
-                    Option(pathToString(maybeRelative))
-                  }
-                } else {
-                  Option(pathToString(filePath))
-                }
-                validFileOpt.toSeq.flatMap { f =>
-                  // paths are relative so provide '/' as the basePath.
-                  allValidFiles(f, isBloomFiltered).flatMap { file =>
-                    val dirs = getAllSubdirs("/", file, fs)
-                    dirs ++ Iterator(file)
-                  }
-                }
-              case _ => Nil
+                getFilePath(fa, fs, reservoirBase, isRemoveFile = false, relativizeIgnoreError)
+                  .map(f => TrackedFile(f, null))
+              case _ => Seq(TrackedFile(null, null))
             }
+            files
           }
-        }.toDF("path")
+        }.toDF("toKeep", "toClean")
 
+      // minor GC
+      val toCleanFiles = allTrackedFiles.select("toClean")
+        .where(col("toClean").isNotNull)
+        .as[String]
+        .map { relativePath =>
+          assert(!stringToPath(relativePath).isAbsolute,
+            "Shouldn't have any absolute paths for deletion here.")
+          pathToString(DeltaFileOperations.absolutePath(basePath, relativePath))
+        }
+
+      val trackedFilesDeleted = if (!dryRun) {
+        try {
+          delete(toCleanFiles, spark, basePath, hadoopConf, parallelDeleteEnabled,
+            parallelDeletePartitions)
+        } catch {
+          case t: Throwable =>
+            logVacuumEnd(deltaLog, spark, path)
+            throw t
+        }
+      } else {
+        0
+      }
+
+      // major GC
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
 
+      val validFiles = allTrackedFiles.select($"toKeep" as "path")
+        .where(col("path").isNotNull)
+        .dropDuplicates()
       val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
@@ -239,7 +251,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
           logConsole(s"Found $numFiles files and directories in a total of " +
             s"$dirCounts directories that are safe to delete.")
-
           return diff.map(f => stringToPath(f).toString).toDF("path")
         }
         logVacuumStart(
@@ -250,13 +261,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           retentionMillis,
           deltaLog.tombstoneRetentionMillis)
 
-        val filesDeleted = try {
+        val untrackedFilesDeleted = try {
           delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled,
             parallelDeletePartitions)
         } catch { case t: Throwable =>
           logVacuumEnd(deltaLog, spark, path)
           throw t
         }
+        val filesDeleted = untrackedFilesDeleted + trackedFilesDeleted
         val stats = DeltaVacuumStats(
           isDryRun = false,
           specifiedRetentionMillis = retentionMillis,
@@ -276,6 +288,41 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 }
 
 trait VacuumCommandImpl extends DeltaCommand {
+
+  protected def getFilePath(
+      fileAction: FileAction,
+      fs: FileSystem,
+      reservoirBase: Path,
+      isRemoveFile: Boolean,
+      relativizeIgnoreError: Boolean): Seq[String] = {
+    val filePath = stringToPath(fileAction.path)
+    val validFileOpt = if (filePath.isAbsolute) {
+      val maybeRelative =
+        DeltaFileOperations.tryRelativizePath(fs, reservoirBase,
+          filePath, relativizeIgnoreError)
+      if (maybeRelative.isAbsolute) {
+        // This file lives outside the directory of the table
+        None
+      } else {
+        Option(pathToString(maybeRelative))
+      }
+    } else {
+      Option(pathToString(filePath))
+    }
+    validFileOpt.toSeq.flatMap { f =>
+      Seq(f).flatMap { file =>
+        if (isRemoveFile) {
+          Iterator(file)
+        }
+        else {
+          // get all parent paths that file has,
+          // those paths will be used to find the untracked files and dirs
+          val dirs = getAllSubdirs("/", file, fs)
+          dirs ++ Iterator(file)
+        }
+      }
+    }
+  }
 
   protected def logVacuumStart(
       spark: SparkSession,
@@ -354,6 +401,8 @@ trait VacuumCommandImpl extends DeltaCommand {
    */
   protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
 }
+
+case class TrackedFile(addFile: String, removeFile: String)
 
 case class DeltaVacuumStats(
     isDryRun: Boolean,

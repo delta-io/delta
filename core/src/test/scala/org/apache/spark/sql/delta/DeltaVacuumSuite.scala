@@ -237,20 +237,35 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CheckFiles(Seq("file3.txt"), exist = false),
 
         // Verify tombstones
+        CreateFile("abc/file4.txt", commitToActionLog = true),
         LogicallyDeleteFile("abc/file2.txt"),
         GC(dryRun = false, Seq(reservoirDir.toString)),
-        CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
+        CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt", "abc/file4.txt")),
         AdvanceClock(defaultTombstoneInterval - 1000),
         GC(dryRun = false, Seq(reservoirDir.toString)),
-        CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
+        CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt", "abc/file4.txt")),
         AdvanceClock(2000), // tombstone should expire
         GC(dryRun = false, Seq(reservoirDir.toString)),
-        CheckFiles(Seq("file1.txt", "abc")),
+        // abc should not be deleted because it still contains file4.txt
+        CheckFiles(Seq("file1.txt", "abc", "abc/file4.txt")),
         CheckFiles(Seq("abc/file2.txt"), exist = false),
-        GC(dryRun = false, Seq(reservoirDir.toString)), // Second gc should clear empty directory
-        CheckFiles(Seq("file1.txt")),
-        CheckFiles(Seq("abc"), exist = false),
+        GC(dryRun = false, Seq(reservoirDir.toString)), // nothing should be deleted
+        CheckFiles(Seq("file1.txt", "abc", "abc/file4.txt")),
 
+        LogicallyDeleteFile("abc/file4.txt"),
+        GC(dryRun = false, Seq(reservoirDir.toString)),
+        CheckFiles(Seq("file1.txt", "abc", "abc/file4.txt")),
+        AdvanceClock(defaultTombstoneInterval - 1000),
+        GC(dryRun = false, Seq(reservoirDir.toString)),
+        CheckFiles(Seq("file1.txt", "abc", "abc/file4.txt")),
+        AdvanceClock(2000), // tombstone should expire
+        GC(dryRun = true, Seq(new File(reservoirDir, "abc/file4.txt").toString)),
+        CheckFiles(Seq("file1.txt", "abc", "abc/file4.txt")),
+        GC(dryRun = false, Seq(reservoirDir.toString)),
+        CheckFiles(Seq("file1.txt")),
+        // abc should be deleted because it became empty after the minor gc deleted file4.txt
+        CheckFiles(Seq("abc"), exist = false),
+        CheckFiles(Seq("abc/file4.txt"), exist = false),
         // Make sure that files outside the reservoir are not affected
         CreateFile(externalFile, commitToActionLog = true),
         AdvanceClock(100),
