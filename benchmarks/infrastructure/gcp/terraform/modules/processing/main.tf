@@ -1,3 +1,8 @@
+resource "google_os_login_ssh_public_key" "key_to_login_to_master_node" {
+  user = data.google_client_openid_userinfo.me.email
+  key  = file(var.public_key_path)
+}
+
 resource "google_dataproc_metastore_service" "this" {
   provider   = google-beta
   service_id = "dataproc-metastore-for-benchmarks"
@@ -48,14 +53,6 @@ resource "google_dataproc_cluster" "benchmarks" {
   }
   labels     = var.labels
   depends_on = [
-    google_dataproc_metastore_service.this,
-    google_storage_bucket.benchmarks-data
+    google_dataproc_metastore_service.this
   ]
-}
-
-data "google_compute_instance" "benchmarks_master" {
-  provider   = google-beta
-  depends_on = [google_dataproc_cluster.benchmarks]
-  name       = google_dataproc_cluster.benchmarks.cluster_config.0.master_config.0.instance_names.0
-  zone       = var.zone
 }

@@ -21,6 +21,7 @@ resource "aws_subnet" "benchmarks_subnet2" {
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
 }
+
 resource "aws_default_route_table" "public" {
   default_route_table_id = aws_vpc.this.default_route_table_id
 

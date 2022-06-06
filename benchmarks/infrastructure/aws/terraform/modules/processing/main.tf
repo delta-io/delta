@@ -1,3 +1,28 @@
+resource "aws_db_instance" "metastore_service" {
+  engine                 = "mysql"
+  engine_version         = "8.0.28"
+  instance_class         = "db.m5.large"
+  db_name                = "hive"
+  username               = var.mysql_user
+  password               = var.mysql_password
+  availability_zone      = var.availability_zone1
+  skip_final_snapshot    = true
+  allocated_storage      = 50
+  db_subnet_group_name   = aws_db_subnet_group.metastore_service.name
+  vpc_security_group_ids = [aws_security_group.metastore_service.id]
+}
+
+resource "aws_db_subnet_group" "metastore_service" {
+  name       = "benchmarks_subnet_group_for_metastore_service"
+  subnet_ids = [var.subnet1_id, var.subnet2_id]
+}
+
+/* EC2 key used to SSH to EMR cluster nodes. */
+resource "aws_key_pair" "benchmarks" {
+  key_name   = "benchmarks_key_pair"
+  public_key = file(var.emr_public_key_path)
+}
+
 resource "aws_emr_cluster" "benchmarks" {
   name                              = "delta_performance_benchmarks_cluster"
   release_label                     = "emr-6.5.0"
@@ -7,7 +32,7 @@ resource "aws_emr_cluster" "benchmarks" {
   ec2_attributes {
     instance_profile                  = aws_iam_instance_profile.benchmarks_emr_profile.arn
     key_name                          = aws_key_pair.benchmarks.key_name
-    subnet_id                         = aws_subnet.benchmarks_subnet1.id
+    subnet_id                         = var.subnet1_id
     emr_managed_master_security_group = aws_security_group.emr.id
     emr_managed_slave_security_group  = aws_security_group.emr.id
   }
@@ -24,7 +49,7 @@ resource "aws_emr_cluster" "benchmarks" {
     {
       "Classification": "hive-site",
       "Properties": {
-        "javax.jdo.option.ConnectionURL": "jdbc:mysql://${aws_db_instance.benchmarks_metastore_service.endpoint}/hive?createDatabaseIfNotExist=true",
+        "javax.jdo.option.ConnectionURL": "jdbc:mysql://${aws_db_instance.metastore_service.endpoint}/hive?createDatabaseIfNotExist=true",
         "javax.jdo.option.ConnectionDriverName": "org.mariadb.jdbc.Driver",
         "javax.jdo.option.ConnectionUserName": "${var.mysql_user}",
         "javax.jdo.option.ConnectionPassword": "${var.mysql_password}"
@@ -33,15 +58,31 @@ resource "aws_emr_cluster" "benchmarks" {
   ]
 EOF
   service_role        = aws_iam_role.benchmarks_iam_emr_service_role.arn
-  depends_on          = [
-    aws_db_instance.benchmarks_metastore_service,
-    aws_s3_bucket.benchmarks_data
-  ]
+  depends_on          = [aws_db_instance.metastore_service]
+}
+
+resource "aws_security_group" "metastore_service" {
+  name   = "metastore_security_group"
+  vpc_id = var.vpc_id
+  ingress {
+    description     = "Allow inbound traffic only from EMR cluster nodes."
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "TCP"
+    security_groups = [aws_security_group.emr.id]
+  }
+  egress {
+    description = "Allow all outbound traffic."
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 resource "aws_security_group" "emr" {
   name   = "benchmarks_master_security_group"
-  vpc_id = aws_vpc.this.id
+  vpc_id = var.vpc_id
   ingress {
     description = "Allow inbound traffic from given IP."
     from_port   = 0
@@ -84,9 +125,8 @@ EOF
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_service_policy" {
-  name = "iam_emr_service_policy"
-  role = aws_iam_role.benchmarks_iam_emr_service_role.id
-
+  name   = "iam_emr_service_policy"
+  role   = aws_iam_role.benchmarks_iam_emr_service_role.id
   policy = <<EOF
 {
     "Version": "2012-10-17",
@@ -171,8 +211,7 @@ EOF
 }
 
 resource "aws_iam_role" "benchmarks_iam_emr_profile_role" {
-  name = "iam_emr_profile_role"
-
+  name               = "iam_emr_profile_role"
   assume_role_policy = <<EOF
 {
   "Version": "2008-10-17",
@@ -196,9 +235,8 @@ resource "aws_iam_instance_profile" "benchmarks_emr_profile" {
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_profile_policy" {
-  name = "iam_emr_profile_policy"
-  role = aws_iam_role.benchmarks_iam_emr_profile_role.id
-
+  name   = "iam_emr_profile_policy"
+  role   = aws_iam_role.benchmarks_iam_emr_profile_role.id
   policy = <<EOF
 {
     "Version": "2012-10-17",
