@@ -54,7 +54,7 @@ object ChangeDataFeed {
       spark.read.format("delta")
         .option("readChangeFeed", "true")
         .option("startingVersion", startingVersion.toString)
-        .table("table")
+        .table("student")
         .orderBy("_change_type", "id")
     }
 
@@ -65,6 +65,7 @@ object ChangeDataFeed {
         .load(path)
         .writeStream
         .format("console")
+        .option("numRows", 1000)
         .start()
     }
 
@@ -72,41 +73,56 @@ object ChangeDataFeed {
       spark.readStream.format("delta")
         .option("readChangeFeed", "true")
         .option("startingVersion", startingVersion.toString)
-        .table("table")
+        .table("student")
         .writeStream
         .format("console")
+        .option("numRows", 1000)
         .start()
     }
 
     spark.sql(
       s"""
-         |CREATE TABLE table (id LONG)
+         |CREATE TABLE student (id INT, name STRING, age INT)
          |USING DELTA
+         |PARTITIONED BY (age)
          |TBLPROPERTIES (delta.enableChangeDataFeed = true)
          |LOCATION '$path'""".stripMargin) // v0
 
-    spark.range(0, 10).write.format("delta").mode("append").save(path)  // v1
+    spark.range(0, 10)
+      .selectExpr(
+        "CAST(id as INT) as id",
+        "CAST(id as STRING) as name",
+        "CAST(id % 4 + 18 as INT) as age")
+      .write.format("delta").mode("append").save(path)  // v1
 
-    readCDCByPath(1).show()
-
+    println("(v1) Initial Table")
     spark.read.format("delta").load(path).orderBy("id").show()
+
+    println("(v1) CDC changes")
+    readCDCByPath(1).show()
 
     val table = io.delta.tables.DeltaTable.forPath(path)
 
+    println("(v2) Updated id -> id + 1")
     table.update(Map("id" -> expr("id + 1"))) // v2
-
     readCDCByPath(2).show()
 
-    table.delete(expr("id >= 5")) // v3
-
+    println("(v3) Deleted where id >= 7")
+    table.delete(expr("id >= 7")) // v3
     readCDCByTableName(3).show()
+
+    println("(v4) Deleted where age = 18")
+    table.delete(expr("age = 18")) // v4, partition delete
+    readCDCByTableName(4).show()
 
     // TODO merge
 
+    println("Streaming by path")
     val cdfStream1 = streamCDCByPath(0)
     cdfStream1.awaitTermination(5000)
     cdfStream1.stop()
 
+    println("Streaming by table name")
     val cdfStream2 = streamCDCByTableName(0)
     cdfStream2.awaitTermination(5000)
     cdfStream2.stop()

@@ -47,7 +47,7 @@ def read_cdc_by_table_name(starting_version):
     return spark.read.format("delta") \
         .option("readChangeFeed", "true") \
         .option("startingVersion", str(starting_version)) \
-        .table("table") \
+        .table("student") \
         .orderBy("_change_type", "id")
 
 
@@ -58,6 +58,7 @@ def stream_cdc_by_path(starting_version):
         .load(path) \
         .writeStream \
         .format("console") \
+        .option("numRows", 1000) \
         .start()
 
 
@@ -65,45 +66,57 @@ def stream_cdc_by_table_name(starting_version):
     return spark.readStream.format("delta") \
         .option("readChangeFeed", "true") \
         .option("startingVersion", str(starting_version)) \
-        .table("table") \
+        .table("student") \
         .writeStream \
         .format("console") \
+        .option("numRows", 1000) \
         .start()
 
-spark.sql('''CREATE TABLE table (id LONG)
+spark.sql('''CREATE TABLE student (id INT, name STRING, age INT)
              USING DELTA
+             PARTITIONED BY (age)
              TBLPROPERTIES (delta.enableChangeDataFeed = true)
              LOCATION '{0}'
          '''.format(path))
 
-spark.range(0, 10).write.format("delta").mode("append").save(path)  # v1
+spark.range(0, 10) \
+    .selectExpr(
+        "CAST(id as INT) as id",
+        "CAST(id as STRING) as name",
+        "CAST(id % 4 + 18 as INT) as age") \
+    .write.format("delta").mode("append").save(path)  # v1
 
-read_cdc_by_path(1).show()
-
+print("(v1) Initial Table")
 spark.read.format("delta").load(path).orderBy("id").show()
+
+print("(v1) CDC changes")
+read_cdc_by_path(1).show()
 
 table = DeltaTable.forPath(spark, path)
 
+print("(v2) Updated id -> id + 1")
 table.update(set={"id": expr("id + 1")})  # v2
-
 read_cdc_by_path(2).show()
 
-table.delete(condition=expr("id >= 5"))  # v3
-
+print("(v3) Deleted where id >= 7")
+table.delete(condition=expr("id >= 7"))  # v3
 read_cdc_by_table_name(3).show()
+
+print("(v4) Deleted where age = 18")
+table.delete(condition=expr("age = 18"))  # v4, partition delete
+read_cdc_by_table_name(4).show()
 
 # TODO merge
 
-print("Starting CDF stream 1")
+print("Streaming by path")
 cdfStream1 = stream_cdc_by_path(0)
 cdfStream1.awaitTermination(10)
 cdfStream1.stop()
 
-print("Starting CDF stream 2")
+print("Streaming by table name")
 cdfStream2 = stream_cdc_by_table_name(0)
 cdfStream2.awaitTermination(10)
 cdfStream2.stop()
 
 # cleanup
 shutil.rmtree(path, ignore_errors=True)
-
