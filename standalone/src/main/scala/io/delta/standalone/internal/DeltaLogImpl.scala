@@ -105,7 +105,6 @@ private[internal] class DeltaLogImpl private(
   override def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean): java.util.Iterator[VersionLog] = {
-    import io.delta.standalone.internal.util.Implicits._
 
     if (startVersion < 0) throw new IllegalArgumentException(s"Invalid startVersion: $startVersion")
 
@@ -115,7 +114,7 @@ private[internal] class DeltaLogImpl private(
 
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltaPaths.map { status =>
+    deltaPaths.map[VersionLog] { status =>
       val p = status.getPath
       val version = FileNames.deltaVersion(p)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
@@ -123,13 +122,9 @@ private[internal] class DeltaLogImpl private(
       }
       lastSeenVersion = version
 
-      new VersionLog(
+      new MemoryOptimizedVersionLog(
         version,
-        store.read(p, hadoopConf)
-          .toArray
-          .map(x => ConversionUtils.convertAction(Action.fromJson(x)))
-          .toList
-          .asJava)
+        () => store.read(p, hadoopConf))
     }.asJava
   }
 

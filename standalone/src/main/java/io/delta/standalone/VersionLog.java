@@ -17,8 +17,11 @@
 package io.delta.standalone;
 
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import javax.annotation.Nonnull;
+
+import io.delta.storage.CloseableIterator;
 
 import io.delta.standalone.actions.Action;
 
@@ -26,7 +29,7 @@ import io.delta.standalone.actions.Action;
  * {@link VersionLog} is the representation of all actions (changes) to the Delta Table
  * at a specific table version.
  */
-public final class VersionLog {
+public class VersionLog {
     private final long version;
 
     @Nonnull
@@ -50,5 +53,33 @@ public final class VersionLog {
     @Nonnull
     public List<Action> getActions() {
         return Collections.unmodifiableList(actions);
+    }
+
+    /**
+     * @return an {@code CloseableIterator} of the actions for this table version. This method is
+     * preferred for memory efficient iteration through the action list.
+     */
+    @Nonnull
+    public CloseableIterator<Action> getActionsIterator() {
+        synchronized (this) {
+            return new CloseableIterator<Action>() {
+
+                private final Iterator<Action> wrap = actions.iterator();
+
+                @Override
+                public void close() {
+                }
+
+                @Override
+                public boolean hasNext() {
+                    return wrap.hasNext();
+                }
+
+                @Override
+                public Action next() {
+                    return wrap.next();
+                }
+            };
+        }
     }
 }
