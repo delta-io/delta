@@ -126,7 +126,7 @@ case class UpdateCommand(
         true
       }.asNondeterministic()
       val pathsToRewrite =
-        withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
+        withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
           data.filter(new Column(updateCondition))
             .filter(updatedRowUdf())
             .select(input_file_name())
@@ -147,7 +147,7 @@ case class UpdateCommand(
       Nil
     } else {
       // Generate the new files containing the updated values
-      withStatusCode("DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation") {
+      withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(filesToRewrite.size)) {
         rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
           filesToRewrite.map(_.path), nameToAddFile, updateCondition)
       }
@@ -245,6 +245,10 @@ case class UpdateCommand(
 object UpdateCommand {
   val FILE_NAME_COLUMN = "_input_file_name_"
   val CONDITION_COLUMN_NAME = "__condition__"
+  val FINDING_TOUCHED_FILES_MSG: String = "Finding files to rewrite for UPDATE operation"
+
+  def rewritingFilesMsg(numFilesToRewrite: Long): String =
+    s"Rewriting $numFilesToRewrite files for UPDATE operation"
 
   /**
    * Whether or not CDC is enabled on this table and, thus, if we should output CDC data during this
