@@ -19,20 +19,23 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FSDataOutputStream, Path, RawLocalFileSystem}
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 
 
 class CheckpointsSuite extends QueryTest
-    with SharedSparkSession {
+  with SharedSparkSession  with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
@@ -167,6 +170,39 @@ class CheckpointsSuite extends QueryTest
          var checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
         checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+      }
+    }
+  }
+
+  test("checkpoint does not contain CDC field") {
+    withSQLConf(
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
+    ) {
+      withTempDir { tempDir =>
+        withTempView("src") {
+          spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+          spark.range(5, 15).createOrReplaceTempView("src")
+          sql(
+            s"""
+               |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+               |WHEN MATCHED THEN DELETE
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.getAbsolutePath),
+            Seq(0, 1, 2, 3, 4, 10, 11, 12, 13, 14).map { i => Row(i) })
+
+          // CDC should exist in the log as seen through getChanges, but it shouldn't be in the
+          // snapshots and the checkpoint file shouldn't have a CDC column.
+          val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+          assert(deltaLog.getChanges(1).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          assert(deltaLog.snapshot.stateDS.collect().forall { sa => sa.cdc == null })
+          deltaLog.checkpoint()
+          val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
+          val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
+          assert(checkpointSchema.fieldNames.toSeq ==
+            Seq("txn", "add", "remove", "metaData", "protocol"))
+        }
       }
     }
   }
