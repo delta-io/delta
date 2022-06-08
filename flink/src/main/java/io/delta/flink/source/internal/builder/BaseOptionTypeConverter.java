@@ -1,7 +1,7 @@
 package io.delta.flink.source.internal.builder;
 
-public abstract class BaseOptionTypeConverter
-    implements OptionTypeConverter {
+public abstract class BaseOptionTypeConverter<TYPE>
+    implements OptionTypeConverter<TYPE> {
 
     /**
      * Converts an Integer valueToConvert to desired type of

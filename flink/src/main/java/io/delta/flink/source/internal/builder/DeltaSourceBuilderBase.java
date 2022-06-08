@@ -108,7 +108,7 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a {@link List} of column names that should be read from Delta table.
      */
     public SELF columnNames(List<String> columnNames) {
-        this.userColumnNames = columnNames;
+        tryToSetOption(() -> this.userColumnNames = columnNames);
         return self();
     }
 
@@ -116,8 +116,10 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, String optionValue) {
-        DeltaConfigOption<?> configOption = validateOptionName(optionName);
-        configOption.setOnConfig(sourceConfiguration, optionValue);
+        tryToSetOption(() -> {
+            DeltaConfigOption<?> configOption = validateOptionName(optionName);
+            configOption.setOnConfig(sourceConfiguration, optionValue);
+        });
         return self();
     }
 
@@ -125,8 +127,10 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, boolean optionValue) {
-        DeltaConfigOption<?> configOption = validateOptionName(optionName);
-        configOption.setOnConfig(sourceConfiguration, optionValue);
+        tryToSetOption(() -> {
+            DeltaConfigOption<?> configOption = validateOptionName(optionName);
+            configOption.setOnConfig(sourceConfiguration, optionValue);
+        });
         return self();
     }
 
@@ -134,8 +138,10 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, int optionValue) {
-        DeltaConfigOption<?> configOption = validateOptionName(optionName);
-        configOption.setOnConfig(sourceConfiguration, optionValue);
+        tryToSetOption(() -> {
+            DeltaConfigOption<?> configOption = validateOptionName(optionName);
+            configOption.setOnConfig(sourceConfiguration, optionValue);
+        });
         return self();
     }
 
@@ -143,12 +149,13 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * Sets a configuration option.
      */
     public SELF option(String optionName, long optionValue) {
-        DeltaConfigOption<?> configOption = validateOptionName(optionName);
-        configOption.setOnConfig(sourceConfiguration, optionValue);
+        tryToSetOption(() -> {
+            DeltaConfigOption<?> configOption = validateOptionName(optionName);
+            configOption.setOnConfig(sourceConfiguration, optionValue);
+        });
         return self();
     }
 
-    // TODO PR 12.1 test immutability
     /**
      * @return A copy of {@link DeltaSourceConfiguration} used by builder. The changes made on
      * returned copy do not change the state of builder's configuration.
@@ -299,8 +306,36 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
         }
     }
 
+    /**
+     * Try to set option on Builder configuration. The option's value conversion, validation and
+     * logic for adding it to builder's configuration is wrapped with {@link Executable}. If {@link
+     * Executable#execute()} call throws eny exception, this exception will be wrapped in {@link
+     * DeltaSourceValidationException} and re-throw.
+     *
+     * @param argument the {@link Executable} wrapping any logic for converting and setting {@link
+     *                 DeltaConfigOption} value.
+     */
+    protected void tryToSetOption(Executable argument) {
+        try {
+            argument.execute();
+        } catch (Exception e) {
+            throw DeltaSourceExceptions.optionValidationException(
+                SourceUtils.pathToString(tablePath),
+                e
+            );
+        }
+    }
+
     @SuppressWarnings("unchecked")
     protected SELF self() {
         return (SELF) this;
+    }
+
+    /**
+     * A functional interface to execute logic that takes no argument nor returns any value.
+     */
+    @FunctionalInterface
+    protected interface Executable {
+        void execute();
     }
 }

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
@@ -165,6 +166,24 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
     }
 
     @Test
+    public void shouldThrowWhenUsingNotExistingOption() {
+        DeltaSourceValidationException exception =
+            assertThrows(DeltaSourceValidationException.class,
+                () -> getBuilderAllColumns().option("SomeOption", "SomeValue"));
+
+        LOG.info("Option Validation Exception: ", exception);
+        assertThat(
+            "Unexpected message in reported DeltaSourceValidationException.",
+            exception
+                .getValidationMessages()
+                .stream()
+                .allMatch(message -> message.contains(
+                    "Invalid option [SomeOption] used for Delta Source Connector")),
+            equalTo(true)
+        );
+    }
+
+    @Test
     public void shouldThrowWhenSettingInternalOption() {
 
         DeltaSourceValidationException exception =
@@ -184,6 +203,69 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
                         + builder.getSourceConfiguration());
             }
         });
+    }
+
+    @Test
+    public void testGetSourceConfigurationImmutability() {
+
+        DeltaSourceBuilderBase<?, ?> builder = getBuilderAllColumns();
+        builder.option(DeltaSourceOptions.STARTING_VERSION.key(), 10);
+
+        DeltaSourceConfiguration originalConfiguration = builder.getSourceConfiguration();
+
+        // making sure that "startingVersion" option was added and configuration has no
+        // "updateCheckIntervalMillis" and "updateCheckDelayMillis" options set.
+        // Those will be used for next step.
+        assertAll(() -> {
+                assertThat(
+                    originalConfiguration.hasOption(DeltaSourceOptions.STARTING_VERSION),
+                    equalTo(true)
+                );
+                assertThat(
+                    originalConfiguration.hasOption(DeltaSourceOptions.UPDATE_CHECK_INTERVAL),
+                    equalTo(false)
+                );
+                assertThat(
+                    originalConfiguration.hasOption(DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY),
+                    equalTo(false));
+            }
+        );
+
+        // Add "updateCheckIntervalMillis" option to builder and check if previous configuration
+        // was updated. It shouldn't because builder.getSourceConfiguration should return a copy of
+        // builder's configuration.
+        builder.option(DeltaSourceOptions.UPDATE_CHECK_INTERVAL.key(), 1000);
+        assertAll(() -> {
+                assertThat(
+                    builder.getSourceConfiguration()
+                        .hasOption(DeltaSourceOptions.UPDATE_CHECK_INTERVAL),
+                    equalTo(true)
+                );
+                assertThat(
+                    "Updates on builder's configuration should not be visible in previously "
+                        + "returned configuration via builder.getSourceConfiguration",
+                    originalConfiguration.hasOption(DeltaSourceOptions.UPDATE_CHECK_INTERVAL),
+                    equalTo(false)
+                );
+            }
+        );
+
+        // Update originalConfiguration and check if that mutates builder's configuration,
+        // it shouldn't.
+        originalConfiguration.addOption(DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY, 1410L);
+
+        assertAll(() -> {
+                assertThat(
+                    originalConfiguration.hasOption(DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY),
+                    equalTo(true));
+                assertThat(
+                    "Updates on returned configuration should not change builder's inner "
+                        + "configuration",
+                    builder.getSourceConfiguration()
+                        .hasOption(DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY),
+                    equalTo(false));
+            }
+        );
     }
 
     /**

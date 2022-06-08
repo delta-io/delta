@@ -48,7 +48,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
         String startingVersion = sourceConfiguration.getValue(STARTING_VERSION);
         if (startingVersion != null) {
-            if (startingVersion.equalsIgnoreCase(DeltaSourceOptions.STARTING_VERSION_LATEST)) {
+            if (DeltaSourceOptions.STARTING_VERSION_LATEST.equalsIgnoreCase(startingVersion)) {
                 return TransitiveOptional.ofNullable(deltaLog.snapshot());
             } else {
                 return TransitiveOptional.ofNullable(

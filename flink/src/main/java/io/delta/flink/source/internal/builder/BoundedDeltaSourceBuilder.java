@@ -7,7 +7,6 @@ import java.util.List;
 
 import io.delta.flink.source.internal.enumerator.BoundedSplitEnumeratorProvider;
 import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
-import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
@@ -51,13 +50,12 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
     }
 
     public SELF versionAsOf(long snapshotVersion) {
-        sourceConfiguration.addOption(VERSION_AS_OF, snapshotVersion);
+        tryToSetOption(() -> VERSION_AS_OF.setOnConfig(sourceConfiguration, snapshotVersion));
         return self();
     }
 
     public SELF timestampAsOf(String snapshotTimestamp) {
-        long toTimestamp = TimestampFormatConverter.convertToTimestamp(snapshotTimestamp);
-        sourceConfiguration.addOption(TIMESTAMP_AS_OF, toTimestamp);
+        tryToSetOption(() -> TIMESTAMP_AS_OF.setOnConfig(sourceConfiguration, snapshotTimestamp));
         return self();
     }
 

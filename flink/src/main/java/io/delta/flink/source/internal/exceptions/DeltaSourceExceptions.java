@@ -160,4 +160,13 @@ public final class DeltaSourceExceptions {
                     + "Expected partition column names from MetaData are %s",
                 partitionName, expectedPartitionColumnNames));
     }
+
+    public static DeltaSourceValidationException optionValidationException(
+            String tablePath,
+            Exception e) {
+        return new DeltaSourceValidationException(
+            tablePath,
+            Collections.singletonList(e.getClass() + " - " + e.getMessage())
+        );
+    }
 }

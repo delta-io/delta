@@ -4,7 +4,7 @@ package io.delta.flink.source.internal.builder;
  * An implementation of {@link OptionTypeConverter} interface to convert {@link DeltaConfigOption}
  * values to desired {@link Class} type.
  */
-public final class DefaultOptionTypeConverter extends BaseOptionTypeConverter {
+public final class DefaultOptionTypeConverter extends BaseOptionTypeConverter<Object> {
 
     private static final String TYPE_EXCEPTION_MSG = "Unsupported value type {%s] for option [%s]";
 

@@ -26,25 +26,30 @@ public class DeltaConfigOption<T> {
     /**
      * Value type converter for this configuration option.
      */
-    private final OptionTypeConverter typeConverter;
+    private final OptionTypeConverter<T> typeConverter;
 
     private DeltaConfigOption(
             ConfigOption<T> decoratedOption,
             Class<T> type,
-            OptionTypeConverter typeConverter) {
+            OptionTypeConverter<T> typeConverter) {
         this.decoratedOption = decoratedOption;
         this.decoratedType = type;
         this.typeConverter = typeConverter;
     }
 
+    @SuppressWarnings("unchecked")
     public static <T> DeltaConfigOption<T> of(ConfigOption<T> configOption, Class<T> type) {
-        return new DeltaConfigOption<>(configOption, type, new DefaultOptionTypeConverter());
+        return new DeltaConfigOption<>(
+            configOption,
+            type,
+            (OptionTypeConverter<T>) new DefaultOptionTypeConverter()
+        );
     }
 
     public static <T> DeltaConfigOption<T> of(
             ConfigOption<T> configOption,
             Class<T> type,
-            OptionTypeConverter typeConverter) {
+            OptionTypeConverter<T> typeConverter) {
         return new DeltaConfigOption<>(configOption, type, typeConverter);
     }
 
