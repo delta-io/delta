@@ -161,10 +161,10 @@ class DeltaTableSuite extends QueryTest
   }
 
   test("isDeltaTable - with table name") {
-    withTempDir { dir =>
-      withTable("anotherDeltaTable") {
-        testData.write.format("delta").saveAsTable("anotherDeltaTable")
-      }
+    val tblName = "anotherDeltaTable"
+    withTable(tblName) {
+      testData.write.format("delta").saveAsTable(tblName)
+      assert(DeltaTable.isDeltaTable(tblName))
     }
   }
 

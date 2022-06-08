@@ -17,20 +17,19 @@
 package io.delta.tables
 
 import java.sql.Timestamp
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.StructType
+
+import scala.util.Try
 
 /**
  * Main class for programmatically interacting with Delta tables.
@@ -694,15 +693,19 @@ object DeltaTable {
    * @since 0.4.0
    */
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
+    // Try table name first
+    val tableId: Try[TableIdentifier] =
+      Try(sparkSession.sessionState.sqlParser.parseTableIdentifier(identifier))
+    if (tableId.isSuccess) {
+      return DeltaTableUtils.isDeltaTable(sparkSession, tableId.get)
+    }
+
     val identifierPath = new Path(identifier)
     if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
       val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
       rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
-    } else if (DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)) {
-      true
     } else {
-      DeltaTableUtils.isDeltaTable(sparkSession,
-        sparkSession.sessionState.sqlParser.parseTableIdentifier(identifier))
+      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
     }
   }
 
