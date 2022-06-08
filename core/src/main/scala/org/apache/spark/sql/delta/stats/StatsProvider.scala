@@ -42,18 +42,15 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    */
   def getPredicateWithStatsColumn(statCol: StatsColumn)
     (f: Column => Column): Option[DataSkippingPredicate] = {
-    for {
-      stat <- getStat(statCol)
-    } yield DataSkippingPredicate(f(stat), statCol)
+    for (stat <- getStat(statCol))
+      yield DataSkippingPredicate(f(stat), statCol)
   }
 
   /** A variant of [[getPredicateWithStatsColumn]] with two stats columns. */
   def getPredicateWithStatsColumns(statCol1: StatsColumn, statCol2: StatsColumn)
     (f: (Column, Column) => Column): Option[DataSkippingPredicate] = {
-    for {
-      stat1 <- getStat(statCol1)
-      stat2 <- getStat(statCol2)
-    } yield DataSkippingPredicate(f(stat1, stat2), statCol1, statCol2)
+    for (stat1 <- getStat(statCol1); stat2 <- getStat(statCol2))
+      yield DataSkippingPredicate(f(stat1, stat2), statCol1, statCol2)
   }
 
   /** A variant of [[getPredicateWithStatsColumn]] with three stats columns. */
@@ -62,11 +59,8 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
       statCol2: StatsColumn,
       statCol3: StatsColumn)
     (f: (Column, Column, Column) => Column): Option[DataSkippingPredicate] = {
-    for {
-      stat1 <- getStat(statCol1)
-      stat2 <- getStat(statCol2)
-      stat3 <- getStat(statCol3)
-    } yield DataSkippingPredicate(f(stat1, stat2, stat3), statCol1, statCol2, statCol3)
+    for (stat1 <- getStat(statCol1); stat2 <- getStat(statCol2); stat3 <- getStat(statCol3))
+      yield DataSkippingPredicate(f(stat1, stat2, stat3), statCol1, statCol2, statCol3)
   }
 
   /**
