@@ -30,9 +30,9 @@ trait ShowTableColumnsSuiteBase extends QueryTest
   import testImplicits._
 
   protected def checkResult(
-    result: DataFrame,
-    expected: Seq[Seq[Any]],
-    columns: Seq[String]): Unit = {
+      result: DataFrame,
+      expected: Seq[Seq[Any]],
+      columns: Seq[String]): Unit = {
     checkAnswer(
       result.select(columns.head, columns.tail: _*),
       expected.map { x =>
@@ -41,10 +41,10 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     )
   }
 
-  def describeDeltaDetailTest(
-    f: File => String,
-    schemaName: String,
-    tableFormat: String): Unit = {
+  private def describeDeltaDetailTest(
+      f: File => String,
+      schemaName: String,
+      tableFormat: String): Unit = {
     val tempDir = Utils.createTempDir()
     Seq(1 -> 1).toDF("column1", "column2")
       .write
@@ -57,12 +57,9 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     } else {
       s"SHOW COLUMNS FROM ${f(tempDir)}"
     }
-    print(sqlCommand) // for debugging
 
-    val sqlResult = sql(sqlCommand)
-    sqlResult.show() // for debugging
     checkResult(
-      sqlResult,
+      sql(sqlCommand),
       Seq(Seq("column1"), Seq("column2")),
       Seq("columnName"))
   }
@@ -84,37 +81,43 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     describeDeltaDetailTest(f => s"'${f.toString}'", "", "parquet")
   }
 
+  test("non-delta table: table identifier") {
+    describeDeltaDetailTest(f => s"`${f.toString}`", "delta", "parquet")
+  }
+
   test("delta table: table identifier with catalog table") {
-      withTable("show_columns") {
-        sql(
-          """
-            |CREATE TABLE show_columns(column1 INT, column2 INT)
-            |USING delta
-            |COMMENT "describe a non delta table"
+    withTable("show_columns") {
+      sql(
+        """
+          |CREATE TABLE show_columns(column1 INT, column2 INT)
+          |USING delta
+          |COMMENT "describe a non delta table"
           """.stripMargin)
-        checkResult(
-          sql("SHOW COLUMNS IN show_columns"),
-          Seq(Seq("column1"), Seq("column2")),
-          Seq("columnName"))
-      }
+      checkResult(
+        sql("SHOW COLUMNS IN show_columns"),
+        Seq(Seq("column1"), Seq("column2")),
+        Seq("columnName"))
+    }
   }
 
   test("delta table: path not found") {
     describeDeltaDetailTest(f => s"'${f.toString}'", "", "delta")
-    val invalidFilePath = s"/invalid/path/to/file"
+    val fakeFilePath = s"/invalid/path/to/file"
     val e = intercept[AnalysisException] {
-      sql(s"SHOW COLUMNS IN `$invalidFilePath`")
+      sql(s"SHOW COLUMNS IN `$fakeFilePath`")
     }
-    assert(e.getMessage().contains(s"Table identifier or view `$invalidFilePath` not found."))
+    assert(e.getMessage().contains(s"Table identifier or view `$fakeFilePath` not found."))
   }
 
   test("delta table: table name not found") {
-    val invalidTableName = s"test_table"
-    describeDeltaDetailTest(f => s"delta.`${f.toString}`", "", "delta")
+    val fakeTableName = s"test_table"
+    val schemaName = s"delta"
+    describeDeltaDetailTest(f => s"$schemaName.`${f.toString}`", "", "delta")
     val e = intercept[AnalysisException] {
-      sql(s"SHOW COLUMNS IN `$invalidTableName` IN delta")
+      sql(s"SHOW COLUMNS IN `$fakeTableName` IN $schemaName")
     }
-    assert(e.getMessage().contains(s"Table identifier or view `delta`.`test_table` not found."))
+    assert(e.getMessage()
+      .contains(s"Table identifier or view `$schemaName`.`$fakeTableName` not found."))
   }
 
   test("delta table: duplicated schema name") {
@@ -127,8 +130,8 @@ trait ShowTableColumnsSuiteBase extends QueryTest
       withTable(tableName) {
         sql(
           s"""
-            |CREATE TABLE $schemaName.$tableName(column1 INT, column2 INT)
-            |USING delta
+             |CREATE TABLE $schemaName.$tableName(column1 INT, column2 INT)
+             |USING delta
           """.stripMargin)
         checkResult(
           sql(s"SHOW COLUMNS IN delta.$tableName IN $schemaName"),
@@ -145,27 +148,33 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     assert(e.getMessage().contains(s"extraneous input"))
   }
 
+  // TODO: expand this test to all non-Delta-table type
   test("non-delta table: file format not supported") {
     val e = intercept[SparkException] {
       describeDeltaDetailTest(f => s"'${f.toString}'", "", "json")
     }
-    print(e.getMessage)
     assert(e.getMessage.contains(s".json is not a Parquet file."))
   }
 
-  test("non-delta table: table ID not valid") {}
+  test("non-delta table: table ID not valid") {
+    val fakeTableID = s"`delta`.`test_table`"
+    describeDeltaDetailTest(f => s"`${f.toString}`", "delta", "parquet")
+    val e = intercept[AnalysisException] {
+      sql(s"SHOW COLUMNS IN $fakeTableID")
+    }
+    assert(e.getMessage.contains(s"Table identifier or view $fakeTableID not found."))
+  }
 
-  // TODO: there is no metadata for temp views so we just raise error while querying view's columns?
   testWithTempView(s"delta table: show columns on temp view") { isSQLTempView =>
-    withTable("t1") {
-      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+    val tableName = "test_table_2"
+    withTable(tableName) {
+      Seq(1 -> 1).toDF("column1", "column2").write.format("delta").saveAsTable(tableName)
       val viewName = "v"
-      createTempViewFromTable("t1", isSQLTempView)
-      val e = intercept[AnalysisException] {
-        sql(s"SHOW COLUMNS IN $viewName").show()
-      }
-      assert(e.getMessage.contains(
-        s"`$viewName` is a view. SHOW COLUMNS is only supported for tables."))
+      createTempViewFromTable(tableName, isSQLTempView)
+      checkResult(
+        sql(s"SHOW COLUMNS IN $viewName"),
+        Seq(Seq("column1"), Seq("column2")),
+        Seq("columnName"))
     }
   }
 }
