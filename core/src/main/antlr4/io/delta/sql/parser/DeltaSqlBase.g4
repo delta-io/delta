@@ -88,8 +88,8 @@ statement
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate = exprToken)?                         #optimizeTable
-    | SHOW COLUMNS (IN | FROM)? (path=STRING | table=qualifiedName
-        ((IN | FROM)? database=identifier)?)                            #showColumns
+    | SHOW COLUMNS (IN | FROM) (path=STRING | tableName=qualifiedName
+        ((IN | FROM) schemaName=identifier)?)                           #showColumns
     | .*?                                                               #passThrough
     ;
 

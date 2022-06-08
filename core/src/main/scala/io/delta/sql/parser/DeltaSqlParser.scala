@@ -302,11 +302,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   override def visitShowColumns(
-      ctx: showColumnsContext): LogicalPlan = withOrigin(ctx) {
+      ctx: ShowColumnsContext): LogicalPlan = withOrigin(ctx) {
     ShowTableColumnsCommand(
-      Option(ctx.table).map(TableIdentifier),
+      Option(ctx.tableName).map(visitTableIdentifier),
       Option(ctx.path).map(string),
-      Option(ctx.database).map(TableIdentifier)
+      Option(ctx.schemaName).map(db => db.getText)
     )
   }
 
