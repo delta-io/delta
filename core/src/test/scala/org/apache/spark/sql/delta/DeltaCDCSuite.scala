@@ -112,6 +112,38 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  private val validTimestampFormats =
+    Seq("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd")
+  private val invalidTimestampFormats =
+    Seq("yyyyMMddHHmmssSSS")
+
+  (validTimestampFormats ++ invalidTimestampFormats).foreach { formatStr =>
+    val isValid = validTimestampFormats.contains(formatStr)
+    val isValidStr = if (isValid) "valid" else "invalid"
+
+    test(s"CDF timestamp format - $formatStr is $isValidStr") {
+      withTable("src") {
+        createTblWithThreeVersions(tblName = Some("src"))
+
+        val timestamp = new SimpleDateFormat(formatStr).format(new Date(1))
+
+        def doRead(): Unit = {
+          cdcRead(new TableName("src"), StartingTimestamp(timestamp), EndingVersion("1"))
+        }
+
+        if (isValid) {
+          doRead()
+        } else {
+          val e = intercept[AnalysisException] {
+            doRead()
+          }.getMessage()
+          assert(e.contains("The provided timestamp"))
+          assert(e.contains("cannot be converted to a valid timestamp"))
+        }
+      }
+    }
+  }
+
   testQuietly("writes with metadata columns") {
     withTable("src", "dst") {
 
