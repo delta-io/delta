@@ -75,9 +75,14 @@ case class DeltaTableV2(
   // bound the creation time of the table.
   private val creationTimeMs = System.currentTimeMillis()
 
+  // Options for DeltaLog creation.
+  private def deltaLogOptions: Map[String, String] = {
+    options
+  }
+
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
-  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
+  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, deltaLogOptions)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
