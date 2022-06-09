@@ -525,8 +525,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, locations) if t == classOf[SetLocation] =>
         if (locations.size != 1) {
-          throw new IllegalArgumentException(s"Can't set location multiple times. Found " +
-            s"${locations.asInstanceOf[Seq[SetProperty]].map(_.value())}")
+          throw DeltaErrors.cannotSetLocationMultipleTimes(
+            locations.asInstanceOf[Seq[SetProperty]].map(_.value()))
         }
         if (table.tableIdentifier.isEmpty) {
           throw DeltaErrors.setLocationNotSupportedOnPathIdentifiers()
