@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -148,12 +148,20 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     assert(e.getMessage().contains(s"extraneous input"))
   }
 
-  // TODO: expand this test to all non-Delta-table type
   test("non-delta table: file format not supported") {
-    val e = intercept[SparkException] {
-      describeDeltaDetailTest(f => s"'${f.toString}'", "", "json")
+    val fileFormat = List("json", "csv", "orc")
+    fileFormat.foreach { x =>
+      val e = intercept[SparkException] {
+        describeDeltaDetailTest(f => s"'${f.toString}'", "", x)
+      }
+      assert(e.getMessage.contains(s"is not a Parquet file"))
     }
-    assert(e.getMessage.contains(s".json is not a Parquet file."))
+
+    // check text format
+    val e = intercept[AnalysisException] {
+      describeDeltaDetailTest(f => s"'${f.toString}'", "", "text")
+    }
+    assert(e.getMessage().contains("Text data source does not support"))
   }
 
   test("non-delta table: table ID not valid") {
