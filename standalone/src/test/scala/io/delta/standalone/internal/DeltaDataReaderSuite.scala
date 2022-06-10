@@ -24,6 +24,7 @@ import java.util.Arrays.{asList => asJList}
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 
+import com.fasterxml.jackson.core.JsonParseException
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.FunSuite
 
@@ -359,14 +360,16 @@ class DeltaDataReaderSuite extends FunSuite {
 
   private def checkDataTypeToJsonFromJson(dataType: DataType): Unit = {
     test(s"DataType to Json and from Json - $dataType") {
-      assert(DataTypeParser.fromJson(dataType.toJson) === dataType)
+      assert(DataTypeParser.fromJson(dataType.toJson) === dataType) // internal API
+      assert(DataType.fromJson(dataType.toJson) === dataType) // public API
     }
 
     test(s"DataType inside StructType to Json and from Json - $dataType") {
       val field1 = new StructField("foo", dataType, true)
       val field2 = new StructField("bar", dataType, true)
       val struct = new StructType(Array(field1, field2))
-      assert(DataTypeParser.fromJson(struct.toJson) === struct)
+      assert(DataTypeParser.fromJson(struct.toJson) === struct) // internal API
+      assert(DataType.fromJson(struct.toJson) === struct) // public API
     }
   }
 
@@ -414,7 +417,23 @@ class DeltaDataReaderSuite extends FunSuite {
       new StructField("singleListMetadata", new BooleanType, true, singleListMetadata),
       new StructField("multipleEntriesMetadata", new BooleanType, true, multipleEntriesMetadata))
     val struct = new StructType(field_array)
-    assert(struct == DataTypeParser.fromJson(struct.toJson()))
+    assert(struct == DataTypeParser.fromJson(struct.toJson())) // internal API
+    assert(struct == DataType.fromJson(struct.toJson)) // public API
+  }
+
+  test("DataType.fromJson - invalid json") {
+    assertThrows[JsonParseException] {
+      DataType.fromJson("foo" + new BooleanType().toJson + "bar")
+    }
+    assertThrows[JsonParseException] {
+      DataType.fromJson(
+        new StructType()
+          .add("col1", new IntegerType())
+          .add("col2", new StringType())
+          .toJson
+          .replaceAll("\"", "?")
+      )
+    }
   }
 
   test("#124: getBigDecimal decode correctly for LongValue") {

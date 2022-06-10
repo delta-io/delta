@@ -52,6 +52,16 @@ import io.delta.standalone.internal.util.DataTypeParser;
 public abstract class DataType {
 
     /**
+     * Parses the input {@code json} into a {@link DataType}.
+     *
+     * @param json the {@link String} json to parse
+     * @return the parsed {@link DataType}
+     */
+    public static DataType fromJson(String json) {
+        return DataTypeParser.fromJson(json);
+    }
+
+    /**
      * @return the name of the type used in JSON serialization
      */
     public String getTypeName() {
