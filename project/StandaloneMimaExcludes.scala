@@ -37,8 +37,12 @@ object StandaloneMimaExcludes {
     ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.storage.LogStore"),
 
     // Ignore missing shaded attributes
-    ProblemFilters.exclude[Problem]("shadedelta.*")
+    ProblemFilters.exclude[Problem]("shadedelta.*"),
 
-  // scalastyle:on line.size.limit
+    // Public API changes in 0.4.0 -> 0.5.0
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getVersionBeforeOrAtTimestamp"),
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getVersionAtOrAfterTimestamp")
+
+    // scalastyle:on line.size.limit
   )
 }

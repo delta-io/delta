@@ -17,6 +17,7 @@
 package io.delta.standalone.internal
 
 import java.io.IOException
+import java.sql.Timestamp
 import java.util.TimeZone
 import java.util.concurrent.locks.ReentrantLock
 
@@ -126,6 +127,48 @@ private[internal] class DeltaLogImpl private(
         version,
         () => store.read(p, hadoopConf))
     }.asJava
+  }
+
+  override def getVersionBeforeOrAtTimestamp(timestamp: Long): Long = {
+    if (!tableExists) return -1
+
+    // Note: if the provided timestamp is earlier than any committed version, then
+    // `getActiveCommitAtTime` will throw IllegalArgumentException (specifically,
+    // `DeltaErrors.timestampEarlierThanTableFirstCommit`).
+    history.getActiveCommitAtTime(
+      new Timestamp(timestamp),
+      // e.g. if we give time T+2 and last commit has time T, then we DO want that last commit
+      canReturnLastCommit = true,
+      mustBeRecreatable = false,
+      // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest commit
+      canReturnEarliestCommit = false
+    ).version
+  }
+
+  override def getVersionAtOrAfterTimestamp(timestamp: Long): Long = {
+    if (!tableExists) return -1
+
+    // Note: if the provided timestamp is later than any committed version, then
+    // `getActiveCommitAtTime` will throw IllegalArgumentException (specifically,
+    // `DeltaErrors.timestampLaterThanTableLastCommit`).
+    val commit = history.getActiveCommitAtTime(
+      new Timestamp(timestamp),
+      // e.g. if we give time T+2 and last commit has time T, then we do NOT want that last commit
+      canReturnLastCommit = false,
+      mustBeRecreatable = false,
+      // e.g. we give time T-1 and first commit has time T, then we DO want that earliest commit
+      canReturnEarliestCommit = true
+    )
+
+    if (commit.timestamp >= timestamp) {
+      commit.version
+    } else {
+      // this commit.timestamp is before the input timestamp. if this is the last commit, then the
+      // input timestamp is after the last commit and `getActiveCommitAtTime` would have thrown
+      // an IllegalArgumentException. So, clearly, this can't be the last commit, so we can safely
+      // return commit.version + 1 as the version that is at or after the input timestamp.
+      commit.version + 1
+    }
   }
 
   override def startTransaction(): OptimisticTransaction = {

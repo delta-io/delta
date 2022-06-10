@@ -94,7 +94,7 @@ private[internal] object DeltaErrors {
   def timestampLaterThanTableLastCommit(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp): Throwable = {
-    new DeltaStandaloneException(
+    new IllegalArgumentException(
       s"""The provided timestamp ($userTimestamp) is after the latest version available to this
          |table ($commitTs). Please use a timestamp less than or equal to $commitTs.
        """.stripMargin)

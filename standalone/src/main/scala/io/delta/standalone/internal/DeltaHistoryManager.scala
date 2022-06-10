@@ -68,14 +68,34 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) extends
   /**
    * Returns the latest commit that happened at or before `time`.
    *
+   * If the given timestamp is outside the range of [earliestCommit, latestCommit] then use params
+   * `canReturnLastCommit` and `canReturnEarliestCommit` to control whether an exception is thrown
+   * or the corresponding earliest/latest commit is returned. See param docs below.
+   *
    * @param timestamp the timestamp to search for
-   * @throws RuntimeException if the state at the given commit in not recreatable
-   * @throws IllegalArgumentException if the provided timestamp is before the earliest commit or
-   *                                  after the latest commit
+   * @param canReturnLastCommit Whether we can return the latest version of the table if the
+   *                            provided timestamp is after the latest commit
+   * @param mustBeRecreatable Whether the state at the given commit should be recreatable
+   * @param canReturnEarliestCommit Whether we can return the earliest version of the table if the
+   *                                provided timestamp is before the earliest commit
+   * @throws RuntimeException if the state at the given commit in not recreatable and
+   *                          mustBeRecreatable is true
+   * @throws IllegalArgumentException if the provided timestamp is before the earliest commit and
+   *                                  canReturnEarliestCommit is false
+   * @throws IllegalArgumentException if the provided timestamp is after the latest commit and
+   *                                  canReturnLastCommit is false
    */
-  def getActiveCommitAtTime(timestamp: Timestamp): Commit = {
+  def getActiveCommitAtTime(
+      timestamp: Timestamp,
+      canReturnLastCommit: Boolean = false,
+      mustBeRecreatable: Boolean = true,
+      canReturnEarliestCommit: Boolean = false): Commit = {
     val time = timestamp.getTime
-    val earliestVersion = getEarliestReproducibleCommitVersion
+    val earliestVersion = if (mustBeRecreatable) {
+      getEarliestReproducibleCommitVersion
+    } else {
+      getEarliestDeltaFile(deltaLog)
+    }
     val latestVersion = deltaLog.update().version
 
     // Search for the commit
@@ -86,13 +106,30 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) extends
 
     // Error handling
     val commitTs = new Timestamp(commit.timestamp)
-    if (commit.timestamp > time) {
+    if (commit.timestamp > time && !canReturnEarliestCommit) {
       throw DeltaErrors.timestampEarlierThanTableFirstCommit(timestamp, commitTs)
-    } else if (commit.timestamp < time && commit.version == latestVersion) {
+    } else if (commit.timestamp < time && commit.version == latestVersion && !canReturnLastCommit) {
       throw DeltaErrors.timestampLaterThanTableLastCommit(timestamp, commitTs)
     }
 
     commit
+  }
+
+  /**
+   * Get the earliest commit available for this table. Note that this version isn't guaranteed to
+   * exist when performing an action as a concurrent operation can delete the file during cleanup.
+   * This value must be used as a lower bound.
+   */
+  def getEarliestDeltaFile(deltaLog: DeltaLogImpl): Long = {
+    val version0 = FileNames.deltaFile(deltaLog.logPath, 0)
+    val earliestVersionOpt = deltaLog.store.listFrom(version0, deltaLog.hadoopConf)
+      .asScala
+      .filter(f => FileNames.isDeltaFile(f.getPath))
+      .take(1).toArray.headOption
+    if (earliestVersionOpt.isEmpty) {
+      throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+    }
+    FileNames.deltaVersion(earliestVersionOpt.get.getPath)
   }
 
   /**

@@ -108,6 +108,46 @@ public interface DeltaLog {
     Iterator<VersionLog> getChanges(long startVersion, boolean failOnDataLoss);
 
     /**
+     * Returns the latest version that was committed before or at {@code timestamp}. If no version
+     * exists, returns -1.
+     *
+     * Specifically:
+     * <ul>
+     *     <li>if a commit version exactly matches the provided timestamp, we return it</li>
+     *     <li>else, we return the latest commit version with a timestamp less than the
+     *         provided one</li>
+     *     <li>If the provided timestamp is less than the timestamp of any committed version,
+     *         we throw an error.</li>
+     * </ul>.
+     *
+     * @param timestamp the number of milliseconds since midnight, January 1, 1970 UTC
+     * @return latest commit that happened before or at {@code timestamp}.
+     * @throws IllegalArgumentException if the timestamp is less than the timestamp of any committed
+     *                                  version
+     */
+    long getVersionBeforeOrAtTimestamp(long timestamp);
+
+    /**
+     * Returns the latest version that was committed at or after {@code timestamp}. If no version
+     * exists, returns -1.
+     *
+     * Specifically:
+     * <ul>
+     *     <li>if a commit version exactly matches the provided timestamp, we return it</li>
+     *     <li>else, we return the earliest commit version with a timestamp greater than the
+     *         provided one</li>
+     *     <li>If the provided timestamp is larger than the timestamp of any committed version,
+     *         we throw an error.</li>
+     * </ul>.
+     *
+     * @param timestamp the number of milliseconds since midnight, January 1, 1970 UTC
+     * @return latest commit that happened at or before {@code timestamp}.
+     * @throws IllegalArgumentException if the timestamp is more than the timestamp of any committed
+     *                                  version
+     */
+    long getVersionAtOrAfterTimestamp(long timestamp);
+
+    /**
      * @return Whether a Delta table exists at this directory.
      */
     boolean tableExists();

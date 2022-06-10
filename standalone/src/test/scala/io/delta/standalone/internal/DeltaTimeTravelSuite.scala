@@ -157,7 +157,7 @@ class DeltaTimeTravelSuite extends FunSuite {
       new File(logDir, "00000000000000000002.json").setLastModified(start + 40.minutes)
       val log = DeltaLog.forTable(new Configuration(), tablePath)
 
-      val e = intercept[DeltaStandaloneException] {
+      val e = intercept[IllegalArgumentException] {
         log.getSnapshotForTimestampAsOf(start + 50.minutes) // later by 10 mins
       }
 

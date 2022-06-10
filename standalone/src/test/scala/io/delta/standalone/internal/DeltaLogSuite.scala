@@ -23,6 +23,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.duration._
 
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -63,6 +64,10 @@ abstract class DeltaLogSuiteBase extends FunSuite {
   }
 
   implicit def createCustomAddFilesAccessor(snapshot: Snapshot): CustomAddFilesAccessor
+
+  private implicit def durationToLong(duration: FiniteDuration): Long = {
+    duration.toMillis
+  }
 
   // scalastyle:on funsuite
   test("checkpoint") {
@@ -457,6 +462,139 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         "test"
       )
       assert(log.tableExists())
+    }
+  }
+
+  test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp") {
+    // Note:
+    // - all Xa test cases will test getVersionBeforeOrAtTimestamp
+    // - all Xb test cases will test getVersionAtOrAfterTimestamp
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+
+      // ========== case 0: delta table is empty ==========
+      assert(log.getVersionBeforeOrAtTimestamp(System.currentTimeMillis()) == -1)
+      assert(log.getVersionAtOrAfterTimestamp(System.currentTimeMillis()) == -1)
+
+      // Setup part 1 of 2: create log files
+      (0 to 2).foreach { i =>
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val metadata = if (i == 0) Metadata() :: Nil else Nil
+        log.startTransaction().commit(
+          (metadata ++ files).map(ConversionUtils.convertAction).asJava,
+          manualUpdate, engineInfo
+        )
+      }
+
+      // Setup part 2 of 2: edit lastModified times
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+      val logDir = new File(dir.getCanonicalPath, "_delta_log")
+      // local file system truncates to seconds
+      val nowEpochMs = System.currentTimeMillis() / 1000 * 1000
+
+      val delta0 = FileNames.deltaFile(logPath, 0)
+      val delta1 = FileNames.deltaFile(logPath, 1)
+      val delta2 = FileNames.deltaFile(logPath, 2)
+
+      new File(logDir, delta0.getName).setLastModified(1000)
+      new File(logDir, delta1.getName).setLastModified(2000)
+      new File(logDir, delta2.getName).setLastModified(3000)
+
+      // ========== case 1: before first commit ==========
+      // case 1a
+      val e1 = intercept[IllegalArgumentException] {
+        log.getVersionBeforeOrAtTimestamp(500)
+      }.getMessage
+      assert(e1.contains("is before the earliest version"))
+      // case 1b
+      assert(log.getVersionAtOrAfterTimestamp(500) == 0)
+
+      // ========== case 2: at first commit ==========
+      // case 2a
+      assert(log.getVersionBeforeOrAtTimestamp(1000) == 0)
+      // case 2b
+      assert(log.getVersionAtOrAfterTimestamp(1000) == 0)
+
+      // ========== case 3: between two normal commits ==========
+      // case 3a
+      assert(log.getVersionBeforeOrAtTimestamp(1500) == 0) // round down to v0
+      // case 3b
+      assert(log.getVersionAtOrAfterTimestamp(1500) == 1) // round up to v1
+
+      // ========== case 4: at last commit ==========
+      // case 4a
+      assert(log.getVersionBeforeOrAtTimestamp(3000) == 2)
+      // case 4b
+      assert(log.getVersionAtOrAfterTimestamp(3000) == 2)
+
+      // ========== case 5: after last commit ==========
+      // case 5a
+      assert(log.getVersionBeforeOrAtTimestamp(4000) == 2)
+      // case 5b
+      val e2 = intercept[IllegalArgumentException] {
+        log.getVersionAtOrAfterTimestamp(4000)
+      }.getMessage
+      assert(e2.contains("is after the latest version"))
+    }
+  }
+
+  test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp - recoverability") {
+    withTempDir { dir =>
+      // local file system truncates to seconds
+      val nowEpochMs = System.currentTimeMillis() / 1000 * 1000
+
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+      val logDir = new File(dir.getCanonicalPath, "_delta_log")
+
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      (0 to 35).foreach { i =>
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val metadata = if (i == 0) Metadata() :: Nil else Nil
+        log.startTransaction().commit(
+          (metadata ++ files).map(ConversionUtils.convertAction).asJava,
+          manualUpdate, engineInfo
+        )
+      }
+
+      (0 to 35).foreach { i =>
+        val delta = FileNames.deltaFile(logPath, i)
+        val file = new File(logDir, delta.getName)
+        val fs = logPath.getFileSystem(new Configuration())
+        if (i >= 25) {
+          file.setLastModified(nowEpochMs + i * 1000)
+        } else {
+          file.delete()
+          assert(!fs.exists(delta))
+        }
+      }
+
+      // A checkpoint exists at version 30, so all versions [30, 35] are recoverable.
+      // Nonetheless, getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp do not
+      // require that the version is recoverable, so we should still be able to get back versions
+      // [25-29]
+
+      (25 to 34).foreach { i =>
+        if (i == 25) {
+          assertThrows[IllegalArgumentException] {
+            log.getVersionBeforeOrAtTimestamp(nowEpochMs + i * 1000 - 1)
+          }
+        } else {
+          assert(log.getVersionBeforeOrAtTimestamp(nowEpochMs + i * 1000 - 1) == i - 1)
+        }
+
+        assert(log.getVersionAtOrAfterTimestamp(nowEpochMs + i * 1000 - 1) == i)
+
+        assert(log.getVersionBeforeOrAtTimestamp(nowEpochMs + i * 1000) == i)
+        assert(log.getVersionAtOrAfterTimestamp(nowEpochMs + i * 1000) == i)
+
+        assert(log.getVersionBeforeOrAtTimestamp(nowEpochMs + i * 1000 + 1) == i)
+
+        if (i == 35) {
+          log.getVersionAtOrAfterTimestamp(nowEpochMs + i * 1000 + 1)
+        } else {
+          assert(log.getVersionAtOrAfterTimestamp(nowEpochMs + i * 1000 + 1) == i + 1)
+        }
+      }
     }
   }
 }
