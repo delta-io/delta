@@ -85,12 +85,12 @@ trait ShowTableColumnsSuiteBase extends QueryTest
     describeDeltaDetailTest(f => s"`${f.toString}`", "delta", "parquet")
   }
 
-  test("delta table: table identifier with catalog table") {
+  test("non-delta table: table identifier with catalog table") {
     withTable("show_columns") {
       sql(
         """
           |CREATE TABLE show_columns(column1 INT, column2 INT)
-          |USING delta
+          |USING parquet
           |COMMENT "describe a non delta table"
           """.stripMargin)
       checkResult(

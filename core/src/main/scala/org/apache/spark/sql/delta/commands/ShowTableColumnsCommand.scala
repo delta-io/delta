@@ -69,25 +69,29 @@ case class ShowTableColumnsCommand(
       getPathAndTableMetadata(sparkSession, path, tableName, schemaName)
     val deltaLog = basePath match {
       case Some(basePath) => DeltaLog.forTable(sparkSession, basePath)
-
       // Found view schema, return the columns in view metadata
       case None => return getColumnsFromSchema(tableMetadata.get.schema)
     }
 
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
-      (deltaLog.snapshot.version, basePath.toString.isEmpty) match {
-        case (-1, true) => getColumnsFromSchema(tableMetadata.get.schema)
-        case (-1, false) =>
-          // Throw FileNotFoundException when the path doesn't exist since there may be a typo
-          if (!basePath.get.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(basePath.get)) {
-            throw DeltaErrors.fileNotFoundException(basePath.get.toString)
+      deltaLog.snapshot.version match {
+        case -1 =>
+          try {
+            getColumnsFromSchema(tableMetadata.get.schema)
+          } catch {
+            case _: NoSuchElementException =>
+              // Throw FileNotFoundException when the path doesn't exist since there may be a typo
+              if (!basePath.get.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(basePath.get)) {
+                throw DeltaErrors.fileNotFoundException(basePath.get.toString)
+              }
+              getColumnsFromSchema(sparkSession
+                .read
+                .format("parquet")
+                .load(basePath.get.toString)
+                .schema)
           }
-          getColumnsFromSchema(sparkSession
-            .read
-            .format("parquet")
-            .load(basePath.get.toString)
-            .schema)
-        case (_, _) => getColumnsFromSchema(deltaLog.snapshot.schema)
+
+        case _ => getColumnsFromSchema(deltaLog.snapshot.schema)
       }
     }
   }
