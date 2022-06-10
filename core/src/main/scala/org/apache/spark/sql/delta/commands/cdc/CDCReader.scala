@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitIn
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
@@ -99,13 +99,15 @@ object CDCReader extends DeltaLogging {
     } else if (options.containsKey(timestampKey)) {
       val ts = options.get(timestampKey)
       val spec = DeltaTimeTravelSpec(Some(Literal(ts)), None, Some("cdcReader"))
+      val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
       if (timestampKey == DeltaDataSource.CDC_START_TIMESTAMP_KEY) {
         // For the starting timestamp we need to find a version after the provided timestamp
         // we can use the same semantics as streaming.
         val resolvedVersion = DeltaSource.getStartingVersionFromTimestamp(
           spark,
           deltaLog,
-          spec.getTimestamp(spark.sessionState.conf)
+          spec.getTimestamp(spark.sessionState.conf),
+          allowOutOfRange
         )
         Some(resolvedVersion)
       } else {
@@ -113,7 +115,8 @@ object CDCReader extends DeltaLogging {
         val resolvedVersion = DeltaTableUtils.resolveTimeTravelVersion(
           conf,
           deltaLog,
-          spec
+          spec,
+          allowOutOfRange
         )
         Some(resolvedVersion._1)
       }
@@ -149,6 +152,23 @@ object CDCReader extends DeltaLogging {
     // add a version check here that is cheap instead of after trying to list a large version
     // that doesn't exist
     if (startingVersion.get > snapshotToUse.version) {
+      val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
+      // LS-129: return an empty relation if start version passed in is beyond latest commit version
+      if (allowOutOfRange) {
+        return new DeltaCDFRelation(
+          cdcReadSchema(snapshotToUse.metadata.schema),
+          spark.sqlContext,
+          deltaLog,
+          None,
+          None
+        ) {
+          override def buildScan(
+              requiredColumns: Array[String],
+              filters: Array[Filter]): RDD[Row] = {
+            sqlContext.sparkSession.sparkContext.emptyRDD[Row]
+          }
+        }
+      }
       throw DeltaErrors.startVersionAfterLatestVersion(
         startingVersion.get, snapshotToUse.version)
     }

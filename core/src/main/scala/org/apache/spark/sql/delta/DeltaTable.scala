@@ -387,14 +387,15 @@ object DeltaTableUtils extends PredicateHelper
   def resolveTimeTravelVersion(
       conf: SQLConf,
       deltaLog: DeltaLog,
-      tt: DeltaTimeTravelSpec): (Long, String) = {
+      tt: DeltaTimeTravelSpec,
+      canReturnLastCommit: Boolean = false): (Long, String) = {
     if (tt.version.isDefined) {
       val userVersion = tt.version.get
       deltaLog.history.checkVersionExists(userVersion)
       userVersion -> "version"
     } else {
       val timestamp = tt.getTimestamp(conf)
-      deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
+      deltaLog.history.getActiveCommitAtTime(timestamp, canReturnLastCommit).version -> "timestamp"
     }
   }
 
