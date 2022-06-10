@@ -40,31 +40,12 @@ def cleanup():
     spark.sql("DROP TABLE IF EXISTS student_source")
 
 
-def read_cdc_by_path(starting_version):
-    return spark.read.format("delta") \
-        .option("readChangeFeed", "true") \
-        .option("startingVersion", str(starting_version)) \
-        .load(path) \
-        .orderBy("_change_type", "id")
-
-
 def read_cdc_by_table_name(starting_version):
     return spark.read.format("delta") \
         .option("readChangeFeed", "true") \
         .option("startingVersion", str(starting_version)) \
         .table("student") \
         .orderBy("_change_type", "id")
-
-
-def stream_cdc_by_path(starting_version):
-    return spark.readStream.format("delta") \
-        .option("readChangeFeed", "true") \
-        .option("startingVersion", str(starting_version)) \
-        .load(path) \
-        .writeStream \
-        .format("console") \
-        .option("numRows", 1000) \
-        .start()
 
 
 def stream_cdc_by_table_name(starting_version):
@@ -81,6 +62,7 @@ def stream_cdc_by_table_name(starting_version):
 cleanup()
 
 try:
+    # =============== Create student table ===============
     spark.sql('''CREATE TABLE student (id INT, name STRING, age INT)
                  USING DELTA
                  PARTITIONED BY (age)
@@ -95,25 +77,35 @@ try:
             "CAST(id % 4 + 18 as INT) as age") \
         .write.format("delta").mode("append").save(path)  # v1
 
+    # =============== Show table data + changes ===============
+
     print("(v1) Initial Table")
     spark.read.format("delta").load(path).orderBy("id").show()
 
     print("(v1) CDC changes")
-    read_cdc_by_path(1).show()
+    read_cdc_by_table_name(1).show()
 
     table = DeltaTable.forPath(spark, path)
 
+    # =============== Perform UPDATE ===============
+
     print("(v2) Updated id -> id + 1")
     table.update(set={"id": expr("id + 1")})  # v2
-    read_cdc_by_path(2).show()
+    read_cdc_by_table_name(2).show()
+
+    # =============== Perform DELETE ===============
 
     print("(v3) Deleted where id >= 7")
     table.delete(condition=expr("id >= 7"))  # v3
     read_cdc_by_table_name(3).show()
 
+    # =============== Perform partition DELETE ===============
+
     print("(v4) Deleted where age = 18")
     table.delete(condition=expr("age = 18"))  # v4, partition delete
     read_cdc_by_table_name(4).show()
+
+    # =============== Create source table for MERGE ===============
 
     spark.sql('''CREATE TABLE student_source (id INT, name STRING, age INT)
                  USING DELTA
@@ -127,6 +119,8 @@ try:
         .write.format("delta").mode("append").saveAsTable("student_source")
     source = spark.sql("SELECT * FROM student_source")
 
+    # =============== Perform MERGE ===============
+
     table.alias("target") \
         .merge(
             source.alias("source"),
@@ -135,17 +129,15 @@ try:
         .whenNotMatchedInsertAll() \
         .execute() # v5
     print("(v5) Merged with a source table")
-    read_cdc_by_path(5).show()
+    read_cdc_by_table_name(5).show()
 
-    print("Streaming by path")
-    cdfStream1 = stream_cdc_by_path(0)
-    cdfStream1.awaitTermination(10)
-    cdfStream1.stop()
+    # =============== Stream changes ===============
 
     print("Streaming by table name")
-    cdfStream2 = stream_cdc_by_table_name(0)
-    cdfStream2.awaitTermination(10)
-    cdfStream2.stop()
+    cdfStream = stream_cdc_by_table_name(0)
+    cdfStream.awaitTermination(10)
+    cdfStream.stop()
+
 finally:
     cleanup()
     spark.stop()
