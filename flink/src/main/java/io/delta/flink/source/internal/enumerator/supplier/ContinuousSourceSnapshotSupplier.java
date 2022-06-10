@@ -59,13 +59,17 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
         }
         return TransitiveOptional.empty();
     }
-
+    // TODO PR 14 add IT test for this
     private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption(
             DeltaSourceConfiguration sourceConfiguration) {
         Long startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);
         if (startingTimestamp != null) {
+            // Delta Lake streaming semantics match timestamps to versions using
+            // 'at or after' semantics. Here we do the same.
+            long versionAtOrAfterTimestamp =
+                deltaLog.getVersionAtOrAfterTimestamp(startingTimestamp);
             return TransitiveOptional.ofNullable(
-                deltaLog.getSnapshotForTimestampAsOf(startingTimestamp));
+                deltaLog.getSnapshotForVersionAsOf(versionAtOrAfterTimestamp));
         }
         return TransitiveOptional.empty();
     }

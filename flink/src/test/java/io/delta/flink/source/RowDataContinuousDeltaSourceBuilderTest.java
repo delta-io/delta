@@ -146,7 +146,10 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         long long_startingTimestamp =
             TimestampFormatConverter.convertToTimestamp(startingTimestamp);
 
-        when(deltaLog.getSnapshotForTimestampAsOf(long_startingTimestamp)).thenReturn(headSnapshot);
+        long snapshotVersion = headSnapshot.getVersion();
+        when(deltaLog.getVersionAtOrAfterTimestamp(long_startingTimestamp))
+            .thenReturn(snapshotVersion);
+        when(deltaLog.getSnapshotForVersionAsOf(snapshotVersion)).thenReturn(headSnapshot);
 
         StructField[] schema = {new StructField("col1", new StringType())};
         mockDeltaTableForSchema(schema);
@@ -168,7 +171,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
             }
             // as many calls as we had builders
             verify(deltaLog, times(builders.size()))
-                .getSnapshotForTimestampAsOf(long_startingTimestamp);
+                .getVersionAtOrAfterTimestamp(long_startingTimestamp);
+            verify(deltaLog, times(builders.size())).getSnapshotForVersionAsOf(snapshotVersion);
         });
     }
 

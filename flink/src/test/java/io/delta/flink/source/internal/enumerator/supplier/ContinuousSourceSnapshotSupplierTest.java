@@ -93,12 +93,15 @@ class ContinuousSourceSnapshotSupplierTest {
         DeltaSourceConfiguration sourceConfig = new DeltaSourceConfiguration(
             Collections.singletonMap(DeltaSourceOptions.STARTING_TIMESTAMP.key(), dateTime)
         );
-        when(deltaLog.getSnapshotForTimestampAsOf(timestamp)).thenReturn(deltaSnapshot);
+        long snapshotVersion = deltaSnapshot.getVersion();
+        when(deltaLog.getVersionAtOrAfterTimestamp(timestamp)).thenReturn(snapshotVersion);
+        when(deltaLog.getSnapshotForVersionAsOf(snapshotVersion)).thenReturn(deltaSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
 
         assertThat(snapshot, equalTo(deltaSnapshot));
-        verify(deltaLog, never()).getSnapshotForVersionAsOf(anyLong());
+        verify(deltaLog).getVersionAtOrAfterTimestamp(timestamp);
+        verify(deltaLog).getSnapshotForVersionAsOf(snapshotVersion);
         verify(deltaLog, never()).snapshot();
     }
 
