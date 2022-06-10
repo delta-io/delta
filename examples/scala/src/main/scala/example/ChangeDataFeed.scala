@@ -50,14 +50,7 @@ object ChangeDataFeed {
       spark.sql(s"DROP TABLE IF EXISTS student_source")
     }
 
-    def readCDCByPath(startingVersion: Int): DataFrame = {
-      spark.read.format("delta")
-        .option("readChangeFeed", "true")
-        .option("startingVersion", startingVersion.toString)
-        .load(path)
-        .orderBy("_change_type", "id")
-    }
-
+    // Note: one could also read by path using `.load(path)`
     def readCDCByTableName(startingVersion: Int): DataFrame = {
       spark.read.format("delta")
         .option("readChangeFeed", "true")
@@ -66,17 +59,7 @@ object ChangeDataFeed {
         .orderBy("_change_type", "id")
     }
 
-    def streamCDCByPath(startingVersion: Int): StreamingQuery = {
-      spark.readStream.format("delta")
-        .option("readChangeFeed", "true")
-        .option("startingVersion", startingVersion.toString)
-        .load(path)
-        .writeStream
-        .format("console")
-        .option("numRows", 1000)
-        .start()
-    }
-
+    // Note: one could also stream by path using `.load(path)`
     def streamCDCByTableName(startingVersion: Int): StreamingQuery = {
       spark.readStream.format("delta")
         .option("readChangeFeed", "true")
@@ -91,6 +74,8 @@ object ChangeDataFeed {
     cleanup()
 
     try {
+      // =============== Create student table ===============
+
       spark.sql(
         s"""
            |CREATE TABLE student (id INT, name STRING, age INT)
@@ -106,25 +91,35 @@ object ChangeDataFeed {
           "CAST(id % 4 + 18 as INT) as age")
         .write.format("delta").mode("append").save(path)  // v1
 
+      // =============== Show table data + changes ===============
+
       println("(v1) Initial Table")
       spark.read.format("delta").load(path).orderBy("id").show()
 
       println("(v1) CDC changes")
-      readCDCByPath(1).show()
+      readCDCByTableName(1).show()
 
       val table = io.delta.tables.DeltaTable.forPath(path)
 
+      // =============== Perform UPDATE ===============
+
       println("(v2) Updated id -> id + 1")
       table.update(Map("id" -> expr("id + 1"))) // v2
-      readCDCByPath(2).show()
+      readCDCByTableName(2).show()
+
+      // =============== Perform DELETE ===============
 
       println("(v3) Deleted where id >= 7")
       table.delete(expr("id >= 7")) // v3
       readCDCByTableName(3).show()
 
+      // =============== Perform partition DELETE ===============
+
       println("(v4) Deleted where age = 18")
       table.delete(expr("age = 18")) // v4, partition delete
       readCDCByTableName(4).show()
+
+      // =============== Create source table for MERGE ===============
 
       spark.sql(
         s"""
@@ -138,6 +133,8 @@ object ChangeDataFeed {
         .write.format("delta").mode("append").saveAsTable("student_source")
       val source = spark.sql("SELECT * FROM student_source")
 
+      // =============== Perform MERGE ===============
+
       table
         .as("target")
         .merge(source.as("source"), "target.id = source.id")
@@ -148,17 +145,14 @@ object ChangeDataFeed {
         .insertAll()
         .execute() // v5
       println("(v5) Merged with a source table")
-      readCDCByPath(5).show()
+      readCDCByTableName(5).show()
 
-      println("Streaming by path")
-      val cdfStream1 = streamCDCByPath(0)
-      cdfStream1.awaitTermination(5000)
-      cdfStream1.stop()
+      // =============== Stream changes ===============
 
       println("Streaming by table name")
-      val cdfStream2 = streamCDCByTableName(0)
-      cdfStream2.awaitTermination(5000)
-      cdfStream2.stop()
+      val cdfStream = streamCDCByTableName(0)
+      cdfStream.awaitTermination(5000)
+      cdfStream.stop()
     } finally {
       cleanup()
       spark.stop()
