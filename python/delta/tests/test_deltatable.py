@@ -535,9 +535,12 @@ class DeltaTableTests(DeltaTestCase):
 
             self.__verify_table_schema(
                 f"delta.`{path}`",
-                deltaTable.toDF().schema, ["col1", "col2"],
-                [IntegerType(),
-                IntegerType()],
+                deltaTable.toDF().schema,
+                ["col1", "col2"],
+                [
+                    IntegerType(),
+                    IntegerType()
+                ],
                 nullables={"col2"},
                 comments={"col1": "foo"},
                 partitioningColumns=["col1"],
