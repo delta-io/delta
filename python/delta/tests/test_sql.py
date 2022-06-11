@@ -44,7 +44,7 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
     def test_describe_history(self) -> None:
-        assert(len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()) > 0)
+        assert len(self.spark.sql(f"desc history delta.`{self.tempFile}`").collect()) > 0
 
     def test_generate(self) -> None:
         # create a delta table
@@ -54,8 +54,8 @@ class DeltaSqlTests(DeltaTestCase):
         self.spark.range(100).repartition(numFiles).write.format("delta").save(temp_file)
 
         # Generate the symlink format manifest
-        self.spark.sql("GENERATE SYMLINK_FORMAT_MANIFEST FOR TABLE delta.`{}`"
-                       .format(temp_file))
+        self.spark.sql(f"GENERATE SYMLINK_FORMAT_MANIFEST FOR TABLE delta.`{temp_file}`")
+
 
         # check the contents of the manifest
         # NOTE: this is not a correctness test, we are testing correctness in the scala suite
@@ -77,14 +77,15 @@ class DeltaSqlTests(DeltaTestCase):
         temp_file3 = os.path.join(temp_path3, "delta_sql_test3")
 
         df.write.format("parquet").save(temp_file2)
-        self.spark.sql("CONVERT TO DELTA parquet.`" + temp_file2 + "`")
+        self.spark.sql(f"CONVERT TO DELTA parquet.`{temp_file2}`")
         self.__checkAnswer(
             self.spark.read.format("delta").load(temp_file2),
             [('a', 1), ('b', 2), ('c', 3)])
 
         # test if convert to delta with partition columns work
         df.write.partitionBy("value").format("parquet").save(temp_file3)
-        self.spark.sql("CONVERT TO DELTA parquet.`" + temp_file3 + "` PARTITIONED BY (value INT)")
+        self.spark.sql(f"CONVERT TO DELTA parquet.`{temp_file3}` PARTITIONED BY (value INT)")
+
         self.__checkAnswer(
             self.spark.read.format("delta").load(temp_file3),
             [('a', 1), ('b', 2), ('c', 3)])
@@ -146,9 +147,9 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
-    def __checkAnswer(self, df: DataFrame,
-                      expectedAnswer: List[Any],
-                      schema: List[str] = ["key", "value"]) -> None:
+    def __checkAnswer(self, df: DataFrame, expectedAnswer: List[Any], schema: List[str] = None) -> None:
+        if schema is None:
+            schema = ["key", "value"]
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
             return
