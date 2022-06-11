@@ -22,12 +22,12 @@ spark.sql("DROP TABLE IF EXISTS newData")
 try:
     # Create a table
     print("############# Creating a table ###############")
-    spark.sql("CREATE TABLE delta.`%s`(id LONG) USING delta" % table_dir)
-    spark.sql("INSERT INTO delta.`%s` VALUES 0, 1, 2, 3, 4" % table_dir)
+    spark.sql(f"CREATE TABLE delta.`{table_dir}`(id LONG) USING delta")
+    spark.sql(f"INSERT INTO delta.`{table_dir}` VALUES 0, 1, 2, 3, 4")
 
     # Read the table
     print("############ Reading the table ###############")
-    spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
+    spark.sql(f"SELECT * FROM delta.`{table_dir}`").show()
 
     # Upsert (merge) new data
     print("########### Upsert new data #############")
@@ -41,22 +41,23 @@ try:
             WHEN NOT MATCHED THEN INSERT *
         '''.format(table_dir))
 
-    spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
+    spark.sql(f"SELECT * FROM delta.`{table_dir}`").show()
 
     # Update table data
     print("########## Overwrite the table ###########")
-    spark.sql("INSERT OVERWRITE delta.`%s` select * FROM (VALUES 5, 6, 7, 8, 9) x (id)" % table_dir)
-    spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
+    spark.sql(f"INSERT OVERWRITE delta.`{table_dir}` select * FROM (VALUES 5, 6, 7, 8, 9) x (id)")
+
+    spark.sql(f"SELECT * FROM delta.`{table_dir}`").show()
 
     # Update every even value by adding 100 to it
     print("########### Update to the table(add 100 to every even value) ##############")
     spark.sql("UPDATE delta.`{0}` SET id = (id + 100) WHERE (id % 2 == 0)".format(table_dir))
-    spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
+    spark.sql(f"SELECT * FROM delta.`{table_dir}`").show()
 
     # Delete every even value
     print("######### Delete every even value ##############")
     spark.sql("DELETE FROM delta.`{0}` WHERE (id % 2 == 0)".format(table_dir))
-    spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
+    spark.sql(f"SELECT * FROM delta.`{table_dir}`").show()
 
 finally:
     # cleanup
