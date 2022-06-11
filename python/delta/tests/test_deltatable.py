@@ -397,6 +397,7 @@ class DeltaTableTests(DeltaTestCase):
                 metadata["comment"] = comments[col]
             fields.append(StructField(col, dataType, col in nullables, metadata))
         assert (StructType(fields) == schema)
+        if properties:
             tablePropertyMap: Dict[str, str] = (
                 self.spark.sql(  # type: ignore[assignment, misc]
                     f"SHOW TBLPROPERTIES {tableName}"
