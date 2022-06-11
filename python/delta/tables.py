@@ -634,7 +634,8 @@ class DeltaTable(object):
         jmap: "JavaMap" = jvm.java.util.HashMap()
         for col, expr in pydict.items():
             if type(col) is not str:
-                e = f"Keys of dict in {argname} must contain only strings with column names" + ", found '%s' of type '%s" % (str(col), str(type(col)))
+                e = f"Keys of dict in {argname} must contain only strings with column names" + \
+                    ", found '%s' of type '%s" % (str(col), str(type(col)))
 
                 raise TypeError(e)
             if type(expr) is Column:
@@ -642,8 +643,9 @@ class DeltaTable(object):
             elif type(expr) is str:
                 jmap.put(col, functions.expr(expr)._jc)
             else:
-                e = f"Values of dict in {argname} must contain only Spark SQL Columns or strings (expressions in SQL syntax) as values, " + "found '%s' of type '%s'" % (str(expr), str(type(expr)))
-
+                e = f"Values of dict in {argname} must contain only Spark SQL Columns" + \
+                    "or strings (expressions in SQL syntax) as values, " + \
+                    "found '%s' of type '%s'" % (str(expr), str(type(expr)))
 
                 raise TypeError(e)
         return jmap
@@ -659,7 +661,8 @@ class DeltaTable(object):
         elif type(condition) is str:
             jcondition = functions.expr(condition)._jc
         else:
-            e = f"{argname} must be a Spark SQL Column or a string (expression in SQL syntax)" + f", found to be of type {str(type(condition))}"
+            e = f"{argname} must be a Spark SQL Column or a string (expression in SQL syntax)" + \
+                f", found to be of type {str(type(condition))}"
 
             raise TypeError(e)
         return jcondition
