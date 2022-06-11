@@ -27,7 +27,7 @@ def delete_if_exists(path):
     # if path exists, delete it.
     if os.path.exists(path):
         shutil.rmtree(path)
-        print("Deleted %s " % path)
+        print(f"Deleted {path} ")
 
 
 def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, scala_version,
@@ -52,12 +52,12 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 continue
 
             try:
-                cmd = ["build/sbt", "runMain example.%s" % test_class]
+                cmd = ["build/sbt", f"runMain example.{test_class}"]
                 print("\nRunning Scala tests in %s\n=====================" % test_class)
-                print("Command: %s" % " ".join(cmd))
+                print(f'Command: {" ".join(cmd)}')
                 run_cmd(cmd, stream_output=True, env=env)
             except:
-                print("Failed Scala tests in %s" % (test_class))
+                print(f"Failed Scala tests in {test_class}")
                 raise
 
 
@@ -77,9 +77,9 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-core_2.12:" + version
+    package = f"io.delta:delta-core_2.12:{version}"
 
-    repo = extra_maven_repo if extra_maven_repo else ""
+    repo = extra_maven_repo or ""
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
@@ -87,14 +87,14 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             continue
         try:
             cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   f"--driver-class-path={extra_class_path}",  # for less verbose logging
                    "--packages", package,
                    "--repositories", repo, test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
+            print(f'Command: {" ".join(cmd)}')
             run_cmd(cmd, stream_output=True)
         except:
-            print("Failed Python tests in %s" % (test_file))
+            print(f"Failed Python tests in {test_file}")
             raise
 
 
@@ -114,10 +114,10 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-core_2.12:" + version
+    packages = f"io.delta:delta-core_2.12:{version}"
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
-        packages += "," + extra_packages
+        packages += f",{extra_packages}"
 
     conf_args = []
     if conf:
@@ -132,13 +132,13 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             continue
         try:
             cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   f"--driver-class-path={extra_class_path}",  # for less verbose logging
                    "--packages", packages] + repo_args + conf_args + [test_file]
             print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
+            print(f'Command: {" ".join(cmd)}')
             run_cmd(cmd, stream_output=True)
         except:
-            print("Failed DynamoDB logstore integration tests tests in %s" % (test_file))
+            print(f"Failed DynamoDB logstore integration tests tests in {test_file}")
             raise
 
 
@@ -150,14 +150,14 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
     run_cmd(["pip", "uninstall", "--yes", delta_pip_name, "pyspark"], stream_output=True)
 
     # install packages
-    delta_pip_name_with_version = "%s==%s" % (delta_pip_name, str(version))
+    delta_pip_name_with_version = f"{delta_pip_name}=={str(version)}"
     if use_testpypi:
         install_cmd = ["pip", "install",
                        "--extra-index-url", "https://test.pypi.org/simple/",
                        delta_pip_name_with_version]
     else:
         install_cmd = ["pip", "install", delta_pip_name_with_version]
-    print("pip install command: %s" % str(install_cmd))
+    print(f"pip install command: {install_cmd}")
     run_cmd(install_cmd, stream_output=True)
 
     # run test python file directly with python and not with spark-submit
@@ -166,11 +166,11 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
         env["EXTRA_MAVEN_REPO"] = extra_maven_repo
     test_file = path.join(root_dir, path.join("examples", "python", "using_with_pip.py"))
     test_cmd = ["python3", test_file]
-    print("Test command: %s" % str(test_cmd))
+    print(f"Test command: {test_cmd}")
     try:
         run_cmd(test_cmd, stream_output=True, env=env)
     except:
-        print("Failed pip installation tests in %s" % (test_file))
+        print(f"Failed pip installation tests in {test_file}")
         raise
 
 
@@ -190,7 +190,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
         child = subprocess.Popen(cmd, env=cmd_env, **kwargs)
         exit_code = child.wait()
         if throw_on_error and exit_code != 0:
-            raise Exception("Non-zero exitcode: %s" % (exit_code))
+            raise Exception(f"Non-zero exitcode: {exit_code}")
         return exit_code
     else:
         child = subprocess.Popen(
