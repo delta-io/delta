@@ -158,19 +158,19 @@ trait OptimizeZOrderSuiteBase extends QueryTest
           .format("delta")
           .save(tempDir.getAbsolutePath)
         val e1 = intercept[AnalysisException] {
-          val res = executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.b"))
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.b"))
         }
         assert(e1.getMessage == DeltaErrors
           .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.b"), spark)
           .getMessage)
         val e2 = intercept[AnalysisException] {
-          val res = executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.a.p1"))
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.a.p1"))
         }
         assert(e2.getMessage == DeltaErrors
           .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.a.p1"), spark)
           .getMessage)
         val e3 = intercept[AnalysisException] {
-          val res = executeOptimizeTable(s"delta.`${tempDir.getPath}`",
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`",
             Seq("nested.a.p1", "nested.b"))
         }
         assert(e3.getMessage == DeltaErrors
