@@ -28,7 +28,7 @@ def run_sbt_tests(root_dir, scala_version=None):
     if scala_version is None:
         run_cmd([sbt_path, "clean", "+test"], stream_output=True)
     else:
-        run_cmd([sbt_path, "clean", "++ %s test" % scala_version], stream_output=True)
+        run_cmd([sbt_path, "clean", f"++ {scala_version} test"], stream_output=True)
 
 
 def run_python_tests(root_dir):
@@ -46,12 +46,12 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
     cmd_env = os.environ.copy()
     if env:
         cmd_env.update(env)
-    print("Running command: " + str(cmd))
+    print(f"Running command: {str(cmd)}")
     if stream_output:
         child = subprocess.Popen(cmd, env=cmd_env, **kwargs)
         exit_code = child.wait()
         if throw_on_error and exit_code != 0:
-            raise Exception("Non-zero exitcode: %s" % (exit_code))
+            raise Exception(f"Non-zero exitcode: {exit_code}")
         return exit_code
     else:
         child = subprocess.Popen(
@@ -66,7 +66,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             # Python 3 produces bytes which needs to be converted to str
             stdout = stdout.decode("utf-8")
             stderr = stderr.decode("utf-8")
-        if throw_on_error and exit_code is not 0:
+        if throw_on_error and exit_code != 0:
             raise Exception(
                 "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))
@@ -98,29 +98,29 @@ def pull_or_build_docker_image(root_dir):
 
     def build_image():
         print("---\nBuilding image %s ..." % test_env_image_tag)
-        run_cmd("docker build --tag=%s %s" % (test_env_image_tag, root_dir))
-        print("Built image %s" % test_env_image_tag)
+        run_cmd(f"docker build --tag={test_env_image_tag} {root_dir}")
+        print(f"Built image {test_env_image_tag}")
 
     def pull_image(registry_image_tag):
         try:
             print("---\nPulling image %s ..." % registry_image_tag)
-            run_cmd("docker pull %s" % registry_image_tag)
-            run_cmd("docker tag %s %s" % (registry_image_tag, test_env_image_tag))
-            print("Pulling image %s succeeded" % registry_image_tag)
+            run_cmd(f"docker pull {registry_image_tag}")
+            run_cmd(f"docker tag {registry_image_tag} {test_env_image_tag}")
+            print(f"Pulling image {registry_image_tag} succeeded")
             return True
         except Exception as e:
-            print("Pulling image %s failed: %s" % (registry_image_tag, repr(e)))
+            print(f"Pulling image {registry_image_tag} failed: {repr(e)}")
             return False
 
     def push_image(registry_image_tag):
         try:
             print("---\nPushing image %s ..." % registry_image_tag)
-            run_cmd("docker tag %s %s" % (test_env_image_tag, registry_image_tag))
-            run_cmd("docker push %s" % registry_image_tag)
-            print("Pushing image %s succeeded" % registry_image_tag)
+            run_cmd(f"docker tag {test_env_image_tag} {registry_image_tag}")
+            run_cmd(f"docker push {registry_image_tag}")
+            print(f"Pushing image {registry_image_tag} succeeded")
             return True
         except Exception as e:
-            print("Pushing image %s failed: %s" % (registry_image_tag, repr(e)))
+            print(f"Pushing image {registry_image_tag} failed: {repr(e)}")
             return False
 
     if docker_registry is not None:
@@ -148,14 +148,13 @@ def run_tests_in_docker(image_tag):
     envs = "-e JENKINS_URL -e SBT_1_5_5_MIRROR_JAR_URL "
     scala_version = os.getenv("SCALA_VERSION")
     if scala_version is not None:
-        envs = envs + "-e SCALA_VERSION=%s " % scala_version
+        envs += f"-e SCALA_VERSION={scala_version} "
 
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
-    test_run_cmd = "docker run --rm  -v %s:%s -w %s %s %s ./%s" % (
-        cwd, cwd, cwd, envs, image_tag, test_script
-    )
+    test_run_cmd = f"docker run --rm  -v {cwd}:{cwd} -w {cwd} {envs} {image_tag} ./{test_script}"
+
     run_cmd(test_run_cmd, stream_output=True)
 
 
