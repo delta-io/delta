@@ -328,10 +328,8 @@ fi
     @staticmethod
     def copy_script_via_ssh(cluster_hostname, ssh_id_file, ssh_user, script_file_name, script_file_text):
         try:
-            script_file = open(script_file_name, "w")
-            script_file.write(script_file_text)
-            script_file.close()
-
+            with open(script_file_name, "w") as script_file:
+                script_file.write(script_file_text)
             scp_cmd = (
                     f"scp -i {ssh_id_file} {script_file_name}" +
                     f" {ssh_user}@{cluster_hostname}:{script_file_name}"
