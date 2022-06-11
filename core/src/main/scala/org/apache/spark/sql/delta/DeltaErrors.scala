@@ -476,6 +476,12 @@ object DeltaErrors
     )
   }
 
+  def fileFormatNotSupportedInShowColumns(filePath: String): Throwable = {
+    new AnalysisException(
+      s"Format of file $filePath not supported in SHOW COLUMNS command."
+    )
+  }
+
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
     new AnalysisException(
       "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "

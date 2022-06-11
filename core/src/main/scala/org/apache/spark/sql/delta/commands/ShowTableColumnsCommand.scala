@@ -84,13 +84,8 @@ case class ShowTableColumnsCommand(
               if (!basePath.get.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(basePath.get)) {
                 throw DeltaErrors.fileNotFoundException(basePath.get.toString)
               }
-              getColumnsFromSchema(sparkSession
-                .read
-                .format("parquet")
-                .load(basePath.get.toString)
-                .schema)
+              throw DeltaErrors.fileFormatNotSupportedInShowColumns(basePath.get.toString)
           }
-
         case _ => getColumnsFromSchema(deltaLog.snapshot.schema)
       }
     }

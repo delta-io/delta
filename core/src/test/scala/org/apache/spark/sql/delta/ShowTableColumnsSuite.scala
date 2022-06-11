@@ -45,23 +45,25 @@ trait ShowTableColumnsSuiteBase extends QueryTest
       f: File => String,
       schemaName: String,
       tableFormat: String): Unit = {
-    val tempDir = Utils.createTempDir()
-    Seq(1 -> 1).toDF("column1", "column2")
-      .write
-      .format(tableFormat)
-      .mode("overwrite")
-      .save(tempDir.toString)
+    withDatabase("delta") {
+      val tempDir = Utils.createTempDir()
+      Seq(1 -> 1).toDF("column1", "column2")
+        .write
+        .format(tableFormat)
+        .mode("overwrite")
+        .save(tempDir.toString)
 
-    val sqlCommand = if (schemaName.nonEmpty) {
-      s"SHOW COLUMNS IN ${f(tempDir)} FROM $schemaName"
-    } else {
-      s"SHOW COLUMNS FROM ${f(tempDir)}"
+      val sqlCommand = if (schemaName.nonEmpty) {
+        s"SHOW COLUMNS IN ${f(tempDir)} FROM $schemaName"
+      } else {
+        s"SHOW COLUMNS FROM ${f(tempDir)}"
+      }
+
+      checkResult(
+        sql(sqlCommand),
+        Seq(Seq("column1"), Seq("column2")),
+        Seq("columnName"))
     }
-
-    checkResult(
-      sql(sqlCommand),
-      Seq(Seq("column1"), Seq("column2")),
-      Seq("columnName"))
   }
 
   test("delta table: path") {
