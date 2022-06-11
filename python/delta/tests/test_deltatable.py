@@ -345,20 +345,18 @@ class DeltaTableTests(DeltaTestCase):
     def test_convertToDelta(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("parquet").save(self.tempFile)
-        dt = DeltaTable.convertToDelta(self.spark, "parquet.`%s`" % self.tempFile)
+        dt = DeltaTable.convertToDelta(self.spark, f"parquet.`{self.tempFile}`")
         self.__checkAnswer(
             self.spark.read.format("delta").load(self.tempFile),
             [('a', 1), ('b', 2), ('c', 3)])
 
         # test if convert to delta with partition columns work
-        tempFile2 = self.tempFile + "_2"
+        tempFile2 = f"{self.tempFile}_2"
         df.write.partitionBy("value").format("parquet").save(tempFile2)
         schema = StructType()
         schema.add("value", IntegerType(), True)
-        #FIXME: tempFile2 is not defined
         dt = DeltaTable.convertToDelta(self.spark, f"parquet.`{tempFile2}`", schema)
         self.__checkAnswer(
-            #FIXME: tempFile2 is not defined
             self.spark.read.format("delta").load(tempFile2),
             [('a', 1), ('b', 2), ('c', 3)])
         self.assertEqual(type(dt), DeltaTable)
