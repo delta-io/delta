@@ -29,15 +29,15 @@ def test(root_dir, package):
     python_root_dir = path.join(root_dir, "python")
     test_dir = path.join(python_root_dir, path.join("delta", "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
-                    if os.path.isfile(os.path.join(test_dir, f)) and
-                    f.endswith(".py") and not f.startswith("_")]
+                  if os.path.isfile(os.path.join(test_dir, f)) and
+                  f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
 
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
-                    f"--driver-class-path={extra_class_path}",
-                    "--packages", package, test_file]
+                   f"--driver-class-path={extra_class_path}",
+                   "--packages", package, test_file]
             print("Running tests in %s\n=============" % test_file)
             print(f"Command: {cmd}")
             run_cmd(cmd, stream_output=True)
