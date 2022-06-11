@@ -147,7 +147,13 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
-    def __checkAnswer(self, df: DataFrame, expectedAnswer: List[Any], schema: List[str] = None) -> None:
+    def __checkAnswer(
+        self,
+        df: DataFrame,
+        expectedAnswer: List[Any],
+        schema: List[str] = None
+        ) -> None:
+        
         if schema is None:
             schema = ["key", "value"]
         if not expectedAnswer:
