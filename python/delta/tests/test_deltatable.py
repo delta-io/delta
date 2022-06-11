@@ -363,7 +363,6 @@ class DeltaTableTests(DeltaTestCase):
 
         # convert to delta with partition column provided as a string
         tempFile3 = f"{self.tempFile}_3"
-        #FIXME: df is not defined
         df.write.partitionBy("value").format("parquet").save(tempFile3)
         dt = DeltaTable.convertToDelta(self.spark, f"parquet.`{tempFile3}`", "value int")
 
