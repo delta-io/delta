@@ -56,7 +56,6 @@ class DeltaSqlTests(DeltaTestCase):
         # Generate the symlink format manifest
         self.spark.sql(f"GENERATE SYMLINK_FORMAT_MANIFEST FOR TABLE delta.`{temp_file}`")
 
-
         # check the contents of the manifest
         # NOTE: this is not a correctness test, we are testing correctness in the scala suite
         manifestPath = os.path.join(
@@ -150,11 +149,11 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
     def __checkAnswer(
-            self,
-            df: DataFrame,
-            expectedAnswer: List[Any],
-            schema: List[str] = None
-            ) -> None:
+        self,
+        df: DataFrame,
+        expectedAnswer: List[Any],
+        schema: List[str] = None
+    ) -> None:
         if schema is None:
             schema = ["key", "value"]
         if not expectedAnswer:
