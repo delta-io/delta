@@ -536,7 +536,16 @@ class DeltaTableTests(DeltaTestCase):
             path = self.tempFile + str(ifNotExists)
             deltaTable = self.__create_table(ifNotExists, location=path)
 
-            self.__verify_table_schema(f"delta.`{path}`", deltaTable.toDF().schema, ["col1", "col2"], [IntegerType(), IntegerType()], nullables={"col2"}, comments={"col1": "foo"}, partitioningColumns=["col1"], tblComment="comment")
+            self.__verify_table_schema(
+                f"delta.`{path}`",
+                deltaTable.toDF().schema, ["col1", "col2"],
+                [IntegerType(),
+                IntegerType()],
+                nullables={"col2"},
+                comments={"col1": "foo"},
+                partitioningColumns=["col1"],
+                tblComment="comment"
+            )
 
             # verify generated columns.
             self.__verify_generated_column(f"delta.`{path}`", deltaTable)
