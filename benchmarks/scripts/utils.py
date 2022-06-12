@@ -30,7 +30,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
         child = subprocess.Popen(cmd, env=cmd_env, **kwargs)
         exit_code = child.wait()
         if throw_on_error and exit_code != 0:
-            raise Exception("Non-zero exitcode: %s" % (exit_code))
+            raise Exception(f"Non-zero exitcode: {exit_code}")
         return exit_code
     else:
         child = subprocess.Popen(
@@ -64,4 +64,3 @@ class WorkingDirectory(object):
 
     def __exit__(self, tpe, value, traceback):
         os.chdir(self.old_workdir)
-
