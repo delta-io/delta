@@ -14,10 +14,9 @@
 # limitations under the License.
 #
 
-from scripts.utils import *
 from datetime import datetime
 import time
-
+from scripts.utils import *
 
 class BenchmarkSpec:
     """
@@ -216,7 +215,7 @@ class Benchmark:
                 self.upload_delta_jars_to_cluster_and_get_version(cluster_hostname, ssh_id_file, ssh_user)
             self.benchmark_spec.update_delta_version(delta_version_to_use)
 
-        jar_path_in_cluster = self.upload_jar_to_cluster(cluster_hostname, ssh_id_file, ssh_user)
+        jar_path_in_cluster = self.upload_jar_to_cluster(cluster_hostname, ssh_id_file, ssh_user, delta_version_to_use)
         self.install_dependencies_via_ssh(cluster_hostname, ssh_id_file, ssh_user)
         self.start_benchmark_via_ssh(cluster_hostname, ssh_id_file, jar_path_in_cluster, ssh_user)
         Benchmark.wait_for_completion(cluster_hostname, ssh_id_file, self.benchmark_id, ssh_user)
