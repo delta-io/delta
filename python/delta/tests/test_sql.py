@@ -152,7 +152,7 @@ class DeltaSqlTests(DeltaTestCase):
         self,
         df: DataFrame,
         expectedAnswer: List[Any],
-        schema: List[str] = None
+        schema: List[str] = ["key", "value"]
     ) -> None:
         if schema is None:
             schema = ["key", "value"]
