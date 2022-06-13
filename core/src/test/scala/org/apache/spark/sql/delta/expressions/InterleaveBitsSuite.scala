@@ -75,6 +75,61 @@ class InterleaveBitsSuite extends SparkFunSuite with ExpressionEvalHelper {
           .map(_.toByte))
   }
 
+  test("9 inputs") {
+    val result = Array(
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92
+    )
+    checkInterleaving(
+      input = Seq(
+        0xff00,
+        0x00ff,
+        0x0000,
+        0xff00,
+        0x00ff,
+        0x0000,
+        0xff00,
+        0x00ff,
+        0x0000
+      ).map(Literal(_)),
+      expectedOutput = result.map(_.toByte)
+    )
+  }
+
   test("nulls") {
     val ones = 0xffffffff
     checkInterleaving(
