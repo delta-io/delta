@@ -90,7 +90,7 @@ statement
         (WHERE partitionPredicate = exprToken)?
         (zorderSpec)?                                                   #optimizeTable
     | SHOW COLUMNS (IN | FROM) (path=STRING | tableName=qualifiedName
-            ((IN | FROM) schemaName=identifier)?)                       #showColumns
+        ((IN | FROM) schemaName=identifier)?)                           #showColumns
     | .*?                                                               #passThrough
     ;
 
