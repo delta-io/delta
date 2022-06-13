@@ -75,7 +75,7 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
         List<AddFile> initialDeltaFiles = deltaLog.snapshot().getAllFiles();
         int initialTableRecordsCount = TestParquetReader.readAndValidateAllTableRecords(deltaLog);
         long initialVersion = deltaLog.snapshot().getVersion();
-        assertEquals(initialDeltaFiles.size(), 2);
+        assertEquals(2, initialDeltaFiles.size());
 
         JobGraph jobGraph = createJobGraph(deltaTablePath);
 

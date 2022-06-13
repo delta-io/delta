@@ -25,11 +25,11 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
 
 import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
-import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ, Protocol => ProtocolJ}
+import io.delta.standalone.actions.{Action => ActionJ, Protocol => ProtocolJ}
 
 import io.delta.standalone.internal.util.TestUtils._
 
-trait OptimisticTransactionSuiteBase extends FunSuite {
+trait OptimisticTransactionSuiteBase extends FunSuite with OptimisticTransactionSuiteTestVals {
 
   val op = new Operation(Operation.Name.MANUAL_UPDATE)
   val engineInfo = "test-engine-info"
@@ -57,7 +57,7 @@ trait OptimisticTransactionSuiteBase extends FunSuite {
   protected def check(
       name: String,
       conflicts: Boolean,
-      setup: Seq[ActionJ] = Seq(MetadataJ.builder().build(), new ProtocolJ(1, 2)),
+      setup: Seq[ActionJ] = Seq(metadata_colXY, new ProtocolJ(1, 2)),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[ActionJ],
       actions: Seq[ActionJ],

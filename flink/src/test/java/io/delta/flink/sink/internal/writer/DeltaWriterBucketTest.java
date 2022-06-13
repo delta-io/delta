@@ -56,7 +56,7 @@ public class DeltaWriterBucketTest {
     private static final String BUCKET_ID = "testing-bucket";
     private static final String APP_ID = "1";
 
-    private Map<String, Counter> testCounters = new HashMap<>();
+    private final Map<String, Counter> testCounters = new HashMap<>();
 
     @Test
     public void testOnCheckpointNoPendingRecoverable() throws IOException {

@@ -33,8 +33,9 @@ import org.scalatest.FunSuite
 import io.delta.standalone.{DeltaLog, Operation, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.exceptions.DeltaStandaloneException
+import io.delta.standalone.types.{BooleanType, IntegerType, LongType, StringType, StructType}
 
-import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, Protocol, RemoveFile}
+import io.delta.standalone.internal.actions.{Action, AddFile, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
 import io.delta.standalone.internal.util.GoldenTableUtils._
@@ -51,6 +52,10 @@ import io.delta.standalone.internal.util.TestUtils._
  */
 abstract class DeltaLogSuiteBase extends FunSuite {
 
+  val metadata = MetadataJ
+    .builder()
+    .schema(new StructType().add("x", new IntegerType()))
+    .build()
   val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
 
@@ -172,7 +177,6 @@ abstract class DeltaLogSuiteBase extends FunSuite {
 
       (1 to 5).foreach { i =>
         val txn = log1.startTransaction()
-        val metadata = if (i == 1) Metadata() :: Nil else Nil
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile((i - 1).toString, Some(System.currentTimeMillis()), true) :: Nil
@@ -180,8 +184,11 @@ abstract class DeltaLogSuiteBase extends FunSuite {
           Nil
         }
 
-        val filesToCommit = (metadata ++ delete ++ file).map(ConversionUtils.convertAction)
+        val filesToCommit = (delete ++ file).map(ConversionUtils.convertAction)
 
+        if (i == 1) {
+          txn.updateMetadata(metadata)
+        }
         txn.commit(filesToCommit.asJava, manualUpdate, engineInfo)
       }
 
@@ -271,7 +278,6 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         null // null
       )
 
-      val metadata = MetadataJ.builder().build()
       val actions = java.util.Arrays.asList(removeFile, metadata)
 
       log.startTransaction().commit(actions, manualUpdate, engineInfo)
@@ -457,11 +463,69 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       assert(!log.tableExists())
 
       log.startTransaction().commit(
-        Seq(MetadataJ.builder().build()).asJava,
+        Seq(metadata).asJava,
         new Operation(Operation.Name.CREATE_TABLE),
         "test"
       )
       assert(log.tableExists())
+    }
+  }
+
+  test("schema must contain all partition columns") {
+    val schema = new StructType()
+      .add("a", new StringType())
+      .add("b", new LongType())
+      .add("foo", new IntegerType())
+      .add("bar", new BooleanType())
+
+    Seq(
+      // all partition columns are contained within schema
+      (Seq("a", "b"), Nil),
+      // no partition columns, so all partition columns are contained within schema
+      (Nil, Nil),
+      // partition columns c and d are not contained within the schema
+      (Seq("a", "b", "c", "d"), Seq("c", "d"))
+    ).foreach { case (inputPartCols, missingPartCols) =>
+      withTempDir { dir =>
+        val shouldThrow = missingPartCols.nonEmpty
+
+        val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+        val metadata = MetadataJ.builder()
+          .schema(schema)
+          .partitionColumns(inputPartCols.asJava)
+          .build()
+
+        if (shouldThrow) {
+          val e = intercept[DeltaStandaloneException] {
+            log.startTransaction().updateMetadata(metadata)
+          }.getMessage
+
+          assert(
+            e.contains(s"Partition column(s) ${missingPartCols.mkString(",")} not found in schema"))
+        } else {
+          log.startTransaction().updateMetadata(metadata)
+        }
+      }
+    }
+  }
+
+  test("schema contains no data columns and only partition columns") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val schema = new StructType()
+        .add("part_1", new StringType())
+        .add("part_2", new LongType())
+
+      val metadata1 = MetadataJ.builder()
+        .schema(schema)
+        .partitionColumns(Seq("part_1", "part_2").asJava)
+        .build()
+
+      val txn = log.startTransaction()
+      val e = intercept[DeltaStandaloneException] {
+        txn.updateMetadata(metadata1)
+      }.getMessage
+      assert(e == "Data written into Delta needs to contain at least one non-partitioned column")
     }
   }
 
@@ -478,10 +542,10 @@ abstract class DeltaLogSuiteBase extends FunSuite {
 
       // Setup part 1 of 2: create log files
       (0 to 2).foreach { i =>
+        val txn = log.startTransaction()
+        if (i == 0) txn.updateMetadata(metadata)
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit(
-          (metadata ++ files).map(ConversionUtils.convertAction).asJava,
+        txn.commit(files.map(ConversionUtils.convertAction).asJava,
           manualUpdate, engineInfo
         )
       }
@@ -548,10 +612,10 @@ abstract class DeltaLogSuiteBase extends FunSuite {
 
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       (0 to 35).foreach { i =>
+        val txn = log.startTransaction()
+        if (i == 0) txn.updateMetadata(metadata)
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit(
-          (metadata ++ files).map(ConversionUtils.convertAction).asJava,
+        txn.commit(files.map(ConversionUtils.convertAction).asJava,
           manualUpdate, engineInfo
         )
       }

@@ -30,9 +30,7 @@ import io.delta.standalone.types.{IntegerType, StringType, StructField, StructTy
 import io.delta.standalone.internal.actions.{AddFile, Metadata}
 import io.delta.standalone.internal.util.TestUtils._
 
-class OptimisticTransactionSuite
-  extends OptimisticTransactionSuiteBase
-  with OptimisticTransactionSuiteTestVals {
+class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
   // Allowed concurrent actions
@@ -115,7 +113,8 @@ class OptimisticTransactionSuite
     "schema change",
     conflicts = true,
     reads = Seq(t => t.metadata),
-    concurrentWrites = Seq(MetadataJ.builder().build()),
+    concurrentWrites = Seq(
+      MetadataJ.builder().schema(new StructType().add("foo", new IntegerType())).build()),
     actions = Nil)
 
   check(
@@ -151,7 +150,7 @@ class OptimisticTransactionSuite
   check(
     "taint whole table + concurrent remove",
     conflicts = true,
-    setup = Seq(metadata_colX, addA),
+    setup = Seq(metadata_colXY, addA),
     reads = Seq(
       // `readWholeTable` should disallow any concurrent `RemoveFile`s.
       t => t.readWholeTable()
@@ -171,7 +170,7 @@ class OptimisticTransactionSuite
   test("isolation level shouldn't be null") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit((MetadataJ.builder().build() :: Nil).asJava, op, engineInfo)
+      log.startTransaction().commit((metadata_colXY :: Nil).asJava, op, engineInfo)
       log.startTransaction().commit((addA :: Nil).asJava, op, engineInfo)
 
       val versionLogs = log.getChanges(0, true).asScala.toList
@@ -235,19 +234,24 @@ class OptimisticTransactionSuite
   // Note: See SchemaUtilsSuite for thorough isWriteCompatible(existingSchema, newSchema) unit tests
   test("can't change schema to invalid schema - table non empty, files not removed") {
     // col a is nullable
-    val schema1 = new StructType(Array(new StructField("a", new IntegerType(), true)))
+    val schema1 = new StructType(
+      Array(
+        new StructField("a", new IntegerType(), true),
+        new StructField("b", new IntegerType(), true)
+      )
+    )
 
     // drop a field
-    val schema2 = new StructType(Array())
+    val schema2 = new StructType(Array(new StructField("a", new IntegerType(), true)))
     testSchemaChange(schema1, schema2, shouldThrow = true)
 
     // restricted nullability (from nullable to non-nullable)
     val schema3 = new StructType(Array(new StructField("a", new IntegerType(), false)))
-    testSchemaChange(schema1, schema3, shouldThrow = true)
+    testSchemaChange(schema2, schema3, shouldThrow = true)
 
     // change of datatype
     val schema4 = new StructType(Array(new StructField("a", new StringType(), true)))
-    testSchemaChange(schema1, schema4, shouldThrow = true)
+    testSchemaChange(schema2, schema4, shouldThrow = true)
   }
 
   test("can change schema to 'invalid' schema - table empty or all files removed") {
@@ -275,7 +279,8 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val addFile = AddFile(dir.getCanonicalPath + "/path/to/file/test.parquet", Map(), 0, 0, true)
-      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+      txn.updateMetadata(metadata_colXY)
+      txn.commit(addFile :: Nil, op, "test")
 
       val committedAddFile = log.update().getAllFiles.asScala.head
       assert(committedAddFile.getPath == "path/to/file/test.parquet")
@@ -287,7 +292,8 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val addFile = AddFile("path/to/file/test.parquet", Map(), 0, 0, true)
-      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+      txn.updateMetadata(metadata_colXY)
+      txn.commit(addFile :: Nil, op, "test")
 
       val committedAddFile = log.update().getAllFiles.asScala.head
       assert(committedAddFile.getPath == "path/to/file/test.parquet")
@@ -299,7 +305,8 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val addFile = AddFile("/absolute/path/to/file/test.parquet", Map(), 0, 0, true)
-      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+      txn.updateMetadata(metadata_colXY)
+      txn.commit( addFile :: Nil, op, "test")
 
       val committedAddFile = log.update().getAllFiles.asScala.head
       val committedPath = new Path(committedAddFile.getPath)

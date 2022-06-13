@@ -23,12 +23,16 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
 
 import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
+import io.delta.standalone.actions.{Metadata => MetadataJ}
+import io.delta.standalone.types.{StringType, StructType}
 
-import io.delta.standalone.internal.actions.Metadata
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
 import io.delta.standalone.internal.util.TestUtils._
 
 trait DeltaRetentionSuiteBase extends FunSuite {
+
+  val metadataJ = MetadataJ.builder().schema(new StructType().add("part", new StringType())).build()
+  val metadata = ConversionUtils.convertMetadataJ(metadataJ)
 
   protected def hadoopConf: Configuration = {
     val conf = new Configuration()
@@ -51,7 +55,7 @@ trait DeltaRetentionSuiteBase extends FunSuite {
    */
   protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
     val txn = log.startTransaction()
-    txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+    txn.updateMetadata(metadataJ)
     txn
   }
 

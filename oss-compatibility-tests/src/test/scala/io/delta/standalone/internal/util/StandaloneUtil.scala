@@ -33,7 +33,8 @@ class StandaloneUtil(now: Long) {
 
   val schema = new StructType(Array(
     new StructField("col1_part", new IntegerType(), true),
-    new StructField("col2_part", new StringType(), true)
+    new StructField("col2_part", new StringType(), true),
+    new StructField("foo", new StringType(), true)
   ))
 
   val partitionColumns: Seq[String] =

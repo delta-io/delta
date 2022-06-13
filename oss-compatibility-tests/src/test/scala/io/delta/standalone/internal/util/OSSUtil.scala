@@ -26,7 +26,8 @@ class OSSUtil(now: Long) {
 
   val schema: StructType = StructType(Array(
     StructField("col1_part", IntegerType, nullable = true),
-    StructField("col2_part", StringType, nullable = true)
+    StructField("col2_part", StringType, nullable = true),
+    StructField("foo", StringType, nullable = true)
   ))
 
   private val partitionColumns = schema.fieldNames.filter(_.contains("part")).toSeq

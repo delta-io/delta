@@ -27,6 +27,7 @@ import org.scalatest.FunSuite
 
 import io.delta.standalone.Operation
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
+import io.delta.standalone.types.{StringType, StructType}
 
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.{AzureLogStore, HDFSLogStore, LocalLogStore, LogStoreProvider, S3SingleDriverLogStore}
@@ -135,7 +136,10 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
       val log = DeltaLogImpl.forTable(conf, tempDir.getCanonicalPath)
       val addFile = AddFileJ.builder("/path", Map.empty[String, String].asJava, 100L,
         System.currentTimeMillis(), true).build()
-      val metadata = MetadataJ.builder().build()
+      val metadata = MetadataJ
+        .builder()
+        .schema(new StructType().add("foo", new StringType()))
+        .build()
 
       log.startTransaction().commit((metadata :: addFile :: Nil).asJava,
         new Operation(Operation.Name.MANUAL_UPDATE), "engineInfo")

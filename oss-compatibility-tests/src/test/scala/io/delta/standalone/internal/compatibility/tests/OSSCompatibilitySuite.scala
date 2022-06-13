@@ -429,7 +429,7 @@ class OSSCompatibilitySuite extends OssCompatibilitySuiteBase with ComparisonUti
   checkStandalone(
     "taint whole table + concurrent remove",
     conflicts = true,
-    setup = Seq(ss.conflict.metadata_colX, ss.conflict.addA),
+    setup = Seq(ss.conflict.metadata_colXY, ss.conflict.addA),
     reads = Seq(
       // `readWholeTable` should disallow any concurrent `RemoveFile`s.
       t => t.readWholeTable()

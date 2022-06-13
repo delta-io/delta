@@ -37,6 +37,11 @@ import io.delta.standalone.internal.util.{ConversionUtils, SchemaUtils}
 import io.delta.standalone.internal.util.TestUtils._
 
 class OptimisticTransactionLegacySuite extends FunSuite {
+  val metadataJ = MetadataJ.builder().schema(new StructType().add("part", new StringType())).build()
+  val metadata = ConversionUtils.convertMetadataJ(metadataJ)
+
+  val metadataJ_2 = MetadataJ.builder().schema(new StructType().add("y", new StringType())).build()
+  val metadata_2 = ConversionUtils.convertMetadataJ(metadataJ_2)
 
   val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
@@ -63,7 +68,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       partitionCols: Seq[String] = "part" :: Nil)(
       test: DeltaLog => Unit): Unit = {
     val schemaFields = partitionCols.map { p => new StructField(p, new StringType()) }.toArray
-    val schema = new StructType(schemaFields)
+    val schema = new StructType(schemaFields).add("non_part_col", new StringType())
     val metadata = Metadata(partitionColumns = partitionCols, schemaString = schema.toJson)
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -120,7 +125,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       (1 to 15).foreach { i =>
-        val meta = if (i == 1) Metadata() :: Nil else Nil
+        val meta = if (i == 1) metadata :: Nil else Nil
         val txn = log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, dataChange = true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
@@ -145,7 +150,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
-      txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      txn.commit(metadata :: Nil, manualUpdate, engineInfo)
       val e = intercept[AssertionError] {
         txn.commit(Iterable().asJava, manualUpdate, engineInfo)
       }
@@ -156,7 +161,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   test("user cannot commit their own CommitInfo") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
       val e = intercept[AssertionError] {
         log.startTransaction().commit(CommitInfo.empty() :: Nil, manualUpdate, engineInfo)
       }
@@ -169,7 +174,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val e = intercept[AssertionError] {
-        txn.commit(Metadata() :: Metadata() :: Nil, manualUpdate, engineInfo)
+        txn.commit(metadata :: metadata_2 :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
     }
@@ -179,9 +184,9 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
-      txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+      txn.updateMetadata(metadataJ)
       val e = intercept[AssertionError] {
-        txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
+        txn.commit(metadata_2 :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
     }
@@ -191,10 +196,9 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
-      val metadata = ConversionUtils.convertMetadata(Metadata())
-      txn.updateMetadata(metadata)
+      txn.updateMetadata(metadataJ)
       val result = txn.commit(
-        (metadata.copyBuilder().build() :: Nil).asJava,
+        (metadataJ.copyBuilder().build() :: Nil).asJava,
         manualUpdate,
         engineInfo)
       assert(result.getVersion == 0)
@@ -209,7 +213,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
 
       val txn = log.startTransaction()
       val e = intercept[java.io.IOException] {
-        txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
+        txn.commit(metadata :: Nil, manualUpdate, engineInfo)
       }
 
       val logPath = new Path(log.getPath, "_delta_log")
@@ -233,7 +237,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
 
       // Note that Metadata() has no partition schema specified and addA_P1 does
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
       val e = intercept[IllegalStateException] {
         log.startTransaction().commit(addA_P1 :: Nil, manualUpdate, engineInfo)
       }
@@ -248,7 +252,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
 
       Seq(Protocol(1, 3), Protocol(1, 1), Protocol(2, 2)).foreach { protocol =>
         val e = intercept[AssertionError] {
-          log.startTransaction().commit(Metadata() :: protocol :: Nil, manualUpdate, engineInfo)
+          log.startTransaction().commit(metadata :: protocol :: Nil, manualUpdate, engineInfo)
         }
         assert(e.getMessage.contains("Invalid Protocol"))
       }
@@ -258,7 +262,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   test("can't change protocol to invalid version") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Protocol() :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(metadata :: Protocol() :: Nil, manualUpdate, engineInfo)
 
       Seq(Protocol(1, 3), Protocol(1, 1), Protocol(2, 2)).foreach { protocol =>
         val e = intercept[AssertionError] {
@@ -272,8 +276,9 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   test("Removing from an append-only table") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      val metadata = Metadata(configuration = Map(DeltaConfigs.IS_APPEND_ONLY.key  -> "true"))
-      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
+      val _metadata = metadata.copy(configuration = Map(DeltaConfigs.IS_APPEND_ONLY.key  -> "true"))
+
+      log.startTransaction().commit(_metadata :: Nil, manualUpdate, engineInfo)
 
       val removeWithDataChange = addA_P1.remove.copy(dataChange = true)
       val e = intercept[UnsupportedOperationException] {
@@ -294,9 +299,9 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
-      txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+      txn.updateMetadata(metadataJ)
       val e = intercept[AssertionError] {
-        txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+        txn.updateMetadata(metadataJ_2)
       }
 
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
@@ -306,7 +311,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   test("Protocol Action should be automatically added to transaction for new table") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
       assert(log.getChanges(0, true).asScala.next().getActions.contains(new ProtocolJ(1, 2)))
     }
   }
@@ -334,7 +339,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   test("commit new metadata with Protocol properties should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
       val newMetadata = Metadata(configuration = Map(
         Protocol.MIN_READER_VERSION_PROP -> "1",
         Protocol.MIN_WRITER_VERSION_PROP -> "2"
@@ -485,11 +490,11 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       hadoopConf.set(
         DeltaConfigs.hadoopConfPrefix + DeltaConfigs.LOG_RETENTION.key.stripPrefix("delta."),
         "1000 milliseconds")
-      val metadata = Metadata(
+      val _metadata = metadata.copy(
         configuration = Map(DeltaConfigs.LOG_RETENTION.key -> "2000 millisecond"))
 
       val log = DeltaLogImpl.forTable(hadoopConf, dir.getCanonicalPath)
-      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(_metadata :: Nil, manualUpdate, engineInfo)
 
       assert(log.deltaRetentionMillis == 2000)
     }
@@ -538,7 +543,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       val opParams = Collections.singletonMap(Operation.Metrics.numAddedFiles, "0")
       val op = new Operation(Operation.Name.MANUAL_UPDATE, opParams)
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, op, "Foo Connector/1.1.0")
+      log.startTransaction().commit(metadata :: Nil, op, "Foo Connector/1.1.0")
 
       val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val commitInfo = log2.getCommitInfoAt(0)
@@ -560,7 +565,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       val add = AddFile("test", Map.empty, 1, 1, dataChange = false)
 
       val log0 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log0.startTransaction().commit(Metadata() :: add :: Nil, manualUpdate, engineInfo)
+      log0.startTransaction().commit(metadata :: add :: Nil, manualUpdate, engineInfo)
       verifyIsBlindAppend(0, expected = true)
 
       val log1 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -608,16 +613,21 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   //////////////////////////////////
 
   test("concurrent metadata update should fail") {
-    withLog(actions = Nil, partitionCols = Nil) { log =>
-      val tx1 = log.startTransaction()
+    Seq(
+      (metadataJ, metadataJ), // using exact same metadata
+      (metadataJ, metadataJ_2) // using a metadata with a different schema
+    ).foreach { case (m1, m2) =>
+      withLog(actions = Nil, partitionCols = Nil) { log =>
+        val tx1 = log.startTransaction()
 
-      val tx2 = log.startTransaction()
-      tx2.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
-      tx2.commit(Iterable().asJava, manualUpdate, engineInfo)
+        val tx2 = log.startTransaction()
+        tx2.updateMetadata(m1)
+        tx2.commit(Iterable().asJava, manualUpdate, engineInfo)
 
-      assertThrows[MetadataChangedException] {
-        tx1.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
-        tx1.commit(Iterable().asJava, manualUpdate, engineInfo)
+        assertThrows[MetadataChangedException] {
+          tx1.updateMetadata(m2)
+          tx1.commit(Iterable().asJava, manualUpdate, engineInfo)
+        }
       }
     }
   }

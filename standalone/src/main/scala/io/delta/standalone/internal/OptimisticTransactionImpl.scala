@@ -174,7 +174,8 @@ private[internal] class OptimisticTransactionImpl(
 
   /**
    * All [[Metadata]] actions must go through this function, and be added to the committed actions
-   * via `newMetadata` (they shouldn't ever be passed into `prepareCommit`.)
+   * via `newMetadata`. That is, they should never be passed into `prepareCommit`.
+   *
    * This function enforces:
    * - At most one unique [[Metadata]] is committed in a single transaction.
    * - If this is the first commit, the committed metadata configuration includes global Delta
@@ -206,6 +207,7 @@ private[internal] class OptimisticTransactionImpl(
     }
 
     verifyNewMetadata(latestMetadata)
+    checkPartitionColumns(latestMetadata.partitionColumns, latestMetadata.schema)
 
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
 
@@ -228,6 +230,10 @@ private[internal] class OptimisticTransactionImpl(
 
   /**
    * Prepare for a commit by doing all necessary pre-commit checks and modifications to the actions.
+   *
+   * Requires that no Metadata action exists inside of `actions`. Instead, Metadata actions should
+   * be added via the `newMetadata` field.
+   *
    * @return The finalized set of actions.
    */
   private def prepareCommit(actions: Seq[Action]): Seq[Action] = {
@@ -459,6 +465,25 @@ private[internal] class OptimisticTransactionImpl(
     }
 
     Protocol.checkMetadataProtocolProperties(metadata, protocol)
+  }
+
+  /**
+   * Check that the schema contains all partition columns and at least one non-partition column
+   */
+  private def checkPartitionColumns(partitionCols: Seq[String], schema: StructType): Unit = {
+    // schema contains all partition column
+    val schemaCols = schema.getFieldNames.toSet
+
+    val partitionsColsNotInSchema = partitionCols.toSet.diff(schemaCols).toSeq
+
+    if (partitionsColsNotInSchema.nonEmpty) {
+      throw DeltaErrors.partitionColumnsNotFoundException(partitionsColsNotInSchema, schema)
+    }
+
+    // schema contains at least one non-partition column
+    if (partitionCols.length == schemaCols.size) {
+      throw DeltaErrors.nonPartitionColumnAbsentException()
+    }
   }
 
   /**

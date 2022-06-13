@@ -72,9 +72,22 @@ public class DeltaSinkTestUtils {
         new RowType.RowField("age", new IntType())
     ));
 
+    public static final RowType TEST_PARTITIONED_ROW_TYPE = new RowType(Arrays.asList(
+        new RowType.RowField("name", new VarCharType(VarCharType.MAX_LENGTH)),
+        new RowType.RowField("surname", new VarCharType(VarCharType.MAX_LENGTH)),
+        new RowType.RowField("age", new IntType()),
+        new RowType.RowField("col1", new VarCharType(VarCharType.MAX_LENGTH)),
+        new RowType.RowField("col2", new VarCharType(VarCharType.MAX_LENGTH))
+    ));
+
     public static final DataFormatConverters.DataFormatConverter<RowData, Row> CONVERTER =
         DataFormatConverters.getConverterForDataType(
             TypeConversions.fromLogicalToDataType(TEST_ROW_TYPE)
+        );
+
+    public static final DataFormatConverters.DataFormatConverter<RowData, Row>
+            PARTITIONED_CONVERTER = DataFormatConverters.getConverterForDataType(
+            TypeConversions.fromLogicalToDataType(TEST_PARTITIONED_ROW_TYPE)
         );
 
     public static List<RowData> getTestRowData(int num_records) {
@@ -384,7 +397,7 @@ public class DeltaSinkTestUtils {
                 ),
                 new BasePathBucketAssigner<>(),
                 OnCheckpointRollingPolicy.build(),
-                DeltaSinkTestUtils.TEST_ROW_TYPE,
+                DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE,
                 false // mergeSchema
             );
             return builder

@@ -42,9 +42,12 @@ trait OptimisticTransactionSuiteTestVals {
   val addB_partX3 = new AddFileJ("b", Map("x" -> "3").asJava, 1, 1, true, null, null)
   val addC_partX4 = new AddFileJ("c", Map("x" -> "4").asJava, 1, 1, true, null, null)
 
-  val schema = new StructType(Array(new StructField("x", new IntegerType())))
+  val schema = new StructType()
+    .add("x", new IntegerType())
+    .add("y", new IntegerType())
+
   val colXEq1Filter = new EqualTo(schema.column("x"), Literal.of(1))
-  val metadata_colX = MetadataJ.builder().schema(schema).build()
+  val metadata_colXY = MetadataJ.builder().schema(schema).build()
   val metadata_partX =
     MetadataJ.builder().schema(schema).partitionColumns(Seq("x").asJava).build()
 }
