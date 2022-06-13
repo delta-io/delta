@@ -135,7 +135,6 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
         raise
 
 
-
 def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,
                                             extra_packages, conf, use_local):
     print(
