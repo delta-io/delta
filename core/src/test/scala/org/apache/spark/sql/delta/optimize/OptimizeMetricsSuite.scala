@@ -263,15 +263,25 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         assert(metrics.totalFilesSkipped === 0)
         assert(metrics.totalConsideredFiles === metrics.numFilesRemoved)
 
-        val expZOrderMetrics = Some(ZOrderStats(
-          strategyName = "all",
-          inputCubeFiles = ZOrderFileStats(0, 0),
-          inputOtherFiles = ZOrderFileStats(startCount, startSizes.sum),
-          inputNumCubes = 0,
-          mergedFiles = ZOrderFileStats(startCount, startSizes.sum),
-          numOutputCubes = 10 // one for each partition
-          ))
-        assert(metrics.zOrderStats === expZOrderMetrics)
+        val expZOrderMetrics = s"""{
+          |  "strategyName" : "all",
+          |  "inputCubeFiles" : {
+          |    "num" : 0,
+          |    "size" : 0
+          |  },
+          |  "inputOtherFiles" : {
+          |    "num" : $startCount,
+          |    "size" : ${startSizes.sum}
+          |  },
+          |  "inputNumCubes" : 0,
+          |  "mergedFiles" : {
+          |    "num" : $startCount,
+          |    "size" : ${startSizes.sum}
+          |  },
+          |  "numOutputCubes" : 10
+          |}""".stripMargin
+
+        assert(metrics.zOrderStats === Some(JsonUtils.fromJson[ZOrderStats](expZOrderMetrics)))
       }
     }
   }
