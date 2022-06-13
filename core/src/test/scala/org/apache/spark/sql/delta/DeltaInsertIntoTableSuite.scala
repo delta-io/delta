@@ -35,7 +35,10 @@ import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, Partitio
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTestsWithTempViews(false, true)
+class DeltaInsertIntoSQLSuite
+  extends DeltaInsertIntoTestsWithTempViews(
+    supportsDynamicOverwrite = true,
+    includeSQLOnlyTests = true)
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -72,7 +75,8 @@ class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTestsWithTempViews(false, t
 
 }
 
-class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
+class DeltaInsertIntoSQLByPathSuite
+  extends DeltaInsertIntoTests(supportsDynamicOverwrite = true, includeSQLOnlyTests = true)
   with DeltaSQLCommandTest {
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val tmpView = "tmp_view"
@@ -110,7 +114,10 @@ class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
   }
 }
 
-class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTestsWithTempViews(false, false)
+class DeltaInsertIntoDataFrameSuite
+  extends DeltaInsertIntoTestsWithTempViews(
+    supportsDynamicOverwrite = true,
+    includeSQLOnlyTests = false)
   with DeltaSQLCommandTest {
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val dfw = insert.write.format(v2Format)
@@ -122,7 +129,7 @@ class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTestsWithTempViews(fa
 }
 
 class DeltaInsertIntoDataFrameByPathSuite
-  extends DeltaInsertIntoTests(false, false)
+  extends DeltaInsertIntoTests(supportsDynamicOverwrite = true, includeSQLOnlyTests = false)
   with DeltaSQLCommandTest {
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val dfw = insert.write.format(v2Format)
