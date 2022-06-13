@@ -61,11 +61,10 @@ object TableColumns {
 case class ShowTableColumnsCommand(
     tableName: Option[TableIdentifier],
     path: Option[String],
-    schemaName: Option[String],
-    override val output: Seq[Attribute] =
-      ExpressionEncoder[TableColumns]().schema.toAttributes
-) extends LeafRunnableCommand
-    with DeltaCommand {
+    schemaName: Option[String])
+  extends LeafRunnableCommand with DeltaCommand {
+
+  override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) =
@@ -84,17 +83,11 @@ case class ShowTableColumnsCommand(
           } catch {
             case _: NoSuchElementException =>
               // Throw FileNotFoundException when the path doesn't exist since there may be a typo
-              if (
-                !basePath.get
-                  .getFileSystem(deltaLog.newDeltaHadoopConf())
-                  .exists(basePath.get)
-              ) {
+              if (!basePath.get.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(basePath.get)) {
                 throw DeltaErrors.fileNotFoundException(basePath.get.toString)
               }
               // `SHOW COLUMNS` command is not supported for non-Delta table described by file path
-              throw DeltaErrors.fileFormatNotSupportedInShowColumns(
-                basePath.get.toString
-              )
+              throw DeltaErrors.fileFormatNotSupportedInShowColumns(basePath.get.toString)
           }
         case _ => getColumnsFromSchema(deltaLog.snapshot.schema)
       }
@@ -130,8 +123,7 @@ case class ShowTableColumnsCommand(
       case None =>
         lookupTable.map { i =>
           DeltaTableIdentifier(spark, i) match {
-            case Some(id) if id.path.isDefined =>
-              Some(new Path(id.path.get)) -> None
+            case Some(id) if id.path.isDefined => Some(new Path(id.path.get)) -> None
             case _ =>
               // Path of table ID not found. This should be a catalog table.
               try {
@@ -146,13 +138,11 @@ case class ShowTableColumnsCommand(
                     // Better error message if an existing database not documented in catalog
                     // table. If only the table name is wrong, the thrown error
                     // `NoSuchDatabaseException` would be misleading in this case.
-                    throw DeltaErrors
-                      .tableIdentifierNotFoundInShowColumnsException(i)
+                    throw DeltaErrors.tableIdentifierNotFoundInShowColumnsException(i)
                   }
               }
           }
-        }
-        .getOrElse {
+        }.getOrElse {
           throw DeltaErrors.missingTableIdentifierException("SHOW COLUMNS")
         }
     }
