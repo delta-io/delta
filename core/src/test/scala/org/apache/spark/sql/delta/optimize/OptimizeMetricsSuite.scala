@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.optimize
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics}
+import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderFileStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTable
@@ -177,6 +177,90 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         endTimeMs = actMetrics.endTimeMs)
 
       assert(actMetrics === expMetrics)
+    }
+  }
+
+  test("optimize ZOrderBy operation metrics in Delta table history") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        // create a partitioned table with each partition containing multiple files
+        0.to(100).seq.toDF()
+            .withColumn("col1", floor('value % 7))
+            .withColumn("col2", floor('value % 27))
+            .withColumn("p", floor('value % 10))
+            .repartition(4).write.partitionBy("p").format("delta").save(tempDir.toString)
+
+        val startSizes = DeltaLog.forTable(spark, tempDir)
+            .snapshot.allFiles.select('size).as[Long].collect().sorted
+
+        spark.sql(s"OPTIMIZE delta.`${tempDir.toString}` ZORDER BY (col1, col2)").show()
+
+        val finalSizes = DeltaLog.forTable(spark, tempDir)
+            .snapshot.allFiles.select('size).collect().map(_.getLong(0)).sorted
+
+        val history = DeltaTable.forPath(spark, tempDir.getAbsolutePath).history(1)
+
+        // Verify ZOrder operation parameters
+        val actualOpParameters = history
+            .select($"operationParameters.zOrderBy")
+            .take(1).head.getString(0)
+        assert(actualOpParameters === "[\"col1\",\"col2\"]")
+
+        // Verify metrics records in commit log.
+        val metrics = history
+            .select("operationMetrics")
+            .take(1)
+            .head
+            .getMap(0)
+            .asInstanceOf[Map[String, String]]
+
+        assert(metrics.get("numRemovedFiles") === Some("37"))
+        assert(metrics.get("numAddedFiles") === Some("10")) // one per partition
+        assert(metrics.get("numAddedBytes") === Some(finalSizes.sum.toString))
+        assert(metrics.get("numRemovedBytes") === Some(startSizes.sum.toString))
+        assert(metrics.get("minFileSize") === Some(finalSizes.min.toString))
+        assert(metrics.get("maxFileSize") === Some(finalSizes.max.toString))
+        assert(metrics.get("p25FileSize") === Some(finalSizes(finalSizes.length / 4).toString))
+        assert(metrics.get("p50FileSize") === Some(finalSizes(finalSizes.length / 2).toString))
+        assert(metrics.get("p75FileSize") === Some(finalSizes(3 * finalSizes.length / 4).toString))
+      }
+    }
+  }
+
+  test("optimize ZOrderBy operation metrics in command output") {
+    withTempDir { tempDir =>
+      // create a partitioned table with each partition containing multiple files
+      0.to(100).seq.toDF()
+          .withColumn("col1", floor('value % 7))
+          .withColumn("col2", floor('value % 27))
+          .withColumn("p", floor('value % 10))
+          .repartition(4).write.partitionBy("p").format("delta").save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val startCount = deltaLog.snapshot.allFiles.count()
+      val startSizes = deltaLog.snapshot.allFiles.select('size).as[Long].collect()
+
+      val result = spark.sql(s"OPTIMIZE delta.`${tempDir.toString}` ZORDER BY (col1, col2)")
+      val metrics: OptimizeMetrics = result.select($"metrics.*").as[OptimizeMetrics].head()
+
+      val finalSizes = deltaLog.snapshot.allFiles.select('size).collect().map(_.getLong(0))
+      val finalNumFiles = deltaLog.snapshot.allFiles.collect().length
+
+      assert(metrics.filesAdded.totalFiles === finalNumFiles)
+      assert(metrics.filesRemoved.totalFiles === startCount)
+      assert(metrics.filesAdded.min.get === finalSizes.min)
+      assert(metrics.filesAdded.max.get === finalSizes.max)
+      assert(metrics.filesRemoved.max.get === startSizes.max)
+      assert(metrics.filesRemoved.min.get === startSizes.min)
+      assert(metrics.totalFilesSkipped === 0)
+      assert(metrics.totalConsideredFiles === metrics.numFilesRemoved)
+
+      assert(metrics.zOrderStats.isDefined)
+      val zOrderMetrics = metrics.zOrderStats.get
+      assert(zOrderMetrics.numOutputCubes === 10) // one for each partition
+      assert(zOrderMetrics.inputNumCubes === 0)
+      assert(zOrderMetrics.inputCubeFiles === new ZOrderFileStats(0, 0))
+      assert(zOrderMetrics.inputOtherFiles === new ZOrderFileStats(startCount, startSizes.sum))
     }
   }
 }
