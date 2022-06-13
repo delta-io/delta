@@ -241,6 +241,14 @@ class DeltaColumnMappingSuite extends QueryTest
       withId(222)
     )
 
+  // This schema has both a.b and a . b as physical path for its columns, we would like to make sure
+  // it shouldn't trigger the duplicated physical name check
+  protected val schemaWithDottedColumnNames = new StructType()
+    .add("a.b", StringType, true, withIdAndPhysicalName(1, "a.b"))
+    .add("a", new StructType()
+      .add("b", StringType, true, withIdAndPhysicalName(3, "b")),
+      true, withIdAndPhysicalName(2, "a"))
+
   protected def dfWithoutIds(spark: SparkSession) =
     spark.createDataFrame(Seq(Row("str1", 1), Row("str2", 2)).asJava, schema)
 
@@ -1180,5 +1188,15 @@ class DeltaColumnMappingSuite extends QueryTest
     }
     assert(e.getMessage.contains("Your current table protocol version does not" +
       " support changing column mapping modes"))
+  }
+
+  test("upgrade with dot column name should not be blocked") {
+    testCreateTableColumnMappingMode("t1", schemaWithDottedColumnNames, false, "name") {
+      sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
+      alterTableWithProps("t1", props = Map(
+        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+        DeltaConfigs.MIN_READER_VERSION.key -> "2",
+        DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+    }
   }
 }
