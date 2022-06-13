@@ -89,7 +89,8 @@ lazy val core = (project in file("core"))
     ),
 
     javaOptions += "-Xmx1024m",
-    javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
+    javacOptions ++= Seq("-source", "1.8"),
+    Compile / compile / javacOptions ++= Seq("-target", "1.8"),
 
     // Configurations to speed up tests and reduce memory footprint
     Test / javaOptions ++= Seq(
@@ -143,7 +144,8 @@ lazy val contribs = (project in file("contribs"))
     ),
 
     javaOptions += "-Xmx1024m",
-    javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
+    javacOptions ++= Seq("-source", "1.8"),
+    Compile / compile / javacOptions ++= Seq("-target", "1.8"),
 
     // Configurations to speed up tests and reduce memory footprint
     Test / javaOptions ++= Seq(
@@ -181,8 +183,8 @@ lazy val storage = (project in file("storage"))
       "org.scalatest" %% "scalatest" % "3.2.11" % "test",
     ),
     scalacOptions ++= Seq("-target:jvm-1.8"),
-    javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
-
+    javacOptions ++= Seq("-source", "1.8"),
+    Compile / compile / javacOptions ++= Seq("-target", "1.8")
   )
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
@@ -201,7 +203,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     ),
     scalacOptions ++= Seq("-target:jvm-1.8"),
-    javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
+    javacOptions ++= Seq("-source", "1.8"),
+    Compile / compile / javacOptions ++= Seq("-target", "1.8")
   )
 
 /**
