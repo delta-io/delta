@@ -332,10 +332,14 @@ class DeltaAnalysis(session: SparkSession)
     conf.storeAssignmentPolicy match {
       case SQLConf.StoreAssignmentPolicy.LEGACY =>
         Cast(_, _, Option(timeZone), ansiEnabled = false)
-      case SQLConf.StoreAssignmentPolicy.ANSI => AnsiCast(_, _, Option(timeZone))
+      case SQLConf.StoreAssignmentPolicy.ANSI =>
+        (input: Expression, dt: DataType) => {
+          AnsiCast(input, dt, Option(timeZone))
+        }
       case SQLConf.StoreAssignmentPolicy.STRICT => UpCast(_, _)
     }
   }
+
 
   /**
    * Recursively casts structs in case it contains null types.
