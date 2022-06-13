@@ -20,7 +20,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.delta.commands.TableColumns.toRow
@@ -29,12 +29,13 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /**
- * The result returned by the `SHOW COLUMNS` command.
+ * The column format of the result returned by the `SHOW COLUMNS` command.
  */
 case class TableColumns(columnName: String)
 
 object TableColumns {
-  val schema: StructType = ScalaReflection.schemaFor[TableColumns].dataType.asInstanceOf[StructType]
+  val schema: StructType =
+    ScalaReflection.schemaFor[TableColumns].dataType.asInstanceOf[StructType]
 
   private lazy val converter: TableColumns => Row = {
     val toInternalRow = CatalystTypeConverters.createToCatalystConverter(schema)
@@ -53,23 +54,25 @@ object TableColumns {
  *   SHOW COLUMNS (FROM | IN) (table_identifier [(FROM | IN) database] | path);
  * }}}
  *
- * @param tableName  the table name
- * @param path       the file path where the table located
- * @param schemaName the schema name / database name of the table
+ * @param tableName  (optional) the table name
+ * @param path       (optional) the file path where the table located
+ * @param schemaName (optional when tableName exists) the schema name / database name of the table
  */
 case class ShowTableColumnsCommand(
     tableName: Option[TableIdentifier],
     path: Option[String],
     schemaName: Option[String],
-    override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes)
-  extends LeafRunnableCommand with DeltaCommand {
+    override val output: Seq[Attribute] =
+      ExpressionEncoder[TableColumns]().schema.toAttributes
+) extends LeafRunnableCommand
+    with DeltaCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) =
       getPathAndTableMetadata(sparkSession, path, tableName, schemaName)
     val deltaLog = basePath match {
       case Some(basePath) => DeltaLog.forTable(sparkSession, basePath)
-      // Found view schema, return the columns in view metadata
+      // basePath would be None only if found a view schema
       case None => return getColumnsFromSchema(tableMetadata.get.schema)
     }
 
@@ -81,10 +84,17 @@ case class ShowTableColumnsCommand(
           } catch {
             case _: NoSuchElementException =>
               // Throw FileNotFoundException when the path doesn't exist since there may be a typo
-              if (!basePath.get.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(basePath.get)) {
+              if (
+                !basePath.get
+                  .getFileSystem(deltaLog.newDeltaHadoopConf())
+                  .exists(basePath.get)
+              ) {
                 throw DeltaErrors.fileNotFoundException(basePath.get.toString)
               }
-              throw DeltaErrors.fileFormatNotSupportedInShowColumns(basePath.get.toString)
+              // `SHOW COLUMNS` command is not supported for non-Delta table described by file path
+              throw DeltaErrors.fileFormatNotSupportedInShowColumns(
+                basePath.get.toString
+              )
           }
         case _ => getColumnsFromSchema(deltaLog.snapshot.schema)
       }
@@ -95,20 +105,22 @@ case class ShowTableColumnsCommand(
     schema.fieldNames.map { x => toRow(TableColumns(x)) }.toSeq
 
   /**
-   * Resolve `path` and `tableIdentifier` to get the underlying storage path, and its `CatalogTable`
-   * if it's a table. The caller will make sure either `path` or `tableIdentifier` is set but not
-   * both.
+   * Resolve `path` and `tableIdentifier` to get the underlying storage path if it's not a view,
+   * and its `CatalogTable` if it's a table. The caller will make sure either `path` or
+   * `tableIdentifier` is set but not both.
    *
    * If `path` is set, return it and an empty `CatalogTable` since it's a physical path. If
    * `tableIdentifier` is set, we will try to see if it's a Delta data source path (such as
    * `delta.<a table path>`). If so, we will return the path and an empty `CatalogTable`. Otherwise,
-   * we will use `SessionCatalog` to resolve `tableIdentifier`.
+   * we will use `SessionCatalog` to resolve `tableIdentifier`. If this still failed, we will try to
+   * see if it's a view. If so, we will return the view description with an empty path.
    */
   protected def getPathAndTableMetadata(
       spark: SparkSession,
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
-      schemaName: Option[String]): (Option[Path], Option[CatalogTable]) = {
+      schemaName: Option[String]
+  ): (Option[Path], Option[CatalogTable]) = {
     val lookupTable = schemaName match {
       case None => tableIdentifier
       case Some(db) => Some(TableIdentifier(tableIdentifier.get.identifier, Some(db)))
@@ -118,14 +130,12 @@ case class ShowTableColumnsCommand(
       case None =>
         lookupTable.map { i =>
           DeltaTableIdentifier(spark, i) match {
-            case Some(id) if id.path.isDefined => Some(new Path(id.path.get)) -> None
+            case Some(id) if id.path.isDefined =>
+              Some(new Path(id.path.get)) -> None
             case _ =>
               // Path of table ID not found. This should be a catalog table.
               try {
                 val metadata = spark.sessionState.catalog.getTableMetadata(i)
-                if (metadata.tableType == CatalogTableType.VIEW) {
-                  throw DeltaErrors.viewInShowColumnsException(i)
-                }
                 Some(new Path(metadata.location)) -> Some(metadata)
               } catch {
                 case _: NoSuchTableException | _: NoSuchDatabaseException =>
@@ -133,14 +143,16 @@ case class ShowTableColumnsCommand(
                   if (view.isDefined) {
                     None -> Some(view.get.desc)
                   } else {
-                    // Better error message if an existing database not documented in catalog table.
-                    // If only the table name is wrong, the thrown `NoSuchDatabaseException` would
-                    // be misleading in this case.
-                    throw DeltaErrors.tableIdentifierNotFoundInShowColumnsException(i)
+                    // Better error message if an existing database not documented in catalog
+                    // table. If only the table name is wrong, the thrown error
+                    // `NoSuchDatabaseException` would be misleading in this case.
+                    throw DeltaErrors
+                      .tableIdentifierNotFoundInShowColumnsException(i)
                   }
               }
           }
-        }.getOrElse {
+        }
+        .getOrElse {
           throw DeltaErrors.missingTableIdentifierException("SHOW COLUMNS")
         }
     }

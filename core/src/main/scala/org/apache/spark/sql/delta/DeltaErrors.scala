@@ -465,11 +465,6 @@ object DeltaErrors
       s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
   }
 
-  def viewInShowColumnsException(view: TableIdentifier): Throwable = {
-    new AnalysisException(
-      s"$view is a view. SHOW COLUMNS is only supported for tables.")
-  }
-
   def tableIdentifierNotFoundInShowColumnsException(tableID: TableIdentifier): Throwable = {
     new AnalysisException(
       s"Table identifier or view ${tableID.toString()} not found."
