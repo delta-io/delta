@@ -118,9 +118,9 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   def isDynamicPartitionOverwriteMode: Boolean = {
     val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
       .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    val acceptable = Seq("STATIC", "DYNAMIC")
-    if (!acceptable.exists(mode.equalsIgnoreCase(_))) {
-      val acceptableStr = acceptable.map("'" + _ + "'").mkString(" or ")
+    if (!DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
+      val acceptableStr =
+        DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
       throw DeltaErrors.illegalDeltaOptionException(
         PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
       )
@@ -211,7 +211,12 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
+
   val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
+  val PARTITION_OVERWRITE_MODE_DYNAMIC = "DYNAMIC"
+  val PARTITION_OVERWRITE_MODE_STATIC = "STATIC"
+  val PARTITION_OVERWRITE_MODE_VALUES =
+    Set(PARTITION_OVERWRITE_MODE_STATIC, PARTITION_OVERWRITE_MODE_DYNAMIC)
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
