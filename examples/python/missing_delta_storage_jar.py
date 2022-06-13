@@ -23,8 +23,6 @@ try:
     # Clear any previous runs
     shutil.rmtree(path, ignore_errors=True)
 
-    # Enable SQL commands and Update/Delete/Merge for the current spark session.
-    # we need to set the following configs
     spark = SparkSession.builder \
         .appName("missing logstore jar") \
         .master("local[*]") \
