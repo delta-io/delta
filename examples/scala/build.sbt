@@ -23,15 +23,16 @@ val scala213 = "2.13.8"
 val deltaVersion = "1.2.0"
 
 val lookupSparkVersion: PartialFunction[String, String] = {
-  case v12x if v12x.startsWith("1.2") => "3.2.1"
-  case v11x if v11x.startsWith("1.1") => "3.2.1"
-  case v10x if v10x.startsWith("1.0") => "3.1.1"
+  case v10x_and_above if Try {
+        v10x_and_above.split('.')(0).toInt
+      }.toOption.exists(_ >= 1) =>
+    "3.2.1"
   case v07x_v08x
       if v07x_v08x.startsWith("0.7") || v07x_v08x.startsWith("0.8") =>
     "3.0.2"
   case belowv07 if Try {
-        belowv07.split(".")(1).toInt
-      }.toOption.map(_ < 7).getOrElse(false) =>
+        belowv07.split('.')(1).toInt
+      }.toOption.exists(_ < 7) =>
     "2.4.4"
   case v =>
     throw new RuntimeException(
@@ -91,6 +92,7 @@ lazy val root = (project in file("."))
       )
     ),
     extraMavenRepo,
+    resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
