@@ -232,7 +232,7 @@ class OptimizeExecutor(
         val inputFileStats =
           ZOrderFileStats(removedFiles.size, removedFiles.map(_.size.getOrElse(0L)).sum)
         optimizeStats.zOrderStats = Some(ZOrderStats(
-          strategyName = "zorder",
+          strategyName = "all", // process all files in the partition
           inputCubeFiles = ZOrderFileStats(0, 0),
           inputOtherFiles = inputFileStats,
           inputNumCubes = 0,
