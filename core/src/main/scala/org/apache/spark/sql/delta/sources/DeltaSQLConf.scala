@@ -756,6 +756,34 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val OPTIMIZE_WRITE_ENABLED =
+    buildConf(key = "optimizeWrite.enabled")
+      .internal()
+      .doc("Enable optimize write.")
+      .booleanConf
+      .createOptional
+
+  val OPTIMIZE_WRITE_BIN_SIZE =
+    buildConf(key = "optimizeWrite.binSize")
+      .internal()
+      .doc("File size hint for optimize write.")
+      .longConf
+      .createWithDefault(134217728)
+
+  val OPTIMIZE_WRITE_SMALL_PARTITION_FACTOR =
+    buildConf("optimizeWrite.smallPartitionFactor")
+      .internal()
+      .doc("Factor used to coalesce partitions for optimize write.")
+      .doubleConf
+      .createWithDefault(0.5)
+
+  val OPTIMIZE_WRITE_MERGED_PARTITION_FACTOR =
+    buildConf("optimizeWrite.mergedPartitionFactor")
+      .internal()
+      .doc("Factor used to rebalance partitions for optimize write.")
+      .doubleConf
+      .createWithDefault(1.2)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()

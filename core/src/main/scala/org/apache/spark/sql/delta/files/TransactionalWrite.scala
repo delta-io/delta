@@ -34,9 +34,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
+import org.apache.spark.sql.delta.util.DeltaShufflePartitionsUtil
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
+import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, HadoopFsRelation, LogicalRelation, WriteJobStatsTracker}
 import org.apache.spark.sql.functions.{col, to_json}
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
@@ -294,6 +295,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
 
+    val isOptimize = isOptimizeCommand(queryExecution.analyzed)
+
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
         outputPath.toString,
@@ -302,7 +305,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
       val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
         partitioningColumns, constraints)
-      val physicalPlan = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      val optimizeWritePlan =
+        applyOptimizeWriteIfNeeded(spark, empty2NullPlan, partitionSchema, isOptimize)
+      val physicalPlan = DeltaInvariantCheckerExec(optimizeWritePlan, constraints)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
@@ -358,5 +363,33 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
 
     resultFiles.toSeq ++ committer.changeFiles
+  }
+
+  private def applyOptimizeWriteIfNeeded(
+      spark: SparkSession,
+      physicalPlan: SparkPlan,
+      partitionSchema: StructType,
+      isOptimize: Boolean): SparkPlan = {
+    val optimizeWriteEnabled = !isOptimize &&
+      spark.sessionState.conf.getConf(DeltaSQLConf.OPTIMIZE_WRITE_ENABLED)
+        .getOrElse(DeltaConfigs.OPTIMIZE_WRITE.fromMetaData(metadata))
+    if (optimizeWriteEnabled) {
+      val planWithoutTopRepartition =
+        DeltaShufflePartitionsUtil.removeTopRepartition(physicalPlan)
+      val partitioning = DeltaShufflePartitionsUtil.partitioningForRebalance(
+        physicalPlan.output, partitionSchema, spark.sessionState.conf.numShufflePartitions)
+      OptimizeWriteExchangeExec(partitioning, planWithoutTopRepartition)
+    } else {
+      physicalPlan
+    }
+  }
+
+  private def isOptimizeCommand(plan: LogicalPlan): Boolean = {
+    val leaves = plan.collectLeaves()
+    leaves.size == 1 && leaves.head.collect {
+      case LogicalRelation(HadoopFsRelation(
+      index: TahoeBatchFileIndex, _, _, _, _, _), _, _, _) =>
+        index.actionType.equals("Optimize")
+    }.headOption.getOrElse(false)
   }
 }
