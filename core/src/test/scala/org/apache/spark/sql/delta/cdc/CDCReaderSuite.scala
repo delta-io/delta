@@ -23,9 +23,11 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
@@ -222,6 +224,154 @@ class CDCReaderSuite
 
       intercept[IllegalArgumentException] {
         CDCReader.changesToBatchDF(log, 1, 0, spark)
+      }
+    }
+  }
+
+  testQuietly("invalid range - start after last version of CDF") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      spark.range(20).write.format("delta").mode("append").save(dir.getAbsolutePath)
+
+      val e = intercept[IllegalArgumentException] {
+        spark.read.format("delta")
+          .option("readChangeFeed", "true")
+          .option("startingVersion", Long.MaxValue)
+          .option("endingVersion", Long.MaxValue)
+          .load(dir.toString)
+          .count()
+      }
+      assert(e.getMessage ==
+        DeltaErrors.startVersionAfterLatestVersion(Long.MaxValue, 1).getMessage)
+    }
+  }
+
+  test("partition filtering of removes and cdc files") {
+    withTempDir { dir =>
+      withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+        val path = dir.getAbsolutePath
+        val log = DeltaLog.forTable(spark, path)
+        spark.range(6).selectExpr("id", "'old' as text", "id % 2 as part")
+          .write.format("delta").partitionBy("part").save(path)
+
+        // Generate some CDC files.
+        withTempView("source") {
+          spark.range(4).createOrReplaceTempView("source")
+          sql(
+            s"""MERGE INTO delta.`$path` t USING source s ON s.id = t.id
+               |WHEN MATCHED AND s.id = 1 THEN UPDATE SET text = 'new'
+               |WHEN MATCHED AND s.id = 3 THEN DELETE""".stripMargin)
+        }
+
+        // This will generate just remove files due to the partition delete optimization.
+        sql(s"DELETE FROM delta.`$path` WHERE part = 0")
+
+        checkCDCAnswer(
+          log,
+          CDCReader.changesToBatchDF(log, 0, 2, spark).filter("_change_type = 'insert'"),
+          Range(0, 6).map { i => Row(i, "old", i % 2, "insert", 0) })
+        checkCDCAnswer(
+          log,
+          CDCReader.changesToBatchDF(log, 0, 2, spark).filter("_change_type = 'delete'"),
+          Seq(0, 2, 3, 4).map { i => Row(i, "old", i % 2, "delete", if (i % 2 == 0) 2 else 1) })
+        checkCDCAnswer(
+          log,
+          CDCReader.changesToBatchDF(log, 0, 2, spark).filter("_change_type = 'update_preimage'"),
+          Row(1, "old", 1, "update_preimage", 1) :: Nil)
+        checkCDCAnswer(
+          log,
+          CDCReader.changesToBatchDF(log, 0, 2, spark).filter("_change_type = 'update_postimage'"),
+          Row(1, "new", 1, "update_postimage", 1) :: Nil)
+      }
+    }
+  }
+
+  test("file layout - unpartitioned") {
+    withTempDir { dir =>
+      withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+        val path = dir.getAbsolutePath
+        spark.range(10).repartition(1).write.format("delta").save(path)
+        sql(s"DELETE FROM delta.`$path` WHERE id < 5")
+
+        val log = DeltaLog.forTable(spark, path)
+        // The data path should contain four files: the delta log, the CDC folder `__is_cdc=true`,
+        // and two data files with randomized names from before and after the DELETE command. The
+        // commit protocol should have stripped out __is_cdc=false.
+        val baseDirFiles =
+          log.logPath.getFileSystem(log.newDeltaHadoopConf()).listStatus(log.dataPath)
+        assert(baseDirFiles.length == 4)
+        assert(baseDirFiles.exists { f => f.isDirectory && f.getPath.getName == "_delta_log"})
+        assert(baseDirFiles.exists { f => f.isDirectory && f.getPath.getName == CDC_LOCATION})
+        assert(!baseDirFiles.exists { f => f.getPath.getName.contains(CDC_PARTITION_COL) })
+      }
+    }
+  }
+
+  test("file layout - partitioned") {
+    withTempDir { dir =>
+      withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+        val path = dir.getAbsolutePath
+        spark.range(10).withColumn("part", col("id") % 2)
+          .repartition(1).write.format("delta").partitionBy("part").save(path)
+        sql(s"DELETE FROM delta.`$path` WHERE id < 5")
+
+        val log = DeltaLog.forTable(spark, path)
+        // The data path should contain four directories: the delta log, the CDC folder
+        // `__is_cdc=true`, and the two partition folders. The commit protocol
+        // should have stripped out __is_cdc=false.
+        val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+        val baseDirFiles = fs.listStatus(log.dataPath)
+        baseDirFiles.foreach { f => assert(f.isDirectory) }
+        assert(baseDirFiles.map(_.getPath.getName).toSet ==
+          Set("_delta_log", CDC_LOCATION, "part=0", "part=1"))
+
+        // Each partition folder should contain only two data files from before and after the read.
+        // In particular, they should not contain any __is_cdc folder - that should always be the
+        // top level partition.
+        for (partitionFolder <- Seq("part=0", "part=1")) {
+          val files = fs.listStatus(new Path(log.dataPath, partitionFolder))
+          assert(files.length === 2)
+          files.foreach { f =>
+            assert(!f.isDirectory)
+            assert(!f.getPath.getName.startsWith(CDC_LOCATION))
+          }
+        }
+
+        // The CDC folder should also contain the two partitions.
+        val cdcPartitions = fs.listStatus(new Path(log.dataPath, CDC_LOCATION))
+        cdcPartitions.foreach { f => assert(f.isDirectory, s"$f was not a directory") }
+        assert(cdcPartitions.map(_.getPath.getName).toSet == Set("part=0", "part=1"))
+      }
+    }
+  }
+
+  test("for CDC add backtick in column name with dot [.] ") {
+    import testImplicits._
+
+    withTempDir { dir =>
+      withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+        val path = dir.getAbsolutePath
+        // 0th commit
+        Seq(2, 4).toDF("id.num")
+          .withColumn("id.num`s", lit(10))
+          .withColumn("struct_col", struct(lit(1).as("field"), lit(2).as("field.one")))
+          .write.format("delta").save(path)
+        // 1st commit
+        Seq(1, 3, 5).toDF("id.num")
+          .withColumn("id.num`s", lit(10))
+          .withColumn("struct_col", struct(lit(1).as("field"), lit(2).as("field.one")))
+          .write.format("delta").mode(SaveMode.Append).save(path)
+        // Reading from 0th version
+        val actual = spark.read.format("delta")
+          .option("readChangeFeed", "true").option("startingVersion", 0)
+          .load(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+        val expected = spark.range(1, 6).toDF("id.num").withColumn("id.num`s", lit(10))
+          .withColumn("struct_col", struct(lit(1).as("field"), lit(2).as("field.one")))
+          .withColumn(CDCReader.CDC_TYPE_COLUMN_NAME, lit("insert"))
+          .withColumn(CDCReader.CDC_COMMIT_VERSION, col("`id.num`") % 2)
+        checkAnswer(actual, expected)
       }
     }
   }

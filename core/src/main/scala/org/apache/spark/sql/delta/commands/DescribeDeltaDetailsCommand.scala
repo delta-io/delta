@@ -77,7 +77,7 @@ case class DescribeDeltaDetailCommand(
 
     val deltaLog = DeltaLog.forTable(sparkSession, basePath)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
-      val snapshot = deltaLog.snapshot
+      val snapshot = deltaLog.update()
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())

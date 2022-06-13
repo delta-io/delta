@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -38,6 +39,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -498,6 +500,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     scan.files
   }
 
+  /** Returns files within the given partitions. */
+  def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
+    import org.apache.spark.sql.functions.{array, col}
+    val partitionValues = partitions.map { partition =>
+      metadata.physicalPartitionColumns.map(partition).toArray
+    }
+    val predicate = array(metadata.partitionColumns.map(col): _*)
+      .isInCollection(partitionValues)
+      .expr
+    filterFiles(Seq(predicate))
+  }
+
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
     readPredicates += Literal.TrueLiteral
@@ -540,6 +554,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Checks if the new schema contains any CDC columns (which is invalid) and throws the appropriate
+   * error
+   */
+  protected def performCdcMetadataCheck(): Unit = {
+    if (newMetadata.nonEmpty) {
+      if (CDCReader.isCDCEnabledOnTable(newMetadata.get)) {
+        val schema = newMetadata.get.schema.fieldNames
+        val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
+          .intersect(schema)
+        if (reservedColumnsUsed.length > 0) {
+          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata)) {
+            // cdc was not enabled previously but reserved columns are present in the new schema.
+            throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
+          } else {
+            // cdc was enabled but reserved columns are present in the new metadata.
+            throw DeltaErrors.cdcColumnsInData(reservedColumnsUsed)
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -554,6 +591,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
 
     val (version, actualCommittedActions) = try {
+      // Check for CDC metadata columns
+      performCdcMetadataCheck()
+
       // Try to commit at the next version.
       val preparedActions = prepareCommit(actions, op)
 
@@ -904,9 +944,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "committedVersion" -> attemptVersion,
         "currentVersion" -> postCommitSnapshot.version
       ))
-      throw new IllegalStateException(
-        s"The committed version is $attemptVersion " +
-          s"but the current version is ${postCommitSnapshot.version}.")
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, postCommitSnapshot.version)
     }
 
     // Post stats

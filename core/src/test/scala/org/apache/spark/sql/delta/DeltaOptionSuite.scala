@@ -16,10 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.Locale
+
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
+import org.apache.parquet.format.CompressionCodec
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -168,13 +173,92 @@ class DeltaOptionSuite extends QueryTest
       val path = tempDir.getCanonicalPath
       withTable("maxRecordsPerFile") {
         spark.range(100)
-          .writeTo(s"maxRecordsPerFile")
+          .writeTo("maxRecordsPerFile")
           .using("delta")
           .option("maxRecordsPerFile", 5)
           .tableProperty("location", path)
           .create()
         assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
       }
+    }
+  }
+
+  test("support no compression write option (defaults to snappy)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("compression") {
+        spark.range(100)
+          .writeTo("compression")
+          .using("delta")
+          .tableProperty("location", path)
+          .create()
+        assert(FileUtils.listFiles(tempDir, Array("snappy.parquet"), false).size > 0)
+      }
+    }
+  }
+
+  // LZO and BROTLI left out as additional library dependencies needed
+  val codecsAndSubExtensions = Seq(
+    CompressionCodec.UNCOMPRESSED -> "",
+    CompressionCodec.SNAPPY -> "snappy.",
+    CompressionCodec.GZIP -> "gz.",
+    CompressionCodec.LZ4 -> "lz4.",
+    CompressionCodec.ZSTD -> "zstd."
+  )
+
+  codecsAndSubExtensions.foreach { case (codec, subExt) =>
+    val codecName = codec.name().toLowerCase(Locale.ROOT)
+    test(s"support compression codec '$codecName' as write option") {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        withTable(s"compression_$codecName") {
+          spark.range(100)
+            .writeTo(s"compression_$codecName")
+            .using("delta")
+            .option("compression", codecName)
+            .tableProperty("location", path)
+            .create()
+          assert(FileUtils.listFiles(tempDir, Array(s"${subExt}parquet"), false).size > 0)
+        }
+      }
+    }
+  }
+
+  test("invalid compression write option") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("compression") {
+        val e = intercept[IllegalArgumentException] {
+          spark.range(100)
+            .writeTo("compression")
+            .using("delta")
+            .option("compression", "???")
+            .tableProperty("location", path)
+            .create()
+        }
+        val expectedMessage = "Codec [???] is not available. Available codecs are "
+        assert(e.getMessage.startsWith(expectedMessage))
+      }
+    }
+  }
+
+  test("partitionOverwriteMode is set to invalid value in options") {
+    withTempDir { tempDir =>
+      val invalidMode = "ADAPTIVE"
+      val e = intercept[IllegalArgumentException] {
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option("partitionOverwriteMode", invalidMode)
+          .save(tempDir.getAbsolutePath)
+      }
+      assert(e.getMessage ===
+        DeltaErrors.illegalDeltaOptionException(
+          PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
+        ).getMessage
+      )
     }
   }
 }

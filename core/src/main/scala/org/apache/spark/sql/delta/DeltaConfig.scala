@@ -100,7 +100,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
     val cal = IntervalUtils.safeStringToInterval(UTF8String.fromString(interval))
     if (cal == null) {
-      throw new IllegalArgumentException("Invalid interval: " + s)
+      throw DeltaErrors.invalidInterval(s)
     }
     cal
   }
@@ -270,6 +270,30 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
 
+  /**
+   * The shortest duration we have to keep delta sample files around before deleting them.
+   */
+  val SAMPLE_RETENTION = buildConfig[CalendarInterval](
+    "sampleRetentionDuration",
+    "interval 7 days",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
+   * The shortest duration we have to keep checkpoint files around before deleting them. Note that
+   * we'll never delete the most recent checkpoint. We may keep checkpoint files beyond this
+   * duration until the next calendar day.
+   */
+  val CHECKPOINT_RETENTION_DURATION = buildConfig[CalendarInterval](
+    "checkpointRetentionDuration",
+    "interval 2 days",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
+
   /** How often to checkpoint the delta log. */
   val CHECKPOINT_INTERVAL = buildConfig[Int](
     "checkpointInterval",
@@ -285,6 +309,20 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
+
+  /**
+   * If true, a delta table can be rolled back to any point within LOG_RETENTION. Leaving this on
+   * requires converting the oldest delta file we have into a checkpoint, which we do once a day. If
+   * doing that operation is too expensive, it can be turned off, but the table can only be rolled
+   * back CHECKPOINT_RETENTION_DURATION ago instead of LOG_RETENTION ago.
+   */
+  val ENABLE_FULL_RETENTION_ROLLBACK = buildConfig[Boolean](
+    "enableFullRetentionRollback",
+    "true",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean."
+  )
 
   /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
@@ -339,6 +377,16 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.",
     Some(Protocol(0, 2)))
 
+
+  /**
+   * Whether this table will automatically optimize the layout of files during writes.
+   */
+  val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
+    "autoOptimize",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 
   /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
@@ -427,6 +475,20 @@ trait DeltaConfigsBase extends DeltaLogging {
     "",
     minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION),
     userConfigurable = false)
+
+
+  /**
+   * The shortest duration within which new [[Snapshot]]s will retain transaction identifiers (i.e.
+   * [[SetTransaction]]s). When a new [[Snapshot]] sees a transaction identifier older than or equal
+   * to the specified TRANSACTION_ID_RETENTION_DURATION, it considers it expired and ignores it.
+   */
+  val TRANSACTION_ID_RETENTION_DURATION = buildConfig[Option[CalendarInterval]](
+    "setTransactionRetentionDuration",
+    null,
+    v => if (v == null) None else Some(parseCalendarInterval(v)),
+    opt => opt.forall(isValidIntervalConfigValue),
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

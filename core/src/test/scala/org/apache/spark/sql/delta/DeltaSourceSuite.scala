@@ -28,9 +28,10 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, Dataset, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
@@ -532,10 +533,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
   }
 
   test("unknown sourceVersion value") {
+    // Set unknown sourceVersion as the max allowed version plus 1.
+    var unknownVersion = 2
+
     val json =
       s"""
          |{
-         |  "sourceVersion": ${Long.MaxValue},
+         |  "sourceVersion": $unknownVersion,
          |  "reservoirVersion": 1,
          |  "index": 1,
          |  "isStartingVersion": true
@@ -544,7 +548,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     val e = intercept[IllegalStateException] {
       DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
     }
-    assert(e.getMessage.contains("Please upgrade your Spark"))
+    assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
   }
 
   test("invalid sourceVersion value") {
@@ -1463,9 +1467,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             .map(_.sources(0).endOffset)
             .map(offsetJson => DeltaSourceOffset(id, SerializedOffset(offsetJson)))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 1, 0, isStartingVersion = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 2, -1, isStartingVersion = false)
+              :: DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 2, -1,
+                isStartingVersion = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1707,10 +1712,184 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+
+  test("should not attempt to read a non exist version") {
+    withTempDirs { (inputDir1, inputDir2, checkpointDir) =>
+      spark.range(1, 2).write.format("delta").save(inputDir1.getCanonicalPath)
+      spark.range(1, 2).write.format("delta").save(inputDir2.getCanonicalPath)
+
+      def startQuery(): StreamingQuery = {
+        val df1 = spark.readStream
+          .format("delta")
+          .load(inputDir1.getCanonicalPath)
+        val df2 = spark.readStream
+          .format("delta")
+          .load(inputDir2.getCanonicalPath)
+        df1.union(df2).writeStream
+          .format("noop")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start()
+      }
+
+      var q = startQuery()
+      try {
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // Note: version 2 doesn't exist in source1
+
+        spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
+        q.processAllAvailable()
+        // current offsets:
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // Note: version 2 doesn't exist in source1
+
+        q.stop()
+        // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // As version 2 doesn't exist, we should not try to load version 2 in this case.
+        q = startQuery()
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+    }
+  }
+}
+
+abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
+  import testImplicits._
+
+  testQuietly("drop column from source disallowed by MicroBatchExecution") {
+    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
+      withTempDir { inputDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          val v = Seq((i.toString, i.toString)).toDF("id", "value")
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        val checkpointDir = new File(inputDir, "_checkpoint")
+
+        // reinitialize stream after restart
+        def df: DataFrame = spark.readStream
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswerRows((0 until 5).map(i => Row(i.toString, i.toString)), false, false),
+          Execute { _ =>
+            sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value")
+          },
+          Execute { _ =>
+            // write more data
+            (5 until 10).foreach { i =>
+              val v = Seq(i.toString).toDF("id")
+              v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+            }
+          },
+          // should have another batch with diff schema and should fail
+          ExpectFailure[AssertionError](t => assert(t.getMessage.contains("Invalid batch")))
+        )
+
+        // Restart the stream from the same checkpoint should pick up the new schema
+        // Since `testStream` creates a new sink every time, the rows for the new data will
+        // be refreshed as well.
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          // 5-10 is recovered due to the previous failure, and is the only data in the sink
+          // note they only have one item, which is the new schema
+          CheckAnswerRows((5 until 10).map(i => Row(i.toString)), false, false),
+          Execute { _ =>
+            // write more data
+            (10 until 15)
+              .map(i => i.toString)
+              .toDF("id")
+              .write
+              .format("delta")
+              .mode("append")
+              .save(deltaLog.dataPath.toString)
+          },
+          ProcessAllAvailable(),
+          CheckAnswerRows((5 until 15).map(i => Row(i.toString)), false, false)
+        )
+      }
+    }
+  }
+
+  testQuietly("rename a column disallowed by DeltaSource's schema check") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq((i.toString, i.toString)).toDF("id", "value")
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val checkpointDir = new File(inputDir, "_checkpoint")
+
+      // reinitialize stream after restart
+      def df: DataFrame = spark.readStream
+        .format("delta")
+        .load(inputDir.getCanonicalPath)
+
+      testStream(df)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
+        Execute { _ =>
+          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` " +
+            s"RENAME COLUMN value TO new_value")
+        },
+        Execute { _ =>
+          (5 until 10).foreach { i =>
+            val v = Seq((i.toString, i.toString)).toDF("id", "new_value")
+            v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+        },
+        ExpectFailure[IllegalStateException](t =>
+          assert(t.getMessage.contains("Detected schema change")))
+      )
+
+      // Restart the stream from the same checkpoint should pick up the new schema
+      // Since `testStream` creates a new sink every time, the rows for the new data will
+      // be refreshed as well.
+      testStream(df)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        // 5-10 is recovered due to the previous failure, and is the only data in the sink
+        CheckAnswerRows((5 until 10).map(i => Row(i.toString, i.toString)), false, false),
+        Execute { _ =>
+          // write more data
+          (10 until 15)
+            .map(i => (i.toString, i.toString))
+            .toDF("id", "new_value")
+            .write
+            .format("delta")
+            .mode("append")
+            .save(deltaLog.dataPath.toString)
+        },
+        ProcessAllAvailable(),
+        CheckAnswerRows((5 until 15).map(i => Row(i.toString, i.toString)), false, false)
+      )
+    }
+  }
+
 }
 
 
-class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
+class DeltaSourceNameColumnMappingSuite extends DeltaSourceColumnMappingSuiteBase
   with DeltaColumnMappingEnableNameMode {
 
   override protected def runOnlyTests = Seq(

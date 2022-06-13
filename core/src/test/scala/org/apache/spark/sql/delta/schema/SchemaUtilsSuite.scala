@@ -1633,6 +1633,55 @@ class SchemaUtilsSuite extends QueryTest
       }
     }
   }
+
+  test("findUndefinedTypes: basic types") {
+    val schema = StructType(Seq(
+      StructField("c1", NullType),
+      StructField("c2", BooleanType),
+      StructField("c3", ByteType),
+      StructField("c4", ShortType),
+      StructField("c5", IntegerType),
+      StructField("c6", LongType),
+      StructField("c7", FloatType),
+      StructField("c8", DoubleType),
+      StructField("c9", StringType),
+      StructField("c10", DateType),
+      StructField("c11", TimestampType),
+      StructField("c12", BinaryType),
+      StructField("c13", DataTypes.createDecimalType()),
+      // undefined types
+      StructField("c14", TimestampNTZType),
+      StructField("c15", YearMonthIntervalType.DEFAULT),
+      StructField("c16", DayTimeIntervalType.DEFAULT),
+      StructField("c17", new PointUDT) // UserDefinedType
+    ))
+    val udts = findUndefinedTypes(schema)
+    assert(udts.map(_.getClass.getName.stripSuffix("$")) ==
+      Seq(
+        classOf[TimestampNTZType],
+        classOf[YearMonthIntervalType],
+        classOf[DayTimeIntervalType],
+        classOf[PointUDT]
+      ).map(_.getName.stripSuffix("$"))
+    )
+  }
+
+  test("findUndefinedTypes: complex types") {
+    val schema = StructType(Seq(
+      StructField("c1", new PointUDT),
+      StructField("c2", ArrayType(new PointUDT, true)),
+      StructField("c3", MapType(new PointUDT, new PointUDT, true)),
+      StructField("c4", StructType(Seq(
+        StructField("c1", new PointUDT),
+        StructField("c2", ArrayType(new PointUDT, true)),
+        StructField("c3", MapType(new PointUDT, new PointUDT, true))
+      )))
+    ))
+    val udts = findUndefinedTypes(schema)
+    assert(udts.size == 8)
+    assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
+  }
+
 }
 
 object UnsupportedDataType extends DataType {

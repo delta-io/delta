@@ -433,7 +433,8 @@ abstract class DeleteSuiteBase extends QueryTest
     data = Seq((2, List(2)), (1, List(4, 5))).toDF("key", "value"),
     where = "key = (select explode(value) from deltaTable)",
     expectException = true, // generate more than one row. Exception expected.
-    customErrorRegex = Some("more than one row returned by a subquery used as an expression(?s).*")
+    customErrorRegex =
+      Some(".*more than one row returned by a subquery used as an expression(?s).*")
   )
 
   Seq(true, false).foreach { isPartitioned =>

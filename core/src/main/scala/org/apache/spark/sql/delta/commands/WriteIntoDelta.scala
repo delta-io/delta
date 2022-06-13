@@ -19,20 +19,22 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
-import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException}
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{And, Expression}
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
+import org.apache.spark.sql.types.{StringType, StructType}
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -51,6 +53,11 @@ import org.apache.spark.sql.types.StructType
  *
  * In combination with `Overwrite`, a `replaceWhere` option can be used to transactionally
  * replace data that matches a predicate.
+ *
+ * In combination with `Overwrite` dynamic partition overwrite mode (option `partitionOverwriteMode`
+ * set to `dynamic`, or in spark conf `spark.sql.sources.partitionOverwriteMode` set to `dynamic`)
+ * is also supported. However a `replaceWhere` option can not be used while dynamic partition mode
+ * is enabled.
  *
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
@@ -76,6 +83,11 @@ case class WriteIntoDelta(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
+      // If this batch has already been executed within this query, then return.
+      var skipExecution = hasBeenExecuted(txn)
+      if (skipExecution) {
+        return Seq.empty
+      }
 
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
@@ -124,7 +136,20 @@ case class WriteIntoDelta(
     val replaceOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
 
+    val useDynamicPartitionOverwriteMode = {
+      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
+        options.isDynamicPartitionOverwriteMode
+      options.replaceWhere.foreach { _ =>
+        if (useDynamic) {
+          throw new AnalysisException(s"'${DeltaOptions.REPLACE_WHERE_OPTION}' cannot be used" +
+            s" when '${DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION}' is set to 'DYNAMIC'")
+        }
+      }
+      useDynamic
+    }
+
     // Validate partition predicates
+    var containsDataFilters = false
     val replaceWhere = options.replaceWhere.flatMap { replace =>
       val parsed = parsePredicates(sparkSession, replace)
       if (replaceOnDataColsEnabled) {
@@ -132,9 +157,9 @@ case class WriteIntoDelta(
         val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
           parsed.head, txn.metadata.partitionColumns, sparkSession)
         if (rearrangeOnly && dataFilters.nonEmpty) {
-          throw new AnalysisException("'replaceWhere' cannot be used with data filters when " +
-            s"'dataChange' is set to false. Filters: ${dataFilters.mkString(",")}")
+          throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters.mkString(","))
         }
+        containsDataFilters = dataFilters.nonEmpty
         Some(metadataPredicates ++ dataFilters)
       } else if (mode == SaveMode.Overwrite) {
         verifyPartitionPredicates(sparkSession, txn.metadata.partitionColumns, parsed)
@@ -168,7 +193,37 @@ case class WriteIntoDelta(
         (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
       case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
         val constraints = extractConstraints(sparkSession, condition)
-        val newFiles = try txn.writeFiles(data, Some(options), constraints) catch {
+
+        // If replaceWhere contains data Filters and CDC is enabled, cdc data should be
+        // written too to produce CDC properly because DeleteCommand rewrites files to delete.
+        val dataToWrite =
+          if (containsDataFilters && CDCReader.isCDCEnabledOnTable(txn.metadata) &&
+              sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED)) {
+            var dataWithDefaultExprs = data
+
+            // pack new data and cdc data into an array of structs and unpack them into rows
+            // to share values in outputCols on both branches, avoiding re-evaluating
+            // non-deterministic expression twice.
+            val outputCols = dataWithDefaultExprs.schema.map(SchemaUtils.fieldToColumn(_))
+            val insertCols = outputCols :+
+              lit(CDCReader.CDC_TYPE_INSERT).as(CDCReader.CDC_TYPE_COLUMN_NAME)
+            val insertDataCols = outputCols :+
+              new Column(Literal.create(CDCReader.CDC_TYPE_NOT_CDC, StringType))
+                .as(CDCReader.CDC_TYPE_COLUMN_NAME)
+            val packedInserts = array(
+              struct(insertCols: _*),
+              struct(insertDataCols: _*)
+            ).expr
+
+            dataWithDefaultExprs
+              .select(explode(new Column(packedInserts)).as("packedData"))
+              .select(
+                (dataWithDefaultExprs.schema.map(_.name) :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+                  .map { n => col(s"packedData.`$n`").as(n) }: _*)
+          } else {
+            data
+          }
+        val newFiles = try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
           case e: InvariantViolationException =>
             throw DeltaErrors.replaceWhereMismatchException(
               options.replaceWhere.get,
@@ -179,7 +234,17 @@ case class WriteIntoDelta(
           removeFiles(sparkSession, txn, condition))
       case (SaveMode.Overwrite, None) =>
         val newFiles = txn.writeFiles(data, Some(options))
-        (newFiles, newFiles.collect { case a: AddFile => a }, txn.filterFiles().map(_.remove))
+        val addFiles = newFiles.collect { case a: AddFile => a }
+        val deletedFiles = if (useDynamicPartitionOverwriteMode) {
+          // with dynamic partition overwrite for any partition that is being written to all
+          // existing data in that partition will be deleted.
+          // the selection what to delete is on the next two lines
+          val updatePartitions = addFiles.map(_.partitionValues).toSet
+          txn.filterFiles(updatePartitions).map(_.remove)
+        } else {
+          txn.filterFiles().map(_.remove)
+        }
+        (newFiles, addFiles, deletedFiles)
       case _ =>
         val newFiles = txn.writeFiles(data, Some(options))
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
@@ -195,7 +260,8 @@ case class WriteIntoDelta(
     } else {
       newFiles ++ deletedFiles
     }
-    fileActions
+    var setTxns = createSetTransaction()
+    setTxns.toSeq ++ fileActions
   }
 
   private def extractConstraints(
@@ -228,5 +294,37 @@ case class WriteIntoDelta(
     val command = spark.sessionState.analyzer.execute(DeleteFromTable(relation, processedCondition))
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+  }
+
+  /**
+   * Returns true if there is information in the spark session that indicates that this write, which
+   * is part of a streaming query and a batch, has already been successfully written.
+   */
+  private def hasBeenExecuted(txn: OptimisticTransaction): Boolean = {
+    val txnVersion = options.txnVersion
+    val txnAppId = options.txnAppId
+    for (v <- txnVersion; a <- txnAppId) {
+      val currentVersion = txn.txnVersion(a)
+      if (currentVersion >= v) {
+        logInfo(s"Transaction write of version $v for application id $a " +
+          s"has already been committed in Delta table id ${txn.deltaLog.tableId}. " +
+          s"Skipping this write.")
+        return true
+      }
+    }
+    false
+  }
+
+  /**
+   * Returns SetTransaction if a valid app ID and version are present. Otherwise returns
+   * an empty list.
+   */
+  private def createSetTransaction(): Option[SetTransaction] = {
+    val txnVersion = options.txnVersion
+    val txnAppId = options.txnAppId
+    for (v <- txnVersion; a <- txnAppId) {
+      return Some(SetTransaction(a, v, Some(deltaLog.clock.getTimeMillis())))
+    }
+    None
   }
 }

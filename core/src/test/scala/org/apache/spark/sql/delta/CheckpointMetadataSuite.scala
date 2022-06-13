@@ -26,8 +26,12 @@ import org.apache.commons.codec.digest.DigestUtils
 import org.apache.commons.io.IOUtils
 
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, StructType}
 
 class CheckpointMetadataSuite extends SharedSparkSession {
+
+  // same checkpoint schema for tests
+  private val checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false))
 
   private def jsonStringToChecksum(jsonStr: String): String = {
     val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[JsonNode])
@@ -152,14 +156,15 @@ class CheckpointMetadataSuite extends SharedSparkSession {
 
   test("test CheckpointMetadata checksum") {
     val cm1 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
-      sizeInBytes = Some(20L), numOfAddFiles = Some(2L))
+      sizeInBytes = Some(20L), numOfAddFiles = Some(2L), checkpointSchema = checkpointSchema)
     val (stored1, actual1) =
       CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm1, addChecksum = true))
     assert(stored1 === Some(actual1))
 
     // checksum mismatch when version changes.
     val cm2 = CheckpointMetaData(version = 2, size = 2, parts = Some(3),
-      sizeInBytes = Some(20L), numOfAddFiles = Some(2L))
+      sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
+      checkpointSchema = checkpointSchema)
     val (stored2, actual2) =
       CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm2, addChecksum = true))
     assert(stored2 === Some(actual2))
@@ -167,7 +172,8 @@ class CheckpointMetadataSuite extends SharedSparkSession {
 
     // `checksum` doesn't participate in `actualChecksum` calculation.
     val cm3 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
-      checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L))
+      checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
+      checkpointSchema = checkpointSchema)
     val (stored3, actual3) =
       CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm3, addChecksum = true))
     assert(stored3 === Some(actual3))
@@ -187,18 +193,23 @@ class CheckpointMetadataSuite extends SharedSparkSession {
   }
 
   test("test backward compatibility - json without checksum is deserialized properly") {
-    val jsonStr = """{"version":1,"size":2,"parts":3,"sizeInBytes":20,"numOfAddFiles":2}"""
+    val jsonStr = """{"version":1,"size":2,"parts":3,"sizeInBytes":20,"numOfAddFiles":2,""" +
+     """"checkpointSchema":{"type":"struct","fields":[{"name":"c1","type":"integer"""" +
+     ""","nullable":false,"metadata":{}}]}}"""
     val expectedCheckpointMetaData = CheckpointMetaData(
-      version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2))
+      version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2),
+      checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false)))
     assert(CheckpointMetaData.deserializeFromJson(jsonStr, validate = true) ===
       expectedCheckpointMetaData)
   }
 
   test("CheckpointMetadata - serialize/deserialize") {
     val cm1 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
-      checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L))
+      checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
+      checkpointSchema = checkpointSchema)
     val cm2 = CheckpointMetaData(version = 1, size = 2, parts = Some(3), checksum = None,
-      sizeInBytes = Some(20L), numOfAddFiles = Some(2L))
+      sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
+      checkpointSchema = checkpointSchema)
 
     val actualChecksum = CheckpointMetaData.getChecksums(
       CheckpointMetaData.serializeToJson(cm1, addChecksum = true))._2
@@ -208,9 +219,12 @@ class CheckpointMetadataSuite extends SharedSparkSession {
       val json = CheckpointMetaData.serializeToJson(cm, addChecksum = true)
       assert(CheckpointMetaData.deserializeFromJson(json, validate = true)
         === cmWithCorrectChecksum)
+      // The below assertion also validates that fields version/size/parts are in the beginning of
+      // the json.
       assert(CheckpointMetaData.serializeToJson(cm, addChecksum = true) ===
         """{"version":1,"size":2,"parts":3,"sizeInBytes":20,"numOfAddFiles":2,""" +
-        """"checksum":"d284dd651155acfdd7ad605de36a599a"}""")
+          s""""checkpointSchema":${JsonUtils.toJson(checkpointSchema)},""" +
+          """"checksum":"524d4e2226f3c3f923df4ee42dae347e"}""")
     }
 
     assert(CheckpointMetaData.serializeToJson(cm1, addChecksum = true)

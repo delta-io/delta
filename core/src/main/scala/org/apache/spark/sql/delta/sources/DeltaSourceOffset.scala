@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
 
@@ -46,7 +47,8 @@ case class DeltaSourceOffset(
     reservoirId: String,
     reservoirVersion: Long,
     index: Long,
-    isStartingVersion: Boolean) extends Offset {
+    isStartingVersion: Boolean
+  ) extends Offset {
 
   override def json: String = JsonUtils.toJson(this)
 
@@ -66,15 +68,23 @@ case class DeltaSourceOffset(
 
 object DeltaSourceOffset {
 
-  val VERSION = 1
+  val VERSION_1 = 1
 
   def apply(
+      sourceVersion: Long,
       reservoirId: String,
       reservoirVersion: Long,
       index: Long,
-      isStartingVersion: Boolean): DeltaSourceOffset = {
+      isStartingVersion: Boolean
+  ): DeltaSourceOffset = {
     // TODO should we detect `reservoirId` changes when a query is running?
-    new DeltaSourceOffset(VERSION, reservoirId, reservoirVersion, index, isStartingVersion)
+    new DeltaSourceOffset(
+      sourceVersion,
+      reservoirId,
+      reservoirVersion,
+      index,
+      isStartingVersion
+    )
   }
 
   def apply(reservoirId: String, offset: Offset): DeltaSourceOffset = {
@@ -99,10 +109,11 @@ object DeltaSourceOffset {
     if (versionOpt.isEmpty) {
       throw DeltaErrors.cannotFindSourceVersionException(json)
     }
-    if (versionOpt.get > VERSION) {
-      throw new IllegalStateException(
-        s"Unsupported format. Expected version is $VERSION " +
-            s"but was ${versionOpt.get}. Please upgrade your Spark.")
+
+    var maxVersion = VERSION_1
+
+    if (versionOpt.get > maxVersion) {
+      throw DeltaErrors.invalidFormatFromSourceVersion(versionOpt.get, maxVersion)
     }
   }
 

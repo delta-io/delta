@@ -92,7 +92,10 @@ abstract class UpdateSuiteBase
       tableName: Option[String] = None): Unit = {
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(
-      tableName.map(readDeltaTable(_)).getOrElse(readDeltaTableByPath(tempPath)),
+      tableName
+        .map(readDeltaTable(_))
+        .getOrElse(readDeltaTableByPath(tempPath))
+        .select("key", "value"),
       expectedResults)
   }
 
@@ -753,7 +756,8 @@ abstract class UpdateSuiteBase
     set = "b = (select explode(c) from deltaTable)",
     where = "b = (select explode(c) from deltaTable)",
     expectException = true, // more than one generated, expect exception.
-    customErrorRegex = Some("more than one row returned by a subquery used as an expression(?s).*")
+    customErrorRegex =
+      Some(".*more than one row returned by a subquery used as an expression(?s).*")
   )
 
   protected def checkUpdateJson(

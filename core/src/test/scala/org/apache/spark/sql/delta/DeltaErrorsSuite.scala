@@ -26,16 +26,14 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
-import org.apache.spark.sql.delta.constraints.Invariants
-import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
@@ -49,9 +47,9 @@ import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Sp
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType, TimestampNTZType}
+import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -143,8 +141,42 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-
-  test("test DeltaErrors OSS methods") {
+  test("test DeltaErrors methods") {
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""Unable to enable Change Data Capture on the table. The table already contains
+           |reserved columns [col1,col2] that will
+           |be used internally as metadata for the table's Change Data Feed. To enable
+           |Change Data Feed on the table rename/drop these columns.
+           |""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.cdcColumnsInData(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "RESERVED_CDC_COLUMNS_ON_WRITE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""
+           |The write contains reserved columns [col1,col2] that are used
+           |internally as metadata for Change Data Feed. To write to the table either rename/drop
+           |these columns or disable Change Data Feed on the table by setting
+           |delta.enableChangeDataFeed to false.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.multipleCDCBoundaryException("sample")
+      }
+      assert(e.getErrorClass == "DELTA_MULTIPLE_CDC_BOUNDARY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Multiple sample arguments provided for CDC read. Please provide " +
+        "one of either sampleTimestamp or sampleVersion.")
+    }
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))
@@ -663,7 +695,7 @@ trait DeltaErrorsSuiteBase
       val baseSchema = StructType(Seq(StructField("c0", StringType)))
       val field = StructField("id", IntegerType)
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.cannotResolveColumn(field, baseSchema)
+        throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_RESOLVE_COLUMN")
       assert(e.getSqlState == "42000")
@@ -717,7 +749,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.operationNotSupportedException("op", id)
       }
-      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
+      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED_DETAIL")
       assert(e.getMessage == s"Operation not allowed: `op` is not supported " +
         s"for Delta tables: $id")
     }
@@ -1304,6 +1336,720 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Not nullable column not found in struct: struct1")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesOptionsException("reason")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Invalid options for idempotent Dataframe writes: reason")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.operationNotSupportedException("dummyOp")
+      }
+      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Operation not allowed: `dummyOp` is not supported for Delta tables")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val s1 = StructType(Seq(StructField("c0", IntegerType)))
+        val s2 = StructType(Seq(StructField("c0", StringType)))
+        throw DeltaErrors.alterTableSetLocationSchemaMismatchException(s1, s2)
+      }
+      assert(e.getErrorClass == "DELTA_SET_LOCATION_SCHEMA_MISMATCH")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        s"""
+           |The schema of the new Delta location is different than the current table schema.
+           |original schema:
+           |root
+           | |-- c0: integer (nullable = true)
+           |
+           |destination schema:
+           |root
+           | |-- c0: string (nullable = true)
+           |
+           |
+           |If this is an intended change, you may turn this check off by running:
+           |%sql set ${DeltaSQLConf.DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK.key}""".stripMargin +
+          " = true")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundDuplicateColumnsException("integer", "col1")
+      }
+      assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Found duplicate column(s) integer: col1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.subqueryNotSupportedException("dummyOp", "col1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SUBQUERY")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Subqueries are not supported in the dummyOp (condition = 'col1').")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundMapTypeColumnException("dummyKey", "dummyVal")
+      }
+      assert(e.getErrorClass == "DELTA_FOUND_MAP_TYPE_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """A MapType was found. In order to access the key or value of a MapType, specify one
+          |of:
+          |dummyKey or
+          |dummyVal
+          |followed by the name of the column (only if that column is a struct type).
+          |e.g. mymap.key.mykey
+          |If the column is a basic type, mymap.key or mymap.value is sufficient.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnOfTargetTableNotFoundInMergeException("target", "dummyCol")
+      }
+      assert(e.getErrorClass == "DELTA_COLUMN_NOT_FOUND_IN_MERGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unable to find the column 'target' of the target table from " +
+        "the INSERT columns: dummyCol. " +
+        "INSERT clause must specify value for all the columns of the target table."
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.multiColumnInPredicateNotSupportedException("dummyOp")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Multi-column In predicates are not supported in the dummyOp condition.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.newNotNullViolated(10L, "table1", UnresolvedAttribute("col1"))
+      }
+      assert(e.getErrorClass == "DELTA_NEW_NOT_NULL_VIOLATION")
+      assert(e.getSqlState == "23001")
+      assert(e.getMessage == "10 rows in table1 violate the new NOT NULL constraint on col1")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.modifyAppendOnlyTableException("dummyTable")
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_MODIFY_APPEND_ONLY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "This table is configured to only allow appends. If you would like to permit " +
+          "updates or deletes, use 'ALTER TABLE dummyTable SET TBLPROPERTIES " +
+          s"(${DeltaConfigs.IS_APPEND_ONLY.key}=false)'.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.schemaNotConsistentWithTarget("dummySchema", "targetAttr")
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_NOT_CONSISTENT_WITH_TARGET")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "The table schema dummySchema is not consistent with " +
+        "the target attributes: targetAttr")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.sparkTaskThreadNotFound
+      }
+      assert(e.getErrorClass == "DELTA_SPARK_THREAD_NOT_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Not running on a Spark task thread")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.staticPartitionsNotSupportedException
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATIC_PARTITIONS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Specifying static partitions in the partition spec is" +
+        " currently not supported during inserts")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedWriteStagedTable("table1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Table implementation does not support writes: table1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.vacuumBasePathMissingException(new Path("path-1"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Please provide the base path (path-1) when Vacuuming Delta tables. " +
+        "Vacuuming specific partitions is currently not supported.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterCreateOnNonExistingColumnsException(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.zOrderingColumnDoesNotExistException("colName")
+      }
+      assert(e.getMessage == "Z-Ordering column colName does not exist in data schema.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.zOrderingOnPartitionColumnException("column1")
+      }
+      assert(e.getErrorClass == "DELTA_ZORDERING_ON_PARTITION_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+                 "column1 is a partition column. Z-Ordering can only be performed on data columns")
+    }
+    {
+      val colNames = Seq("col1", "col2")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colNames, spark)
+      }
+      assert(e.getErrorClass == "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS")
+      assert(e.getSqlState == "42000")
+    }
+  }
+
+  // Complier complains the lambda function is too large if we put all tests in one lambda
+  test("test DeltaErrors OSS methods more") {
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.schemaNotSetException
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_NOT_SET")
+      assert(e.getMessage ==
+        "Table schema is not set.  Write data into it or use CREATE TABLE to set the schema.")
+      assert(e.getSqlState == "22000")
+    }
+    {
+      val st1 = StructType(Seq(StructField("a0", IntegerType)))
+      val st2 = StructType(Seq(StructField("b0", IntegerType)))
+      val schemaDiff = SchemaUtils.reportDifferences(st1, st2)
+        .map(_.replace("Specified", "Latest"))
+
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.schemaChangedSinceAnalysis(st1, st2)
+      }
+      assert(e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+
+      val msg =
+        s"""The schema of your Delta table has changed in an incompatible way since your DataFrame
+           |or DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
+           |Changes:
+           |${schemaDiff.mkString("\n")}""".stripMargin
+      assert(e.getMessage == msg)
+      assert(e.getSqlState == "22000")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsAggregateExpression("1".expr)
+      }
+      assert(e.getErrorClass == "DELTA_AGGREGATE_IN_GENERATED_COLUMN")
+      assert(e.getSqlState == "42000")
+
+      assert(e.getMessage == s"Found ${"1".expr.sql}. " +
+        "A generated column cannot use an aggregate expression")
+    }
+    {
+      val path = new Path("a/b")
+      val smaps = Map("abc" -> "xyz")
+      val emaps = Map("def" -> "hjk")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithDifferentPropertiesException(path, smaps, emaps)
+      }
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""The specified properties do not match the existing properties at $path.
+           |
+           |== Specified ==
+           |${smaps.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+           |
+           |== Existing ==
+           |${emaps.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportSubqueryInPartitionPredicates()
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Subquery is not supported in partition predicates.")
+    }
+    {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.emptyDirectoryException("dir")
+      }
+      assert(e.getErrorClass == "DELTA_EMPTY_DIRECTORY")
+      assert(e.getMessage == "No file found in the directory: dir.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereUsedInOverwrite()
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_IN_OVERWRITE")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "You can't use replaceWhere in conjunction with an overwrite by filter")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.incorrectArrayAccessByName("rightName", "wrongName")
+      }
+      assert(e.getErrorClass == "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""An ArrayType was found. In order to access elements of an ArrayType, specify
+           |rightName
+           |Instead of wrongName
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      }
+      assert(e.getErrorClass == "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE")
+      assert(e.getSqlState == "21000")
+
+      val docLink = generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#upsert-into-a-table-using-merge", skipValidation = true)
+      val msg =
+        s"""Cannot perform Merge as multiple source rows matched and attempted to modify the same
+           |target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,
+           |when multiple source rows match on the same target row, the result may be ambiguous
+           |as it is unclear which source row should be used to update or delete the matching
+           |target row. You can preprocess the source table to eliminate the possibility of
+           |multiple matches. Please refer to
+           |${docLink}""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.showPartitionInNotPartitionedTable("table")
+      }
+      assert(e.getErrorClass == "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "SHOW PARTITIONS is not allowed on a table that is not partitioned: table")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.duplicateColumnOnInsert()
+      }
+      assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_ON_INSERT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Duplicate column names in INSERT clause")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.timeTravelInvalidBeginValue("key", new Throwable)
+      }
+      assert(e.getErrorClass == "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "key needs to be a valid begin value.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.metadataAbsentException()
+      }
+      assert(e.getErrorClass == "DELTA_METADATA_ABSENT")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""Couldn't find Metadata while committing the first version of the Delta table. To disable
+           |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(errorClass = "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION",
+          Array.empty)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot use all columns for partition columns")
+    }
+    {
+      val e = intercept[DeltaIOException] {
+        throw DeltaErrors.failedReadFileFooter("test.txt", null)
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_READ_FILE_FOOTER")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Could not read footer for file: test.txt")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedScanWithHistoricalVersion(123)
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Expect a full scan of the latest version of the Delta source, " +
+        "but found a historical scan of version 123")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedRecognizePredicate("select ALL", new Throwable())
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_RECOGNIZE_PREDICATE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot recognize the predicate 'select ALL'")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.failedFindAttributeInOutputCollumns("col1",
+          "col2,col3,col4")
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS")
+      assert(e.getSqlState == "22000")
+
+      val msg = "Could not find col1 among the existing target output col2,col3,col4"
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.deltaTableFoundInExecutor()
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_FOUND_IN_EXECUTOR")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "DeltaTable cannot be used in executors")
+    }
+    {
+      val e = intercept[DeltaFileAlreadyExistsException] {
+        throw DeltaErrors.fileAlreadyExists("file.txt")
+      }
+      assert(e.getErrorClass == "DELTA_FILE_ALREADY_EXISTS")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Existing file path file.txt")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(new Throwable())
+      }
+      assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+      assert(e.getSqlState == "42000")
+
+      val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+      val msg =
+        s"""This Delta operation requires the SparkSession to be configured with the
+           |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
+           |configurations when creating the SparkSession as shown below.
+           |
+           |  SparkSession.builder()
+           |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+           |    ...
+           |    .build()
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cdcNotAllowedInThisVersion()
+      }
+      assert(e.getErrorClass == "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Configuration delta.enableChangeDataFeed cannot be set." +
+          " Change data feed from Delta is not yet available.")
+    }
+    {
+      val ident = TableIdentifier("view1")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertNonParquetTablesException(ident, "source1")
+      }
+      assert(e.getErrorClass == "DELTA_CONVERT_NON_PARQUET_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "CONVERT TO DELTA only supports parquet tables, but you are trying to " +
+          s"convert a source1 source: $ident")
+    }
+    {
+      val from = StructType(Seq(StructField("c0", IntegerType)))
+      val to = StructType(Seq(StructField("c1", IntegerType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.updateSchemaMismatchExpression(from, to)
+      }
+      assert(e.getErrorClass == "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
+          "columns must match.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.removeFileCDCMissingExtendedMetadata("file")
+      }
+      assert(e.getErrorClass == "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """RemoveFile created without extended metadata is ineligible for CDC:
+          |file""".stripMargin)
+    }
+    {
+      val columnName = "c0"
+      val colMatches = Seq(StructField("c0", IntegerType))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.ambiguousPartitionColumnException(columnName, colMatches)
+      }
+      assert(e.getErrorClass == "DELTA_AMBIGUOUS_PARTITION_COLUMN")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Ambiguous partition column ${DeltaErrors.formatColumn(columnName)} can be" +
+          s" ${DeltaErrors.formatColumnList(colMatches.map(_.name))}."
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.truncateTablePartitionNotSupportedException
+      }
+      assert(e.getErrorClass == "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Operation not allowed: TRUNCATE TABLE on Delta tables does not support" +
+          " partition predicates; use DELETE to delete specific partitions or rows.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidFormatFromSourceVersion(100, 10)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Unsupported format. Expected version should be smaller than or equal to 10 but was 100. " +
+          "Please upgrade to newer version of Delta.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.emptyDataException
+      }
+      assert(e.getErrorClass == "DELTA_EMPTY_DATA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Data used in creating the Delta table doesn't have any columns.")
+    }
+    {
+      val path = "path"
+      val parsedCols = Seq("col1", "col2")
+      val expectedCols = Seq("col3", "col4")
+
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(path, parsedCols,
+          expectedCols)
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Expecting ${expectedCols.size} partition column(s): " +
+          s"${DeltaErrors.formatColumnList(expectedCols)}," +
+          s" but found ${parsedCols.size} partition column(s): " +
+          s"${DeltaErrors.formatColumnList(parsedCols)} from parsing the file name: $path"
+      assert(e.getMessage == msg)
+    }
+    {
+      val version = 100L
+      val removedFile = "file"
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removedFile)
+      }
+      assert(e.getErrorClass == "DELTA_SOURCE_IGNORE_DELETE")
+      assert(e.getSqlState == "0A000")
+
+      val msg =
+        s"Detected deleted data (for example $removedFile) from streaming source at " +
+          s"version $version. This is currently not supported. If you'd like to ignore deletes, " +
+          "set the option 'ignoreDeletes' to 'true'."
+      assert(e.getMessage == msg)
+    }
+    {
+      val tableId = "tableId"
+      val tableLocation = "path"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithNonEmptyLocation(tableId, tableLocation)
+      }
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Cannot create table ('${tableId}')." +
+          s" The associated location ('${tableLocation}') is not empty but " +
+          "it's not a Delta table"
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.maxArraySizeExceeded()
+      }
+      assert(e.getErrorClass == "DELTA_MAX_ARRAY_SIZE_EXCEEDED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Please use a limit less than Int.MaxValue - 8.")
+    }
+    {
+      val unknownColumns = Seq("col1", "col2")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterDropOnNonExistingColumnsException(unknownColumns)
+      }
+      assert(e.getErrorClass == "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Cannot drop bloom filter indices for the following non-existent column(s): "
+          + unknownColumns.mkString(", "))
+    }
+    {
+      val dataFilters = "filters"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters)
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET")
+      assert(e.getSqlState == "22000")
+
+      val msg =
+        "'replaceWhere' cannot be used with data filters when " +
+          s"'dataChange' is set to false. Filters: ${dataFilters}"
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.missingTableIdentifierException("read")
+      }
+      assert(e.getErrorClass == "DELTA_OPERATION_MISSING_PATH")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Please provide the path or table identifier for read.")
+    }
+    {
+      val column = StructField("c0", IntegerType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(column)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_PARTITION_COLUMN_TYPE")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Using column c0 of type IntegerType as a partition column is not supported.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidInterval("interval1")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_INTERVAL")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "interval1 is not a valid INTERVAL.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cdcWriteNotAllowedInThisVersion
+      }
+      assert(e.getErrorClass == "DELTA_CHANGE_TABLE_FEED_DISABLED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot write to table with delta.enableChangeDataFeed set. " +
+        "Change data feed from Delta is not available.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.specifySchemaAtReadTimeException
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SCHEMA_DURING_READ")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Delta does not support specifying the schema at read time.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedDataChangeException("operation1")
+      }
+      assert(e.getErrorClass == "DELTA_DATA_CHANGE_FALSE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot change table metadata because the 'dataChange' option is " +
+        "set to false. Attempted operation: 'operation1'.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.noStartVersionForCDC
+      }
+      assert(e.getErrorClass == "DELTA_NO_START_FOR_CDC_READ")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "No startingVersion or startingTimestamp provided for CDC read.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unrecognizedColumnChange("change1")
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_COLUMN_CHANGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Unrecognized column change change1. You may be running an out-of-date Delta Lake version.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.endBeforeStartVersionInCDC(2, 1)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_CDC_RANGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "CDC range from start 2 to end 1 was invalid. End cannot be before start.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.logFailedIntegrityCheck(2, "option1")
+      }
+      assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==  "The transaction log has failed integrity checks. Failed " +
+        "verification at version 2 of:\noption1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.viewInDescribeDetailException(TableIdentifier("customer"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==  "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.pathAlreadyExistsException(new Path(path))
+      }
+      assert(e.getErrorClass == "DELTA_PATH_EXISTS")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Cannot write to already existent path /sample/path without setting OVERWRITE = 'true'.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "DELTA_MERGE_MISSING_WHEN",
+          messageParameters = Array.empty
+        )
+      }
+      assert(e.getErrorClass == "DELTA_MERGE_MISSING_WHEN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "There must be at least one WHEN clause in a MERGE statement.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unrecognizedFileAction("invalidAction", "invalidClass")
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_FILE_ACTION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unrecognized file action invalidAction with type invalidClass.")
     }
   }
 }

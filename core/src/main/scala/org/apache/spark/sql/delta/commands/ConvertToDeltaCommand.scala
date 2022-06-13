@@ -335,7 +335,8 @@ abstract class ConvertToDeltaCommandBase(
       val metadata = Metadata(
         schemaString = schema.json,
         partitionColumns = partitionFields.fieldNames,
-        configuration = convertProperties.properties ++ targetTable.properties)
+        configuration = convertProperties.properties ++ targetTable.properties,
+        createdTime = Some(System.currentTimeMillis()))
       txn.updateMetadataForNewTable(metadata)
 
       // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes

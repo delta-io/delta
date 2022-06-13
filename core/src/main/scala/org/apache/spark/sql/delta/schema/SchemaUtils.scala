@@ -22,9 +22,10 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,7 +37,7 @@ import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-object SchemaUtils {
+object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
@@ -216,7 +217,7 @@ object SchemaUtils {
           // in the table schema.
           case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
           case None =>
-            throw DeltaErrors.cannotResolveColumn(field, baseSchema)
+            throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
         }
         if (originalCase != field.name) {
           fieldToColumn(field).as(originalCase)
@@ -537,12 +538,9 @@ object SchemaUtils {
         case (Seq(), ArrayType(_, _)) =>
           (Nil, 0)
         case (_, ArrayType(_, _)) =>
-          throw new AnalysisException(
-            s"""An ArrayType was found. In order to access elements of an ArrayType, specify
-               |${prettyFieldName(stack ++ Seq(thisCol, "element"))}
-               |Instead of ${prettyFieldName(stack ++ Seq(thisCol))}
-               """.stripMargin
-          )
+          throw DeltaErrors.incorrectArrayAccessByName(
+            prettyFieldName(stack ++ Seq(thisCol, "element")),
+            prettyFieldName(stack ++ Seq(thisCol)))
         case (Seq(), MapType(_, _, _)) =>
           (Nil, 2)
         case (Seq("key", _ @ _*), MapType(keyType: StructType, _, _)) =>
@@ -556,16 +554,9 @@ object SchemaUtils {
         case (Seq("value"), MapType(_, _, _)) =>
           (Seq(MAP_VALUE_INDEX), 0)
         case (_, MapType(_, _, _)) =>
-          throw new AnalysisException(
-            s"""A MapType was found. In order to access the key or value of a MapType, specify one
-               |of:
-               |${prettyFieldName(stack ++ Seq(thisCol, "key"))} or
-               |${prettyFieldName(stack ++ Seq(thisCol, "value"))}
-               |followed by the name of the column (only if that column is a struct type).
-               |e.g. mymap.key.mykey
-               |If the column is a basic type, mymap.key or mymap.value is sufficient.
-              """.stripMargin
-          )
+          throw DeltaErrors.foundMapTypeColumnException(
+            prettyFieldName(stack ++ Seq(thisCol, "key")),
+            prettyFieldName(stack ++ Seq(thisCol, "value")))
         case (_, o) =>
           if (column.length > 1) {
             throw new AnalysisException(
@@ -1111,6 +1102,35 @@ object SchemaUtils {
       dependentGenCols.toList
     } else {
       Seq.empty
+    }
+  }
+
+  /** Recursively find all types not defined in Delta protocol but used in `dt` */
+  def findUndefinedTypes(dt: DataType): Seq[DataType] = dt match {
+    // Types defined in Delta protocol
+    case NullType => Nil
+    case BooleanType => Nil
+    case ByteType | ShortType | IntegerType | LongType => Nil
+    case FloatType | DoubleType | _: DecimalType => Nil
+    case StringType | BinaryType => Nil
+    case DateType | TimestampType => Nil
+    // Recursively search complex data types
+    case s: StructType => s.fields.flatMap(f => findUndefinedTypes(f.dataType))
+    case a: ArrayType => findUndefinedTypes(a.elementType)
+    case m: MapType => findUndefinedTypes(m.keyType) ++ findUndefinedTypes(m.valueType)
+    // Other types are not defined in Delta protocol
+    case undefinedType => Seq(undefinedType)
+  }
+
+  /** Record all types not defined in Delta protocol but used in the `schema`. */
+  def recordUndefinedTypes(deltaLog: DeltaLog, schema: StructType): Unit = {
+    try {
+      findUndefinedTypes(schema).map(_.getClass.getName).toSet.foreach { className: String =>
+        recordDeltaEvent(deltaLog, "delta.undefined.type", data = Map("className" -> className))
+      }
+    } catch {
+      case NonFatal(e) =>
+        logWarning(s"Failed to log undefined types for table ${deltaLog.logPath}", e)
     }
   }
 }

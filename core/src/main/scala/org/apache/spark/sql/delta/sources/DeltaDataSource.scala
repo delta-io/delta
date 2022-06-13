@@ -27,6 +27,7 @@ import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
@@ -94,7 +95,10 @@ class DeltaDataSource
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
-    {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    if (CDCReader.isCDCRead(options)) {
+      (shortName(), CDCReader.cdcReadSchema(schemaToUse))
+    } else {
       (shortName(), schemaToUse)
     }
   }
@@ -152,7 +156,8 @@ class DeltaDataSource
       mode = mode,
       new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
       partitionColumns = partitionColumns,
-      configuration = Map.empty,
+      configuration = DeltaConfigs.validateConfigurations(
+        parameters.filterKeys(_.startsWith("delta.")).toMap),
       data = data).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()
@@ -171,7 +176,26 @@ class DeltaDataSource
 
       val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
       var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
-
+      val caseInsensitiveParams = new CaseInsensitiveStringMap(parameters.asJava)
+      if (CDCReader.isCDCRead(caseInsensitiveParams)) {
+        cdcOptions = mutable.Map[String, String](DeltaDataSource.CDC_ENABLED_KEY -> "true")
+        if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_START_VERSION_KEY)) {
+          cdcOptions(DeltaDataSource.CDC_START_VERSION_KEY) = caseInsensitiveParams.get(
+            DeltaDataSource.CDC_START_VERSION_KEY)
+        }
+        if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_START_TIMESTAMP_KEY)) {
+          cdcOptions(DeltaDataSource.CDC_START_TIMESTAMP_KEY) = caseInsensitiveParams.get(
+            DeltaDataSource.CDC_START_TIMESTAMP_KEY)
+        }
+        if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_END_VERSION_KEY)) {
+          cdcOptions(DeltaDataSource.CDC_END_VERSION_KEY) = caseInsensitiveParams.get(
+            DeltaDataSource.CDC_END_VERSION_KEY)
+        }
+        if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_END_TIMESTAMP_KEY)) {
+          cdcOptions(DeltaDataSource.CDC_END_TIMESTAMP_KEY) = caseInsensitiveParams.get(
+            DeltaDataSource.CDC_END_TIMESTAMP_KEY)
+        }
+      }
       val dfOptions: Map[String, String] =
         if (sqlContext.sparkSession.sessionState.conf.getConf(
             DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
@@ -361,8 +385,8 @@ object DeltaDataSource extends DatabricksLogging {
     } else if (versionOpt.isDefined) {
       val version = Try(versionOpt.get.toLong) match {
         case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
+        case Failure(t) =>
+          throw DeltaErrors.timeTravelInvalidBeginValue(DeltaDataSource.TIME_TRAVEL_VERSION_KEY, t)
       }
       Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
     } else {

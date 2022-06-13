@@ -87,10 +87,16 @@ statement
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | OPTIMIZE (path=STRING | table=qualifiedName)
-        (WHERE partitionPredicate = exprToken)?                         #optimizeTable
+        (WHERE partitionPredicate = exprToken)?
+        (zorderSpec)?                                                   #optimizeTable
     | SHOW COLUMNS (IN | FROM) (path=STRING | tableName=qualifiedName
-        ((IN | FROM) schemaName=identifier)?)                           #showColumns
+            ((IN | FROM) schemaName=identifier)?)                       #showColumns
     | .*?                                                               #passThrough
+    ;
+
+zorderSpec
+    : ZORDER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
+    | ZORDER BY interleave+=qualifiedName (COMMA interleave+=qualifiedName)*
     ;
 
 temporalClause
@@ -151,7 +157,9 @@ nonReserved
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
-    | RESTORE | AS | OF | SHOW | COLUMNS | IN | FROM
+    | RESTORE | AS | OF
+    | ZORDER | LEFT_PAREN | RIGHT_PAREN
+    | SHOW | COLUMNS | IN | FROM
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -160,6 +168,7 @@ ALTER: 'ALTER';
 AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
+COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
 CONVERT: 'CONVERT';
@@ -170,6 +179,7 @@ DETAIL: 'DETAIL';
 DROP: 'DROP';
 EXISTS: 'EXISTS';
 GENERATE: 'GENERATE';
+LEFT_PAREN: '(';
 DRY: 'DRY';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
@@ -185,6 +195,7 @@ TABLE: 'TABLE';
 PARTITIONED: 'PARTITIONED';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';
+RIGHT_PAREN: ')';
 RUN: 'RUN';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
@@ -193,6 +204,7 @@ TIMESTAMP: 'TIMESTAMP';
 VACUUM: 'VACUUM';
 WHERE: 'WHERE';
 VERSION: 'VERSION';
+ZORDER: 'ZORDER';
 SHOW: 'SHOW';
 COLUMNS: 'COLUMNS';
 FROM: 'FROM';

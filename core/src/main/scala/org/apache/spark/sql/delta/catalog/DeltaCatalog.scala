@@ -520,8 +520,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
 
           case other =>
-            throw new UnsupportedOperationException("Unrecognized column change " +
-              s"${other.getClass}. You may be running an out of date Delta Lake version.")
+            throw DeltaErrors.unrecognizedColumnChange(s"${other.getClass}")
         }
 
       case (t, locations) if t == classOf[SetLocation] =>
@@ -581,7 +580,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = table match {
       case supportsWrite: SupportsWrite => supportsWrite.newWriteBuilder(info)
-      case _ => throw new AnalysisException(s"Table implementation does not support writes: $name")
+      case _ => throw DeltaErrors.unsupportedWriteStagedTable(name)
     }
   }
 }

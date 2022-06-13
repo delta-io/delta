@@ -52,9 +52,9 @@ object TPCDSDataLoadConf {
         .text("Name of the target database to create with TPC-DS tables in necessary format"),
       opt[String]("source-path")
         .optional()
-        .valueName("<path in s3 to load the TPC-DS raw data from>")
+        .valueName("<path to the TPC-DS raw input data>")
         .action((x, c) => c.copy(sourcePath = Some(x)))
-        .text("Name of the database to create"),
+        .text("The location of the TPC-DS raw input data"),
       opt[String]("exclude-nulls")
         .optional()
         .valueName("true/false")

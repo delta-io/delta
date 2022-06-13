@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -38,6 +39,7 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -441,6 +443,75 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("valid replaceWhere with cdf enabled") {
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(
+        DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString,
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+        withTempDir { dir =>
+          Seq(1, 2, 3, 4).map(i => (i, i + 2)).toDF("key", "value.1")
+            .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+            .withColumn("is_even", $"`value.1`" % 2 === 0)
+            .coalesce(1)
+            .write
+            .format("delta")
+            .partitionBy("is_odd").save(dir.toString)
+
+          checkAnswer(
+            CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 0, 0, spark)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+            Row(1, 3, true, false, "insert", 0) :: Row(3, 5, true, false, "insert", 0) ::
+              Row(2, 4, false, true, "insert", 0) :: Row(4, 6, false, true, "insert", 0) :: Nil)
+
+          def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+          Seq(5, 7).map(i => (i, i + 2)).toDF("key", "value.1")
+            .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+            .withColumn("is_even", $"`value.1`" % 2 === 0)
+            .coalesce(1)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(dir.toString)
+          checkAnswer(
+            data,
+            Seq(2, 4, 5, 7).map(i => (i, i + 2)).toDF("key", "value.1")
+              .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+              .withColumn("is_even", $"`value.1`" % 2 === 0))
+
+          checkAnswer(
+            CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 1, 1, spark)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+            Row(1, 3, true, false, "delete", 1) :: Row(3, 5, true, false, "delete", 1) ::
+              Row(5, 7, true, false, "insert", 1) :: Row(7, 9, true, false, "insert", 1) :: Nil)
+
+          if (enabled) {
+            // replaceWhere on non-partitioning columns if enabled.
+            Seq((4, 8)).toDF("key", "value.1")
+              .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+              .withColumn("is_even", $"`value.1`" % 2 === 0)
+              .write
+              .format("delta")
+              .mode("overwrite")
+              .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 4")
+              .save(dir.toString)
+            checkAnswer(
+              data,
+              Seq((2, 4), (4, 8), (5, 7), (7, 9)).toDF("key", "value.1")
+                .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
+                .withColumn("is_even", $"`value.1`" % 2 === 0))
+
+            checkAnswer(
+              CDCReader.changesToBatchDF(DeltaLog.forTable(spark, dir), 2, 2, spark)
+                .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+              Row(4, 6, false, true, "delete", 2) :: Row(4, 8, false, true, "insert", 2) :: Nil)
+          }
+        }
+      }
+    }
+  }
+
   test("replace arbitrary with multiple references") {
     withTempDir { dir =>
       def data: DataFrame = spark.read.format("delta").load(dir.toString)
@@ -596,6 +667,255 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("batch write: append, dynamic partition overwrite integer partition column") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(1, 2, 3).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(1, 5).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite string partition column") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("a", "x"), ("d", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("value").as[String], "a", "b", "d")
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite overwrites nothing") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("d", "z")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
+        ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite multiple partition columns") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(("a", "x", 1), ("b", "y", 2), ("c", "x", 3)).toDF("part1", "part2", "value")
+        .write
+        .format("delta")
+        .partitionBy("part1", "part2")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("a", "x", 4), ("d", "x", 5)).toDF("part1", "part2", "value")
+        .write
+        .format("delta")
+        .partitionBy("part1", "part2")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("part1", "part2", "value").as[(String, String, Int)],
+        ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite without partitionBy") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(1, 2, 3).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(1, 5).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+    }
+  }
+
+  test(
+    "batch write: append, dynamic partition overwrite option not supported with replaceWhere") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+        .withColumn("part1", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part1", "part2")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      val e = intercept[AnalysisException] {
+        Seq((3, "x"), (5, "x")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+      }
+      assert(e.getMessage ===
+        "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
+    }
+  }
+
+  test(
+    "batch write: append, dynamic partition overwrite conf not supported with replaceWhere") {
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        val e = intercept[AnalysisException] {
+          Seq((3, "x"), (5, "x")).toDF("value", "part2")
+            .withColumn("part1", $"value" % 2)
+            .write
+            .format("delta")
+            .partitionBy("part1", "part2")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
+            .save(tempDir.getCanonicalPath)
+        }
+        assert(e.getMessage ===
+          "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
+      }
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite set via conf") {
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+      }
+    }
+  }
+
+  test(
+    "batch write: append, dynamic partition overwrite set via conf and overridden via option") {
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "static")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
+      }
+    }
+  }
+
+  test(
+    "batch write: append, overwrite without partitions should ignore partition overwrite mode") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(1, 2, 3).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(1, 5).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
+    }
+  }
+
   test("batch write: ignore") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
@@ -635,7 +955,7 @@ class DeltaSuite extends QueryTest
           .mode("error")
           .save(tempDir.getCanonicalPath)
       }
-      assert(e.getMessage.contains("already exists"))
+      assert(e.getMessage.contains("Cannot write to already existent path"))
     }
   }
 
@@ -1642,6 +1962,149 @@ class DeltaSuite extends QueryTest
     // rename dir2 to dir1 then read
     dir2.renameTo(dir1)
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
+  }
+
+  test("set metadata upon write") {
+    withTempDir { inputDir =>
+      val testPath = inputDir.getCanonicalPath
+      spark.range(10)
+        .map(_.toInt)
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .option("delta.logRetentionDuration", "123 days")
+        .option("mergeSchema", "true")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      val deltaLog = DeltaLog.forTable(spark, testPath)
+      // We need to drop default properties set by subclasses to make this test pass in them
+      assert(deltaLog.snapshot.metadata.configuration
+        .filterKeys(!_.startsWith("delta.columnMapping.")).toMap ===
+        Map("delta.logRetentionDuration" -> "123 days"))
+    }
+  }
+
+  test("idempotent Dataframe writes") {
+    withTempDir{ dir =>
+      val appId1 = "myAppId1"
+      val appId2 = "myAppId2"
+      def runQuery(appId: String, seq: Seq[Int], version: Long, expectedCount: Long): Unit = {
+        seq.toDF().write.format("delta")
+          .option(DeltaOptions.TXN_VERSION, version)
+          .option(DeltaOptions.TXN_APP_ID, appId)
+          .mode("append")
+          .save(dir.getCanonicalPath)
+        val i = spark.read.format("delta").load(dir.getCanonicalPath).count()
+        assert(i == expectedCount)
+      }
+      var s = Seq(1, 2, 3)
+      // The first 2 runs must succeed increasing the expected count.
+      runQuery(appId1, s, 1, 3)
+      runQuery(appId1, s, 2, 6)
+
+      // Even if the version is not consecutive, higher versions should commit successfully.
+      runQuery(appId1, s, 5, 9)
+
+      // This run should be ignored because it uses an older version.
+      runQuery(appId1, s, 5, 9)
+
+      // Use a different app ID, but same version. This should succeed.
+      runQuery(appId2, s, 5, 12)
+
+      // Verify that specifying only one of the options -- either appId or version -- fails.
+      val e1 = intercept[Exception] {
+        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_APP_ID, 1)
+          .mode("append").save(dir.getCanonicalPath)
+      }
+      assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+      val e2 = intercept[Exception] {
+        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_VERSION, 1)
+          .mode("append").save(dir.getCanonicalPath)
+      }
+      assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+    }
+  }
+
+  test("idempotent writes in streaming foreachBatch") {
+    // Function to get a checkpoint location and 2 table locations.
+    def withTempDirs(f: (File, File, File) => Unit): Unit = {
+      withTempDir { file1 =>
+        withTempDir { file2 =>
+          withTempDir { file3 =>
+            f(file1, file2, file3)
+          }
+        }
+      }
+    }
+
+    // In this test, we are going to run a streaming query in a deterministic way.
+    // This streaming query uses foreachBatch to append data to two tables, and
+    // depending on a boolean flag, the query can fail between the two table writes.
+    // By setting this flag, we will test whether both tables are consistenly updated
+    // when query resumes after failure - no duplicates, no data missing.
+
+    withTempDirs { (checkpointDir, table1Dir, table2Dir) =>
+      @volatile var shouldFail = false
+
+      /* Function to write a batch's data to 2 tables */
+      def runBatch(batch: DataFrame, appId: String, batchId: Long): Unit = {
+        // Append to table 1
+        batch.write.format("delta")
+          .option(DeltaOptions.TXN_VERSION, batchId)
+          .option(DeltaOptions.TXN_APP_ID, appId)
+          .mode("append").save(table1Dir.getCanonicalPath)
+        if (shouldFail) {
+          throw new Exception("Terminating execution")
+        } else {
+          // Append to table 2
+          batch.write.format("delta")
+            .option(DeltaOptions.TXN_VERSION, batchId)
+            .option(DeltaOptions.TXN_APP_ID, appId)
+            .mode("append").save(table2Dir.getCanonicalPath)
+        }
+      }
+
+      @volatile var query: StreamingQuery = null
+
+      // Prepare a streaming query
+      val inputData = MemoryStream[Int]
+      val df = inputData.toDF()
+      val streamWriter = df.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .foreachBatch { (batch: DataFrame, id: Long) => {
+          runBatch(batch, query.id.toString, id) }
+        }
+
+      /* Add data and run streaming query, then verify # rows in 2 tables */
+      def runQuery(dataToAdd: Int, expectedTable1Count: Int, expectedTable2Count: Int): Unit = {
+        inputData.addData(dataToAdd)
+        query = streamWriter.start()
+        try {
+          query.processAllAvailable()
+        } catch {
+          case e: Exception =>
+            assert(e.getMessage.contains("Terminating execution"))
+        } finally {
+          query.stop()
+        }
+        val t1Count = spark.read.format("delta").load(table1Dir.getCanonicalPath).count()
+        assert(t1Count == expectedTable1Count)
+        val t2Count = spark.read.format("delta").load(table2Dir.getCanonicalPath).count()
+        assert(t2Count == expectedTable2Count)
+      }
+
+      // Run the query 3 times. First time without failure, both the output tables are updated.
+      shouldFail = false
+      runQuery(dataToAdd = 0, expectedTable1Count = 1, expectedTable2Count = 1)
+      // Second time with failure. Only one of the tables should be updated.
+      shouldFail = true
+      runQuery(dataToAdd = 1, expectedTable1Count = 2, expectedTable2Count = 1)
+      // Third time without failure. Both the tables should be consistently updated.
+      shouldFail = false
+      runQuery(dataToAdd = 2, expectedTable1Count = 3, expectedTable2Count = 3)
+    }
   }
 }
 

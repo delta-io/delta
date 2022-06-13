@@ -22,10 +22,10 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
@@ -33,6 +33,7 @@ import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
 
@@ -55,7 +56,7 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
     }
   }
 
-  private def withTempDirs(f: (File, File) => Unit): Unit = {
+  protected def withTempDirs(f: (File, File) => Unit): Unit = {
     withTempDir { file1 =>
       withTempDir { file2 =>
         f(file1, file2)
@@ -553,8 +554,192 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
   }
 }
 
+abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite {
+  import testImplicits._
 
-class DeltaSinkNameColumnMappingSuite extends DeltaSinkSuite
+
+  test("allow schema evolution after renaming column") {
+    Seq(true, false).foreach { schemaMergeEnabled =>
+      withClue(s"Schema merge enabled: $schemaMergeEnabled") {
+        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaMergeEnabled.toString) {
+          failAfter(streamingTimeout) {
+            withTempDirs { (outputDir, checkpointDir) =>
+              val sourceDir = Utils.createTempDir()
+              def addData(df: DataFrame): Unit =
+                df.coalesce(1).write.mode("append").save(sourceDir.getCanonicalPath)
+
+              // save data to target dir
+              Seq(100).toDF("value").write.format("delta").save(outputDir.getCanonicalPath)
+              // use parquet stream as MemoryStream doesn't support recovering failed batches
+              val df = spark.readStream
+                .schema(new StructType().add("value", IntegerType, true))
+                .parquet(sourceDir.getCanonicalPath)
+              // start writing into Delta sink
+              def queryGen(df: DataFrame): StreamingQuery = df.writeStream
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta")
+                .start(outputDir.getCanonicalPath)
+
+              val query = queryGen(df)
+              val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+
+              // delta sink contains [100, 1]
+              addData(Seq(1).toDF("value"))
+              query.processAllAvailable()
+
+              def outputDf: DataFrame =
+                spark.read.format("delta").load(outputDir.getCanonicalPath)
+              checkDatasetUnorderly(outputDf.as[Int], 100, 1)
+              require(log.update().transactions.head == (query.id.toString -> 0L))
+
+              sql(s"ALTER TABLE delta.`${outputDir.getAbsolutePath}` " +
+                s"RENAME COLUMN value TO new_value")
+
+              if (!schemaMergeEnabled) {
+                // schema has changed, we can't automatically migrate the schema
+                val e = intercept[StreamingQueryException] {
+                  addData(Seq(2).toDF("value"))
+                  query.processAllAvailable()
+                }
+                assert(e.cause.isInstanceOf[AnalysisException])
+                assert(e.cause.getMessage.contains("A schema mismatch detected when writing"))
+
+                // restart using the same query would still fail
+                val query2 = queryGen(df)
+                val e2 = intercept[StreamingQueryException] {
+                  addData(Seq(2).toDF("value"))
+                  query2.processAllAvailable()
+                }
+                assert(e2.cause.isInstanceOf[AnalysisException])
+                assert(e2.cause.getMessage.contains("A schema mismatch detected when writing"))
+
+                // but reingest using new schema should work
+                val df2 = spark.readStream
+                  .schema(new StructType().add("value", IntegerType, true))
+                  .parquet(sourceDir.getCanonicalPath)
+                  .withColumnRenamed("value", "new_value")
+                val query3 = queryGen(df2)
+                // delta sink contains [100, 1, 2] + [2, 2] due to recovering the failed batched
+                addData(Seq(2).toDF("value"))
+                query3.processAllAvailable()
+                checkAnswer(outputDf,
+                  Row(100) :: Row(1) :: Row(2) :: Row(2) :: Row(2) :: Nil)
+                assert(outputDf.schema == new StructType().add("new_value", IntegerType, true))
+                query3.stop()
+              } else {
+                // we allow auto schema migration, delta sink contains [100, 1, 2]
+                addData(Seq(2).toDF("value"))
+                query.processAllAvailable()
+                // Since the incoming `value` column is now merged as a new column (even though it
+                // has the same value as the original name) in which only the 3rd record has data.
+                checkAnswer(outputDf, Row(100, null) :: Row(1, null) :: Row(null, 2) :: Nil)
+                assert(outputDf.schema ==
+                  new StructType().add("new_value", IntegerType, true)
+                    .add("value", IntegerType, true))
+                query.stop()
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("allow schema evolution after dropping column") {
+    Seq(true, false).foreach { schemaMergeEnabled =>
+      withClue(s"Schema merge enabled: $schemaMergeEnabled") {
+        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaMergeEnabled.toString) {
+          failAfter(streamingTimeout) {
+            withTempDirs { (outputDir, checkpointDir) =>
+              val sourceDir = Utils.createTempDir()
+              def addData(df: DataFrame): Unit =
+                df.coalesce(1).write.mode("append").save(sourceDir.getCanonicalPath)
+
+              // save data to target dir
+              Seq((1, 100)).toDF("id", "value").write.format("delta")
+                .save(outputDir.getCanonicalPath)
+
+              // use parquet stream as MemoryStream doesn't support recovering failed batches
+              val df = spark.readStream
+                .schema(new StructType().add("id", IntegerType, true)
+                  .add("value", IntegerType, true))
+                .parquet(sourceDir.getCanonicalPath)
+
+              // start writing into Delta sink
+              def queryGen(df: DataFrame): StreamingQuery = df.writeStream
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta")
+                .start(outputDir.getCanonicalPath)
+
+              val query = queryGen(df)
+              val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+              // delta sink contains [(1, 100), (2, 200)]
+              addData(Seq((2, 200)).toDF("id", "value"))
+              query.processAllAvailable()
+
+              def outputDf: DataFrame =
+                spark.read.format("delta").load(outputDir.getCanonicalPath)
+
+              checkDatasetUnorderly(outputDf.as[(Int, Int)], (1, 100), (2, 200))
+              assert(log.update().transactions.head == (query.id.toString -> 0L))
+
+              withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
+                sql(s"ALTER TABLE delta.`${outputDir.getAbsolutePath}` DROP COLUMN value")
+              }
+
+              if (!schemaMergeEnabled) {
+                // schema changed, we can't automatically migrate the schema
+                val e = intercept[StreamingQueryException] {
+                  addData(Seq((3, 300)).toDF("id", "value"))
+                  query.processAllAvailable()
+                }
+                assert(e.cause.isInstanceOf[AnalysisException])
+                assert(e.cause.getMessage.contains("A schema mismatch detected when writing"))
+
+                // restart using the same query would still fail
+                val query2 = queryGen(df)
+                val e2 = intercept[StreamingQueryException] {
+                  addData(Seq((3, 300)).toDF("id", "value"))
+                  query2.processAllAvailable()
+                }
+                assert(e2.cause.isInstanceOf[AnalysisException])
+                assert(e2.cause.getMessage.contains("A schema mismatch detected when writing"))
+
+                // but reingest using new schema should work
+                val df2 = spark.readStream
+                  .schema(new StructType().add("id", IntegerType, true))
+                  .parquet(sourceDir.getCanonicalPath)
+                val query3 = queryGen(df2)
+                // delta sink contains [1, 2, 3] + [3, 3] due to
+                // recovering failed batches
+                addData(Seq((3, 300)).toDF("id", "value"))
+                query3.processAllAvailable()
+                checkAnswer(outputDf,
+                  Row(1) :: Row(2) :: Row(3) :: Row(3) :: Row(3) :: Nil)
+                assert(outputDf.schema == new StructType().add("id", IntegerType, true))
+                query3.stop()
+              } else {
+                addData(Seq((3, 300)).toDF("id", "value"))
+                query.processAllAvailable()
+                // None/null value appears because even though the added column has the same
+                // logical name (`value`) as the dropped column, the physical name has been
+                // changed so the old data could not be loaded.
+                checkAnswer(outputDf, Row(1, null) :: Row(2, null) :: Row(3, 300) :: Nil)
+                assert(outputDf.schema ==
+                  new StructType().add("id", IntegerType, true).add("value", IntegerType, true))
+                query.stop()
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+}
+
+
+class DeltaSinkNameColumnMappingSuite extends DeltaSinkColumnMappingSuiteBase
   with DeltaColumnMappingEnableNameMode {
 
   override protected def runOnlyTests = Seq(

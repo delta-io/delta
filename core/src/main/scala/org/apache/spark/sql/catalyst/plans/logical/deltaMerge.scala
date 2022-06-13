@@ -281,13 +281,17 @@ object DeltaMergeInto {
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
-      throw new AnalysisException("There must be at least one WHEN clause in a MERGE statement")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_MERGE_MISSING_WHEN",
+        messageParameters = Array.empty
+      )
     }
 
     // check that only last MATCHED clause omits the condition
     if (matchedClauses.length > 1 && !matchedClauses.init.forall(_.condition.nonEmpty)) {
-      throw new AnalysisException("When there are more than one MATCHED clauses in a MERGE " +
-        "statement, only the last MATCHED clause can omit the condition.")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+        messageParameters = Array.empty)
     }
 
     // check that only last NOT MATCHED clause omits the condition

@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -48,6 +48,7 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
     // Check we can load CheckpointMetaData
     assert(deltaLog.lastCheckpoint.get.version === 3)
     assert(deltaLog.lastCheckpoint.get.size === 6L)
+    assert(deltaLog.lastCheckpoint.get.checkpointSchema.isEmpty)
 
     // Check we can parse all `Action`s in delta files. It doesn't check correctness.
     deltaLog.getChanges(0L).toList.map(_._2.toList)
@@ -73,6 +74,46 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
       DeltaLog.clearCache()
       operation(tempDir.getAbsolutePath)
     }
+  }
+
+  /**
+   * Read from a table's CDF and check for the expected preimage/postimage after applying an update
+   */
+  protected def testCdfUpdate(
+      tablePath: String,
+      commitVersion: Long,
+      expectedPreimage: Seq[Int],
+      expectedPostimage: Seq[Int],
+      streaming: Boolean = false): Unit = {
+
+    val df = if (streaming) {
+      val q = spark.readStream.format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", commitVersion)
+        .option("endingVersion", commitVersion)
+        .load(tablePath)
+        .writeStream
+        .option("checkpointLocation", tablePath + "-checkpoint")
+        .toTable("streaming");
+      try {
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+      spark.read.table("streaming")
+    } else {
+      spark.read.format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", commitVersion)
+        .option("endingVersion", commitVersion)
+        .load(tablePath)
+    }
+
+    val preimage = df.where("_change_type = 'update_preimage'").select("value")
+    val postimage = df.where("_change_type = 'update_postimage'").select("value")
+
+    checkAnswer(preimage, expectedPreimage.map(Row(_)))
+    checkAnswer(postimage, expectedPostimage.map(Row(_)))
   }
 }
 

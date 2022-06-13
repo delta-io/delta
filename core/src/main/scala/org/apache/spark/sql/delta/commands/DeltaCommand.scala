@@ -59,7 +59,7 @@ trait DeltaCommand extends DeltaLogging {
       spark.sessionState.sqlParser.parseExpression(predicate) :: Nil
     } catch {
       case e: ParseException =>
-        throw new AnalysisException(s"Cannot recognize the predicate '$predicate'", cause = Some(e))
+        throw DeltaErrors.failedRecognizePredicate(predicate, e)
     }
   }
 
@@ -70,7 +70,7 @@ trait DeltaCommand extends DeltaLogging {
 
     predicates.foreach { pred =>
       if (SubqueryExpression.hasSubquery(pred)) {
-        throw new AnalysisException("Subquery is not supported in partition predicates.")
+        throw DeltaErrors.unsupportSubqueryInPartitionPredicates()
       }
 
       pred.references.foreach { col =>

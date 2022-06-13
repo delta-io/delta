@@ -46,7 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaRuntimeException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException
@@ -604,12 +604,14 @@ private[delta] object PartitionUtils {
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
         case _: AtomicType => // OK
-        case _ => throw new AnalysisException(s"Cannot use ${field.dataType} for partition column")
+        case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }
 
     if (partitionColumns.nonEmpty && partitionColumns.size == schema.fields.length) {
-      throw new AnalysisException(s"Cannot use all columns for partition columns")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION",
+        Array.empty)
     }
   }
 
@@ -722,8 +724,8 @@ private[delta] object PartitionUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"`$x`"
       }
-      throw new AnalysisException(
-        s"Found duplicate column(s) $colType: ${duplicateColumns.mkString(", ")}")
+      throw DeltaErrors.foundDuplicateColumnsException(colType,
+        duplicateColumns.mkString(", "))
     }
   }
 

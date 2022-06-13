@@ -24,6 +24,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
@@ -186,8 +187,30 @@ case class DeltaTableV2(
     if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
       throw DeltaErrors.multipleTimeTravelSyntaxUsed
     }
+
+    def checkCDCOptionsValidity(options: CaseInsensitiveStringMap): Unit = {
+      // check if we have both version and timestamp parameters
+      if (options.containsKey(DeltaDataSource.CDC_START_TIMESTAMP_KEY)
+          && options.containsKey(DeltaDataSource.CDC_START_VERSION_KEY)) {
+        throw DeltaErrors.multipleCDCBoundaryException("starting")
+      }
+      if (options.containsKey(DeltaDataSource.CDC_END_VERSION_KEY)
+          && options.containsKey(DeltaDataSource.CDC_END_TIMESTAMP_KEY)) {
+        throw DeltaErrors.multipleCDCBoundaryException("ending")
+      }
+      if (!options.containsKey(DeltaDataSource.CDC_START_VERSION_KEY)
+          && !options.containsKey(DeltaDataSource.CDC_START_TIMESTAMP_KEY)) {
+        throw DeltaErrors.noStartVersionForCDC()
+      }
+    }
+
+    val caseInsensitiveStringMap = new CaseInsensitiveStringMap(options.asJava)
+
     if (timeTravelOpt.isEmpty && ttSpec.nonEmpty) {
       copy(timeTravelOpt = ttSpec)
+    } else if (CDCReader.isCDCRead(caseInsensitiveStringMap)) {
+      checkCDCOptionsValidity(caseInsensitiveStringMap)
+      copy(cdcOptions = caseInsensitiveStringMap)
     } else {
       this
     }
@@ -222,8 +245,7 @@ private class WriteIntoDeltaBuilder(
 
   override def overwrite(filters: Array[Filter]): WriteBuilder = {
     if (writeOptions.containsKey("replaceWhere")) {
-      throw new AnalysisException(
-        "You can't use replaceWhere in conjunction with an overwrite by filter")
+      throw DeltaErrors.replaceWhereUsedInOverwrite()
     }
     options.put("replaceWhere", DeltaSourceUtils.translateFilters(filters).sql)
     forceOverwrite = true

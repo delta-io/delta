@@ -61,9 +61,7 @@ object DeltaFullTable {
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && filters.isEmpty) {
         Some(index)
       } else if (index.versionToUse.nonEmpty) {
-        throw new AnalysisException(
-          s"Expect a full scan of the latest version of the Delta source, but found a historical " +
-          s"scan of version ${index.versionToUse.get}")
+        throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
       } else {
         throw DeltaErrors.unexpectedPartialScan(index.path)
       }

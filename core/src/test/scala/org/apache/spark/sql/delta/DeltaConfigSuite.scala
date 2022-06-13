@@ -18,12 +18,17 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
+import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.util.ManualClock
 
-class DeltaConfigSuite extends SparkFunSuite {
+class DeltaConfigSuite extends SparkFunSuite
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   test("parseCalendarInterval") {
     for (input <- Seq("5 MINUTES", "5 minutes", "5 Minutes", "inTERval 5 minutes")) {
@@ -42,7 +47,7 @@ class DeltaConfigSuite extends SparkFunSuite {
       val e = intercept[IllegalArgumentException] {
         parseCalendarInterval(input)
       }
-      assert(e.getMessage.contains("Invalid interval"))
+      assert(e.getMessage.contains("not a valid INTERVAL"))
     }
   }
 
@@ -66,6 +71,49 @@ class DeltaConfigSuite extends SparkFunSuite {
         "1 month",
         "1 year")) {
       assert(!isValidIntervalConfigValue(parseCalendarInterval(input)), s"$input")
+    }
+  }
+
+  test("Optional Calendar Interval config") {
+    val clock = new ManualClock(System.currentTimeMillis())
+
+    // case 1: duration not specified
+    withTempDir { dir =>
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      val retentionTimestampOpt =
+        DeltaLog.forTable(spark, dir.getCanonicalPath, clock).minSetTransactionRetentionTimestamp
+
+      assert(retentionTimestampOpt.isEmpty)
+    }
+
+    // case 2: valid duration specified
+    withTempDir { dir =>
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 days')
+           |""".stripMargin)
+
+      DeltaLog.clearCache() // we want to ensure we can use the ManualClock we pass in
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath, clock)
+      val retentionTimestampOpt = log.minSetTransactionRetentionTimestamp
+      assert(log.clock.getTimeMillis() == clock.getTimeMillis())
+      val expectedRetentionTimestamp =
+        clock.getTimeMillis() - getMilliSeconds(parseCalendarInterval("interval 1 days"))
+
+      assert(retentionTimestampOpt.contains(expectedRetentionTimestamp))
+    }
+
+    // case 3: invalid duration specified
+    withTempDir { dir =>
+      val e = intercept[IllegalArgumentException] {
+        sql(
+          s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 foo')
+             |""".stripMargin)
+      }
+      assert(e.getMessage.contains("not a valid INTERVAL"))
     }
   }
 }

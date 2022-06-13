@@ -56,38 +56,77 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
    * Verify we can recognize an `OptimizablePartitionExpression` and generate corresponding
    * partition filters correctly.
    *
-   * @param normalColDDL DDL to define a data column
-   * @param generatedPartColDDL a list of generated partition columns defined using the above data
-   *                            column
+   * @param dataSchema DDL of the data columns
+   * @param partitionSchema DDL of the partition columns
+   * @param generatedColumns a map of generated partition columns defined using the above data
+   *                         columns
    * @param expectedPartitionExpr the expected `OptimizablePartitionExpression` to be recognized
+   * @param auxiliaryTestName string to append to the generated test name
+   * @param expressionKey key to check for the optmizable expression if not the default first
+   *                      word in the data schema
+   * @param skipNested Whether to skip the nested variant of the test
    * @param filterTestCases test cases for partition filters. The key is the data filter, and the
    *                        value is the partition filters we should generate.
    */
   private def testOptimizablePartitionExpression(
-      schemaString: String,
+      dataSchema: String,
+      partitionSchema: String,
       generatedColumns: Map[String, String],
       expectedPartitionExpr: OptimizablePartitionExpression,
       auxiliaryTestName: Option[String] = None,
+      expressionKey: Option[String] = None,
+      skipNested: Boolean = false,
       filterTestCases: Seq[(String, Seq[String])]): Unit = {
     test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("")) {
-      val normalCol = schemaString.split(" ")(0)
+      val normalCol = dataSchema.split(" ")(0)
 
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
           None,
-          schemaString,
+          s"$dataSchema, $partitionSchema",
           generatedColumns,
           generatedColumns.keys.toSeq
         )
 
         val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
-        assert(metadata.optimizablePartitionExpressions(normalCol.toLowerCase(Locale.ROOT)) ==
-          expectedPartitionExpr :: Nil)
+        assert(metadata.optimizablePartitionExpressions(expressionKey.getOrElse(
+          normalCol).toLowerCase(Locale.ROOT)) == expectedPartitionExpr :: Nil)
         filterTestCases.foreach { filterTestCase =>
           val partitionFilters = getPushedPartitionFilters(
             sql(s"SELECT * from $table where ${filterTestCase._1}").queryExecution)
           assert(partitionFilters.map(_.sql) == filterTestCase._2)
+        }
+      }
+    }
+
+    if (!skipNested) {
+      test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("") + " nested") {
+        val normalCol = dataSchema.split(" ")(0)
+        val nestedSchema = s"nested struct<${dataSchema.replace(" ", ": ")}>"
+        val updatedGeneratedColumns =
+          generatedColumns.mapValues(v => v.replaceAll(s"(?i)($normalCol)", "nested.$1")).toMap
+
+        withTableName("optimizable_partition_expression") { table =>
+          createTable(
+            table,
+            None,
+            s"$nestedSchema, $partitionSchema",
+            updatedGeneratedColumns,
+            updatedGeneratedColumns.keys.toSeq
+          )
+
+          val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
+          val nestedColPath =
+            s"nested.${expressionKey.getOrElse(normalCol).toLowerCase(Locale.ROOT)}"
+          assert(metadata.optimizablePartitionExpressions(nestedColPath)
+            == expectedPartitionExpr :: Nil)
+          filterTestCases.foreach { filterTestCase =>
+            val updatedFilter = filterTestCase._1.replaceAll(s"(?i)($normalCol)", "nested.$1")
+            val partitionFilters = getPushedPartitionFilters(
+              sql(s"SELECT * from $table where $updatedFilter").queryExecution)
+            assert(partitionFilters.map(_.sql) == filterTestCase._2)
+          }
         }
       }
     }
@@ -103,7 +142,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   }
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, date DATE",
+    "eventTime TIMESTAMP",
+    "date DATE",
     Map("date" -> "CAST(eventTime AS DATE)"),
     expectedPartitionExpr = DatePartitionExpr("date"),
     auxiliaryTestName = Option(" from cast(timestamp)"),
@@ -151,7 +191,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventDate DATE, date DATE",
+    "eventDate DATE",
+    "date DATE",
     Map("date" -> "CAST(eventDate AS DATE)"),
     expectedPartitionExpr = DatePartitionExpr("date"),
     auxiliaryTestName = Option(" from cast(date)"),
@@ -199,7 +240,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, year INT, month INT, day INT, hour INT",
+    "eventTime TIMESTAMP",
+    "year INT, month INT, day INT, hour INT",
     Map(
       "year" -> "YEAR(eventTime)",
       "month" -> "MONTH(eventTime)",
@@ -384,7 +426,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, year INT, month INT, day INT",
+    "eventTime TIMESTAMP",
+    "year INT, month INT, day INT",
     Map(
       "year" -> "YEAR(eventTime)",
       "month" -> "MONTH(eventTime)",
@@ -502,7 +545,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, year INT, month INT",
+    "eventTime TIMESTAMP",
+    "year INT, month INT",
     // Use different cases to verify we can recognize the same column using different cases in
     // generation expressions.
     Map(
@@ -568,7 +612,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, year INT",
+    "eventTime TIMESTAMP",
+    "year INT",
     Map("year" -> "YEAR(eventTime)"),
     expectedPartitionExpr = YearPartitionExpr("year"),
     filterTestCases = Seq(
@@ -595,7 +640,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     ("YEAR(CAST(eventDate AS DATE))", " from year(cast(date))"))
     .foreach { case (partCol, auxTestName) =>
       testOptimizablePartitionExpression(
-        "eventDate DATE, year INT",
+        "eventDate DATE",
+        "year INT",
         Map("year" -> partCol),
         expectedPartitionExpr = YearPartitionExpr("year"),
         auxiliaryTestName = Option(auxTestName),
@@ -621,44 +667,124 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     }
 
   testOptimizablePartitionExpression(
-    "str STRING, substr STRING",
-    Map("substr" -> "SUBSTRING(str, 2, 3)"),
+    "value STRING",
+    "substr STRING",
+    Map("substr" -> "SUBSTRING(value, 2, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 2, 3),
     filterTestCases = Seq(
-      "str < 'foo'" -> Nil,
-      "str <= 'foo'" -> Nil,
-      "str = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 2, 3)))"),
-      "str > 'foo'" -> Nil,
-      "str >= 'foo'" -> Nil,
-      "str is null" -> Seq("(substr IS NULL)")
+      "value < 'foo'" -> Nil,
+      "value <= 'foo'" -> Nil,
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 2, 3)))"),
+      "value > 'foo'" -> Nil,
+      "value >= 'foo'" -> Nil,
+      "value is null" -> Seq("(substr IS NULL)")
     )
   )
 
   testOptimizablePartitionExpression(
-    "str STRING, substr STRING",
-    Map("substr" -> "SUBSTRING(str, 0, 3)"),
+    "value STRING",
+    "substr STRING",
+    Map("substr" -> "SUBSTRING(value, 0, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 0, 3),
     filterTestCases = Seq(
-      "str < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
-      "str <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
-      "str = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 0, 3)))"),
-      "str > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
-      "str >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
-      "str is null" -> Seq("(substr IS NULL)")
+      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
+      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 0, 3)))"),
+      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
+      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
+      "value is null" -> Seq("(substr IS NULL)")
     )
   )
 
   testOptimizablePartitionExpression(
-    "str STRING, substr STRING",
-    Map("substr" -> "SUBSTRING(str, 1, 3)"),
+    "value STRING",
+    "substr STRING",
+    Map("substr" -> "SUBSTRING(value, 1, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
     filterTestCases = Seq(
-      "str < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
-      "str <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
-      "str = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
-      "str > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
-      "str >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
-      "str is null" -> Seq("(substr IS NULL)")
+      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
+      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "value is null" -> Seq("(substr IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "value STRING",
+    "`my.substr` STRING",
+    Map("my.substr" -> "SUBSTRING(value, 1, 3)"),
+    expectedPartitionExpr = SubstringPartitionExpr("my.substr", 1, 3),
+    filterTestCases = Seq(
+      "value < 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= substring('foo', 1, 3)))"),
+      "value <= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= substring('foo', 1, 3)))"),
+      "value = 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` = substring('foo', 1, 3)))"),
+      "value > 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= substring('foo', 1, 3)))"),
+      "value >= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= substring('foo', 1, 3)))"),
+      "value is null" -> Seq("(`my.substr` IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "outer struct<inner struct<nested: struct<value:STRING>>>",
+    "substr STRING",
+    Map("substr" -> "SUBSTRING(outer.inner.nested.value, 1, 3)"),
+    expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
+    auxiliaryTestName = Some(" deeply nested"),
+    expressionKey = Some("outer.inner.nested.value"),
+    skipNested = true,
+    filterTestCases = Seq(
+      "outer.inner.nested.value < 'foo'" ->
+        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value <= 'foo'" ->
+        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value = 'foo'" ->
+        Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
+      "outer.inner.nested.value > 'foo'" ->
+        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value >= 'foo'" ->
+        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value is null" -> Seq("(substr IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "value STRING",
+    "part STRING",
+    Map("part" -> "value"),
+    expectedPartitionExpr = IdentityPartitionExpr("part"),
+    expressionKey = Some("value"),
+    filterTestCases = Seq(
+      "value < 'foo'" -> Seq("((part IS NULL) OR (part < 'foo'))"),
+      "value <= 'foo'" -> Seq("((part IS NULL) OR (part <= 'foo'))"),
+      "value = 'foo'" -> Seq("((part IS NULL) OR (part = 'foo'))"),
+      "value > 'foo'" -> Seq("((part IS NULL) OR (part > 'foo'))"),
+      "value >= 'foo'" -> Seq("((part IS NULL) OR (part >= 'foo'))"),
+      "value is null" -> Seq("(part IS NULL)")
+    )
+  )
+
+  /**
+   * In order to distinguish between field names with periods and nested field names,
+   * fields with periods must be escaped. Otherwise in the example below, there's
+   * no way to tell whether a filter on nested.value should be applied to part1 or part2.
+   */
+  testOptimizablePartitionExpression(
+    "`nested.value` STRING, nested struct<value: STRING>",
+    "part1 STRING, part2 STRING",
+    Map("part1" -> "`nested.value`", "part2" -> "nested.value"),
+    auxiliaryTestName = Some(" escaped field names"),
+    expectedPartitionExpr = IdentityPartitionExpr("part1"),
+    expressionKey = Some("`nested.value`"),
+    skipNested = true,
+    filterTestCases = Seq(
+      "`nested.value` < 'foo'" -> Seq("((part1 IS NULL) OR (part1 < 'foo'))"),
+      "`nested.value` <= 'foo'" -> Seq("((part1 IS NULL) OR (part1 <= 'foo'))"),
+      "`nested.value` = 'foo'" -> Seq("((part1 IS NULL) OR (part1 = 'foo'))"),
+      "`nested.value` > 'foo'" -> Seq("((part1 IS NULL) OR (part1 > 'foo'))"),
+      "`nested.value` >= 'foo'" -> Seq("((part1 IS NULL) OR (part1 >= 'foo'))"),
+      "`nested.value` is null" -> Seq("(part1 IS NULL)")
     )
   )
 
@@ -787,7 +913,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   }
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, month STRING",
+    "eventTime TIMESTAMP",
+    "month STRING",
     Map("month" -> "DATE_FORMAT(eventTime, 'yyyy-MM')"),
     expectedPartitionExpr = DateFormatPartitionExpr("month", "yyyy-MM"),
     auxiliaryTestName = Option(" from timestamp"),
@@ -827,7 +954,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventDate DATE, month STRING",
+    "eventDate DATE",
+    "month STRING",
     Map("month" -> "DATE_FORMAT(eventDate, 'yyyy-MM')"),
     expectedPartitionExpr = DateFormatPartitionExpr("month", "yyyy-MM"),
     auxiliaryTestName = Option(" from cast(date)"),
@@ -867,7 +995,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "eventTime TIMESTAMP, hour STRING",
+    "eventTime TIMESTAMP",
+    "hour STRING",
     Map("hour" -> "(DATE_FORMAT(eventTime, 'yyyy-MM-dd-HH'))"),
     expectedPartitionExpr = DateFormatPartitionExpr("hour", "yyyy-MM-dd-HH"),
     filterTestCases = Seq(

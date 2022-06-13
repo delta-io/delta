@@ -180,6 +180,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_SAMPLE_ESTIMATOR_ENABLED =
+    buildConf("sampling.enabled")
+      .internal()
+      .doc("Enable sample based estimation.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -434,6 +441,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
+
   val LAST_CHECKPOINT_CHECKSUM_ENABLED =
     buildConf("lastCheckpoint.checksum.enabled")
       .internal()
@@ -441,6 +456,15 @@ trait DeltaSQLConfBase {
         " whether to validate it while reading the LAST_CHECKPOINT file")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_PART_SIZE =
+    buildConf("checkpoint.partSize")
+        .internal()
+        .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
+                 "write a maximum of this many actions per checkpoint file.")
+        .longConf
+        .checkValue(_ > 0, "partSize has to be positive")
+        .createOptional
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -546,6 +570,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED =
+    buildConf("replaceWhere.dataColumnsWithCDF.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns will produce
+          |results for CDF. If disabled, it will fall back to the old behavior.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val LOG_SIZE_IN_MEMORY_THRESHOLD =
     buildConf("streaming.logSizeInMemoryThreshold")
       .internal()
@@ -579,10 +613,10 @@ trait DeltaSQLConfBase {
       .createWithDefault(true)
 
   /**
-   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
-   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
-   * some of whom are Databricks customers, have to keep track of two different conf values for the
-   * same data skipping parameter.
+   * The below confs have a special prefix `spark.databricks.io` because this is the conf value
+   * already used by Databricks' data skipping implementation. There's no benefit to making OSS
+   * users, some of whom are Databricks customers, have to keep track of two different conf
+   * values for the same data skipping parameter.
    */
   val DATA_SKIPPING_STRING_PREFIX_LENGTH =
     SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
@@ -590,6 +624,32 @@ trait DeltaSQLConfBase {
       .doc("For string columns, how long prefix to store in the data skipping index.")
       .intConf
       .createWithDefault(32)
+
+  val MDC_NUM_RANGE_IDS =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.rangeId.max")
+      .internal()
+      .doc("This controls the domain of rangeId values to be interleaved. The bigger, the better " +
+         "granularity, but at the expense of performance (more data gets sampled).")
+      .intConf
+      .checkValue(_ > 1, "'spark.databricks.io.skipping.mdc.rangeId.max' must be greater than 1")
+      .createWithDefault(1000)
+
+  val MDC_ADD_NOISE =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.addNoise")
+      .internal()
+      .doc("Whether or not a random byte should be added as a suffix to the interleaved bits " +
+         "when computing the Z-order values for MDC. This can help deal with skew, but may " +
+         "have a negative impact on overall min/max skipping effectiveness.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
+    buildConf("optimize.zorder.checkStatsCollection.enabled")
+      .internal()
+      .doc(s"When enabled, we will check if the column we're actually collecting stats " +
+        "on the columns we are z-ordering on.")
+      .booleanConf
+      .createWithDefault(true)
 
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
@@ -661,10 +721,11 @@ trait DeltaSQLConfBase {
     buildConf("alterTable.dropColumn.enabled")
       .internal()
       .doc(
-        "Whether to enable the drop column feature. This feature is behind this flag with default" +
-          " off until the physical deletion of dropped columns is supported")
+        """Whether to enable the drop column feature for Delta.
+          |This is a safety switch - we should only turn this off when there is an issue.
+          |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

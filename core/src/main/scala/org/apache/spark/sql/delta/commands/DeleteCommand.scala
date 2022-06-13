@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, FileAction}
+import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -37,7 +38,7 @@ import org.apache.spark.sql.functions.{lit, typedLit, udf}
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
 
-  override lazy val metrics: Map[String, SQLMetric] = Map[String, SQLMetric](
+  def createMetrics: Map[String, SQLMetric] = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
@@ -77,6 +78,8 @@ case class DeleteCommand(
   extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
+
+  override lazy val metrics = createMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
@@ -195,7 +198,7 @@ case class DeleteCommand(
             true
           }.asNondeterministic()
           val filesToRewrite =
-            withStatusCode("DELTA", s"Finding files to rewrite for DELETE operation") {
+            withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
               if (candidateFiles.isEmpty) {
                 Array.empty[String]
               } else {
@@ -271,6 +274,7 @@ case class DeleteCommand(
     numPartitionsAfterSkipping.foreach(metrics("numPartitionsAfterSkipping").set)
     numPartitionsAddedTo.foreach(metrics("numPartitionsAddedTo").set)
     numPartitionsRemovedFrom.foreach(metrics("numPartitionsRemovedFrom").set)
+    numCopiedRows.foreach(metrics("numCopiedRows").set)
     txn.registerSQLMetrics(sparkSession, metrics)
     // This is needed to make the SQL metrics visible in the Spark UI
     val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
@@ -325,7 +329,7 @@ case class DeleteCommand(
     }.asNondeterministic()
 
     withStatusCode(
-      "DELTA", s"Rewriting $numFilesToRewrite files for DELETE operation") {
+      "DELTA", rewritingFilesMsg(numFilesToRewrite)) {
       val dfToWrite = if (shouldWriteCdc) {
         import org.apache.spark.sql.delta.commands.cdc.CDCReader._
         // The logic here ends up being surprisingly elegant, with all source rows ending up in
@@ -364,7 +368,11 @@ object DeleteCommand {
     DeleteCommand(index.deltaLog, delete.child, delete.condition)
   }
 
-  val FILE_NAME_COLUMN = "_input_file_name_"
+  val FILE_NAME_COLUMN: String = "_input_file_name_"
+  val FINDING_TOUCHED_FILES_MSG: String = "Finding files to rewrite for DELETE operation"
+
+  def rewritingFilesMsg(numFilesToRewrite: Long): String =
+    s"Rewriting $numFilesToRewrite files for DELETE operation"
 }
 
 /**

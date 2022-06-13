@@ -22,7 +22,7 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -93,6 +93,40 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     options.get(DATA_CHANGE_OPTION).exists(!toBoolean(_, DATA_CHANGE_OPTION))
   }
 
+  val txnVersion = options.get(TXN_VERSION).map { str =>
+    Try(str.toLong).toOption.filter(_ >= 0).getOrElse {
+      throw DeltaErrors.illegalDeltaOptionException(
+        TXN_VERSION, str, "must be a non-negative integer")
+    }
+  }
+
+  val txnAppId = options.get(TXN_APP_ID)
+
+  private def validateIdempotentWriteOptions(): Unit = {
+    // Either both txnVersion and txnAppId must be specified to get idempotent writes or
+    // neither must be given. In all other cases, throw an exception.
+    val numOptions = txnVersion.size + txnAppId.size
+    if (numOptions != 0 && numOptions != 2) {
+      throw DeltaErrors.invalidIdempotentWritesOptionsException("Both txnVersion and txnAppId " +
+      "must be specified for idempotent data frame writes")
+    }
+  }
+
+  validateIdempotentWriteOptions()
+
+  /** Whether to only overwrite partitions that have data written into it at runtime. */
+  def isDynamicPartitionOverwriteMode: Boolean = {
+    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+    val acceptable = Seq("STATIC", "DYNAMIC")
+    if (!acceptable.exists(mode.equalsIgnoreCase(_))) {
+      val acceptableStr = acceptable.map("'" + _ + "'").mkString(" or ")
+      throw DeltaErrors.illegalDeltaOptionException(
+        PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
+      )
+    }
+    mode.equalsIgnoreCase("DYNAMIC")
+  }
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -121,6 +155,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
     .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
+
+  val readChangeFeed = options.get(CDC_READ_OPTION).exists(toBoolean(_, CDC_READ_OPTION)) ||
+    options.get(CDC_READ_OPTION_LEGACY).exists(toBoolean(_, CDC_READ_OPTION_LEGACY))
 
 
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
@@ -174,6 +211,7 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
+  val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
@@ -187,6 +225,16 @@ object DeltaOptions extends DeltaLogging {
   val DATA_CHANGE_OPTION = "dataChange"
   val STARTING_VERSION_OPTION = "startingVersion"
   val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
+  val CDC_START_VERSION = "startingVersion"
+  val CDC_START_TIMESTAMP = "startingTimestamp"
+  val CDC_END_VERSION = "endingVersion"
+  val CDC_END_TIMESTAMP = "endingTimestamp"
+  val CDC_READ_OPTION = "readChangeFeed"
+  val CDC_READ_OPTION_LEGACY = "readChangeData"
+  val COMPRESSION = "compression"
+  val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
+  val TXN_APP_ID = "txnAppId"
+  val TXN_VERSION = "txnVersion"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -194,6 +242,7 @@ object DeltaOptions extends DeltaLogging {
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
     USER_METADATA_OPTION,
+    PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
@@ -203,6 +252,16 @@ object DeltaOptions extends DeltaLogging {
     DATA_CHANGE_OPTION,
     STARTING_TIMESTAMP_OPTION,
     STARTING_VERSION_OPTION,
+    CDC_READ_OPTION,
+    CDC_READ_OPTION_LEGACY,
+    CDC_START_TIMESTAMP,
+    CDC_END_TIMESTAMP,
+    CDC_START_VERSION,
+    CDC_END_VERSION,
+    COMPRESSION,
+    MAX_RECORDS_PER_FILE,
+    TXN_APP_ID,
+    TXN_VERSION,
     "queryName",
     "checkpointLocation",
     "path",

@@ -31,6 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -142,12 +143,26 @@ class DeltaLog private(
   }
 
   /**
+   * [[SetTransaction]]s before this timestamp will be considered expired and dropped from the
+   * state, but no files will be deleted.
+   */
+  def minSetTransactionRetentionTimestamp: Option[Long] = {
+    val intervalOpt = DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.fromMetaData(metadata)
+
+    if (intervalOpt.isDefined) {
+      Some(clock.getTimeMillis() - DeltaConfigs.getMilliSeconds(intervalOpt.get))
+    } else {
+      None
+    }
+  }
+
+  /**
    * Checks whether this table only accepts appends. If so it will throw an error in operations that
    * can remove data such as DELETE/UPDATE/MERGE.
    */
   def assertRemovable(): Unit = {
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
-      throw DeltaErrors.modifyAppendOnlyTableException
+      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
     }
   }
 
@@ -399,6 +414,15 @@ class DeltaLog private(
       // out in this case.
       throw DeltaErrors.pathNotExistsException(dataPath.toString)
     }
+
+    // For CDC we have to return the relation that represents the change data instead of actual
+    // data.
+    if (!cdcOptions.isEmpty) {
+      recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
+      return CDCReader.getCDCRelation(spark,
+        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+    }
+
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
