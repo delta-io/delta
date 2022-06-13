@@ -603,7 +603,10 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
           if (setColExprStr.trim == "*") {          // UPDATE SET *
             actionBuilder.updateAll()
-          } else {                                  // UPDATE SET x = a, y = b, z = c
+          } else if (setColExprStr.contains("array_")) { // UPDATE SET x = array_union(..)
+            val setColExprPairs = parseUpdate(setColExprStr)
+            actionBuilder.updateExpr(setColExprPairs)
+          } else {                                 // UPDATE SET x = a, y = b, z = c
             val setColExprPairs = parseUpdate(setColExprStr.split(","))
             actionBuilder.updateExpr(setColExprPairs)
           }
