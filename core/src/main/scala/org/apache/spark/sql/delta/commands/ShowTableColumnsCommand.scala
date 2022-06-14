@@ -51,12 +51,12 @@ object TableColumns {
  *
  * The syntax of using this command in SQL is:
  * {{{
- *   SHOW COLUMNS (FROM | IN) (table_identifier [(FROM | IN) database] | path);
+ *   SHOW COLUMNS (FROM | IN) (tableName [(FROM | IN) schemaName] | path);
  * }}}
  *
  * @param tableName  (optional) the table name
  * @param path       (optional) the file path where the table located
- * @param schemaName (optional when tableName exists) the schema name / database name of the table
+ * @param schemaName (optional when tableName exists) the schema name (database name) of the table
  */
 case class ShowTableColumnsCommand(
     tableName: Option[TableIdentifier],

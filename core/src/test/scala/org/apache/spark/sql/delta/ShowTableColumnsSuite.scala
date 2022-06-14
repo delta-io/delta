@@ -31,6 +31,9 @@ trait ShowTableColumnsSuiteBase
 
   import testImplicits._
 
+  private val outputColumnNames = Seq("columnName")
+  private val outputColumnValues = Seq(Seq("column1"), Seq("column2"))
+
   protected def checkResult(
       result: DataFrame,
       expected: Seq[Seq[Any]],
@@ -66,8 +69,8 @@ trait ShowTableColumnsSuiteBase
 
       checkResult(
         sql(sqlCommand),
-        Seq(Seq("column1"), Seq("column2")),
-        Seq("columnName")
+        outputColumnValues,
+        outputColumnNames
       )
     }
   }
@@ -81,8 +84,8 @@ trait ShowTableColumnsSuiteBase
           """.stripMargin)
       checkResult(
         sql("SHOW COLUMNS IN show_columns"),
-        Seq(Seq("column1"), Seq("column2")),
-        Seq("columnName")
+        outputColumnValues,
+        outputColumnNames
       )
     }
   }
@@ -158,8 +161,8 @@ trait ShowTableColumnsSuiteBase
           """.stripMargin)
         checkResult(
           sql(s"SHOW COLUMNS IN delta.$tableName IN $schemaName"),
-          Seq(Seq("column1"), Seq("column2")),
-          Seq("columnName")
+          outputColumnValues,
+          outputColumnNames
         )
       }
     }
@@ -197,8 +200,8 @@ trait ShowTableColumnsSuiteBase
       createTempViewFromTable(tableName, isSQLTempView)
       checkResult(
         sql(s"SHOW COLUMNS IN $viewName"),
-        Seq(Seq("column1"), Seq("column2")),
-        Seq("columnName")
+        outputColumnValues,
+        outputColumnNames
       )
     }
   }
