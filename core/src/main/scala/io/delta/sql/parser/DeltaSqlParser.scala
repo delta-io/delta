@@ -285,7 +285,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     tokens.map(_.getText).mkString(" ")
   }
 
-  private def extractRawText(exprContext: ExprTokenContext): String = {
+  private def extractRawText(exprContext: ParserRuleContext): String = {
     // Extract the raw expression which will be parsed later
     exprContext.getStart.getInputStream.getText(new Interval(
       exprContext.getStart.getStartIndex,
