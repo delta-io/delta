@@ -669,6 +669,8 @@ class DeltaSuite extends QueryTest
 
   test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = false: defaults to static overwrites") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
+
+      // DataFrame write, dynamic partition overwrite enabled in DataFrameWriter option
       withTempDir { tempDir =>
         def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
@@ -691,6 +693,7 @@ class DeltaSuite extends QueryTest
         checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
       }
 
+      // DataFrame write, dynamic partition overwrite enabled in sparkConf
       withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
         withTempDir { tempDir =>
           def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
@@ -714,6 +717,7 @@ class DeltaSuite extends QueryTest
         }
       }
 
+      // SQL write
       withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key ->  "dynamic") {
         val table_name = "test_table"
         withTable(table_name) {
