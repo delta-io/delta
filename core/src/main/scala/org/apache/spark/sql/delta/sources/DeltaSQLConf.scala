@@ -737,8 +737,9 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
   }
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
-    buildConf("partitionOverwriteMode.dynamic.enabled")
+    buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
         "'dynamic' in either the SQL conf, or a DataFrameWriter option. When this is disabled " +
         "'partitionOverwriteMode' will be ignored.")

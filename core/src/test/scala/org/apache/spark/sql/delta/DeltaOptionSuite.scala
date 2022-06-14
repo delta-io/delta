@@ -265,6 +265,7 @@ class DeltaOptionSuite extends QueryTest
       }
     }
   }
+
   test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = false: " +
     "partitionOverwriteMode is set to invalid value in options") {
     // partitionOverwriteMode is ignored and no error is thrown
