@@ -654,12 +654,17 @@ trait DataSkippingReaderBase
     val bytesCompressed = $"size"
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
 
-    val accumulator = new ArrayAccumulator(3)
+    val accumulator = new ArrayAccumulator(
+      3
+    )
+
     spark.sparkContext.register(accumulator)
 
     // The arguments (order and datatype) must match the encoders defined in the
     // `sizeCollectorInputEncoders` value.
-    val collector = (include: Boolean, bytesCompressed: java.lang.Long, rows: java.lang.Long) => {
+    val collector = (include: Boolean,
+                     bytesCompressed: java.lang.Long,
+                     rows: java.lang.Long) => {
       if (include) {
         accumulator.add((0, bytesCompressed)) /* count bytes of AddFiles */
         accumulator.add((1, Option(rows).map(_.toLong).getOrElse(-1L))) /* count rows in AddFiles */
