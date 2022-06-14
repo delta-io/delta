@@ -704,6 +704,10 @@ case class DeltaSource(
    * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
    */
   protected lazy val getStartingVersion: Option[Long] = {
+    // Note: returning a version beyond latest snapshot version won't be a problem as callers
+    // of this function won't use the version to retrieve snapshot(refer to [[getStartingOffset]]).
+    val allowOutOfRange =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
     /** DeltaOption validates input and ensures that only one is provided. */
     if (options.startingVersion.isDefined) {
       val v = options.startingVersion.get match {
@@ -712,7 +716,7 @@ case class DeltaSource(
         case StartingVersion(version) =>
           // when starting from a given version, we don't need the snapshot of this version. So
           // `mustBeRecreatable` is set to `false`.
-          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false)
+          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
           version
       }
       Some(v)
@@ -722,7 +726,11 @@ case class DeltaSource(
         version = None,
         creationSource = Some("deltaSource"))
       Some(DeltaSource
-        .getStartingVersionFromTimestamp(spark, deltaLog, tt.getTimestamp(spark.sessionState.conf)))
+        .getStartingVersionFromTimestamp(
+          spark,
+          deltaLog,
+          tt.getTimestamp(spark.sessionState.conf),
+          allowOutOfRange))
     } else {
       None
     }
