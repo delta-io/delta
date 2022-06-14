@@ -390,6 +390,12 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  private def checkErrMsg(msg: String, field: Seq[String]): Unit = {
+    val fieldParent = field.dropRight(1)
+    assert(msg.contains(s"Field name ${field.mkString(".")} is invalid: " +
+      s"${fieldParent.mkString(".")} is not a struct"))
+  }
+
   ddlTest("ADD COLUMNS should not be able to add column to basic type key/value of " +
     "MapType") {
     withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")
@@ -400,8 +406,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Field name m.key.mkv3 is invalid: m.key is not a struct") ||
-        ex.getMessage.contains("Cannot add m.key.mkv3"))
+      checkErrMsg(ex.getMessage, Seq("m", "key", "mkv3"))
 
       ex = intercept[AnalysisException] {
         sql(
@@ -409,8 +414,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.value.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add m.value.mkv3") ||
-        ex.getMessage.contains("Field name m.value.mkv3 is invalid: m.value is not a struct"))
+      checkErrMsg(ex.getMessage, Seq("m", "value", "mkv3"))
     }
   }
 
@@ -492,8 +496,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.mkv3 long)
            """.stripMargin)
       }
-      assert(ex.getMessage.contains("Field name m.mkv3 is invalid: m is not a struct") ||
-        ex.getMessage.contains("Cannot add m.mkv3"))
+      checkErrMsg(ex.getMessage, Seq("m", "mkv3"))
     }
   }
 
@@ -556,8 +559,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v2.x long)")
       }
-      assert(ex.getMessage.contains("Field name v2.x is invalid: v2 is not a struct") ||
-        ex.getMessage.contains("Cannot add v2.x"))
+      checkErrMsg(ex.getMessage, Seq("v2", "x"))
     }
   }
 

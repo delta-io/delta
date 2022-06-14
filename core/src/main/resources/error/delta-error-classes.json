@@ -15,6 +15,10 @@
     "message" : [ "Struct not found at position <position>" ],
     "sqlState" : "2F000"
   },
+  "DELTA_ADD_CONSTRAINTS" : {
+    "message" : [ "Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints." ],
+    "sqlState" : "42000"
+  },
   "DELTA_AGGREGATE_IN_GENERATED_COLUMN" : {
     "message" : [ "Found <sqlExpr>. A generated column cannot use an aggregate expression" ],
     "sqlState" : "42000"
@@ -115,6 +119,10 @@
     "message" : [ "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)" ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
+    "message" : [ "Can't set location multiple times. Found <location>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [ "Cannot update %1$s field %2$s type: update the element by updating %2$s.element" ],
     "sqlState" : "42000"
@@ -138,6 +146,10 @@
   "DELTA_CHANGE_TABLE_FEED_DISABLED" : {
     "message" : [ "Cannot write to table with delta.enableChangeDataFeed set. Change data feed from Delta is not available." ],
     "sqlState" : "42000"
+  },
+  "DELTA_CHECKPOINT_SNAPSHOT_MISMATCH" : {
+    "message" : [ "State of the checkpoint doesn't match that of the snapshot." ],
+    "sqlState" : "22000"
   },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [ "Unable to find the column `<columnName>` given [<columnList>]" ],
@@ -397,6 +409,10 @@
     "message" : [ "<columnName> is not a valid partition column in table <tableName>." ],
     "sqlState" : "22000"
   },
+  "DELTA_INVALID_PARTITION_COLUMN_NAME" : {
+    "message" : [ "Found partition columns having invalid character(s) among \" ,;{}()\n\t=\". Please change the name to your partition columns." ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_PARTITION_COLUMN_TYPE" : {
     "message" : [ "Using column <name> of type <dataType> as a partition column is not supported." ],
     "sqlState" : "22000"
@@ -423,6 +439,10 @@
   },
   "DELTA_ITERATOR_ALREADY_CLOSED" : {
     "message" : [ "Iterator is closed" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_LOG_ALREADY_EXISTS" : {
+    "message" : [ "A Delta log already exists at <path>" ],
     "sqlState" : "42000"
   },
   "DELTA_MAX_ARRAY_SIZE_EXCEEDED" : {
@@ -477,6 +497,10 @@
     "message" : [ "Partition column `<columnName>` not found in schema <columnList>" ],
     "sqlState" : "42000"
   },
+  "DELTA_MISSING_PART_FILES" : {
+    "message" : [ "Couldn't find all part files of the checkpoint version: <version>" ],
+    "sqlState" : "42000"
+  },
   "DELTA_MISSING_PROVIDER_FOR_CONVERT" : {
     "message" : [ "CONVERT TO DELTA only supports parquet tables. Please rewrite your target as parquet.`<path>` if it's a parquet directory." ],
     "sqlState" : "42000"
@@ -501,6 +525,10 @@
     "message" : [ "Cannot perform Merge as multiple source rows matched and attempted to modify the same", "target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,", "when multiple source rows match on the same target row, the result may be ambiguous", "as it is unclear which source row should be used to update or delete the matching", "target row. You can preprocess the source table to eliminate the possibility of", "multiple matches. Please refer to", "<usageReference>" ],
     "sqlState" : "21000"
   },
+  "DELTA_NESTED_FIELDS_NEED_RENAME" : {
+    "message" : [ "Nested fields need renaming to avoid data loss. Fields:\n<fields>.\nOriginal schema:\n<schema>" ],
+    "sqlState" : "22000"
+  },
   "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
     "message" : [ "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)" ],
     "sqlState" : "42000"
@@ -508,6 +536,10 @@
   "DELTA_NEW_NOT_NULL_VIOLATION" : {
     "message" : [ "<numRows> rows in <tableName> violate the new NOT NULL constraint on <colName>" ],
     "sqlState" : "23001"
+  },
+  "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
+    "message" : [ "CHECK constraint '<name>' (<expr>) should be a boolean expression." ],
+    "sqlState" : "42000"
   },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
     "message" : [ "Non-deterministic functions are not supported in the <operation> <expression>" ],
@@ -553,6 +585,10 @@
     "message" : [ "NOT NULL constraint violated for column: <columnName>.", "" ],
     "sqlState" : "22004"
   },
+  "DELTA_NOT_NULL_NESTED_FIELD" : {
+    "message" : [ "A non-nullable nested field can't be added to a nullable parent. Please set the nullability of the parent column accordingly." ],
+    "sqlState" : "42000"
+  },
   "DELTA_NO_COMMITS_FOUND" : {
     "message" : [ "No commits found at <logPath>" ],
     "sqlState" : "42000"
@@ -565,9 +601,17 @@
     "message" : [ "No startingVersion or startingTimestamp provided for CDC read." ],
     "sqlState" : "42000"
   },
+  "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE" : {
+    "message" : [ "Delta doesn't accept NullTypes in the schema for streaming writes." ],
+    "sqlState" : "22000"
+  },
   "DELTA_ONEOF_IN_TIMETRAVEL" : {
     "message" : [ "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel." ],
     "sqlState" : "42000"
+  },
+  "DELTA_ONLY_OPERATION" : {
+    "message" : [ "<operation> is only supported for Delta tables." ],
+    "sqlState" : "0A000"
   },
   "DELTA_OPERATION_MISSING_PATH" : {
     "message" : [ "Please provide the path or table identifier for <operation>." ],
@@ -653,6 +697,10 @@
     "message" : [ "Detected deleted data (for example <removedFile>) from streaming source at version <version>. This is currently not supported. If you'd like to ignore deletes, set the option 'ignoreDeletes' to 'true'." ],
     "sqlState" : "0A000"
   },
+  "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
+    "message" : [ "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory." ],
+    "sqlState" : "42000"
+  },
   "DELTA_SPARK_SESSION_NOT_SET" : {
     "message" : [ "Active SparkSession not set." ]
   },
@@ -707,6 +755,10 @@
   "DELTA_TXN_LOG_FAILED_INTEGRITY" : {
     "message" : [ "The transaction log has failed integrity checks. Failed verification at version <version> of:", "<mismatchStringOpt>" ],
     "sqlState" : "22000"
+  },
+  "DELTA_UNEXPECTED_ALIAS" : {
+    "message" : [ "Expected Alias but got <alias>" ],
+    "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE" : {
     "message" : [ "Expected AttributeReference but got <ref>" ],
@@ -782,6 +834,10 @@
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [ "DROP COLUMN is not supported for your Delta table. <advice>" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE" : {
+    "message" : [ "Can only drop nested columns from StructType. Found <struct>" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_DROP_PARTITION_COLUMN" : {

@@ -1198,7 +1198,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
-class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests {
+class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
+{
   import testImplicits._
 
   test("data skipping flags") {

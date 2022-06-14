@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -35,6 +36,11 @@ trait OptimizeZOrderSuiteBase extends QueryTest
   import testImplicits._
 
 
+  def executeOptimizeTable(table: String, zOrderBy: Seq[String],
+    condition: Option[String] = None): DataFrame
+  def executeOptimizePath(path: String, zOrderBy: Seq[String],
+    condition: Option[String] = None): DataFrame
+
   test("optimize command: checks existence of interleaving columns") {
     withTempDir { tempDir =>
       Seq(1, 2, 3).toDF("value")
@@ -43,7 +49,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
         .format("delta")
         .save(tempDir.toString)
       val e = intercept[IllegalArgumentException] {
-        spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (id, id3)")
+        executeOptimizePath(tempDir.getCanonicalPath, Seq("id", "id3"))
       }
       assert(Seq("id3", "data schema").forall(e.getMessage.contains))
     }
@@ -58,7 +64,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
         .partitionBy("id")
         .save(tempDir.toString)
       val e = intercept[IllegalArgumentException] {
-        spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (id, id2)")
+        executeOptimizePath(tempDir.getCanonicalPath, Seq("id", "id2"))
       }
       assert(e.getMessage === DeltaErrors.zOrderingOnPartitionColumnException("id").getMessage)
     }
@@ -68,15 +74,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
     withTempDir { tempDir =>
       val df = spark.read.json(Seq("""{"a":1,"b":{"c":2,"d":3}}""").toDS())
       df.write.format("delta").save(tempDir.toString)
-      spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (a, b.c)")
-    }
-  }
-
-  test("optimize command: no need for parenthesis") {
-    withTempDir { tempDir =>
-      val df = spark.read.json(Seq("""{"a":1,"b":{"c":2,"d":3}}""").toDS())
-      df.write.format("delta").save(tempDir.toString)
-      spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY a, b.c")
+      executeOptimizePath(tempDir.getCanonicalPath, Seq("a", "b.c"))
     }
   }
 
@@ -98,7 +96,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
       assert(preOptInputFiles.forall(_._2.length > 1))
       assert(preOptInputFiles.keys.exists(_ == (part, nullPartitionValue)))
 
-      sql(s"optimize '${tempDir.getAbsolutePath}'")
+      executeOptimizePath(tempDir.getAbsolutePath, Seq("value"))
 
       df = spark.read.format("delta").load(tempDir.getAbsolutePath)
       preOptInputFiles = groupInputFilesByPartition(df.inputFiles, deltaLog)
@@ -123,7 +121,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
 
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numFilesBefore = deltaLog.snapshot.numOfFiles
-      val res = sql(s"OPTIMIZE delta.`${tempDir.toString}` ZORDER BY `flat.a`")
+      val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("`flat.a`"))
       val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
       val numFilesAfter = deltaLog.snapshot.numOfFiles
       assert(metrics.numFilesAdded === numFilesAfter)
@@ -142,7 +140,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
 
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numFilesBefore = deltaLog.snapshot.numOfFiles
-      val res = sql(s"OPTIMIZE delta.`${tempDir.toString}` ZORDER BY nested.sub.c")
+      val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("nested.sub.c"))
       val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
       val numFilesAfter = deltaLog.snapshot.numOfFiles
       assert(metrics.numFilesAdded === numFilesAfter)
@@ -161,19 +159,20 @@ trait OptimizeZOrderSuiteBase extends QueryTest
           .format("delta")
           .save(tempDir.getAbsolutePath)
         val e1 = intercept[AnalysisException] {
-          sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.b")
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.b"))
         }
         assert(e1.getMessage == DeltaErrors
           .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.b"), spark)
           .getMessage)
         val e2 = intercept[AnalysisException] {
-          sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.a.p1 ")
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.a.p1"))
         }
         assert(e2.getMessage == DeltaErrors
           .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.a.p1"), spark)
           .getMessage)
         val e3 = intercept[AnalysisException] {
-          sql(s"OPTIMIZE delta.`${tempDir.getPath}` ZORDER BY nested.a.p1, nested.b")
+          executeOptimizeTable(s"delta.`${tempDir.getPath}`",
+            Seq("nested.a.p1", "nested.b"))
         }
         assert(e3.getMessage == DeltaErrors
           .zOrderingOnColumnWithNoStatsException(
@@ -213,7 +212,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
         Row(25, Row(75, 0, 25), Row(99, 24, 49))))
 
       withSQLConf(DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "1000000") {
-        val res = spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (c1, c2, c3)")
+        val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("c1", "c2", "c3"))
         val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
         assert(metrics.zOrderStats.get.mergedFiles.num == 4)
         assert(deltaLog.snapshot.allFiles.count() == 1)
@@ -226,7 +225,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
       withSQLConf(
         DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> maxFileSize.toString
       ) {
-        val res = spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY (c1, c2, c3)")
+        val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("c1", "c2", "c3"))
         val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
         assert(metrics.zOrderStats.get.mergedFiles.num == 1)
         assert(deltaLog.snapshot.allFiles.count() == 4)
@@ -240,10 +239,60 @@ trait OptimizeZOrderSuiteBase extends QueryTest
   }
 }
 
-class OptimizeZOrderSuite extends OptimizeZOrderSuiteBase
-  with DeltaSQLCommandTest
+/**
+ * Runs optimize compaction tests using OPTIMIZE SQL
+ */
+class OptimizeZOrderSQLSuite extends OptimizeZOrderSuiteBase
+  with DeltaSQLCommandTest {
+  import testImplicits._
 
-class OptimizeZOrderNameColumnMappingSuite extends OptimizeZOrderSuite
+  def executeOptimizeTable(table: String, zOrderBy: Seq[String],
+      condition: Option[String] = None): DataFrame = {
+    val conditionClause = condition.map(c => s"WHERE $c").getOrElse("")
+    val zOrderClause = s"ZORDER BY (${zOrderBy.mkString(", ")})"
+    spark.sql(s"OPTIMIZE $table $conditionClause $zOrderClause")
+  }
+
+  def executeOptimizePath(path: String, zOrderBy: Seq[String],
+      condition: Option[String] = None): DataFrame = {
+    executeOptimizeTable(s"'$path'", zOrderBy, condition)
+  }
+
+  test("optimize command: no need for parenthesis") {
+    withTempDir { tempDir =>
+      val df = spark.read.json(Seq("""{"a":1,"b":{"c":2,"d":3}}""").toDS())
+      df.write.format("delta").save(tempDir.toString)
+      spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}' ZORDER BY a, b.c")
+    }
+  }
+}
+
+/**
+ * Runs optimize compaction tests using OPTIMIZE Scala APIs
+ */
+class OptimizeZOrderScalaSuite extends OptimizeZOrderSuiteBase
+    with DeltaSQLCommandTest {
+
+
+  def executeOptimizeTable(table: String, zOrderBy: Seq[String],
+      condition: Option[String] = None): DataFrame = {
+    if (condition.isDefined) {
+      DeltaTable.forName(table).optimize().where(condition.get).executeZOrderBy(zOrderBy: _*)
+    } else {
+      DeltaTable.forName(table).optimize().executeZOrderBy(zOrderBy: _*)
+    }
+  }
+
+  def executeOptimizePath(path: String, zOrderBy: Seq[String],
+      condition: Option[String] = None): DataFrame = {
+    if (condition.isDefined) {
+      DeltaTable.forPath(path).optimize().where(condition.get).executeZOrderBy(zOrderBy: _*)
+    } else {
+      DeltaTable.forPath(path).optimize().executeZOrderBy(zOrderBy: _*)
+    }
+  }
+}
+
+class OptimizeZOrderNameColumnMappingSuite extends OptimizeZOrderSQLSuite
   with DeltaColumnMappingEnableNameMode
   with DeltaColumnMappingTestUtils
-

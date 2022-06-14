@@ -582,7 +582,7 @@ class ParquetTable(
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
     var numFiles = 0L
     var dataSchema: StructType = StructType(Seq())
-    recordDeltaOperation(null, "delta.convert.schemaInference") {
+    recordDeltaOperationForTablePath(basePath, "delta.convert.schemaInference") {
       initialList.grouped(schemaBatchSize).foreach { batch =>
         numFiles += batch.size
         // Obtain a union schema from all files.

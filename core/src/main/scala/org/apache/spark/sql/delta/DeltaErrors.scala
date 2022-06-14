@@ -132,11 +132,9 @@ trait DeltaErrorsBase
   }
 
   def deltaSourceIgnoreChangesError(version: Long, removedFile: String): Throwable = {
-    new UnsupportedOperationException(
-      s"Detected a data update (for example $removedFile) in the source table at version " +
-        s"$version. This is currently not supported. If you'd like to ignore updates, set the " +
-        "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
-        "please restart this query with a fresh checkpoint directory."
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_SOURCE_TABLE_IGNORE_CHANGES",
+      messageParameters = Array(removedFile, version.toString)
     )
   }
 
@@ -173,6 +171,13 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
       messageParameters = Array(s"$src", s"$dest"))
+  }
+
+  def checkpointMismatchWithSnapshot : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_CHECKPOINT_SNAPSHOT_MISMATCH",
+      messageParameters = Array.empty
+    )
   }
 
   /**
@@ -239,6 +244,13 @@ trait DeltaErrorsBase
       s"Parsed $nestType type:\n${nested.prettyJson}")
   }
 
+  def nullableParentWithNotNullNestedField : Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NOT_NULL_NESTED_FIELD",
+      messageParameters = Array.empty
+    )
+  }
+
   def constraintAlreadyExists(name: String, oldExpr: String): AnalysisException = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CONSTRAINT_ALREADY_EXISTS",
@@ -261,7 +273,10 @@ trait DeltaErrorsBase
   }
 
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
-    new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+      messageParameters = Array(name, expr)
+    )
   }
 
   def newCheckConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
@@ -279,8 +294,10 @@ trait DeltaErrorsBase
     )
   }
 
-  def useAddConstraints: AnalysisException = {
-    new AnalysisException(s"Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints.")
+  def useAddConstraints: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADD_CONSTRAINTS",
+      messageParameters = Array.empty)
   }
 
   def incorrectLogStoreImplementationException(
@@ -444,7 +461,10 @@ trait DeltaErrorsBase
   }
 
   def notADeltaTableException(operation: String): Throwable = {
-    new AnalysisException(s"$operation is only supported for Delta tables.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ONLY_OPERATION",
+      messageParameters = Array(operation)
+    )
   }
 
   def notADeltaSourceException(command: String, plan: Option[LogicalPlan] = None): Throwable = {
@@ -507,11 +527,9 @@ trait DeltaErrorsBase
   }
 
   def invalidPartitionColumn(e: AnalysisException): Throwable = {
-    new AnalysisException(
-      """Found partition columns having invalid character(s) among " ,;{}()\n\t=". Please """ +
-        "change the name to your partition columns. This check can be turned off by setting " +
-        """spark.conf.set("spark.databricks.delta.partitionColumnValidity.enabled", false) """ +
-        "however this is not recommended as other features of Delta may not work properly.",
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_PARTITION_COLUMN_NAME",
+      messageParameters = Array.empty,
       cause = Option(e))
   }
 
@@ -814,8 +832,11 @@ trait DeltaErrorsBase
   }
 
   def missingPartFilesException(version: Long, ae: Exception): Throwable = {
-    new IllegalStateException(
-      s"Couldn't find all part files of the checkpoint version: $version", ae)
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_PART_FILES",
+      messageParameters = Array(s"$version"),
+      cause = ae
+    )
   }
 
   def deltaVersionsNotContiguousException(
@@ -851,8 +872,10 @@ trait DeltaErrorsBase
   }
 
   def streamWriteNullTypeException: Throwable = {
-    new AnalysisException(
-      "Delta doesn't accept NullTypes in the schema for streaming writes.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE",
+      messageParameters = Array.empty
+    )
   }
 
   def schemaNotSetException: Throwable = {
@@ -1030,6 +1053,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION",
       messageParameters = Array(operation, field)
+    )
+  }
+
+  def nestedFieldsNeedRename(columns : Set[String], baseSchema : StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NESTED_FIELDS_NEED_RENAME",
+      messageParameters = Array(columns.mkString("[", ", ", "]"), formatSchema(baseSchema))
     )
   }
 
@@ -1270,7 +1300,10 @@ trait DeltaErrorsBase
   }
 
   def deltaLogAlreadyExistsException(path: String): Throwable = {
-    new AnalysisException(s"A Delta Lake log already exists at $path")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_LOG_ALREADY_EXISTS",
+      messageParameters = Array(path)
+    )
   }
 
   // should only be used by fast import
@@ -1347,6 +1380,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotSetLocationMultipleTimes(locations : Seq[String]) : Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES",
+      messageParameters = Array(s"${locations}")
+    )
+  }
+
   def cannotReplaceMissingTableException(itableIdentifier: Identifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_REPLACE_MISSING_TABLE",
@@ -1415,8 +1455,7 @@ trait DeltaErrorsBase
     )
   }
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
-    new AnalysisException(
-      s"Couldn't find column $column in:\n${schema.treeString}")
+    nonExistentColumnInSchema(column, schema.treeString)
   }
 
   def metadataAbsentException(): Throwable = {
@@ -1756,6 +1795,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
+  def dropNestedColumnsFromNonStructTypeException(struct : StructField) : Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+      messageParameters = Array(s"$struct")
+    )
+  }
+
   def dropPartitionColumnNotSupported(droppingPartCols: Seq[String]): Throwable = {
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_PARTITION_COLUMN",
       Array(droppingPartCols.mkString(",")))
@@ -1926,6 +1972,13 @@ trait DeltaErrorsBase
          | To disable check update option ${SQLConf.IGNORE_MISSING_FILES.key}"""
         .stripMargin
     )
+
+  def unexpectedAlias(alias : String) : Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNEXPECTED_ALIAS",
+      messageParameters = Array(alias)
+    )
+  }
 
   def unexpectedAttributeReference(ref: String): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE",

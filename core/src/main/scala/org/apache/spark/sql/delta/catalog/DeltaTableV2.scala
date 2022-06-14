@@ -36,7 +36,7 @@ import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapabi
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
@@ -75,9 +75,14 @@ case class DeltaTableV2(
   // bound the creation time of the table.
   private val creationTimeMs = System.currentTimeMillis()
 
+  // Options for DeltaLog creation.
+  private def deltaLogOptions: Map[String, String] = {
+    options
+  }
+
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
-  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
+  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, deltaLogOptions)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
@@ -146,7 +151,7 @@ case class DeltaTableV2(
 
   override def capabilities(): ju.Set[TableCapability] = Set(
     ACCEPT_ANY_SCHEMA, BATCH_READ,
-    V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
+    V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
   ).asJava
 
 
@@ -231,7 +236,7 @@ case class DeltaTableV2(
 private class WriteIntoDeltaBuilder(
     log: DeltaLog,
     writeOptions: CaseInsensitiveStringMap)
-  extends WriteBuilder with SupportsOverwrite with SupportsTruncate {
+  extends WriteBuilder with SupportsOverwrite with SupportsTruncate with SupportsDynamicOverwrite {
 
   private var forceOverwrite = false
 
@@ -248,6 +253,14 @@ private class WriteIntoDeltaBuilder(
       throw DeltaErrors.replaceWhereUsedInOverwrite()
     }
     options.put("replaceWhere", DeltaSourceUtils.translateFilters(filters).sql)
+    forceOverwrite = true
+    this
+  }
+
+  override def overwriteDynamicPartitions(): WriteBuilder = {
+    options.put(
+      DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION,
+      DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC)
     forceOverwrite = true
     this
   }

@@ -66,8 +66,8 @@ class DeltaLog private(
     val logPath: Path,
     val dataPath: Path,
     val options: Map[String, String],
-    val clock: Clock)
-  extends Checkpoints
+    val clock: Clock
+  ) extends Checkpoints
   with MetadataCleanup
   with LogStoreProvider
   with SnapshotManagement
@@ -588,7 +588,12 @@ object DeltaLog extends DeltaLogging {
       "delta.log.create",
       Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
         AnalysisHelper.allowInvokingTransformsInAnalyzer {
-          new DeltaLog(path, path.getParent, fileSystemOptions, clock)
+          new DeltaLog(
+            logPath = path,
+            dataPath = path.getParent,
+            options = fileSystemOptions,
+            clock = clock
+          )
         }
     }
     def getDeltaLogFromCache(): DeltaLog = {
