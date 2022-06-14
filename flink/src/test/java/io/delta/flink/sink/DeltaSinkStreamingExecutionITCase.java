@@ -32,7 +32,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.stream.LongStream;
 
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import io.delta.flink.sink.utils.TestParquetReader;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.state.CheckpointListener;
@@ -98,9 +99,9 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         try {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
             if (isPartitioned) {
-                DeltaSinkTestUtils.initTestForPartitionedTable(deltaTablePath);
+                DeltaTestUtils.initTestForPartitionedTable(deltaTablePath);
             } else {
-                DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+                DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
             }
         } catch (IOException e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
@@ -120,7 +121,7 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
 
     public void runDeltaSinkTest() throws Exception {
         // GIVEN
-        DeltaLog deltaLog = DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), deltaTablePath);
+        DeltaLog deltaLog = DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), deltaTablePath);
         List<AddFile> initialDeltaFiles = deltaLog.snapshot().getAllFiles();
 
         long initialVersion = deltaLog.snapshot().getVersion();
@@ -289,7 +290,7 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         private void sendRecordsUntil(int targetNumber, SourceContext<RowData> ctx) {
             while (!isCanceled && nextValue < targetNumber) {
                 synchronized (ctx.getCheckpointLock()) {
-                    RowData row = DeltaSinkTestUtils.CONVERTER.toInternal(
+                    RowData row = DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER.toInternal(
                         Row.of(
                             String.valueOf(nextValue),
                             String.valueOf((nextValue + nextValue)),

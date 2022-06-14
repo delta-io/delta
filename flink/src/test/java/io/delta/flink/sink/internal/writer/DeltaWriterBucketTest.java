@@ -30,7 +30,7 @@ import java.util.stream.Stream;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committer.DeltaCommitter;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import io.delta.flink.sink.utils.TestParquetReader;
+import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.MetricGroup;
@@ -301,7 +301,11 @@ public class DeltaWriterBucketTest {
         for (DeltaCommittable committable : committables) {
             Path filePath = new Path(bucketPath, committable.getDeltaPendingFile().getFileName());
             writtenRecordsCount +=
-                TestParquetReader.parseAndCountRecords(filePath, DeltaSinkTestUtils.TEST_ROW_TYPE);
+                TestParquetReader.parseAndCountRecords(
+                    filePath,
+                    DeltaSinkTestUtils.TEST_ROW_TYPE,
+                    DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER
+                );
         }
         return writtenRecordsCount;
     }

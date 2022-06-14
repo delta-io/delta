@@ -2,22 +2,26 @@ package io.delta.flink.source;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-import io.delta.flink.DeltaTestUtils;
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import io.delta.flink.source.ContinuousTestDescriptor.Descriptor;
-import io.delta.flink.source.RecordCounterToFail.FailCheck;
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
+import io.delta.flink.utils.ContinuousTestDescriptor;
+import io.delta.flink.utils.ContinuousTestDescriptor.Descriptor;
+import io.delta.flink.utils.DeltaTableUpdater;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.FailoverType;
+import io.delta.flink.utils.RecordCounterToFail.FailCheck;
+import io.delta.flink.utils.TableUpdateDescriptor;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -35,6 +39,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -87,7 +92,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         // Fail TaskManager or JobManager after half of the records or do not fail anything if
         // FailoverType.NONE.
         List<List<RowData>> resultData = testContinuousDeltaSource(failoverType, deltaSource,
-            new ContinuousTestDescriptor(INITIAL_DATA_SIZE),
+            new ContinuousTestDescriptor(
+                deltaSource.getTablePath().toUri().toString(),
+                INITIAL_DATA_SIZE),
             (FailCheck) readRows -> readRows == SMALL_TABLE_COUNT / 2);
 
         // total number of read rows.
@@ -117,7 +124,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
         // WHEN
         List<List<RowData>> resultData = testContinuousDeltaSource(failoverType, deltaSource,
-            new ContinuousTestDescriptor(LARGE_TABLE_RECORD_COUNT),
+            new ContinuousTestDescriptor(
+                deltaSource.getTablePath().toUri().toString(),
+                LARGE_TABLE_RECORD_COUNT),
             (FailCheck) readRows -> readRows == LARGE_TABLE_RECORD_COUNT / 2);
 
         int totalNumberOfRows = resultData.stream().mapToInt(List::size).sum();
@@ -220,7 +229,7 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         // Create a Source object with option "startingVersion" == 1;
         DeltaSource<RowData> source =  DeltaSource.forContinuousRowData(
                 Path.fromLocalFile(new File(nonPartitionedTablePath)),
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             )
             .startingVersion(1)
             .build();
@@ -254,17 +263,21 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         int expectedNumberOfChanges =
             versionOneUpdate.getNumberOfNewRows() + versionTwoUpdate.getNumberOfNewRows();
 
+        ExecutorService singleThreadExecutor = Executors.newSingleThreadExecutor();
+
         // Read data
         Future<List<RowData>> dataFuture =
-            startInitialResultsFetcherThread(
+            DeltaTestUtils.startInitialResultsFetcherThread(
                 new ContinuousTestDescriptor(
+                    source.getTablePath().toUri().toString(),
                     versionOneUpdate.getNumberOfNewRows() + versionTwoUpdate.getNumberOfNewRows()),
-                client
+                client,
+                singleThreadExecutor
             );
 
         // Creating a new thread that will wait some time to check if there are any "extra"
         // unexpected records.
-        Future<List<RowData>> unexpectedFuture = SINGLE_THREAD_EXECUTOR.submit(
+        Future<List<RowData>> unexpectedFuture = singleThreadExecutor.submit(
             () -> DataStreamUtils.collectRecordsFromUnboundedStream(client, 1));
 
         DeltaSourceConfiguration sourceConfiguration = source.getSourceConfiguration();
@@ -303,8 +316,12 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
     @Override
     protected List<RowData> testWithPartitions(DeltaSource<RowData> deltaSource) throws Exception {
-        return testContinuousDeltaSource(FailoverType.NONE, deltaSource,
-            new ContinuousTestDescriptor(2), (FailCheck) integer -> true).get(0);
+        return testContinuousDeltaSource(
+                FailoverType.NONE,
+                deltaSource,
+                new ContinuousTestDescriptor(deltaSource.getTablePath().toUri().toString(), 2),
+                (FailCheck) integer -> true)
+            .get(0);
     }
 
     /**
@@ -344,7 +361,13 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         DeltaSource<RowData> deltaSource,
         FailoverType failoverType)
         throws Exception {
-        ContinuousTestDescriptor testDescriptor = prepareTableUpdates();
+
+        ContinuousTestDescriptor testDescriptor = DeltaTestUtils.prepareTableUpdates(
+                deltaSource.getTablePath().toUri().toString(),
+                RowType.of(DATA_COLUMN_TYPES, DATA_COLUMN_NAMES),
+                INITIAL_DATA_SIZE,
+                new TableUpdateDescriptor(NUMBER_OF_TABLE_UPDATE_BULKS, ROWS_PER_TABLE_UPDATE)
+        );
 
         // WHEN
         List<List<RowData>> resultData =
@@ -372,23 +395,5 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         assertThat("Source Produced Different Rows that were in Delta Table",
             uniqueValues.size(),
             equalTo(INITIAL_DATA_SIZE + NUMBER_OF_TABLE_UPDATE_BULKS * ROWS_PER_TABLE_UPDATE));
-    }
-
-    /**
-     * Creates a {@link ContinuousTestDescriptor} for tests. The descriptor created by this method
-     * describes a scenario where Delta table will be updated {@link #NUMBER_OF_TABLE_UPDATE_BULKS}
-     * times, where every update will contain {@link #ROWS_PER_TABLE_UPDATE} new unique rows.
-     */
-    private ContinuousTestDescriptor prepareTableUpdates() {
-        ContinuousTestDescriptor testDescriptor = new ContinuousTestDescriptor(INITIAL_DATA_SIZE);
-        for (int i = 0; i < NUMBER_OF_TABLE_UPDATE_BULKS; i++) {
-            List<Row> newRows = new ArrayList<>();
-            for (int j = 0; j < ROWS_PER_TABLE_UPDATE; j++) {
-                newRows.add(Row.of("John-" + i + "-" + j, "Wick-" + i + "-" + j, j * i));
-            }
-            testDescriptor.add(
-                RowType.of(DATA_COLUMN_TYPES, DATA_COLUMN_NAMES), newRows);
-        }
-        return testDescriptor;
     }
 }

@@ -4,12 +4,12 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
+import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.data.RowData;
@@ -53,7 +53,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
 
         DeltaSource<RowData> boundedSource = DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
-                DeltaSinkTestUtils.getHadoopConf())
+                DeltaTestUtils.getHadoopConf())
             .build();
 
         assertThat(boundedSource, notNullValue());
@@ -550,7 +550,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         RowDataContinuousDeltaSourceBuilder builder =
             DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             );
 
         return (RowDataContinuousDeltaSourceBuilder)
@@ -569,7 +569,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
     protected RowDataContinuousDeltaSourceBuilder getBuilderForColumns(String[] columnNames) {
         return DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             )
             .columnNames((columnNames != null) ? Arrays.asList(columnNames) : null);
     }
@@ -578,7 +578,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
     protected RowDataContinuousDeltaSourceBuilder getBuilderAllColumns() {
         return DeltaSource.forContinuousRowData(
             new Path(TABLE_PATH),
-            DeltaSinkTestUtils.getHadoopConf()
+            DeltaTestUtils.getHadoopConf()
         );
     }
 
@@ -586,7 +586,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
     protected RowDataContinuousDeltaSourceBuilder getBuilderWithMutuallyExcludedOptions() {
         return DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             )
             .startingVersion(10)
             .startingTimestamp("2022-02-24T04:55:00.001");
@@ -596,7 +596,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
     protected RowDataContinuousDeltaSourceBuilder getBuilderWithGenericMutuallyExcludedOptions() {
         return DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             )
             .option(DeltaSourceOptions.STARTING_VERSION.key(), 10)
             .option(
@@ -609,7 +609,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         getBuilderWithNullMandatoryFieldsAndExcludedOption() {
         return DeltaSource.forContinuousRowData(
                 null,
-                DeltaSinkTestUtils.getHadoopConf()
+                DeltaTestUtils.getHadoopConf()
             )
             .startingTimestamp("2022-02-24T04:55:00.001")
             .option(DeltaSourceOptions.STARTING_VERSION.key(), 10);

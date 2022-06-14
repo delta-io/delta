@@ -31,7 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
+import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.core.fs.Path;
@@ -131,7 +131,7 @@ public class DeltaSinkWriteReadITCase {
 
         // THEN
         DeltaLog deltaLog =
-            DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), deltaTablePath);
+            DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), deltaTablePath);
         waitUntilDeltaLogExists(deltaLog);
         validate(deltaLog.snapshot(), testRow);
     }
@@ -214,7 +214,7 @@ public class DeltaSinkWriteReadITCase {
         DeltaSink<RowData> deltaSink = DeltaSink
             .forRowData(
                 new Path(deltaTablePath),
-                DeltaSinkTestUtils.getHadoopConf(), rowType).build();
+                DeltaTestUtils.getHadoopConf(), rowType).build();
         env.fromCollection(testData).sinkTo(deltaSink);
         try {
             env.execute();

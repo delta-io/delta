@@ -1,4 +1,4 @@
-package io.delta.flink.source;
+package io.delta.flink.utils;
 
 import java.io.Serializable;
 import java.util.concurrent.CompletableFuture;

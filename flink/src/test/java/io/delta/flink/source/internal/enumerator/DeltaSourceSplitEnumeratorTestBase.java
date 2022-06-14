@@ -6,7 +6,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.source.internal.DeltaSourceConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
@@ -14,6 +13,7 @@ import io.delta.flink.source.internal.file.AddFileEnumerator.SplitFilter;
 import io.delta.flink.source.internal.file.AddFileEnumeratorContext;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
+import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.connector.source.ReaderInfo;
 import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.connector.file.src.FileSourceSplit;
@@ -169,6 +169,7 @@ public abstract class DeltaSourceSplitEnumeratorTestBase {
         verify(enumContext).assignSplit(split, subtaskId);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     public void shouldReadInitialSnapshot() {
 
@@ -234,12 +235,12 @@ public abstract class DeltaSourceSplitEnumeratorTestBase {
     protected DeltaSourceSplitEnumerator createEnumerator() {
         return (DeltaSourceSplitEnumerator) getProvider().createInitialStateEnumerator(
             new Path(TABLE_PATH),
-            DeltaSinkTestUtils.getHadoopConf(), enumContext, sourceConfiguration);
+            DeltaTestUtils.getHadoopConf(), enumContext, sourceConfiguration);
     }
 
     protected DeltaSourceSplitEnumerator createEnumerator(
         DeltaEnumeratorStateCheckpoint<DeltaSourceSplit> checkpoint) {
         return (DeltaSourceSplitEnumerator) getProvider().createEnumeratorForCheckpoint(checkpoint,
-            DeltaSinkTestUtils.getHadoopConf(), enumContext, sourceConfiguration);
+            DeltaTestUtils.getHadoopConf(), enumContext, sourceConfiguration);
     }
 }

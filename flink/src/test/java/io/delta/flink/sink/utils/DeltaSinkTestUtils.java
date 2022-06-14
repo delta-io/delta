@@ -33,7 +33,8 @@ import io.delta.flink.sink.internal.DeltaSinkBuilder;
 import io.delta.flink.sink.internal.DeltaSinkInternal;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
-import org.apache.commons.io.FileUtils;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.connector.file.sink.utils.FileSinkTestUtils;
@@ -80,11 +81,13 @@ public class DeltaSinkTestUtils {
         new RowType.RowField("col2", new VarCharType(VarCharType.MAX_LENGTH))
     ));
 
-    public static final DataFormatConverters.DataFormatConverter<RowData, Row> CONVERTER =
-        DataFormatConverters.getConverterForDataType(
+    @SuppressWarnings("unchecked")
+    public static final DataFormatConverters.DataFormatConverter<RowData, Row>
+        TEST_ROW_TYPE_CONVERTER = DataFormatConverters.getConverterForDataType(
             TypeConversions.fromLogicalToDataType(TEST_ROW_TYPE)
         );
 
+    @SuppressWarnings("unchecked")
     public static final DataFormatConverters.DataFormatConverter<RowData, Row>
             PARTITIONED_CONVERTER = DataFormatConverters.getConverterForDataType(
             TypeConversions.fromLogicalToDataType(TEST_PARTITIONED_ROW_TYPE)
@@ -95,7 +98,7 @@ public class DeltaSinkTestUtils {
         for (int i = 0; i < num_records; i++) {
             Integer v = i;
             rows.add(
-                CONVERTER.toInternal(
+                TEST_ROW_TYPE_CONVERTER.toInternal(
                     Row.of(
                         String.valueOf(v),
                         String.valueOf((v + v)),
@@ -109,7 +112,7 @@ public class DeltaSinkTestUtils {
     public static RowData getTestRowDataEvent(String name,
                                               String surname,
                                               Integer age) {
-        return CONVERTER.toInternal(Row.of(name, surname, age));
+        return TEST_ROW_TYPE_CONVERTER.toInternal(Row.of(name, surname, age));
     }
 
     public static RowType addNewColumnToSchema(RowType schema) {
@@ -138,56 +141,6 @@ public class DeltaSinkTestUtils {
                 put("col1", "val1");
                 put("col2", "val2");
             }};
-    }
-
-    // TODO Refactor this by moving to DeltaTestUtils since Source tests are also using those
-    public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR =
-        "/test-data/test-non-partitioned-delta-table-initial-state";
-    public static final String TEST_DELTA_TABLE_INITIAL_STATE_P_DIR =
-        "/test-data/test-partitioned-delta-table-initial-state";
-    public static final String TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR =
-        "/test-data/test-non-partitioned-delta-table_1100_records";
-    public static final String TEST_PARTITIONED_DELTA_TABLE_SOURCE =
-        "/test-data/test-partitioned-delta-table-source";
-
-    public static void initTestForNonPartitionedTable(String targetTablePath)
-        throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
-    }
-
-    public static void initTestForSourcePartitionedTable(String targetTablePath)
-        throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_PARTITIONED_DELTA_TABLE_SOURCE;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
-    }
-
-    public static void initTestForPartitionedTable(String targetTablePath)
-        throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_TABLE_INITIAL_STATE_P_DIR;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
-    }
-
-    public static void initTestForNonPartitionedLargeTable(String targetTablePath)
-        throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -294,17 +247,6 @@ public class DeltaSinkTestUtils {
     }
 
     ///////////////////////////////////////////////////////////////////////////
-    // hadoop conf test utils
-    ///////////////////////////////////////////////////////////////////////////
-
-    public static org.apache.hadoop.conf.Configuration getHadoopConf() {
-        org.apache.hadoop.conf.Configuration conf = new org.apache.hadoop.conf.Configuration();
-        conf.set("parquet.compression", "SNAPPY");
-        conf.set("io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID", "UTC");
-        return conf;
-    }
-
-    ///////////////////////////////////////////////////////////////////////////
     // filesystem test utils
     ///////////////////////////////////////////////////////////////////////////
 
@@ -325,7 +267,9 @@ public class DeltaSinkTestUtils {
             assertTrue(file.length() > 100);
             totalRecordsCount += TestParquetReader.parseAndCountRecords(
                 new Path(file.toURI()),
-                DeltaSinkTestUtils.TEST_ROW_TYPE);
+                DeltaSinkTestUtils.TEST_ROW_TYPE,
+                TEST_ROW_TYPE_CONVERTER
+            );
         }
         return totalRecordsCount;
     }
@@ -338,7 +282,7 @@ public class DeltaSinkTestUtils {
     public static ParquetWriterFactory<RowData> createTestWriterFactory() {
         return ParquetRowDataBuilder.createWriterFactory(
             DeltaSinkTestUtils.TEST_ROW_TYPE,
-            DeltaSinkTestUtils.getHadoopConf(),
+            DeltaTestUtils.getHadoopConf(),
             true // utcTimestamp
         );
     }
@@ -389,10 +333,10 @@ public class DeltaSinkTestUtils {
         if (isTablePartitioned) {
             DeltaSinkBuilder<RowData> builder = new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
                 new Path(deltaTablePath),
-                DeltaSinkTestUtils.getHadoopConf(),
+                DeltaTestUtils.getHadoopConf(),
                 ParquetRowDataBuilder.createWriterFactory(
                     DeltaSinkTestUtils.TEST_ROW_TYPE,
-                    DeltaSinkTestUtils.getHadoopConf(),
+                    DeltaTestUtils.getHadoopConf(),
                     true // utcTimestamp
                 ),
                 new BasePathBucketAssigner<>(),
@@ -407,7 +351,7 @@ public class DeltaSinkTestUtils {
         return DeltaSink
             .forRowData(
                 new Path(deltaTablePath),
-                DeltaSinkTestUtils.getHadoopConf(),
+                DeltaTestUtils.getHadoopConf(),
                 DeltaSinkTestUtils.TEST_ROW_TYPE).build();
     }
 

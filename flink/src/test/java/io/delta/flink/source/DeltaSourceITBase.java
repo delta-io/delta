@@ -1,42 +1,28 @@
 package io.delta.flink.source;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import io.delta.flink.source.RecordCounterToFail.FailCheck;
-import org.apache.flink.api.common.JobID;
+import io.delta.flink.utils.ContinuousTestDescriptor;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.ExecutionITCaseTestConstants;
+import io.delta.flink.utils.FailoverType;
+import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.connector.source.Boundedness;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.CoreOptions;
-import org.apache.flink.runtime.highavailability.nonha.embedded.HaLeadershipControl;
-import org.apache.flink.runtime.minicluster.MiniCluster;
-import org.apache.flink.runtime.minicluster.RpcServiceSharing;
-import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.DataStreamUtils;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.operators.collect.ClientAndIterator;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.CharType;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.util.TestLogger;
 import org.junit.jupiter.api.Test;
 import org.junit.rules.TemporaryFolder;
+import static io.delta.flink.utils.DeltaTestUtils.buildCluster;
+import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -44,88 +30,33 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public abstract class DeltaSourceITBase extends TestLogger {
 
-    public static final TemporaryFolder TMP_FOLDER = new TemporaryFolder();
-
-    protected static final LogicalType[] DATA_COLUMN_TYPES =
-        {new CharType(), new CharType(), new IntType()};
-
-    protected static final List<String> NAME_COLUMN_VALUES =
-        Stream.of("Jan", "Jan").collect(Collectors.toList());
-
-    protected static final Set<String> SURNAME_COLUMN_VALUES =
-        Stream.of("Kowalski", "Duda").collect(Collectors.toSet());
-
-    protected static final Set<Integer> AGE_COLUMN_VALUES =
-        Stream.of(1, 2).collect(Collectors.toSet());
-
-    /**
-     * Columns that are not used as a partition columns.
-     */
-    protected static final String[] DATA_COLUMN_NAMES = {"name", "surname", "age"};
-
-    // Large table has no partitions.
-    protected static final String[] LARGE_TABLE_ALL_COLUMN_NAMES = {"col1", "col2", "col3"};
-
-    protected static final int SMALL_TABLE_COUNT = 2;
-
-    protected static final int LARGE_TABLE_RECORD_COUNT = 1100;
+    protected static final TemporaryFolder TMP_FOLDER = new TemporaryFolder();
 
     protected static final int PARALLELISM = 4;
 
-    protected static final ExecutorService SINGLE_THREAD_EXECUTOR =
-        Executors.newSingleThreadExecutor();
-
-    public final MiniClusterWithClientResource miniClusterResource = buildCluster();
+    protected final MiniClusterWithClientResource miniClusterResource = buildCluster(PARALLELISM);
 
     /**
-     * Schema for this table has only {@link #DATA_COLUMN_NAMES} of type {@link #DATA_COLUMN_TYPES}
-     * columns.
+     * Schema for this table has only {@link ExecutionITCaseTestConstants#DATA_COLUMN_NAMES}
+     * of type {@link ExecutionITCaseTestConstants#DATA_COLUMN_TYPES} columns.
      */
     protected String nonPartitionedTablePath;
 
     /**
-     * Schema for this table contains data columns {@link #DATA_COLUMN_NAMES} and col1, col2
-     * partition columns. Types of data columns are {@link #DATA_COLUMN_TYPES}
+     * Schema for this table contains data columns
+     * {@link ExecutionITCaseTestConstants#DATA_COLUMN_NAMES} and col1, col2
+     * partition columns. Types of data columns are
+     * {@link ExecutionITCaseTestConstants#DATA_COLUMN_TYPES}
      */
     protected String partitionedTablePath;
 
     /**
-     * Schema for this table has only {@link #LARGE_TABLE_ALL_COLUMN_NAMES} of type {@link
-     * #LARGE_TABLE_ALL_COLUMN_NAMES} columns. Column types are long, long, String
+     * Schema for this table has only
+     * {@link ExecutionITCaseTestConstants#LARGE_TABLE_ALL_COLUMN_NAMES} of type
+     * {@link ExecutionITCaseTestConstants#LARGE_TABLE_ALL_COLUMN_TYPES} columns.
+     * Column types are long, long, String
      */
     protected String nonPartitionedLargeTablePath;
-
-    private static void triggerFailover(FailoverType type, JobID jobId, Runnable afterFailAction,
-        MiniCluster miniCluster) throws Exception {
-        switch (type) {
-            case NONE:
-                afterFailAction.run();
-                break;
-            case TASK_MANAGER:
-                restartTaskManager(afterFailAction, miniCluster);
-                break;
-            case JOB_MANAGER:
-                triggerJobManagerFailover(jobId, afterFailAction, miniCluster);
-                break;
-        }
-    }
-
-    private static void triggerJobManagerFailover(
-        JobID jobId, Runnable afterFailAction, MiniCluster miniCluster) throws Exception {
-        System.out.println("Triggering Job Manager failover.");
-        HaLeadershipControl haLeadershipControl = miniCluster.getHaLeadershipControl().get();
-        haLeadershipControl.revokeJobMasterLeadership(jobId).get();
-        afterFailAction.run();
-        haLeadershipControl.grantJobMasterLeadership(jobId).get();
-    }
-
-    public static void restartTaskManager(Runnable afterFailAction, MiniCluster miniCluster)
-        throws Exception {
-        System.out.println("Triggering Task Manager failover.");
-        miniCluster.terminateTaskManager(0).get();
-        afterFailAction.run();
-        miniCluster.startTaskManager();
-    }
 
     public static void beforeAll() throws IOException {
         TMP_FOLDER.create();
@@ -143,10 +74,9 @@ public abstract class DeltaSourceITBase extends TestLogger {
             nonPartitionedLargeTablePath = TMP_FOLDER.newFolder().getAbsolutePath();
             partitionedTablePath = TMP_FOLDER.newFolder().getAbsolutePath();
 
-            // TODO Move this from DeltaSinkTestUtils to DeltaTestUtils
-            DeltaSinkTestUtils.initTestForSourcePartitionedTable(partitionedTablePath);
-            DeltaSinkTestUtils.initTestForNonPartitionedTable(nonPartitionedTablePath);
-            DeltaSinkTestUtils.initTestForNonPartitionedLargeTable(
+            DeltaTestUtils.initTestForPartitionedTable(partitionedTablePath);
+            DeltaTestUtils.initTestForNonPartitionedTable(nonPartitionedTablePath);
+            DeltaTestUtils.initTestForNonPartitionedLargeTable(
                 nonPartitionedLargeTablePath);
         } catch (Exception e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
@@ -354,8 +284,8 @@ public abstract class DeltaSourceITBase extends TestLogger {
 
     /**
      * Base method used for testing {@link DeltaSource} in {@link Boundedness#BOUNDED} mode. This
-     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code
-     * DeltaSource} instance.
+     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code DeltaSource}
+     * instance.
      * <p>
      * <p>
      * The created environment can perform a failover after condition described by {@link FailCheck}
@@ -368,47 +298,9 @@ public abstract class DeltaSourceITBase extends TestLogger {
      *                     by source.
      * @param <T>          Type of objects produced by source.
      * @return A {@link List} of produced records.
-     * @implNote The {@code RecordCounterToFail::wrapWithFailureAfter} for every row checks the
-     * "fail check" and if true and if this is a first fail check it completes the FAIL {@code
-     * CompletableFuture} and waits on continueProcessing {@code CompletableFuture} next.
-     * <p>
-     * The flow is:
-     * <ul>
-     *      <li>
-     *          The main test thread creates Flink's Streaming Environment.
-     *      </li>
-     *      <li>
-     *          The main test thread creates Delta source.
-     *      </li>
-     *      <li>
-     *          The main test thread wraps created source with {@code wrapWithFailureAfter} which
-     *          has the {@code FailCheck} condition.
-     *      </li>
-     *      <li>
-     *          The main test thread starts the "test Flink cluster" to produce records from
-     *          Source via {@code DataStreamUtils.collectWithClient(...)}. As a result there is a
-     *          Flink mini cluster created and data is consumed by source on a new thread.
-     *      </li>
-     *      <li>
-     *          The main thread waits for "fail signal" that is issued by calling fail
-     *          .complete. This is done on that new thread from point above. After calling {@code
-     *          fail.complete} the source thread waits on {@code continueProcessing.get()};
-     *       </li>
-     *       <li>
-     *           When the main thread sees that fail.complete was executed by the Source
-     *          thread, it triggers the "generic" failover based on failoverType by calling
-     *          {@code triggerFailover(
-     *          ...)}.
-     *      </li>
-     *      <li>
-     *          After failover is complied, the main thread calls
-     *          {@code RecordCounterToFail::continueProcessing},
-     *          which releases the Source thread and resumes record consumption.
-     *       </li>
-     * </ul>
-     * For test where FailoverType == NONE, we trigger fail signal on a first record, Main thread
-     * executes triggerFailover method which only sends a continueProcessing signal that resumes
-     * the Source thread.
+     * @implNote For Implementation details please refer to
+     * {@link DeltaTestUtils#testBoundedStream(FailoverType,
+     * FailCheck, DataStream, MiniClusterWithClientResource)} method.
      */
     protected <T> List<T> testBoundedDeltaSource(FailoverType failoverType, DeltaSource<T> source,
         FailCheck failCheck) throws Exception {
@@ -426,32 +318,8 @@ public abstract class DeltaSourceITBase extends TestLogger {
         DataStream<T> stream =
             env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source");
 
-        DataStream<T> failingStreamDecorator =
-            RecordCounterToFail.wrapWithFailureAfter(stream, failCheck);
-
-        ClientAndIterator<T> client =
-            DataStreamUtils.collectWithClient(
-                failingStreamDecorator, "Bounded Delta Source Test");
-        JobID jobId = client.client.getJobID();
-
-        // Wait with main thread until FailCheck from RecordCounterToFail.wrapWithFailureAfter
-        // triggers.
-        RecordCounterToFail.waitToFail();
-
-        // Trigger The Failover with desired failover failoverType and continue processing after
-        // recovery.
-        triggerFailover(
-            failoverType,
-            jobId,
-            RecordCounterToFail::continueProcessing,
-            miniClusterResource.getMiniCluster());
-
-        final List<T> result = new ArrayList<>();
-        while (client.iterator.hasNext()) {
-            result.add(client.iterator.next());
-        }
-
-        return result;
+        return DeltaTestUtils
+            .testBoundedStream(failoverType, failCheck, stream, miniClusterResource);
     }
 
     /**
@@ -470,98 +338,29 @@ public abstract class DeltaSourceITBase extends TestLogger {
      *                     by source.
      * @param <T>          Type of objects produced by source.
      * @return A {@link List} of produced records.
-     * @implNote The {@code RecordCounterToFail::wrapWithFailureAfter} for every row checks the
-     * "fail check" and if true and if this is a first fail check it completes the FAIL {@code
-     * CompletableFuture} and waits on continueProcessing {@code CompletableFuture} next.
-     * <p>
-     * The flow is:
-     * <ul>
-     *      <li>
-     *          The main test thread creates Flink's Streaming Environment.
-     *      </li>
-     *      <li>
-     *          The main test thread creates Delta source.
-     *      </li>
-     *      <li>
-     *          The main test thread wraps created source with {@code wrapWithFailureAfter} which
-     *          has the {@code FailCheck} condition.
-     *      </li>
-     *      <li>
-     *          The main test thread starts the "test Flink cluster" to produce records from
-     *          Source via {@code DataStreamUtils.collectWithClient(...)}. As a result there is a
-     *          Flink mini cluster created and data is consumed by source on a new thread.
-     *      </li>
-     *      <li>
-     *          The main thread waits for "fail signal" that is issued by calling fail
-     *          .complete. This is done on that new thread from point above. After calling {@code
-     *          fail.complete} the source thread waits on {@code continueProcessing.get()};
-     *       </li>
-     *       <li>
-     *           When the main thread sees that fail.complete was executed by the Source
-     *          thread, it triggers the "generic" failover based on failoverType by calling
-     *          {@code triggerFailover(...)}.
-     *      </li>
-     *      <li>
-     *          After failover is complied, the main thread calls
-     *          {@code RecordCounterToFail::continueProcessing},
-     *          which releases the Source thread and resumes record consumption.
-     *       </li>
-     * </ul>
-     * For test where FailoverType == NONE, we trigger fail signal on a first record, Main thread
-     * executes triggerFailover method which only sends a continueProcessing signal that resumes
-     * the Source thread.
+     * @implNote For Implementation details please refer to
+     * {@link DeltaTestUtils#testContinuousStream(FailoverType, ContinuousTestDescriptor,
+     * FailCheck, DataStream, MiniClusterWithClientResource)}
      */
     protected <T> List<List<T>> testContinuousDeltaSource(
-        FailoverType failoverType, DeltaSource<T> source, ContinuousTestDescriptor testDescriptor,
-        FailCheck failCheck)
+            FailoverType failoverType,
+            DeltaSource<T> source,
+            ContinuousTestDescriptor testDescriptor,
+            FailCheck failCheck)
         throws Exception {
 
         StreamExecutionEnvironment env = prepareStreamingEnvironment(source);
 
-        DeltaTableUpdater tableUpdater = new DeltaTableUpdater(source.getTablePath().toString());
-
         DataStream<T> stream =
             env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source");
 
-        DataStream<T> failingStreamDecorator =
-            RecordCounterToFail.wrapWithFailureAfter(stream, failCheck);
-
-        ClientAndIterator<T> client =
-            DataStreamUtils.collectWithClient(failingStreamDecorator,
-                "Continuous Delta Source Test");
-
-        JobID jobId = client.client.getJobID();
-
-        // Read data from initial snapshot
-        Future<List<T>> initialDataFuture =
-            startInitialResultsFetcherThread(testDescriptor, client);
-
-        // Read data from table updates.
-        Future<List<T>> tableUpdaterFuture =
-            startTableUpdaterThread(testDescriptor, tableUpdater, client);
-
-        RecordCounterToFail.waitToFail();
-        triggerFailover(
-            failoverType,
-            jobId,
-            RecordCounterToFail::continueProcessing,
-            miniClusterResource.getMiniCluster());
-
-        // Main thread waits up to 5 minutes for all threads to finish. Fails of timeout.
-        List<List<T>> totalResults = new ArrayList<>();
-        totalResults.add(initialDataFuture.get(5, TimeUnit.MINUTES));
-        totalResults.add(tableUpdaterFuture.get(5, TimeUnit.MINUTES));
-        client.client.cancel().get(5, TimeUnit.MINUTES);
-
-        return totalResults;
-    }
-
-    protected <T> Future<List<T>> startInitialResultsFetcherThread(
-        ContinuousTestDescriptor testDescriptor,
-        ClientAndIterator<T> client) {
-        return SINGLE_THREAD_EXECUTOR.submit(
-            () -> (DataStreamUtils.collectRecordsFromUnboundedStream(client,
-                testDescriptor.getInitialDataSize())));
+        return DeltaTestUtils.testContinuousStream(
+                failoverType,
+                testDescriptor,
+                failCheck,
+                stream,
+                miniClusterResource
+        );
     }
 
     protected void assertPartitionValue(
@@ -596,37 +395,6 @@ public abstract class DeltaSourceITBase extends TestLogger {
         return env;
     }
 
-    private MiniClusterWithClientResource buildCluster() {
-        Configuration configuration = new Configuration();
-        configuration.set(CoreOptions.CHECK_LEAKED_CLASSLOADER, false);
-
-        return new MiniClusterWithClientResource(
-            new MiniClusterResourceConfiguration.Builder()
-                .setNumberTaskManagers(1)
-                .setNumberSlotsPerTaskManager(PARALLELISM)
-                .setRpcServiceSharing(RpcServiceSharing.DEDICATED)
-                .withHaLeadershipControl()
-                .setConfiguration(configuration)
-                .build());
-    }
-
-    private <T> Future<List<T>> startTableUpdaterThread(ContinuousTestDescriptor testDescriptor,
-        DeltaTableUpdater tableUpdater, ClientAndIterator<T> client) {
-        return SINGLE_THREAD_EXECUTOR.submit(
-            () ->
-            {
-                List<T> results = new LinkedList<>();
-                testDescriptor.getUpdateDescriptors().forEach(descriptor -> {
-                    tableUpdater.writeToTable(descriptor);
-                    List<T> records = DataStreamUtils.collectRecordsFromUnboundedStream(client,
-                        descriptor.getNumberOfNewRows());
-                    System.out.println("Stream update result size: " + records.size());
-                    results.addAll(records);
-                });
-                return results;
-            });
-    }
-
     private void assertNoMoreColumns(List<RowData> resultData, int columnIndex) {
         resultData.forEach(rowData ->
             assertThrows(
@@ -636,23 +404,4 @@ public abstract class DeltaSourceITBase extends TestLogger {
             )
         );
     }
-
-    public enum FailoverType {
-
-        /**
-         * Indicates that no failover should take place.
-         */
-        NONE,
-
-        /**
-         * Indicates that failover was caused by Task Manager failure
-         */
-        TASK_MANAGER,
-
-        /**
-         * Indicates that failover was caused by Job Manager failure
-         */
-        JOB_MANAGER
-    }
-
 }

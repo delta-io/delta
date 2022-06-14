@@ -1,4 +1,4 @@
-package io.delta.flink.source;
+package io.delta.flink.utils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,6 +14,11 @@ import org.apache.flink.types.Row;
 public class ContinuousTestDescriptor {
 
     /**
+     * Path to Delta table
+     */
+    private final String tablePath;
+
+    /**
      * Number of rows in test Delta table before starting adding new data.
      */
     private final int initialDataSize;
@@ -24,7 +29,8 @@ public class ContinuousTestDescriptor {
      */
     private final List<Descriptor> updateDescriptors = new ArrayList<>();
 
-    public ContinuousTestDescriptor(int initialDataSize) {
+    public ContinuousTestDescriptor(String tablePath, int initialDataSize) {
+        this.tablePath = tablePath;
         this.initialDataSize = initialDataSize;
     }
 
@@ -42,6 +48,10 @@ public class ContinuousTestDescriptor {
 
     public int getInitialDataSize() {
         return initialDataSize;
+    }
+
+    public String getTablePath() {
+        return tablePath;
     }
 
     /**

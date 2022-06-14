@@ -8,9 +8,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import io.delta.flink.DeltaTestUtils;
-import io.delta.flink.source.ContinuousTestDescriptor.Descriptor;
-import io.delta.flink.source.RecordCounterToFail.FailCheck;
+import io.delta.flink.utils.ContinuousTestDescriptor.Descriptor;
+import io.delta.flink.utils.DeltaTableUpdater;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.FailoverType;
+import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 
@@ -164,8 +167,8 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
     }
 
     private void shouldReadDeltaTable(
-        DeltaSource<RowData> deltaSource,
-        FailoverType failoverType) throws Exception {
+            DeltaSource<RowData> deltaSource,
+            FailoverType failoverType) throws Exception {
         // WHEN
         // Fail TaskManager or JobManager after half of the records or do not fail anything if
         // FailoverType.NONE.

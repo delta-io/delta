@@ -30,6 +30,7 @@ import java.util.regex.Pattern;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
+import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.types.logical.RowType;
 import org.junit.Before;
@@ -75,7 +76,7 @@ public class DeltaGlobalCommitterTestParametrized {
         );
     }
 
-    @Parameterized.Parameter(0)
+    @Parameterized.Parameter()
     public boolean mergeSchema;
 
     @Parameterized.Parameter(1)
@@ -94,13 +95,13 @@ public class DeltaGlobalCommitterTestParametrized {
         tablePath = new Path(TEMPORARY_FOLDER.newFolder().toURI());
         if (initializeTableBeforeCommit) {
             if (partitionSpec.isEmpty()) {
-                DeltaSinkTestUtils.initTestForNonPartitionedTable(
+                DeltaTestUtils.initTestForNonPartitionedTable(
                     tablePath.getPath());
             } else {
-                DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
+                DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
             }
         }
-        deltaLog = DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
+        deltaLog = DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), tablePath.getPath());
         RowType rowType = (partitionSpec.isEmpty()) ?
             DeltaSinkTestUtils.TEST_ROW_TYPE : DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE;
 
@@ -112,7 +113,7 @@ public class DeltaGlobalCommitterTestParametrized {
     public void testCommitToDeltaTableInAppendMode() {
         //GIVEN
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
-            DeltaSinkTestUtils.getHadoopConf(),
+            DeltaTestUtils.getHadoopConf(),
             tablePath,
             rowTypeToCommit,
             mergeSchema);

@@ -27,7 +27,8 @@ import java.util.stream.LongStream;
 
 import io.delta.flink.sink.internal.DeltaSinkInternal;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import io.delta.flink.sink.utils.TestParquetReader;
+import io.delta.flink.utils.DeltaTestUtils;
+import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
@@ -57,7 +58,7 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
     public void setup() {
         try {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-            DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+            DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
         } catch (IOException e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
         }
@@ -71,7 +72,7 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
 
     public void runDeltaSinkTest() throws Exception {
         // GIVEN
-        DeltaLog deltaLog = DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), deltaTablePath);
+        DeltaLog deltaLog = DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), deltaTablePath);
         List<AddFile> initialDeltaFiles = deltaLog.snapshot().getAllFiles();
         int initialTableRecordsCount = TestParquetReader.readAndValidateAllTableRecords(deltaLog);
         long initialVersion = deltaLog.snapshot().getVersion();

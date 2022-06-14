@@ -4,12 +4,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.function.Supplier;
 
-import io.delta.flink.DeltaTestUtils;
 import io.delta.flink.source.DeltaSource;
 import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
 import io.delta.flink.source.internal.enumerator.supplier.SnapshotSupplierFactory;
 import io.delta.flink.source.internal.exceptions.DeltaSourceException;
 import io.delta.flink.source.internal.utils.SourceSchema;
+import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.IntType;
