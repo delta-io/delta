@@ -93,7 +93,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
       case _ => true
-    }
+    }.toMap
     val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
     var newSchema = schema
     var newPartitionColumns = partitionColumns
@@ -130,7 +130,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
-    val tableDesc = new CatalogTable(
+    var tableDesc = new CatalogTable(
       identifier = id,
       tableType = tableType,
       storage = storage,
@@ -138,7 +138,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       provider = Some(DeltaSourceUtils.ALT_NAME),
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
-      properties = tableProperties.toMap,
+      properties = tableProperties,
       comment = commentOpt)
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
