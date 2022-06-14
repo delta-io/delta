@@ -669,6 +669,9 @@ class DeltaSuite extends QueryTest
 
   test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = false: defaults to static overwrites") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
+      // This checks that when dynamic partition overwrite mode is disabled, we return to our
+      // previous behavior: setting `partitionOverwriteMode` to `dynamic` is a no-op, and we
+      // statically overwrite data
 
       // DataFrame write, dynamic partition overwrite enabled in DataFrameWriter option
       withTempDir { tempDir =>
