@@ -144,7 +144,7 @@ abstract class ConvertToDeltaCommandBase(
   private def convertMetadata(
       catalogTable: CatalogTable,
       sessionCatalog: SessionCatalog): Unit = {
-    val newCatalog = catalogTable.copy(
+    var newCatalog = catalogTable.copy(
       provider = Some("delta"),
       // TODO: Schema changes unfortunately doesn't get reflected in the HiveMetaStore. Should be
       // fixed in Apache Spark
@@ -241,7 +241,10 @@ abstract class ConvertToDeltaCommandBase(
             collectStats = false,
             catalogTable = catalogTable.map(t => t.identifier.toString)))
       }
-      convertMetadata(catalogTable.get, spark.sessionState.catalog)
+      convertMetadata(
+        catalogTable.get,
+        spark.sessionState.catalog
+      )
     } else {
       logConsole("The table you are trying to convert is already a delta table")
     }
@@ -362,7 +365,10 @@ abstract class ConvertToDeltaCommandBase(
 
     // If there is a catalog table, convert metadata
     if (convertProperties.catalogTable.isDefined) {
-      convertMetadata(convertProperties.catalogTable.get, spark.sessionState.catalog)
+      convertMetadata(
+        convertProperties.catalogTable.get,
+        spark.sessionState.catalog
+      )
     }
 
     Seq.empty[Row]
