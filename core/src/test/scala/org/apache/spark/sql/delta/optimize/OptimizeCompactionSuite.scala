@@ -529,7 +529,6 @@ class OptimizeCompactionScalaSuite extends OptimizeCompactionSuiteBase
   def executeOptimizePath(path: String, condition: Option[String] = None): Unit = {
     if (condition.isDefined) {
       DeltaTable.forPath(path).optimize().where(condition.get).executeCompaction()
-      DeltaTable.forPath(path).optimize().where(condition.get).executeCompaction()
     } else {
       DeltaTable.forPath(path).optimize().executeCompaction()
     }
