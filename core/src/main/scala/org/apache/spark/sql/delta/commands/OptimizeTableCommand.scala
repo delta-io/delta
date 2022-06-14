@@ -199,7 +199,7 @@ class OptimizeExecutor(
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
       if (addedFiles.size > 0) {
-        val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql))
+        val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql), zOrderByColumns)
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles)
         commitAndRetry(txn, operation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
@@ -232,12 +232,13 @@ class OptimizeExecutor(
         val inputFileStats =
           ZOrderFileStats(removedFiles.size, removedFiles.map(_.size.getOrElse(0L)).sum)
         optimizeStats.zOrderStats = Some(ZOrderStats(
-          strategyName = "zorder",
+          strategyName = "all", // means process all files in a partition
           inputCubeFiles = ZOrderFileStats(0, 0),
           inputOtherFiles = inputFileStats,
           inputNumCubes = 0,
           mergedFiles = inputFileStats,
-          numOutputCubes = 1))
+          // There will one z-cube for each partition
+          numOutputCubes = optimizeStats.numPartitionsOptimized))
       }
 
       return Seq(Row(deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
