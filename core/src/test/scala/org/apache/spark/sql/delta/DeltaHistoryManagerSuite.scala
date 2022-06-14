@@ -76,12 +76,23 @@ trait DeltaTimeTravelTests extends QueryTest
 
 
   /** Alternate for `withTables` as we leave some tables in an unusable state for clean up */
-  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    val tablePaths = tableNames.map(t =>
-      spark.sessionState.catalog.defaultTablePath(TableIdentifier(t)))
+  protected def withTable(tableName: String, dir: String)(f: => Unit): Unit = {
     try f finally {
-      tablePaths.foreach(p => Utils.deleteRecursively(new File(p)))
-      tableNames.foreach(t => sql(s"DROP TABLE IF EXISTS $t"))
+      try {
+        Utils.deleteRecursively(new File(dir.toString))
+      } catch {
+        case _: Throwable =>
+          Nil // do nothing, this can fail if the table was deleted by the test.
+      } finally {
+        try {
+          sql(s"DROP TABLE IF EXISTS $tableName")
+        } catch {
+          case _: Throwable =>
+            // There is one test that fails the drop table as well
+            // we ignore this exception as that test uses a path based location.
+            Nil
+        }
+      }
     }
   }
 
