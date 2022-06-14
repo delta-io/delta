@@ -205,7 +205,6 @@ class DeltaLog private(
    * directly to the [[DeltaLog]] otherwise they will not be checked for conflicts.
    */
   def startTransaction(): OptimisticTransaction = {
-    update()
     new OptimisticTransaction(this)
   }
 

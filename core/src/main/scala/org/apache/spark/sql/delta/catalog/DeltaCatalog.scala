@@ -480,7 +480,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
-            val schema = table.deltaLog.snapshot.schema
+            // TODO: Theoretically we should be able to fetch the snapshot from a txn.
+            val schema = table.snapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)

@@ -108,7 +108,7 @@ class OptimisticTransaction
    * @param deltaLog The Delta Log for the table this transaction is modifying.
    */
   def this(deltaLog: DeltaLog)(implicit clock: Clock) {
-    this(deltaLog, deltaLog.snapshot)
+    this(deltaLog, deltaLog.update())
   }
 }
 
@@ -819,7 +819,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /**
    * Returns true if we should checkpoint the version that has just been committed.
    */
-  protected def shouldCheckpoint(committedVersion: Long): Boolean = {
+  protected def shouldCheckpoint(committedVersion: Long, latestSnapshot: Snapshot): Boolean = {
     committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
 
@@ -972,7 +972,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ =>
     }
 
-    val needsCheckpoint = shouldCheckpoint(attemptVersion)
+    val needsCheckpoint = shouldCheckpoint(attemptVersion, postCommitSnapshot)
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
@@ -1069,8 +1069,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns the next attempt version given the last attempted version */
   protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    deltaLog.update()
-    deltaLog.snapshot.version + 1
+    deltaLog.update().version + 1
   }
 
   /** Register a hook that will be executed once a commit is successful. */

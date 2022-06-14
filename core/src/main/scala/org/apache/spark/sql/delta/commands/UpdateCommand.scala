@@ -93,7 +93,7 @@ case class UpdateCommand(
     var rewriteTimeMs: Long = 0
 
     val startTime = System.nanoTime()
-    val numFilesTotal = deltaLog.snapshot.numOfFiles
+    val numFilesTotal = txn.snapshot.numOfFiles
 
     val updateCondition = condition.getOrElse(Literal.TrueLiteral)
     val (metadataPredicates, dataPredicates) =
