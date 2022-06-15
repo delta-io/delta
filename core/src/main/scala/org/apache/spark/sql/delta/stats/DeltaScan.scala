@@ -54,7 +54,6 @@ object DataSize {
 object DeltaDataSkippingType extends Enumeration {
   type DeltaDataSkippingType = Value
   // V1: code path in DataSkippingReader.scala, which needs StateReconstruction
-  // V2: code path in DataSkippingReaderV2.scala, which does NOT need StateReconstruction
   // noSkipping: no skipping and get all files from the Delta table
   // partitionFiltering: filtering and skipping based on partition columns
   // dataSkipping: filtering and skipping based on stats columns
