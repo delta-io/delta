@@ -764,6 +764,10 @@
     "message" : [ "Expected AttributeReference but got <ref>" ],
     "sqlState" : "42000"
   },
+  "DELTA_UNEXPECTED_CHANGE_FILES_FOUND" : {
+    "message" : [ "Change files found in a dataChange = false transaction. Files:", "<fileList>" ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME" : {
     "message" : [ "Expecting <expectedColsSize> partition column(s): <expectedCols>, but found <parsedColsSize> partition column(s): <parsedCols> from parsing the file name: <path>" ],
     "sqlState" : "42000"

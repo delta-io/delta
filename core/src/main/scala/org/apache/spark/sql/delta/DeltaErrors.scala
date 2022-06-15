@@ -386,6 +386,12 @@ trait DeltaErrorsBase
         s"Start version cannot be greater than the latest version of the table($latest).")
   }
 
+  def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNEXPECTED_CHANGE_FILES_FOUND",
+      messageParameters = Array(changeFiles))
+  }
+
   def addColumnAtIndexLessThanZeroException(pos: String, col: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO",
