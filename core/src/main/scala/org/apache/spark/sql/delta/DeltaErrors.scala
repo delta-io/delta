@@ -2201,6 +2201,13 @@ trait DeltaErrorsBase
       messageParameters = Array(dataFilters)
     )
   }
+
+  def blockColumnMappingAndCdcOperation(op: DeltaOperations.Operation): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION",
+      messageParameters = Array(op.name)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

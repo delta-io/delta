@@ -577,6 +577,45 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * We want to future-proof and explicitly block any occurrences of
+   * - table has CDC enabled and there are FileActions to write, AND
+   * - table has column mapping enabled and there is a column mapping related metadata action
+   *
+   * This is because the semantics for this combination of features and file changes is undefined.
+   */
+  private def performCdcColumnMappingCheck(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation): Unit = {
+    if (newMetadata.nonEmpty) {
+      val _newMetadata = newMetadata.get
+      val _currentMetadata = snapshot.metadata
+
+      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata)
+
+      val columnMappingEnabled = _newMetadata.columnMappingMode != NoMapping
+
+      val isColumnMappingUpgrade = DeltaColumnMapping.isColumnMappingUpgrade(
+        oldMode = _currentMetadata.columnMappingMode,
+        newMode = _newMetadata.columnMappingMode
+      )
+
+      def dropColumnOp: Boolean = DeltaColumnMapping.isDropColumnOperation(
+        _newMetadata, _currentMetadata)
+
+      def renameColumnOp: Boolean = DeltaColumnMapping.isRenameColumnOperation(
+        _newMetadata, _currentMetadata)
+
+      def columnMappingChange: Boolean = isColumnMappingUpgrade || dropColumnOp || renameColumnOp
+
+      def existsFileActions: Boolean = actions.exists { _.isInstanceOf[FileAction] }
+
+      if (cdcEnabled && columnMappingEnabled && columnMappingChange && existsFileActions) {
+        throw DeltaErrors.blockColumnMappingAndCdcOperation(op)
+      }
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -685,6 +724,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     metadataChanges.foreach(m => verifyNewMetadata(m))
     finalActions = newProtocol.toSeq ++ finalActions
+
+    // Block future cases of CDF + Column Mapping changes + file changes
+    // This check requires having called DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments
+    // which is done in the `verifyNewMetadata` call above.
+    performCdcColumnMappingCheck(finalActions, op)
 
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
