@@ -116,16 +116,21 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
 
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
-    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    if (!DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
-      val acceptableStr =
-        DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
-      throw DeltaErrors.illegalDeltaOptionException(
-        PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
-      )
+    if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
+      // If dynamic partition overwrite mode is disabled, fallback to the default behavior
+      false
+    } else {
+      val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
+        .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+      if (!DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
+        val acceptableStr =
+          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
+        throw DeltaErrors.illegalDeltaOptionException(
+          PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
+        )
+      }
+      mode.equalsIgnoreCase("DYNAMIC")
     }
-    mode.equalsIgnoreCase("DYNAMIC")
   }
 }
 
