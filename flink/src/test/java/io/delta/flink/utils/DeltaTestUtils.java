@@ -25,8 +25,12 @@ import org.apache.flink.streaming.api.operators.collect.ClientAndIterator;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class DeltaTestUtils {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaTestUtils.class);
 
     ///////////////////////////////////////////////////////////////////////////
     // hadoop conf test utils
@@ -97,7 +101,7 @@ public class DeltaTestUtils {
 
     public static void triggerJobManagerFailover(
         JobID jobId, Runnable afterFailAction, MiniCluster miniCluster) throws Exception {
-        System.out.println("Triggering Job Manager failover.");
+        LOG.info("Triggering Job Manager failover.");
         HaLeadershipControl haLeadershipControl = miniCluster.getHaLeadershipControl().get();
         haLeadershipControl.revokeJobMasterLeadership(jobId).get();
         afterFailAction.run();
@@ -106,7 +110,7 @@ public class DeltaTestUtils {
 
     public static void restartTaskManager(Runnable afterFailAction, MiniCluster miniCluster)
         throws Exception {
-        System.out.println("Triggering Task Manager failover.");
+        LOG.info("Triggering Task Manager failover.");
         miniCluster.terminateTaskManager(0).get();
         afterFailAction.run();
         miniCluster.startTaskManager();

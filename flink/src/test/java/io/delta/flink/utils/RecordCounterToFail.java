@@ -6,6 +6,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A wrapper class for {@link DataStream} that counts number of processed records and for each
@@ -15,8 +17,12 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  */
 public class RecordCounterToFail implements Serializable {
 
+    private static final Logger LOG = LoggerFactory.getLogger(RecordCounterToFail.class);
+
     private static AtomicInteger records;
+
     private static CompletableFuture<Void> fail;
+
     private static CompletableFuture<Void> continueProcessing;
 
     /**
@@ -48,7 +54,7 @@ public class RecordCounterToFail implements Serializable {
      */
     public static void waitToFail() throws Exception {
         fail.get();
-        System.out.println("Wait to fail Finished.");
+        LOG.info("Fail.get finished.");
     }
 
     /**

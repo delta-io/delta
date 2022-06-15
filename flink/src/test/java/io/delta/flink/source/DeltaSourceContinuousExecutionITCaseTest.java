@@ -22,6 +22,8 @@ import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.FailoverType;
 import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import io.delta.flink.utils.TableUpdateDescriptor;
+import io.github.artsok.ParameterizedRepeatedIfExceptionsTest;
+import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -36,8 +38,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -81,7 +81,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         super.after();
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     public void shouldReadTableWithNoUpdates(FailoverType failoverType) throws Exception {
 
@@ -115,7 +117,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
             equalTo(SURNAME_COLUMN_VALUES));
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     public void shouldReadLargeDeltaTableWithNoUpdates(FailoverType failoverType) throws Exception {
 
@@ -146,7 +150,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
             equalTo(LARGE_TABLE_RECORD_COUNT));
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     // This test updates Delta Table 5 times, so it will take some time to finish.
     public void shouldReadDeltaTableFromSnapshotAndUpdatesUsingUserSchema(FailoverType failoverType)
@@ -159,7 +165,9 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         shouldReadDeltaTableFromSnapshotAndUpdates(deltaSource, failoverType);
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     // This test updates Delta Table 5 times, so it will take some time to finish. About 1 minute.
     public void shouldReadDeltaTableFromSnapshotAndUpdatesUsingDeltaLogSchema(
@@ -211,7 +219,7 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
      * </ul>
      *
      */
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void shouldReadLoadedSchemaVersion() throws Exception {
 
         // Add version 1 to delta Table.

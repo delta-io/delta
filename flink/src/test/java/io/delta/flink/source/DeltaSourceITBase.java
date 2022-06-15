@@ -10,6 +10,7 @@ import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.ExecutionITCaseTestConstants;
 import io.delta.flink.utils.FailoverType;
 import io.delta.flink.utils.RecordCounterToFail.FailCheck;
+import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
@@ -19,7 +20,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.util.TestLogger;
-import org.junit.jupiter.api.Test;
 import org.junit.rules.TemporaryFolder;
 import static io.delta.flink.utils.DeltaTestUtils.buildCluster;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
@@ -87,7 +87,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
         miniClusterResource.after();
     }
 
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void testReadPartitionedTableSkippingPartitionColumns() throws Exception {
 
         // GIVEN, the full schema of used table is {name, surname, age} + col1, col2 as a partition
@@ -131,7 +131,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
         assertNoMoreColumns(resultData,3);
     }
 
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void testReadOnlyPartitionColumns() throws Exception {
 
         // GIVEN, the full schema of used table is {name, surname, age} + col1, col2 as a partition
@@ -164,7 +164,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
         assertNoMoreColumns(resultData,2);
     }
 
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void testWithOnePartition() throws Exception {
 
         // GIVEN, the full schema of used table is {name, surname, age} + col1, col2 as a partition
@@ -204,7 +204,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
         assertNoMoreColumns(resultData,3);
     }
 
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void testWithBothPartitions() throws Exception {
 
         // GIVEN, the full schema of used table is {name, surname, age} + col1, col2 as a partition

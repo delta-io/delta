@@ -709,6 +709,7 @@ lazy val flink = (project in file("flink"))
       "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
       "org.mockito" % "mockito-junit-jupiter" % "4.5.0" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "io.github.artsok" % "rerunner-jupiter" % "2.1.6" % "test",
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12

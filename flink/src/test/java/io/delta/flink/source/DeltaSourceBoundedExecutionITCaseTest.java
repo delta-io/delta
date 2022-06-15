@@ -13,6 +13,8 @@ import io.delta.flink.utils.DeltaTableUpdater;
 import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.FailoverType;
 import io.delta.flink.utils.RecordCounterToFail.FailCheck;
+import io.github.artsok.ParameterizedRepeatedIfExceptionsTest;
+import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -22,8 +24,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -51,7 +51,9 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
         super.after();
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     public void shouldReadDeltaTableUsingDeltaLogSchema(FailoverType failoverType)
             throws Exception {
@@ -61,7 +63,9 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
         shouldReadDeltaTable(deltaSource, failoverType);
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L, repeats = 3, name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     // NOTE that this test can take some time to finish since we are restarting JM here.
     // It can be around 30 seconds or so.
@@ -103,7 +107,7 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
      * </ul>
      *
      */
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void shouldReadLoadedSchemaVersion() throws Exception {
 
         // Create a Delta source instance. In this step, builder discovered Delta table schema
