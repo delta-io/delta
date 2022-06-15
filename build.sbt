@@ -34,6 +34,7 @@ lazy val commonSettings = Seq(
   fork := true,
   scalacOptions ++= Seq("-target:jvm-1.8"),
   javacOptions ++= Seq("-source", "1.8"),
+  // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
   Compile / compile / javacOptions ++= Seq("-target", "1.8")
 )
 
