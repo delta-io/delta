@@ -2201,6 +2201,22 @@ trait DeltaErrorsBase
       messageParameters = Array(dataFilters)
     )
   }
+
+  def missingDeltaStorageJar(e: NoClassDefFoundError): Throwable = {
+    // scalastyle:off line.size.limit
+    new NoClassDefFoundError(
+      s"""${e.getMessage}
+         |Please ensure that the delta-storage dependency is included.
+         |
+         |If using Python, please ensure you call `configure_spark_with_delta_pip` or use
+         |`--packages io.delta:delta-core_<scala-version>:<delta-lake-version>`.
+         |See https://docs.delta.io/latest/quick-start.html#python.
+         |
+         |More information about this dependency and how to include it can be found here:
+         |https://docs.delta.io/latest/porting.html#delta-lake-1-1-or-below-to-delta-lake-1-2-or-above.
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

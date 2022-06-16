@@ -68,7 +68,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
-    files_to_skip = {"using_with_pip.py"}
+    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py"}
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
                   if path.isfile(path.join(test_dir, f)) and
@@ -96,6 +96,43 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         except:
             print("Failed Python tests in %s" % (test_file))
             raise
+
+
+def test_missing_delta_storage_jar(root_dir, version, use_local):
+    if not use_local:
+        print("Skipping 'missing_delta_storage_jar' - test should only run in local mode")
+        return
+
+    print("\n\n##### Running 'missing_delta_storage_jar' on version %s #####" % str(version))
+
+    clear_artifact_cache()
+
+    run_cmd(["build/sbt", "publishM2"])
+
+    print("Clearing delta-storage artifact")
+    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/delta-storage"))
+    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta/delta-storage"))
+    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta/delta-storage"))
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    test_file = path.join(root_dir, path.join("examples", "python", "missing_delta_storage_jar.py"))
+    jar = path.join(
+        os.path.expanduser("~/.m2/repository/io/delta/"),
+        "delta-core_2.12",
+        version,
+        "delta-core_2.12-%s.jar" % str(version))
+
+    try:
+        cmd = ["spark-submit",
+               "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+               "--jars", jar, test_file]
+        print("\nRunning Python tests in %s\n=============" % test_file)
+        print("Command: %s" % " ".join(cmd))
+        run_cmd(cmd, stream_output=True)
+    except:
+        print("Failed Python tests in %s" % (test_file))
+        raise
 
 
 def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,
@@ -337,6 +374,8 @@ if __name__ == "__main__":
     if run_python:
         run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                      args.use_local)
+
+        test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
