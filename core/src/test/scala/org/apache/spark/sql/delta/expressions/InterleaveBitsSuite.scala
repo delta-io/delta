@@ -163,7 +163,7 @@ class InterleaveBitsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val numIters = sys.env
       .get("NUMBER_OF_ITERATIONS_TO_INTERLEAVE_BITS")
       .map(_.toInt)
-      .getOrElse(100000000)
+      .getOrElse(1000000)
     var i = 0
     while (i < numIters) {
       // generate n columns where 1 <= n <= 8

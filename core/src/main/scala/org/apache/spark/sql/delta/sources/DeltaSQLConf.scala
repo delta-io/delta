@@ -727,7 +727,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-<<<<<<< HEAD
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
       .doc(
