@@ -19,8 +19,6 @@ package org.apache.spark.sql.delta.commands
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
@@ -57,7 +55,7 @@ case class ShowTableColumnsCommand(
       case None => tableName
       case Some(db) => Some(TableIdentifier(tableName.get.identifier, Some(db)))
     }
-    getSchema(sparkSession, path, lookupTable, "SHOW COLUMNS")
+    getSchema(sparkSession, path, lookupTable)
       .fieldNames
       .map { x => Row(x) }
       .toSeq
@@ -72,8 +70,7 @@ case class ShowTableColumnsCommand(
   protected def getSchema(
       spark: SparkSession,
       path: Option[String],
-      tableIdentifier: Option[TableIdentifier],
-      operationName: String): StructType = {
+      tableIdentifier: Option[TableIdentifier]): StructType = {
     val tablePath =
       if (path.nonEmpty) {
         new Path(path.get)
@@ -81,7 +78,7 @@ case class ShowTableColumnsCommand(
         val sessionCatalog = spark.sessionState.catalog
         sessionCatalog.getTempView(tableIdentifier.get.table).map { x =>
           // If `path` is empty while `tableIdentifier` is set, we will check if `tableIdentifier`
-          // is a view. If so, return the schema in view description.
+          // is a view first. If so, return the schema in view description.
           return x.desc.schema
         }.getOrElse {
           lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
@@ -99,7 +96,7 @@ case class ShowTableColumnsCommand(
         }
       } else {
         // If either table identifier and path is empty, raise an error.
-        throw DeltaErrors.missingTableIdentifierException(operationName)
+        throw DeltaErrors.missingTableIdentifierException("SHOW COLUMNS")
       }
 
     // Return the schema from snapshot if it is an Delta table, or return the schema from catalog
