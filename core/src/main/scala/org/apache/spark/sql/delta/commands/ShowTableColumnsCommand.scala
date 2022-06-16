@@ -99,8 +99,8 @@ case class ShowTableColumnsCommand(
         throw DeltaErrors.missingTableIdentifierException("SHOW COLUMNS")
       }
 
-    // Return the schema from snapshot if it is an Delta table, or return the schema from catalog
-    // table if it is an non-Delta table. Raise error if catalog table not found in non-Delta table.
+    // Return the schema from snapshot if it is an Delta table. Or raise `fileNotFoundException` if
+    // it is a non-Delta table (here the non-Delta table must be represented by `path`).
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (deltaLog.snapshot.version < 0) {
