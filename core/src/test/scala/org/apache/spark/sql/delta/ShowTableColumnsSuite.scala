@@ -107,10 +107,10 @@ trait ShowTableColumnsSuiteBase
   test("non-delta table: path") {
     // Non-Delta table represent by path (e.g.: '/path/to/table') is NOT supported in
     // SHOW COLUMNS command.
-    val e = intercept[AnalysisException] {
+    val e = intercept[DeltaFileNotFoundException] {
       showDeltaColumnsTest(f => s"'${f.toString}'", "", "parquet")
     }
-    assert(e.getMessage().contains("not supported in SHOW COLUMNS command"))
+    assert(e.getMessage.contains("File path "))
   }
 
   test("non-delta table: table identifier with catalog table") {

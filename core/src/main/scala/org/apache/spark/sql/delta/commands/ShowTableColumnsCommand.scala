@@ -104,12 +104,7 @@ case class ShowTableColumnsCommand(
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (deltaLog.snapshot.version < 0) {
-          spark
-            .sessionState
-            .catalog
-            .getTableMetadata(tableIdentifier.getOrElse(
-              throw DeltaErrors.fileFormatNotSupportedInShowColumns(path.get)))
-            .schema
+        throw DeltaErrors.fileNotFoundException(tablePath.toString)
       } else {
         deltaLog.snapshot.schema
       }
