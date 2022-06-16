@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -246,6 +247,50 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         // File sizes are flaky due to differences in order of data (=> encoding size differences)
         assert(outputRow.getLong(4) > 0L) // removed_files_size
         assert(outputRow.getLong(5) == 0L) // restored_files_size
+      }
+    }
+  }
+
+  test("cdf + RESTORE") {
+    withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withTempDir { tempDir =>
+        val df0 = Seq(0, 1).toDF("id") // version 0 = [0, 1]
+        df0.write.format("delta").save(tempDir.getAbsolutePath)
+
+        val df1 = Seq(2).toDF("id") // version 1: append to df0 = [0, 1, 2]
+        df1.write.mode("append").format("delta").save(tempDir.getAbsolutePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+        deltaTable.delete("id < 1") // version 2: delete (0) = [1, 2]
+
+        deltaTable.updateExpr(
+          "id > 1",
+          Map("id" -> "4")
+        ) // version 3: update 2 --> 4 = [1, 4]
+
+        // version 4: restore to version 2 (delete 4, insert 2) = [1, 2]
+        restoreTableToVersion(tempDir.getAbsolutePath, 2, false)
+        checkAnswer(
+          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 4, 4, spark)
+            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+          Row(4, "delete", 4) :: Row(2, "insert", 4) :: Nil
+        )
+
+        // version 5: restore to version 1 (insert 0) = [0, 1, 2]
+        restoreTableToVersion(tempDir.getAbsolutePath, 1, false)
+        checkAnswer(
+          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 5, 5, spark)
+            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+          Row(0, "insert", 5) :: Nil
+        )
+
+        // version 6: restore to version 0 (delete 2) = [0, 1]
+        restoreTableToVersion(tempDir.getAbsolutePath, 0, false)
+        checkAnswer(
+          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 6, 6, spark)
+            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+          Row(2, "delete", 6) :: Nil
+        )
       }
     }
   }
