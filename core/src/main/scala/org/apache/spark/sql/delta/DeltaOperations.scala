@@ -434,6 +434,7 @@ private[delta] object DeltaOperationMetrics {
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
     "numTargetFilesRemoved", // number of files removed from the sink(target)
+    "numTargetChangeFilesAdded", // number of CDC files
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
@@ -443,6 +444,7 @@ private[delta] object DeltaOperationMetrics {
   val UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
+    "numAddedChangeFiles", // number of CDC files
     "numUpdatedRows", // number of rows updated
     "numCopiedRows", // number of rows just copied over in the process of updating files.
     "executionTimeMs",  // time taken to execute the entire operation

@@ -37,7 +37,8 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+  with MergeIntoMetricsBase {
 
   import testImplicits._
 
