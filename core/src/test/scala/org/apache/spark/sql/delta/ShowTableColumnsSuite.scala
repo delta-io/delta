@@ -207,7 +207,7 @@ trait ShowTableColumnsSuiteBase
     }
   }
 
-  test("optimize: Zorder on a nested column") {
+  test(s"delta table: show columns on a nested column") {
     withTempDir { tempDir =>
       (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
         .toDF("id")
@@ -215,9 +215,6 @@ trait ShowTableColumnsSuiteBase
         .write
         .format("delta")
         .save(tempDir.toString)
-
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numFilesBefore = deltaLog.snapshot.numOfFiles
       checkResult(
         sql(s"SHOW COLUMNS IN delta.`${tempDir.toString}`"),
         Seq(Seq("id"), Seq("nested")),
