@@ -140,12 +140,16 @@ case class WriteIntoDelta(
       val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
         options.isDynamicPartitionOverwriteMode
       options.replaceWhere.foreach { _ =>
-        if (useDynamic) {
-          throw new AnalysisException(s"'${DeltaOptions.REPLACE_WHERE_OPTION}' cannot be used" +
-            s" when '${DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION}' is set to 'DYNAMIC'")
+        if (useDynamic && options.partitionOverwriteModeInOptions) {
+          // We throw an error when:
+          // 1. replaceWhere is provided
+          // 2. partitionOverwriteMode is set to "dynamic" in a DataFrameWriter option
+          // 3. the table is partitioned
+          throw DeltaErrors.replaceWhereUsedWithDynamicPartitionOverwrite()
         }
       }
-      useDynamic
+      // If replaceWhere is provided, we do not use dynamic partition overwrite
+      useDynamic && options.replaceWhere.isEmpty
     }
 
     // Validate partition predicates
