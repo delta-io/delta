@@ -312,6 +312,20 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ifExists = ctx.EXISTS != null)
   }
 
+/**
+ * Create a [[ShowTableColumnsCommand]] logical plan.
+ *
+ * Syntax:
+ * {{{
+ *   SHOW COLUMNS (FROM | IN) (tableName [(FROM | IN) schemaName] | path);
+ * }}}
+ * Examples:
+ * {{{
+ *   SHOW COLUMNS IN delta.`test_table`
+ *   SHOW COLUMNS FROM '/path/to/table'
+ *   SHOW COLUMNS IN `test_table` IN delta
+ * }}}
+ */
   override def visitShowColumns(
       ctx: ShowColumnsContext): LogicalPlan = withOrigin(ctx) {
     ShowTableColumnsCommand(

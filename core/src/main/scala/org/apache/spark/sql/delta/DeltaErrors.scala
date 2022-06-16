@@ -539,12 +539,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def tableIdentifierNotFoundInShowColumnsException(tableID: TableIdentifier): Throwable = {
-    new AnalysisException(
-      s"Table identifier or view ${tableID.toString()} not found."
-    )
-  }
-
   def fileFormatNotSupportedInShowColumns(filePath: String): Throwable = {
     new AnalysisException(
       s"Format of file $filePath not supported in SHOW COLUMNS command."

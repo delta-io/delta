@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -128,7 +129,7 @@ trait ShowTableColumnsSuiteBase
     }
     assert(
       e.getMessage()
-        .contains(s"Table identifier or view `$fakeFilePath` not found.")
+        .contains(s"Table or view '$fakeFilePath' not found")
     )
   }
 
@@ -142,7 +143,7 @@ trait ShowTableColumnsSuiteBase
     assert(
       e.getMessage()
         .contains(
-          s"Table identifier or view `$schemaName`.`$fakeTableName` not found."
+          s"Database '$schemaName' not found"
         )
     )
   }
@@ -184,7 +185,7 @@ trait ShowTableColumnsSuiteBase
       sql(s"SHOW COLUMNS IN $fakeTableID")
     }
     assert(
-      e.getMessage.contains(s"Table identifier or view $fakeTableID not found.")
+      e.getMessage.contains(s"Database 'delta' not found")
     )
   }
 
@@ -202,6 +203,25 @@ trait ShowTableColumnsSuiteBase
         sql(s"SHOW COLUMNS IN $viewName"),
         outputColumnValues,
         outputColumnNames
+      )
+    }
+  }
+
+  test("optimize: Zorder on a nested column") {
+    withTempDir { tempDir =>
+      (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
+        .toDF("id")
+        .withColumn("nested", struct(struct('id + 2 as 'b, 'id + 3 as 'c) as 'sub))
+        .write
+        .format("delta")
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val numFilesBefore = deltaLog.snapshot.numOfFiles
+      checkResult(
+        sql(s"SHOW COLUMNS IN delta.`${tempDir.toString}`"),
+        Seq(Seq("id"), Seq("nested")),
+        Seq("columnName")
       )
     }
   }
