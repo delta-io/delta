@@ -598,8 +598,9 @@ trait DataSkippingReaderBase
    * Returns an expression to access the given statistics for a specific column, or a NULL
    * literal expression if that column does not exist.
    */
-  final protected def getStatsColumnOrNullLiteral(statType: String, pathToColumn: Seq[String] = Nil)
-      : Column =
+  final protected[delta] def getStatsColumnOrNullLiteral(
+      statType: String,
+      pathToColumn: Seq[String] = Nil) : Column =
     getStatsColumnOpt(statType, pathToColumn).getOrElse(lit(null))
 
   /** Overload for convenience working with StatsColumn helpers */
@@ -607,7 +608,7 @@ trait DataSkippingReaderBase
     getStatsColumnOpt(stat.statType, stat.pathToColumn)
 
   /** Overload for convenience working with StatsColumn helpers */
-  final protected def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
+  final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
     getStatsColumnOrNullLiteral(stat.statType, stat.pathToColumn)
 
   /**
