@@ -254,6 +254,15 @@ object DeltaOperations {
       "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
   }
 
+  /** Recorded when column is renamed */
+  case class RenameColumn(oldColumnPath: Seq[String], newColumnPath: Seq[String])
+    extends Operation("RENAME COLUMN") {
+    override val parameters: Map[String, Any] = Map(
+      "oldColumnPath" -> UnresolvedAttribute(oldColumnPath).name,
+      "newColumnPath" -> UnresolvedAttribute(newColumnPath).name
+    )
+  }
+
   /** Recorded when columns are changed. */
   case class ChangeColumn(
       columnPath: Seq[String],
