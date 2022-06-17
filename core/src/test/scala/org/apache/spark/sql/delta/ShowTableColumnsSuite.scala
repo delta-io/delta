@@ -90,11 +90,6 @@ trait ShowTableColumnsSuiteBase
       )
     }
   }
-
-  test("delta table: path") {
-    showDeltaColumnsTest(f => s"'${f.toString}'", "", "delta")
-  }
-
   // when no schema name provided, default schema name is `default`.
   test("delta table: table identifier") {
     showDeltaColumnsTest(f => s"delta.`${f.toString}`", "", "delta")
@@ -104,33 +99,12 @@ trait ShowTableColumnsSuiteBase
     showDeltaColumnsTest(f => s"`${f.toString}`", "delta", "delta")
   }
 
-  test("non-delta table: path") {
-    // Non-Delta table represent by path (e.g.: '/path/to/table') is NOT supported in
-    // SHOW COLUMNS command.
-    val e = intercept[DeltaFileNotFoundException] {
-      showDeltaColumnsTest(f => s"'${f.toString}'", "", "parquet")
-    }
-    assert(e.getMessage.contains("File path "))
-  }
-
   test("non-delta table: table identifier with catalog table") {
     // Non-Delta table represent by catalog identifier (e.g.: sales.line_ite) is supported in
     // SHOW COLUMNS command.
     List("json", "csv", "orc", "parquet").foreach { x =>
       showNonDeltaColumnsTest(x)
     }
-  }
-
-  test("delta table: path not found") {
-    showDeltaColumnsTest(f => s"'${f.toString}'", "", "delta")
-    val fakeFilePath = s"/invalid/path/to/table"
-    val e = intercept[AnalysisException] {
-      sql(s"SHOW COLUMNS IN `$fakeFilePath`")
-    }
-    assert(
-      e.getMessage()
-        .contains(s"Table or view '$fakeFilePath' not found")
-    )
   }
 
   test("delta table: table name not found") {
@@ -143,7 +117,7 @@ trait ShowTableColumnsSuiteBase
     assert(
       e.getMessage()
         .contains(
-          s"Database '$schemaName' not found"
+          s"Table or view not found: $schemaName.$fakeTableName"
         )
     )
   }
@@ -176,17 +150,6 @@ trait ShowTableColumnsSuiteBase
       showDeltaColumnsTest(f => s"'${f.toString}'", "delta", "delta")
     }
     assert(e.getMessage().contains(s"extraneous input"))
-  }
-
-  test("non-delta table: table ID not valid") {
-    val fakeTableID = s"`delta`.`test_table`"
-    showNonDeltaColumnsTest("parquet")
-    val e = intercept[AnalysisException] {
-      sql(s"SHOW COLUMNS IN $fakeTableID")
-    }
-    assert(
-      e.getMessage.contains(s"Database 'delta' not found")
-    )
   }
 
   testWithTempView(s"delta table: show columns on temp view") { isSQLTempView =>

@@ -81,16 +81,16 @@ statement
     | CONVERT TO DELTA table=qualifiedName
         (PARTITIONED BY '(' colTypeList ')')?                           #convert
     | RESTORE TABLE? table=qualifiedName TO?
-        clause=temporalClause                                           #restore
+            clause=temporalClause                                       #restore
     | ALTER TABLE table=qualifiedName ADD CONSTRAINT name=identifier
-        constraint                                                      #addTableConstraint
+      constraint                                                        #addTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate = exprToken)?
         (zorderSpec)?                                                   #optimizeTable
-    | SHOW COLUMNS (IN | FROM) (path=STRING | tableName=qualifiedName
-        ((IN | FROM) schemaName=identifier)?)                           #showColumns
+    | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
+        ((IN | FROM) schemaName=identifier)?                            #showColumns
     | .*?                                                               #passThrough
     ;
 

@@ -35,78 +35,25 @@ case class TableColumns(col_name: String)
  *
  * The syntax of using this command in SQL is:
  * {{{
- *   SHOW COLUMNS (FROM | IN) (tableName [(FROM | IN) schemaName] | path);
+ *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
  * }}}
  *
- * @param tableName  (optional) the table name
- * @param path       (optional) the file path where the table located
- * @param schemaName (optional when tableName exists) the schema name (database name) of the table
+ * @param path  the file path where the Delta table located
  */
-case class ShowTableColumnsCommand(
-    tableName: Option[TableIdentifier],
-    path: Option[String],
-    schemaName: Option[String])
+case class ShowTableColumnsCommand(path: Path)
   extends LeafRunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val lookupTable = schemaName match {
-      case None => tableName
-      case Some(db) => Some(TableIdentifier(tableName.get.identifier, Some(db)))
-    }
-    getSchema(sparkSession, path, lookupTable)
-      .fieldNames
-      .map { x => Row(x) }
-      .toSeq
-  }
-
-  /**
-   * Resolve `path` and `tableIdentifier` to get the underlying storage path if it's not a Delta
-   * table, or its `CatalogTable` if it's a non-Delta table, or its description if it is a view.
-   * The caller will make sure either `path` or `tableIdentifier` is set but not both. Then return
-   * the table schema from storage path, `CatalogTable` or view description.
-   */
-  protected def getSchema(
-      spark: SparkSession,
-      path: Option[String],
-      tableIdentifier: Option[TableIdentifier]): StructType = {
-    val tablePath =
-      if (path.nonEmpty) {
-        new Path(path.get)
-      } else if (tableIdentifier.nonEmpty) {
-        val sessionCatalog = spark.sessionState.catalog
-        sessionCatalog.getTempView(tableIdentifier.get.table).map { x =>
-          // If `path` is empty while `tableIdentifier` is set, we will check if `tableIdentifier`
-          // is a view first. If so, return the schema in view description.
-          return x.desc.schema
-        }.getOrElse {
-          lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
-          DeltaTableIdentifier(spark, tableIdentifier.get) match {
-            // If `tableIdentifier` is a Delta table, get `tablePath` from `path` or
-            // `metadata.location`. If `tableIdentifier` is a non-Delta table, return the schema in
-            // catalog table if it exists.
-            case Some(id) if id.path.nonEmpty =>
-              new Path(id.path.get)
-            case Some(id) if id.table.nonEmpty =>
-              new Path(metadata.location)
-            case _ =>
-              return metadata.schema
-          }
-        }
-      } else {
-        // If either table identifier and path is empty, raise an error.
-        throw DeltaErrors.missingTableIdentifierException("SHOW COLUMNS")
-      }
-
     // Return the schema from snapshot if it is an Delta table. Or raise `fileNotFoundException` if
-    // it is a non-Delta table (here the non-Delta table must be represented by `path`).
-    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    // it is a non-Delta table.
+    val deltaLog = DeltaLog.forTable(sparkSession, path)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (deltaLog.snapshot.version < 0) {
-        throw DeltaErrors.fileNotFoundException(tablePath.toString)
+        throw DeltaErrors.fileNotFoundException(path.toString)
       } else {
-        deltaLog.snapshot.schema
+        deltaLog.snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
       }
     }
   }
