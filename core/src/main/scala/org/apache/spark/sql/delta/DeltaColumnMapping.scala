@@ -21,6 +21,7 @@ import java.util.{Locale, UUID}
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -28,7 +29,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
-trait DeltaColumnMappingBase {
+trait DeltaColumnMappingBase extends DeltaLogging {
   val MIN_WRITER_VERSION = 5
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
@@ -88,6 +89,7 @@ trait DeltaColumnMappingBase {
    *     - upgrading to the column mapping Protocol through configurations
    */
   def verifyAndUpdateMetadataChange(
+      deltaLog: DeltaLog,
       oldProtocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
@@ -121,7 +123,19 @@ trait DeltaColumnMappingBase {
         }
       }
     }
-    tryFixMetadata(oldMetadata, newMetadata, isChangingModeOnExistingTable)
+
+    val updatedMetadata = tryFixMetadata(oldMetadata, newMetadata, isChangingModeOnExistingTable)
+
+    // record column mapping table creation/upgrade
+    if (newMappingMode != NoMapping) {
+      if (isCreatingNewTable) {
+        recordDeltaEvent(deltaLog, "delta.columnMapping.createTable")
+      } else if (oldMappingMode != newMappingMode) {
+        recordDeltaEvent(deltaLog, "delta.columnMapping.upgradeTable")
+      }
+    }
+
+    updatedMetadata
   }
 
   def hasColumnId(field: StructField): Boolean =

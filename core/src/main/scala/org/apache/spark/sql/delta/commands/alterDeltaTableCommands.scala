@@ -397,8 +397,16 @@ case class AlterTableChangeColumnDeltaCommand(
       }
 
       txn.updateMetadata(newMetadata)
-      txn.commit(Nil, DeltaOperations.ChangeColumn(
-        columnPath, columnName, newColumn, colPosition.map(_.toString)))
+
+      if (newColumn.name != columnName) {
+        // record column rename separately
+        txn.commit(Nil, DeltaOperations.RenameColumn(
+          columnPath :+ columnName,
+          columnPath :+ newColumn.name))
+      } else {
+        txn.commit(Nil, DeltaOperations.ChangeColumn(
+          columnPath, columnName, newColumn, colPosition.map(_.toString)))
+      }
 
       Seq.empty[Row]
     }

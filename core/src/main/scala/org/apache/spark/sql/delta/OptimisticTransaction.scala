@@ -303,10 +303,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     latestMetadata = DeltaColumnMapping.verifyAndUpdateMetadataChange(
+      deltaLog,
       protocolBeforeUpdate,
       snapshot.metadata,
       latestMetadata,
       isCreatingNewTable)
+
     if (latestMetadata.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
       var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)

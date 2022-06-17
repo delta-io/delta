@@ -35,7 +35,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
 
-trait DeltaColumnMappingSuiteBase extends SharedSparkSession with DeltaSQLCommandTest {
+trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
 
 
   protected def supportedModes: Seq[String]
@@ -84,10 +84,11 @@ trait DeltaColumnMappingSuiteBase extends SharedSparkSession with DeltaSQLComman
     }
   }
 
+
 }
 
 class DeltaColumnMappingSuite extends QueryTest
-  with GivenWhenThen  with DeltaColumnMappingSuiteBase {
+  with GivenWhenThen  with DeltaColumnMappingSuiteUtils {
 
   protected def supportedModes: Seq[String] = Seq("name")
 
@@ -442,9 +443,10 @@ class DeltaColumnMappingSuite extends QueryTest
       tableName: String,
       expectedSchema: StructType,
       ignorePhysicalName: Boolean,
-      mode: String)(createFunc: => Unit): Unit = {
+      mode: String,
+      createNewTable: Boolean = true)(fn: => Unit): Unit = {
     withTable(tableName) {
-      createFunc
+        fn
       checkProperties(tableName,
         readerVersion = 2,
         writerVersion = 5,
@@ -558,7 +560,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
   }
 
-  testColumnMapping("create table through dataframe with id mode should " +
+  testColumnMapping("create table through dataframe should " +
     "auto bumps the version and rebuild schema metadata/drop dataframe metadata") { mode =>
     // existing ids should be dropped/ignored and ids should be regenerated
     // so for tests below even if we are ingesting dfs with random ids
@@ -1120,8 +1122,9 @@ class DeltaColumnMappingSuite extends QueryTest
         props = Map(
           DeltaConfigs.MIN_READER_VERSION.key -> "2",
           DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1133,8 +1136,8 @@ class DeltaColumnMappingSuite extends QueryTest
         DeltaConfigs.MIN_READER_VERSION.key -> "2",
         DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
 
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1142,10 +1145,11 @@ class DeltaColumnMappingSuite extends QueryTest
   test("upgrade and change mode in one ALTER TABLE cmd") {
     withTable("t1") {
       createTableWithSQLAPI("t1", isPartitioned = true, nested = true)
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
-        DeltaConfigs.MIN_READER_VERSION.key -> "2",
-        DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1191,7 +1195,13 @@ class DeltaColumnMappingSuite extends QueryTest
   }
 
   test("upgrade with dot column name should not be blocked") {
-    testCreateTableColumnMappingMode("t1", schemaWithDottedColumnNames, false, "name") {
+    testCreateTableColumnMappingMode(
+      "t1",
+      schemaWithDottedColumnNames,
+      false,
+      "name",
+      createNewTable = false
+    ) {
       sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
       alterTableWithProps("t1", props = Map(
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
