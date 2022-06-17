@@ -20,13 +20,14 @@ from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
-from pyspark.sql.functions import col, lit, expr
+from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
 
 from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
 from delta.testing.utils import DeltaTestCase
 
+import json
 
 class DeltaTableTests(DeltaTestCase):
 
@@ -911,6 +912,85 @@ class DeltaTableTests(DeltaTestCase):
         self.__intercept(optimize,
                          "Predicate references non-partition column 'value'. "
                          "Only the partition columns may be referenced: [key]")
+
+        def test_optimize_zorder_with_partition_column(self) -> None:
+            # write an unoptimized delta table
+            self.spark.createDataFrame([i for i in range(0, 100)], IntegerType()) \
+                    .withColumn("col1", floor(col("value") % 7)) \
+                    .withColumn("col2", floor(col("value") % 27)) \
+                    .withColumn("p", floor(col("value") % 10)) \
+                    .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
+
+            # create DeltaTable
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+            # execute Z-Order Optimization
+            optimizer = dt.optimize()
+
+            result = optimizer.executeZOrderBy(["col1", "col2"])
+            metrics = self.result.select("metrics.*").head()
+
+            print(result)
+            print(metrics)
+
+            # create DeltaTable
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+            # execute Z-Order Optimization
+            optimizer = dt.optimize()
+
+            result = optimizer.executeZOrderBy(["col1", "col2"])
+            metrics = self.result.select("metrics.*").head()
+
+            self.assertTrue(metrics.filesAdded.totalFiles == 10)
+            self.assertTrue(metrics.filesRemoved.totalFiles == 39)
+            self.assertTrue(metrics.filesAdded.min.get == 1235)
+            self.assertTrue(metrics.filesAdded.max.get == 1252)
+            self.assertTrue(metrics.filesRemoved.max.get == 1179)
+            self.assertTrue(metrics.filesRemoved.min.get == 1082)
+            self.assertTrue(metrics.totalFilesSkipped == 0)
+            self.assertTrue(metrics.totalConsideredFiles == 39)
+
+            expStartCount = 39
+            expStartSizes = 43456
+
+            expZOrderMetrics = {
+                "strategyName": "all",
+                "inputCubeFiles": {
+                        "num": 0,
+                        "size": 0
+                    },
+                "inputOtherFiles" : {
+                        "num": expStartCount,
+                        "size": expStartSizes
+                    },
+                "inputNumCubes": 0,
+                "mergedFiles": {
+                        "num": expStartCount,
+                        "size": expStartSizes
+                    },
+                "numOutputCubes" : 10
+            }
+
+            actualZOrderMetrics = {
+                "strategyName": metrics.strategyName,
+                "inputCubeFiles": {
+                        "num": metrics.inputCubeFiles.num,
+                        "size": metrics.inputCubeFiles.size
+                    },
+                "inputOtherFiles": {
+                        "num": metrics.inputOtherFiles.num,
+                        "size": metrics.inputOtherFiles.size
+                    },
+                "inputNumCubes": metrics.inputNumCubes,
+                "mergedFiles": {
+                        "num": metrics.mergedFiles.num,
+                        "size": metrics.mergedFiles.size
+                        },
+                "numOutputCubes": metrics.numOutputCubes
+            }
+
+            self.assertEqual(sorted(expZOrderMetrics.items()), sorted(actualZOrderMetrics.items()))
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
