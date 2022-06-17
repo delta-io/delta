@@ -32,7 +32,7 @@ trait ShowTableColumnsSuiteBase
 
   import testImplicits._
 
-  private val outputColumnNames = Seq("columnName")
+  private val outputColumnNames = Seq("col_name")
   private val outputColumnValues = Seq(Seq("column1"), Seq("column2"))
 
   protected def checkResult(
@@ -218,7 +218,7 @@ trait ShowTableColumnsSuiteBase
       checkResult(
         sql(s"SHOW COLUMNS IN delta.`${tempDir.toString}`"),
         Seq(Seq("id"), Seq("nested")),
-        Seq("columnName")
+        outputColumnNames
       )
     }
   }

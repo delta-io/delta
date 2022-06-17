@@ -28,7 +28,7 @@ import org.apache.spark.sql.types.StructType
 /**
  * The column format of the result returned by the `SHOW COLUMNS` command.
  */
-case class TableColumns(columnName: String)
+case class TableColumns(col_name: String)
 
 /**
  * A command listing all column names of a table.
