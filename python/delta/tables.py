@@ -1203,7 +1203,7 @@ class DeltaOptimizeBuilder(object):
         :rtype: pyspark.sql.DataFrame
         """
         return DataFrame(
-            self._jbuilder.executeCompaction(),å
+            self._jbuilder.executeCompaction(),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
