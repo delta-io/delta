@@ -1003,62 +1003,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("batch write: append, dynamic partition overwrite + CDF") {
-    withSQLConf(
-      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
-      DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-      withTempDir { tempDir =>
-        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-        Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
-        checkAnswer(
-          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 0, 0, spark)
-            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-          Row("a", "x", "insert", 0) :: Row("b", "y", "insert", 0) ::
-            Row("c", "x", "insert", 0) :: Nil
-        )
-
-        // ovewrite nothing
-        Seq(("d", "z")).toDF("value", "part")
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .mode("overwrite")
-          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-          .save(tempDir.getCanonicalPath)
-        checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
-          ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
-        checkAnswer(
-          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 1, 1, spark)
-            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-          Row("d", "z", "insert", 1) :: Nil
-        )
-
-        // overwrite partition `part`="x"
-        Seq(("a", "x"), ("e", "x")).toDF("value", "part")
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .mode("overwrite")
-          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-          .save(tempDir.getCanonicalPath)
-        checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
-          ("a", "x"), ("b", "y"), ("d", "z"), ("e", "x"))
-        checkAnswer(
-          CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempDir), 2, 2, spark)
-            .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-          Row("a", "x", "delete", 2) :: Row("c", "x", "delete", 2) ::
-            Row("a", "x", "insert", 2) :: Row("e", "x", "insert", 2) :: Nil
-        )
-      }
-    }
-  }
-
   test("batch write: ignore") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
