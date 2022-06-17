@@ -107,6 +107,23 @@ object SkippingEligibleColumn {
 }
 
 /**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the expression,
+ *         3) [[DataSkippingPredicateBuilder]] that builds the data skipping predicate for the
+ *         expression, if the given expression is eligible. Otherwise, return None.
+ */
+object SkippingEligibleExpression {
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
+/**
  * An extractor that matches on access of a skipping-eligible Literal. Delta tables track min/max
  * stats for a limited set of data types, and only Literals of those types are skipping-eligible.
  *
@@ -216,7 +233,7 @@ trait DataSkippingReaderBase
       return Some(DataSkippingPredicate(falseLiteral))
     }
 
-    val (pathToColumn, dt) = SkippingEligibleColumn.unapply(a).getOrElse {
+    val (pathToColumn, dt, builder) = SkippingEligibleExpression.unapply(a).getOrElse {
       // The expression is not eligible for skipping, and we can stop constructing data filters
       // for the expression by simply returning None.
       return None
@@ -379,7 +396,7 @@ trait DataSkippingReaderBase
     //
     // Similar to AND case, if the rewritten predicate does not evaluate to TRUE, then it means that
     // neither `constructDataFilters(a)` nor `constructDataFilters(b)` evaluated to TRUE, which in
-    // turn means that neither `a` nor `b` could evaulate to TRUE for any row the file might
+    // turn means that neither `a` nor `b` could evaluate to TRUE for any row the file might
     // contain, which proves we have a valid data skipping predicate.
     //
     // Unlike AND, a single leg of an OR expression provides no filtering power -- we can only
@@ -418,18 +435,14 @@ trait DataSkippingReaderBase
       constructDataFilters(IsNull(e))
 
     // Match any file whose min/max range contains the requested point.
-    case EqualTo(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v)) =>
-      statsProvider.getPredicateWithStatTypes(a, MIN, MAX) { (min, max) =>
-        min <= v && max >= v
-      }
+    case EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.equalTo(statsProvider, c, v)
     case EqualTo(v: Literal, a) =>
       constructDataFilters(EqualTo(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
-    case Not(EqualTo(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v))) =>
-      statsProvider.getPredicateWithStatTypes(a, MIN, MAX) { (min, max) =>
-        !(min === v && max === v)
-      }
+    case Not(EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v))) =>
+      builder.notEqualTo(statsProvider, c, v)
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
 
@@ -447,40 +460,33 @@ trait DataSkippingReaderBase
       constructDataFilters(Not(EqualNullSafe(a, v)))
 
     // Match any file whose min is less than the requested upper bound.
-    case LessThan(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v)) =>
-      statsProvider.getPredicateWithStatType(a, MIN) { min =>
-        min < v
-      }
+    case LessThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.lessThan(statsProvider, c, v)
     case LessThan(v: Literal, a) =>
       constructDataFilters(GreaterThan(a, v))
     case Not(LessThan(a, b)) =>
       constructDataFilters(GreaterThanOrEqual(a, b))
 
     // Match any file whose min is less than or equal to the requested upper bound
-    case LessThanOrEqual(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v)) =>
-      statsProvider.getPredicateWithStatType(a, MIN) { min =>
-        min <= v
-      }
+    case LessThanOrEqual(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.lessThanOrEqual(statsProvider, c, v)
     case LessThanOrEqual(v: Literal, a) =>
       constructDataFilters(GreaterThanOrEqual(a, v))
     case Not(LessThanOrEqual(a, b)) =>
       constructDataFilters(GreaterThan(a, b))
 
     // Match any file whose max is larger than the requested lower bound.
-    case GreaterThan(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v)) =>
-      statsProvider.getPredicateWithStatType(a, MAX) { max =>
-        max > v
-      }
+    case GreaterThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.greaterThan(statsProvider, c, v)
     case GreaterThan(v: Literal, a) =>
       constructDataFilters(LessThan(a, v))
     case Not(GreaterThan(a, b)) =>
       constructDataFilters(LessThanOrEqual(a, b))
 
     // Match any file whose max is larger than or equal to the requested lower bound.
-    case GreaterThanOrEqual(SkippingEligibleColumn(a, _), SkippingEligibleLiteral(v)) =>
-      statsProvider.getPredicateWithStatType(a, MAX) { max =>
-        max >= v
-      }
+    case GreaterThanOrEqual(
+        SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.greaterThanOrEqual(statsProvider, c, v)
     case GreaterThanOrEqual(v: Literal, a) =>
       constructDataFilters(LessThanOrEqual(a, v))
     case Not(GreaterThanOrEqual(a, b)) =>
