@@ -911,6 +911,26 @@ class DeltaTableTests(DeltaTestCase):
         self.__intercept(optimize,
                          "Predicate references non-partition column 'value'. "
                          "Only the partition columns may be referenced: [key]")
+        
+        def test_optimize_zorder(self) -> None:
+            # write an unoptimized delta table
+            df = self.spark.createDataFrame([("a", 1), ("a", 2)], ["key", "value"]).repartition(1)
+            df.write.format("delta").save(self.tempFile)
+            df = self.spark.createDataFrame([("a", 3), ("a", 4)], ["key", "value"]).repartition(1)
+            df.write.format("delta").save(self.tempFile, mode="append")
+            df = self.spark.createDataFrame([("b", 1), ("b", 2)], ["key", "value"]).repartition(1)
+            df.write.format("delta").save(self.tempFile, mode="append")
+            
+            # create DeltaTable
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+            
+            # execute Z-Order Optimization
+            optimizer = dt.optimize()
+            res = optimizer.executeZOrderBy(["a", "b"])
+            
+            # assertions
+            self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
+            self.assertTrue(isinstance(res, DataFrame))
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
