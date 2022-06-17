@@ -24,7 +24,7 @@ import org.apache.spark.util.Utils
 
 import java.io.File
 
-trait ShowTableColumnsSuiteBase
+class ShowTableColumnsSuite
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
@@ -38,88 +38,61 @@ trait ShowTableColumnsSuiteBase
   protected def checkResult(
       result: DataFrame,
       expected: Seq[Seq[Any]],
-      columns: Seq[String]
-  ): Unit = {
+      columns: Seq[String]): Unit = {
     checkAnswer(
       result.select(columns.head, columns.tail: _*),
-      expected.map { x =>
-        Row(x: _*)
-      }
-    )
+      expected.map { x => Row(x: _*)})
   }
 
   private def showDeltaColumnsTest(
-      f: File => String,
-      schemaName: String,
-      tableFormat: String
-  ): Unit = {
+      fileToTableNameMapper: File => String,
+      schemaName: String = ""): Unit = {
     withDatabase("delta") {
       val tempDir = Utils.createTempDir()
       Seq(1 -> 1)
         .toDF("column1", "column2")
         .write
-        .format(tableFormat)
+        .format("delta")
         .mode("overwrite")
         .save(tempDir.toString)
 
-      val sqlCommand = if (schemaName.nonEmpty) {
-        s"SHOW COLUMNS IN ${f(tempDir)} FROM $schemaName"
-      } else {
-        s"SHOW COLUMNS FROM ${f(tempDir)}"
-      }
-
-      checkResult(
-        sql(sqlCommand),
+      val finalSchema = if (schemaName.nonEmpty) s"FROM $schemaName" else ""
+      checkResult(sql(s"SHOW COLUMNS IN ${fileToTableNameMapper(tempDir)} $finalSchema"),
         outputColumnValues,
-        outputColumnNames
-      )
+        outputColumnNames)
     }
   }
 
-  private def showNonDeltaColumnsTest(tableFormat: String): Unit = {
-    withTable("show_columns") {
-      sql(s"""
-          |CREATE TABLE show_columns(column1 INT, column2 INT)
-          |USING $tableFormat
-          |COMMENT "describe a non delta table"
-          """.stripMargin)
-      checkResult(
-        sql("SHOW COLUMNS IN show_columns"),
-        outputColumnValues,
-        outputColumnNames
-      )
-    }
-  }
   // when no schema name provided, default schema name is `default`.
   test("delta table: table identifier") {
-    showDeltaColumnsTest(f => s"delta.`${f.toString}`", "", "delta")
+    showDeltaColumnsTest(f => s"delta.`${f.toString}`", schemaName = "")
   }
 
   test("delta table: table name with separated schema name") {
-    showDeltaColumnsTest(f => s"`${f.toString}`", "delta", "delta")
+    showDeltaColumnsTest(f => s"`${f.toString}`", schemaName = "delta")
   }
 
   test("non-delta table: table identifier with catalog table") {
     // Non-Delta table represent by catalog identifier (e.g.: sales.line_ite) is supported in
     // SHOW COLUMNS command.
     List("json", "csv", "orc", "parquet").foreach { x =>
-      showNonDeltaColumnsTest(x)
+      withTable("show_columns") {
+        sql(s"""
+               |CREATE TABLE show_columns(column1 INT, column2 INT)
+               |USING $x
+               |COMMENT "describe a non delta table"
+        """.stripMargin)
+        checkResult(sql("SHOW COLUMNS IN show_columns"), outputColumnValues, outputColumnNames)
+      }
     }
   }
 
   test("delta table: table name not found") {
     val fakeTableName = s"test_table"
     val schemaName = s"delta"
-    showDeltaColumnsTest(f => s"$schemaName.`${f.toString}`", "", "delta")
-    val e = intercept[AnalysisException] {
-      sql(s"SHOW COLUMNS IN `$fakeTableName` IN $schemaName")
-    }
-    assert(
-      e.getMessage()
-        .contains(
-          s"Table or view not found: $schemaName.$fakeTableName"
-        )
-    )
+    showDeltaColumnsTest(f => s"$schemaName.`${f.toString}`", schemaName = "")
+    val e = intercept[AnalysisException] { sql(s"SHOW COLUMNS IN `$fakeTableName` IN $schemaName") }
+    assert(e.getMessage().contains(s"Table or view not found: $schemaName.$fakeTableName"))
   }
 
   test("delta table: duplicated schema name") {
@@ -137,19 +110,9 @@ trait ShowTableColumnsSuiteBase
         checkResult(
           sql(s"SHOW COLUMNS IN delta.$tableName IN $schemaName"),
           outputColumnValues,
-          outputColumnNames
-        )
+          outputColumnNames)
       }
     }
-  }
-
-  test("delta table: should not use schema name together with path") {
-    // e.g.: SHOW COLUMNS '/path/to/table' IN `delta`
-    // is not allowed.
-    val e = intercept[AnalysisException] {
-      showDeltaColumnsTest(f => s"'${f.toString}'", "delta", "delta")
-    }
-    assert(e.getMessage().contains(s"extraneous input"))
   }
 
   testWithTempView(s"delta table: show columns on temp view") { isSQLTempView =>
@@ -162,11 +125,7 @@ trait ShowTableColumnsSuiteBase
         .saveAsTable(tableName)
       val viewName = "v"
       createTempViewFromTable(tableName, isSQLTempView)
-      checkResult(
-        sql(s"SHOW COLUMNS IN $viewName"),
-        outputColumnValues,
-        outputColumnNames
-      )
+      checkResult(sql(s"SHOW COLUMNS IN $viewName"), outputColumnValues, outputColumnNames)
     }
   }
 
@@ -181,12 +140,8 @@ trait ShowTableColumnsSuiteBase
       checkResult(
         sql(s"SHOW COLUMNS IN delta.`${tempDir.toString}`"),
         Seq(Seq("id"), Seq("nested")),
-        outputColumnNames
-      )
+        outputColumnNames)
     }
   }
 }
 
-class ShowTableColumnsSuite
-    extends ShowTableColumnsSuiteBase
-    with DeltaSQLCommandTest

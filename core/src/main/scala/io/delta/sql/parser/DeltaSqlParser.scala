@@ -331,10 +331,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case None => tableName
       case Some(db) => Some(TableIdentifier(tableName.get.identifier, Some(db)))
     }
-    // If `tableIdentifier` is a Delta table, get `tablePath` from `path` or `metadata.location`.
-    // If `tableIdentifier` is a non-Delta table or a view, return `null` to fallback to Spark's
-    // own parser.
+
     DeltaTableIdentifier(spark, tableIdentifier.get) match {
+      // If `tableIdentifier` is a Delta table, get `tablePath` from `path` or `metadata.location`.
+      // If `tableIdentifier` is a non-Delta table or a view, return `null` to fallback to Spark's
+      // own parser.
       case Some(id) if id.path.nonEmpty =>
         ShowTableColumnsCommand(new Path(id.path.get))
       case Some(id) if id.table.nonEmpty =>

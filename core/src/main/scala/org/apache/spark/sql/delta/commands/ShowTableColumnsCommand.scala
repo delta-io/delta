@@ -18,12 +18,10 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.types.StructType
 
 /**
  * The column format of the result returned by the `SHOW COLUMNS` command.
