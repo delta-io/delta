@@ -59,7 +59,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
         }
         return TransitiveOptional.empty();
     }
-    // TODO PR 14 add IT test for this
+
     private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption(
             DeltaSourceConfiguration sourceConfiguration) {
         Long startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);

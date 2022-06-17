@@ -6,9 +6,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.flink.table.types.logical.BigIntType;
+import org.apache.flink.table.types.logical.BooleanType;
 import org.apache.flink.table.types.logical.CharType;
+import org.apache.flink.table.types.logical.DecimalType;
+import org.apache.flink.table.types.logical.DoubleType;
+import org.apache.flink.table.types.logical.FloatType;
 import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.SmallIntType;
+import org.apache.flink.table.types.logical.TimestampType;
+import org.apache.flink.table.types.logical.TinyIntType;
 import org.apache.flink.table.types.logical.VarCharType;
 
 public final class ExecutionITCaseTestConstants {
@@ -28,6 +35,18 @@ public final class ExecutionITCaseTestConstants {
 
     public static final Set<Integer> AGE_COLUMN_VALUES =
         Stream.of(1, 2).collect(Collectors.toSet());
+
+    public static final String[] ALL_DATA_TABLE_COLUMN_NAMES = {
+        "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9", "col10"
+    };
+
+    public static final LogicalType[] ALL_DATA_TABLE_COLUMN_TYPES = {
+        new TinyIntType(), new SmallIntType(), new IntType(), new DoubleType(), new FloatType(),
+        new DecimalType(), new DecimalType(), new TimestampType(), new VarCharType(),
+        new BooleanType()
+    };
+
+    public static final int ALL_DATA_TABLE_RECORD_COUNT = 5;
 
     /**
      * Columns that are not used as a partition columns.

@@ -30,7 +30,6 @@ import io.delta.standalone.types.TimestampType;
  */
 public enum DeltaDataType {
     ARRAY(ArrayType.class),
-    BIGINT(LongType.class),
     BINARY(BinaryType.class),
     BYTE(ByteType.class),
     BOOLEAN(BooleanType.class),
@@ -39,6 +38,7 @@ public enum DeltaDataType {
     DOUBLE(DoubleType.class),
     FLOAT(FloatType.class),
     INTEGER(IntegerType.class),
+    LONG(LongType.class),
     MAP(MapType.class),
     NULL(NullType.class),
     SMALLINT(ShortType.class),

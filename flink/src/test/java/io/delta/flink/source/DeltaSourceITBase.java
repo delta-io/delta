@@ -1,26 +1,32 @@
 package io.delta.flink.source;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.sql.Timestamp;
+import java.time.ZoneOffset;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-import io.delta.flink.utils.ContinuousTestDescriptor;
+import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.ExecutionITCaseTestConstants;
-import io.delta.flink.utils.FailoverType;
-import io.delta.flink.utils.RecordCounterToFail.FailCheck;
+import io.delta.flink.utils.TestDescriptor;
 import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.connector.source.Boundedness;
-import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.util.TestLogger;
 import org.junit.rules.TemporaryFolder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static io.delta.flink.utils.DeltaTestUtils.buildCluster;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.*;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -29,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public abstract class DeltaSourceITBase extends TestLogger {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaSourceITBase.class);
 
     protected static final TemporaryFolder TMP_FOLDER = new TemporaryFolder();
 
@@ -98,7 +106,10 @@ public abstract class DeltaSourceITBase extends TestLogger {
         );
 
         // WHEN
-        List<RowData> resultData = testWithPartitions(deltaSource);
+        List<RowData> resultData = this.testSource(
+            deltaSource,
+            new TestDescriptor(partitionedTablePath, 2)
+        );
 
         List<String> readNames =
             resultData.stream()
@@ -142,7 +153,10 @@ public abstract class DeltaSourceITBase extends TestLogger {
         );
 
         // WHEN
-        List<RowData> resultData = testWithPartitions(deltaSource);
+        List<RowData> resultData = this.testSource(
+            deltaSource,
+            new TestDescriptor(partitionedTablePath, 2)
+        );
 
         // THEN
         assertThat("Source read different number of rows that Delta Table have.",
@@ -175,7 +189,10 @@ public abstract class DeltaSourceITBase extends TestLogger {
         );
 
         // WHEN
-        List<RowData> resultData = testWithPartitions(deltaSource);
+        List<RowData> resultData = this.testSource(
+            deltaSource,
+            new TestDescriptor(partitionedTablePath, 2)
+        );
 
         Set<String> readSurnames =
             resultData.stream().map(row -> row.getString(0).toString()).collect(Collectors.toSet());
@@ -212,7 +229,10 @@ public abstract class DeltaSourceITBase extends TestLogger {
         DeltaSource<RowData> deltaSource = initSourceAllColumns(partitionedTablePath);
 
         // WHEN
-        List<RowData> resultData = testWithPartitions(deltaSource);
+        List<RowData> resultData = this.testSource(
+            deltaSource,
+            new TestDescriptor(partitionedTablePath, 2)
+        );
 
         List<String> readNames =
             resultData.stream()
@@ -254,114 +274,79 @@ public abstract class DeltaSourceITBase extends TestLogger {
         assertNoMoreColumns(resultData,5);
     }
 
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
+    public void shouldReadTableWithAllDataTypes() throws Exception {
+        String sourceTablePath = TMP_FOLDER.newFolder().getAbsolutePath();
+        DeltaTestUtils.initTestForAllDataTypes(sourceTablePath);
+
+        DeltaSource<RowData> deltaSource = initSourceAllColumns(sourceTablePath);
+
+        List<RowData> rowData = this.testSource(
+            deltaSource,
+            new TestDescriptor(sourceTablePath, ALL_DATA_TABLE_RECORD_COUNT)
+        );
+
+        assertThat(
+            "Source read different number of records than expected.",
+            rowData.size(),
+            equalTo(5)
+        );
+
+        Iterator<RowData> rowDataIterator = rowData.iterator();
+        AtomicInteger index = new AtomicInteger(0);
+        while (rowDataIterator.hasNext()) {
+            int i = index.getAndIncrement();
+            RowData row = rowDataIterator.next();
+            LOG.info("Row Content: " + row);
+            assertRowValues(i, row);
+        }
+    }
+
+    private void assertRowValues(int i, RowData row) {
+        assertAll(() -> {
+                assertThat(row.getByte(0), equalTo(new Integer(i).byteValue()));
+                assertThat(row.getShort(1), equalTo((short) i));
+                assertThat(row.getInt(2), equalTo(i));
+                assertThat(row.getDouble(3), equalTo(new Integer(i).doubleValue()));
+                assertThat(row.getFloat(4), equalTo(new Integer(i).floatValue()));
+                assertThat(
+                    row.getDecimal(5, 1, 1).toBigDecimal().setScale(18),
+                    equalTo(BigDecimal.valueOf(i).setScale(18))
+                );
+                assertThat(
+                    row.getDecimal(6, 1, 1).toBigDecimal().setScale(18),
+                    equalTo(BigDecimal.valueOf(i).setScale(18))
+                );
+
+                // same value for all columns
+                assertThat(
+                    row.getTimestamp(7, 18).toLocalDateTime().toInstant(ZoneOffset.UTC),
+                    equalTo(Timestamp.valueOf("2022-06-14 18:54:24.547557")
+                        .toLocalDateTime().toInstant(ZoneOffset.UTC))
+                );
+                assertThat(row.getString(8).toString(), equalTo(String.valueOf(i)));
+
+                // same value for all columns
+                assertThat(row.getBoolean(9), equalTo(true));
+            }
+        );
+    }
+
     protected abstract DeltaSource<RowData> initSourceAllColumns(String tablePath);
 
     protected abstract DeltaSource<RowData> initSourceForColumns(
         String tablePath,
         String[] columnNames);
 
-    protected abstract List<RowData> testWithPartitions(DeltaSource<RowData> deltaSource)
-        throws Exception;
-
     /**
-     * Base method used for testing {@link DeltaSource} in {@link Boundedness#BOUNDED} mode. This
-     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code
-     * DeltaSource} instance without any failover.
-     *
-     * @param source The {@link DeltaSource} that should be used in this test.
-     * @param <T>    Type of objects produced by source.
+     * Test a source without failover setup.
+     * @param deltaSource delta source to test.
+     * @param testDescriptor A {@link TestDescriptor} for this test run.
      * @return A {@link List} of produced records.
      */
-    protected <T> List<T> testBoundedDeltaSource(DeltaSource<T> source)
-        throws Exception {
-
-        // Since we don't do any failover here (used FailoverType.NONE) we don't need any
-        // actually FailCheck.
-        // We do need to pass the check at least once, to call
-        // RecordCounterToFail#continueProcessing.get() hence (FailCheck) integer -> true
-        return testBoundedDeltaSource(FailoverType.NONE, source, (FailCheck) integer -> true);
-    }
-
-    /**
-     * Base method used for testing {@link DeltaSource} in {@link Boundedness#BOUNDED} mode. This
-     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code DeltaSource}
-     * instance.
-     * <p>
-     * <p>
-     * The created environment can perform a failover after condition described by {@link FailCheck}
-     * which is evaluated every record produced by {@code DeltaSource}
-     *
-     * @param failoverType The {@link FailoverType} type that should be performed for given test
-     *                     setup.
-     * @param source       The {@link DeltaSource} that should be used in this test.
-     * @param failCheck    The {@link FailCheck} condition which is evaluated for every row produced
-     *                     by source.
-     * @param <T>          Type of objects produced by source.
-     * @return A {@link List} of produced records.
-     * @implNote For Implementation details please refer to
-     * {@link DeltaTestUtils#testBoundedStream(FailoverType,
-     * FailCheck, DataStream, MiniClusterWithClientResource)} method.
-     */
-    protected <T> List<T> testBoundedDeltaSource(FailoverType failoverType, DeltaSource<T> source,
-        FailCheck failCheck) throws Exception {
-
-        if (source.getBoundedness() != Boundedness.BOUNDED) {
-            throw new RuntimeException(
-                "Not using Bounded source in Bounded test setup. This will not work properly.");
-        }
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(PARALLELISM);
-        env.setRuntimeMode(RuntimeExecutionMode.AUTOMATIC);
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(5, 1000));
-
-        DataStream<T> stream =
-            env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source");
-
-        return DeltaTestUtils
-            .testBoundedStream(failoverType, failCheck, stream, miniClusterResource);
-    }
-
-    /**
-     * Base method used for testing {@link DeltaSource} in {@link Boundedness#CONTINUOUS_UNBOUNDED}
-     * mode. This method creates a {@link StreamExecutionEnvironment} and uses provided {@code
-     * DeltaSource} instance.
-     * <p>
-     * <p>
-     * The created environment can perform a failover after condition described by {@link FailCheck}
-     * which is evaluated every record produced by {@code DeltaSource}
-     *
-     * @param failoverType The {@link FailoverType} type that should be performed for given test
-     *                     setup.
-     * @param source       The {@link DeltaSource} that should be used in this test.
-     * @param failCheck    The {@link FailCheck} condition which is evaluated for every row produced
-     *                     by source.
-     * @param <T>          Type of objects produced by source.
-     * @return A {@link List} of produced records.
-     * @implNote For Implementation details please refer to
-     * {@link DeltaTestUtils#testContinuousStream(FailoverType, ContinuousTestDescriptor,
-     * FailCheck, DataStream, MiniClusterWithClientResource)}
-     */
-    protected <T> List<List<T>> testContinuousDeltaSource(
-            FailoverType failoverType,
-            DeltaSource<T> source,
-            ContinuousTestDescriptor testDescriptor,
-            FailCheck failCheck)
-        throws Exception {
-
-        StreamExecutionEnvironment env = prepareStreamingEnvironment(source);
-
-        DataStream<T> stream =
-            env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source");
-
-        return DeltaTestUtils.testContinuousStream(
-                failoverType,
-                testDescriptor,
-                failCheck,
-                stream,
-                miniClusterResource
-        );
-    }
+    protected abstract List<RowData> testSource(
+            DeltaSource<RowData> deltaSource,
+            TestDescriptor testDescriptor) throws Exception;
 
     protected void assertPartitionValue(
             RowData rowData,
@@ -393,6 +378,44 @@ public abstract class DeltaSourceITBase extends TestLogger {
         env.enableCheckpointing(200L);
         env.setRestartStrategy(RestartStrategies.fixedDelayRestart(5, 1000));
         return env;
+    }
+
+    /**
+     * Changes last modification time for delta log files.
+     *
+     * @param sourceTablePath  Path to delta log to change last modification time.
+     * @param lastModifyValues An array of times to which last modification time should be change
+     *                         to.
+     */
+    protected void changeDeltaLogLastModifyTimestamp(
+            String sourceTablePath,
+            String[] lastModifyValues) throws IOException {
+
+        List<java.nio.file.Path> sortedLogFiles =
+            Files.list(Paths.get(sourceTablePath + "/_delta_log"))
+                .filter(file -> file.getFileName().toUri().toString().endsWith(".json"))
+                .sorted()
+                .collect(Collectors.toList());
+
+        assertThat(
+            "Delta log for table " + sourceTablePath + " size, does not match"
+                + " test's last modify argument size " + lastModifyValues.length,
+            sortedLogFiles.size(),
+            equalTo(lastModifyValues.length)
+        );
+
+        int i = 0;
+        for (java.nio.file.Path logFile : sortedLogFiles) {
+            String timestampAsOfValue = lastModifyValues[i++];
+            long toTimestamp = TimestampFormatConverter.convertToTimestamp(timestampAsOfValue);
+            LOG.info(
+                "Changing Last Modified timestamp on file " + logFile
+                    + " to " + timestampAsOfValue + " -> " + timestampAsOfValue
+            );
+            assertThat(
+                "Unable to modify " + logFile + " last modified timestamp.",
+                logFile.toFile().setLastModified(toTimestamp), equalTo(true));
+        }
     }
 
     private void assertNoMoreColumns(List<RowData> resultData, int columnIndex) {

@@ -49,36 +49,49 @@ public class DeltaTestUtils {
 
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR =
         "/test-data/test-non-partitioned-delta-table-initial-state";
+
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_P_DIR =
         "/test-data/test-partitioned-delta-table-initial-state";
+
     public static final String TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR =
         "/test-data/test-non-partitioned-delta-table_1100_records";
 
+    public static final String TEST_DELTA_TABLE_ALL_DATA_TYPES =
+        "/test-data/test-non-partitioned-delta-table-alltypes";
+
+    public static final String TEST_VERSIONED_DELTA_TABLE =
+        "/test-data/test-non-partitioned-delta-table-4-versions";
+
+    public static void initTestForAllDataTypes(String targetTablePath)
+        throws IOException {
+        initTestFor(TEST_DELTA_TABLE_ALL_DATA_TYPES, targetTablePath);
+    }
+
     public static void initTestForNonPartitionedTable(String targetTablePath)
         throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
+        initTestFor(TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR, targetTablePath);
     }
 
     public static void initTestForPartitionedTable(String targetTablePath)
         throws IOException {
-        File resourcesDirectory = new File("src/test/resources");
-        String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_TABLE_INITIAL_STATE_P_DIR;
-        FileUtils.copyDirectory(
-            new File(initialTablePath),
-            new File(targetTablePath));
+        initTestFor(TEST_DELTA_TABLE_INITIAL_STATE_P_DIR, targetTablePath);
     }
 
     public static void initTestForNonPartitionedLargeTable(String targetTablePath)
         throws IOException {
+        initTestFor(TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR, targetTablePath);
+    }
+
+    public static void initTestForVersionedTable(String targetTablePath)
+        throws IOException {
+        initTestFor(TEST_VERSIONED_DELTA_TABLE, targetTablePath);
+    }
+
+    public static void initTestFor(String testDeltaTableInitialStateNpDir, String targetTablePath)
+        throws IOException {
         File resourcesDirectory = new File("src/test/resources");
         String initialTablePath =
-            resourcesDirectory.getAbsolutePath() + TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR;
+            resourcesDirectory.getAbsolutePath() + testDeltaTableInitialStateNpDir;
         FileUtils.copyDirectory(
             new File(initialTablePath),
             new File(targetTablePath));
@@ -128,6 +141,19 @@ public class DeltaTestUtils {
                 .withHaLeadershipControl()
                 .setConfiguration(configuration)
                 .build());
+    }
+
+    public static <T> List<T> testBoundedStream(
+            DataStream<T> stream,
+            MiniClusterWithClientResource miniClusterResource)
+        throws Exception {
+
+        return testBoundedStream(
+            FailoverType.NONE,
+            (FailCheck) integer -> true,
+            stream,
+            miniClusterResource
+        );
     }
 
     /**
@@ -230,7 +256,7 @@ public class DeltaTestUtils {
      *
      * @param failoverType        The {@link FailoverType} type that should be performed for given
      *                            test setup.
-     * @param testDescriptor      The {@link ContinuousTestDescriptor} used for test run.
+     * @param testDescriptor      The {@link TestDescriptor} used for test run.
      * @param failCheck           The {@link FailCheck} condition which is evaluated for every row
      *                            produced by source.
      * @param stream              The {@link DataStream} under test.
@@ -280,7 +306,7 @@ public class DeltaTestUtils {
      */
     public static <T> List<List<T>> testContinuousStream(
             FailoverType failoverType,
-            ContinuousTestDescriptor testDescriptor,
+            TestDescriptor testDescriptor,
             FailCheck failCheck,
             DataStream<T> stream,
             MiniClusterWithClientResource miniClusterResource) throws Exception {
@@ -323,7 +349,7 @@ public class DeltaTestUtils {
     }
 
     public static <T> Future<List<T>> startInitialResultsFetcherThread(
-            ContinuousTestDescriptor testDescriptor,
+            TestDescriptor testDescriptor,
             ClientAndIterator<T> client,
             ExecutorService threadExecutor) {
 
@@ -333,7 +359,7 @@ public class DeltaTestUtils {
     }
 
     public static <T> Future<List<T>> startTableUpdaterThread(
-            ContinuousTestDescriptor testDescriptor,
+            TestDescriptor testDescriptor,
             DeltaTableUpdater tableUpdater,
             ClientAndIterator<T> client,
             ExecutorService threadExecutor) {
@@ -346,7 +372,7 @@ public class DeltaTestUtils {
                     tableUpdater.writeToTable(descriptor);
                     List<T> records = DataStreamUtils.collectRecordsFromUnboundedStream(client,
                         descriptor.getNumberOfNewRows());
-                    System.out.println("Stream update result size: " + records.size());
+                    LOG.info("Stream update result size: " + records.size());
                     results.addAll(records);
                 });
                 return results;
@@ -354,21 +380,21 @@ public class DeltaTestUtils {
     }
 
     /**
-     * Creates a {@link ContinuousTestDescriptor} for tests. The descriptor created by this method
+     * Creates a {@link TestDescriptor} for tests. The descriptor created by this method
      * describes a scenario where Delta table will be updated
      * {@link TableUpdateDescriptor#getNumberOfNewVersions()}
      * times, where every update/version will contain
      * {@link TableUpdateDescriptor#getNumberOfRecordsPerNewVersion()}
      * new unique rows.
      */
-    public static ContinuousTestDescriptor prepareTableUpdates(
+    public static TestDescriptor prepareTableUpdates(
             String tablePath,
             RowType rowType,
             int initialDataSize,
             TableUpdateDescriptor tableUpdateDescriptor) {
 
-        ContinuousTestDescriptor testDescriptor =
-            new ContinuousTestDescriptor(tablePath, initialDataSize);
+        TestDescriptor testDescriptor =
+            new TestDescriptor(tablePath, initialDataSize);
 
         for (int i = 0; i < tableUpdateDescriptor.getNumberOfNewVersions(); i++) {
             List<Row> newRows = new ArrayList<>();

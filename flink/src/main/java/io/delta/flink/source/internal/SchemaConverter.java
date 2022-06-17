@@ -61,7 +61,7 @@ public class SchemaConverter {
                     arrayContainsNull);
                 return
                     new ArrayType(nullable, elementType);
-            case BIGINT:
+            case LONG:
                 return new BigIntType(nullable);
             case BINARY:
                 return new BinaryType(nullable, BinaryType.DEFAULT_LENGTH);

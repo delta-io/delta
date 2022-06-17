@@ -230,6 +230,7 @@ public class DeltaSinkWriteReadITCase {
         return env;
     }
 
+    @SuppressWarnings("unchecked")
     private static List<RowData> rowToRowData(RowType rowType,
                                               Row row) {
         DataFormatConverters.DataFormatConverter<RowData, Row> CONVERTER =

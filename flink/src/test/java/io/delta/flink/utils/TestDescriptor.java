@@ -11,7 +11,7 @@ import org.apache.flink.types.Row;
  * This class describes a Delta table update scenario for IT case test. Information from this class
  * is used by updater thread that updates Delta table with new rows during test run.
  */
-public class ContinuousTestDescriptor {
+public class TestDescriptor {
 
     /**
      * Path to Delta table
@@ -29,7 +29,7 @@ public class ContinuousTestDescriptor {
      */
     private final List<Descriptor> updateDescriptors = new ArrayList<>();
 
-    public ContinuousTestDescriptor(String tablePath, int initialDataSize) {
+    public TestDescriptor(String tablePath, int initialDataSize) {
         this.tablePath = tablePath;
         this.initialDataSize = initialDataSize;
     }

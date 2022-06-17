@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultOptionTypeConverterTest {
 
-    private OptionTypeConverter typeConverter;
+    private OptionTypeConverter<?> typeConverter;
 
     @BeforeEach
     public void setUp() {
