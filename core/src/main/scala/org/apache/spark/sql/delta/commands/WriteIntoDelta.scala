@@ -251,6 +251,10 @@ case class WriteIntoDelta(
     }
 
     val fileActions = if (rearrangeOnly) {
+      val changeFiles = newFiles.collect { case c: AddCDCFile => c }
+      if (changeFiles.nonEmpty) {
+        throw DeltaErrors.unexpectedChangeFilesFound(changeFiles.mkString("\n"))
+      }
       addFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map {
           case add: AddFile => add.copy(dataChange = !rearrangeOnly)
