@@ -2008,6 +2008,15 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unexpectedChangeFilesFound("a.parquet")
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_CHANGE_FILES_FOUND")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == """Change files found in a dataChange = false transaction. Files:
+                               |a.parquet""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.logFailedIntegrityCheck(2, "option1")
       }
       assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
