@@ -2147,6 +2147,15 @@ trait DeltaErrorsSuiteBase
         "Can only drop nested columns from StructType. Found StructField(invalid1,StringType,true)")
     }
     {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_STREAMING_COLUMN_MAPPING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Streaming reads from a Delta table with column mapping enabled are not supported.")
+    }
+    {
       val columnsThatNeedRename = Set("c0", "c1")
       val schema = StructType(Seq(StructField("schema1", StringType)))
       val e = intercept[DeltaAnalysisException] {

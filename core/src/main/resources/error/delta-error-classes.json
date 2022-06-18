@@ -39,6 +39,12 @@
     "message" : [ "CREATE TABLE contains two different locations: <identifier> and <location>.", "You can remove the LOCATION clause from the CREATE TABLE statement, or set", "<config> to true to skip this check.", "" ],
     "sqlState" : "42000"
   },
+  "DELTA_BLOCK_STREAMING_COLUMN_MAPPING_READS" : {
+    "message" : [
+      "Streaming reads from a Delta table with column mapping enabled are not supported."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS" : {
     "message" : [ "Cannot drop bloom filter indices for the following non-existent column(s): <unknownColumns>" ],
     "sqlState" : "42000"
