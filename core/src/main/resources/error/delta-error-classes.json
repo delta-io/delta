@@ -1282,7 +1282,10 @@
     "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_CHANGE_FILES_FOUND" : {
-    "message" : [ "Change files found in a dataChange = false transaction. Files:", "<fileList>" ],
+    "message" : [
+      "Change files found in a dataChange = false transaction. Files:",
+      "<fileList>"
+    ],
     "sqlState" : "0A000"
   },
   "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME" : {
