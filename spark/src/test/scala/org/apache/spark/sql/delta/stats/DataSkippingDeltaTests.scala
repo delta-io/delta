@@ -35,7 +35,8 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -1808,6 +1809,23 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       )
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  test("Ensure that we do reuse a scan with nested column pruning") {
+    withTempDir { dir =>
+      val schema = StructType.fromDDL("inner STRUCT<a: STRING, b: LONG>, c LONG")
+      Seq(("a", 1), ("b", 2), ("c", 3)).toDF("a", "b").select(struct('a, 'b).alias("nested"))
+        .write.format("delta").save(dir.getCanonicalPath)
+
+      val plans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+        sql(s"SELECT nested.b FROM delta.`$dir` WHERE nested.b < 2").collect()
+      }
+      val rddScans = plans.flatMap(_.collect {
+        case l: LogicalRDD => l
+      })
+      // We should only scan the log once
+      assert(rddScans.length == 1)
     }
   }
 
