@@ -1814,7 +1814,6 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   test("Ensure that we do reuse a scan with nested column pruning") {
     withTempDir { dir =>
-      val schema = StructType.fromDDL("inner STRUCT<a: STRING, b: LONG>, c LONG")
       Seq(("a", 1), ("b", 2), ("c", 3)).toDF("a", "b").select(struct('a, 'b).alias("nested"))
         .write.format("delta").save(dir.getCanonicalPath)
 
