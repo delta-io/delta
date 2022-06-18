@@ -23,7 +23,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
-import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
@@ -262,7 +262,9 @@ trait DeltaColumnMappingBase {
 
     SchemaMergingUtils.transformColumns(physicalSchema) ((parentPhysicalPath, field, _) => {
       // field.name is now physical name
-      val curFullPhysicalPath = (parentPhysicalPath :+ field.name).mkString(".")
+      // We also need to apply backticks to column paths with dots in them to prevent a possible
+      // false alarm in which a column `a.b` is duplicated with `a`.`b`
+      val curFullPhysicalPath = UnresolvedAttribute(parentPhysicalPath :+ field.name).name
       val columnId = getColumnId(field)
       if (columnIds.contains(columnId)) {
         throw DeltaErrors.duplicatedColumnId(mode, columnId, schema)

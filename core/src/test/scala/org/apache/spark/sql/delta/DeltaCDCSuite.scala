@@ -22,6 +22,7 @@ import java.util.Date
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -109,6 +110,38 @@ abstract class DeltaCDCSuiteBase
     } else {
       readDf.write.format("delta")
         .saveAsTable(dstTbl)
+    }
+  }
+
+  private val validTimestampFormats =
+    Seq("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd")
+  private val invalidTimestampFormats =
+    Seq("yyyyMMddHHmmssSSS")
+
+  (validTimestampFormats ++ invalidTimestampFormats).foreach { formatStr =>
+    val isValid = validTimestampFormats.contains(formatStr)
+    val isValidStr = if (isValid) "valid" else "invalid"
+
+    test(s"CDF timestamp format - $formatStr is $isValidStr") {
+      withTable("src") {
+        createTblWithThreeVersions(tblName = Some("src"))
+
+        val timestamp = new SimpleDateFormat(formatStr).format(new Date(1))
+
+        def doRead(): Unit = {
+          cdcRead(new TableName("src"), StartingTimestamp(timestamp), EndingVersion("1"))
+        }
+
+        if (isValid) {
+          doRead()
+        } else {
+          val e = intercept[AnalysisException] {
+            doRead()
+          }.getMessage()
+          assert(e.contains("The provided timestamp"))
+          assert(e.contains("cannot be converted to a valid timestamp"))
+        }
+      }
     }
   }
 
@@ -526,6 +559,74 @@ abstract class DeltaCDCSuiteBase
         }
         assert(e.getMessage === DeltaErrors.changeDataNotRecordedException(
           firstDisabledVersion, start, end).getMessage)
+      }
+    }
+  }
+
+  test("changes - start timestamp exceeding latest commit timestamp") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+        val path = tempDir.getAbsolutePath
+        createTblWithThreeVersions(path = Some(path))
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        // modify timestamps
+        // version 0
+        modifyDeltaTimestamp(deltaLog, 0, 0)
+
+        // version 1
+        modifyDeltaTimestamp(deltaLog, 1, 1000)
+
+        // version 2
+        modifyDeltaTimestamp(deltaLog, 2, 2000)
+
+        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(3000))
+        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(4000))
+
+        val readDf = cdcRead(
+          new TablePath(path),
+          StartingTimestamp(tsStart),
+          EndingTimestamp(tsEnd))
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, tempDir),
+          readDf,
+          sqlContext.emptyDataFrame)
+      }
+    }
+  }
+
+  test("changes - end timestamp exceeding latest commit timestamp") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+        createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+        // modify timestamps
+        // version 0
+        modifyDeltaTimestamp(deltaLog, 0, 0)
+
+        // version 1
+        modifyDeltaTimestamp(deltaLog, 1, 1000)
+
+        // version 2
+        modifyDeltaTimestamp(deltaLog, 2, 2000)
+
+        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(0))
+        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(4000))
+
+        val readDf = cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, tempDir),
+          readDf,
+          spark.range(30)
+            .withColumn("_change_type", lit("insert"))
+            .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
       }
     }
   }

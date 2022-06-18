@@ -204,9 +204,7 @@ object SchemaUtils extends DeltaLogging {
       val topLevelDataFields = dataFields.map(UnresolvedAttribute.parseAttributeName(_).head)
       if (topLevelDataFields.subsetOf(tableFields)) {
         val columnsThatNeedRenaming = dataFields -- tableFields
-        throw new AnalysisException("Nested fields need renaming to avoid data loss. " +
-          s"Fields:\n${columnsThatNeedRenaming.mkString("[", ", ", "]")}.\n" +
-          s"Original schema:\n${baseSchema.treeString}")
+        throw DeltaErrors.nestedFieldsNeedRename(columnsThatNeedRenaming, baseSchema)
       }
 
       val baseFields = toFieldMap(baseSchema)
@@ -620,9 +618,7 @@ object SchemaUtils extends DeltaLogging {
       val mid = schema(slicePosition) match {
         case StructField(name, f: StructType, nullable, metadata) =>
           if (!column.nullable && nullable) {
-            throw new AnalysisException(
-              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
-              "nullability of the parent column accordingly.")
+            throw DeltaErrors.nullableParentWithNotNullNestedField
           }
           StructField(
             name,
@@ -631,9 +627,7 @@ object SchemaUtils extends DeltaLogging {
             metadata)
         case StructField(name, ArrayType(f: StructType, containsNull), nullable, metadata) =>
           if (!column.nullable && nullable) {
-            throw new AnalysisException(
-              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
-                "nullability of the parent column accordingly.")
+            throw DeltaErrors.nullableParentWithNotNullNestedField
           }
 
           if (posTail.head != ARRAY_ELEMENT_INDEX) {
@@ -647,9 +641,7 @@ object SchemaUtils extends DeltaLogging {
             metadata)
         case StructField(name, map @ MapType(_, _, _), nullable, metadata) =>
           if (!column.nullable && nullable) {
-            throw new AnalysisException(
-              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
-                "nullability of the parent column accordingly.")
+            throw DeltaErrors.nullableParentWithNotNullNestedField
           }
 
           val addedMap = (posTail.head, map) match {
@@ -701,7 +693,7 @@ object SchemaUtils extends DeltaLogging {
           val (dropped, original) = dropColumn(f, position.tail)
           (StructField(name, dropped, nullable, metadata), original)
         case o =>
-          throw new AnalysisException(s"Can only drop nested columns from StructType. Found: $o")
+          throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(o)
       }
       (StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length)), original)
     } else {

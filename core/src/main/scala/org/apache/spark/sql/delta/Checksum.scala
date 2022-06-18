@@ -104,7 +104,7 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   private[delta] def store: LogStore
 
   private[delta] def readChecksum(version: Long): Option[VersionChecksum] = {
-    recordFrameProfile("Delta", "ReadChecksum.readChecksum") {
+    recordDeltaOperation(self, "delta.readChecksum") {
       val checksumFile = FileNames.checksumFile(logPath, version)
 
       var exception: Option[String] = None

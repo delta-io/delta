@@ -259,7 +259,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
               }.toSeq :+ column
             case other =>
               // Should not happen since we use `Alias` expressions.
-              throw new IllegalStateException(s"Expected Alias but got $other")
+              throw DeltaErrors.unexpectedAlias(s"$other")
           }
         case other =>
           // Should not happen since `select` should use `Project`.
@@ -368,7 +368,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
               }
             case other =>
               // Should not happen since we use `Alias` expressions.
-              throw new IllegalStateException(s"Expected Alias but got $other")
+              throw DeltaErrors.unexpectedAlias(s"$other")
           }
         case other =>
           // Should not happen since `select` should use `Project`.

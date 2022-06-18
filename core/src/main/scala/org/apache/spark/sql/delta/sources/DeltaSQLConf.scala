@@ -726,6 +726,26 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
+    buildConf("changeDataFeed.timestampOutOfRange.enabled")
+      .doc(
+        """When enabled, Change Data Feed queries with starting and ending timestamps
+           | exceeding the newest delta commit timestamp will not error out. For starting timestamp
+           | out of range we will return an empty DataFrame, for ending timestamps out of range we
+           | will consider the latest Delta version as the ending version.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+  }
+
+  val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
+    buildConf("dynamicPartitionOverwrite.enabled")
+      .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
+        "'dynamic' in either the SQL conf, or a DataFrameWriter option. When this is disabled " +
+        "'partitionOverwriteMode' will be ignored.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

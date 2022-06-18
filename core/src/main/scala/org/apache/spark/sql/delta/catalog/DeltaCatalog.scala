@@ -93,7 +93,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
       case _ => true
-    }
+    }.toMap
     val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
     var newSchema = schema
     var newPartitionColumns = partitionColumns
@@ -130,7 +130,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
-    val tableDesc = new CatalogTable(
+    var tableDesc = new CatalogTable(
       identifier = id,
       tableType = tableType,
       storage = storage,
@@ -138,7 +138,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       provider = Some(DeltaSourceUtils.ALT_NAME),
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
-      properties = tableProperties.toMap,
+      properties = tableProperties,
       comment = commentOpt)
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
@@ -480,7 +480,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
-            val schema = table.deltaLog.snapshot.schema
+            // TODO: Theoretically we should be able to fetch the snapshot from a txn.
+            val schema = table.snapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
@@ -525,8 +526,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, locations) if t == classOf[SetLocation] =>
         if (locations.size != 1) {
-          throw new IllegalArgumentException(s"Can't set location multiple times. Found " +
-            s"${locations.asInstanceOf[Seq[SetProperty]].map(_.value())}")
+          throw DeltaErrors.cannotSetLocationMultipleTimes(
+            locations.asInstanceOf[Seq[SetProperty]].map(_.value()))
         }
         if (table.tableIdentifier.isEmpty) {
           throw DeltaErrors.setLocationNotSupportedOnPathIdentifiers()

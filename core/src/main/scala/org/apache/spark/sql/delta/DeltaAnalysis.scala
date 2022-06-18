@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.RestoreTableCommand
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -31,9 +32,10 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Dataset, SaveMode, SparkSession}
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, NamedRelation, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
@@ -44,6 +46,7 @@ import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
@@ -90,6 +93,15 @@ class DeltaAnalysis(session: SparkSession)
         o
       }
 
+    // INSERT OVERWRITE by name with dynamic partition overwrite
+    case o @ DynamicPartitionOverwriteDelta(r, d) if o.resolved
+      =>
+      val adjustedQuery = if (!o.isByName && needsSchemaAdjustment(d.name(), o.query, r.schema)) {
+        resolveQueryColumnsByOrdinal(o.query, r.output, d.name())
+      } else {
+        o.query
+      }
+      DeltaDynamicPartitionOverwriteCommand(r, d, adjustedQuery, o.writeOptions, o.isByName)
 
     // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
     // queries a Delta table such as spark.read.format("delta").load("/some/table/partition=2")
@@ -332,10 +344,14 @@ class DeltaAnalysis(session: SparkSession)
     conf.storeAssignmentPolicy match {
       case SQLConf.StoreAssignmentPolicy.LEGACY =>
         Cast(_, _, Option(timeZone), ansiEnabled = false)
-      case SQLConf.StoreAssignmentPolicy.ANSI => AnsiCast(_, _, Option(timeZone))
+      case SQLConf.StoreAssignmentPolicy.ANSI =>
+        (input: Expression, dt: DataType) => {
+          AnsiCast(input, dt, Option(timeZone))
+        }
       case SQLConf.StoreAssignmentPolicy.STRICT => UpCast(_, _)
     }
   }
+
 
   /**
    * Recursively casts structs in case it contains null types.
@@ -445,3 +461,67 @@ object OverwriteDelta {
     }
   }
 }
+
+object DynamicPartitionOverwriteDelta {
+  def unapply(o: OverwritePartitionsDynamic): Option[(DataSourceV2Relation, DeltaTableV2)] = {
+    if (o.query.resolved) {
+      o.table match {
+        case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
+          Some((r, r.table.asInstanceOf[DeltaTableV2]))
+        case _ => None
+      }
+    } else {
+      None
+    }
+  }
+}
+
+/**
+ * A `RunnableCommand` that will execute dynamic partition overwrite using [[WriteIntoDelta]].
+ *
+ * This is a workaround of Spark not supporting V1 fallback for dynamic partition overwrite.
+ * Note the following details:
+ * - Extends `V2WriteCommmand` so that Spark can transform this plan in the same as other
+ *   commands like `AppendData`.
+ * - Exposes the query as a child so that the Spark optimizer can optimize it.
+ */
+case class DeltaDynamicPartitionOverwriteCommand(
+    table: NamedRelation,
+    deltaTable: DeltaTableV2,
+    query: LogicalPlan,
+    writeOptions: Map[String, String],
+    isByName: Boolean) extends RunnableCommand with V2WriteCommand {
+
+  override def child: LogicalPlan = query
+
+  override def withNewQuery(newQuery: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = {
+    copy(query = newQuery)
+  }
+
+  override def withNewTable(newTable: NamedRelation): DeltaDynamicPartitionOverwriteCommand = {
+    copy(table = newTable)
+  }
+
+  override protected def withNewChildInternal(
+      newChild: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = copy(query = newChild)
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaOptions = new DeltaOptions(
+      CaseInsensitiveMap[String](
+        deltaTable.options ++
+        writeOptions ++
+        Seq(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION ->
+          DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC)),
+      sparkSession.sessionState.conf)
+
+    WriteIntoDelta(
+      deltaTable.deltaLog,
+      SaveMode.Overwrite,
+      deltaOptions,
+      partitionColumns = Nil,
+      deltaTable.deltaLog.snapshot.metadata.configuration,
+      Dataset.ofRows(sparkSession, query)
+    ).run(sparkSession)
+  }
+}
+
