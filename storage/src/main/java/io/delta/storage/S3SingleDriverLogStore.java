@@ -28,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.io.CountingOutputStream;
@@ -36,15 +35,9 @@ import io.delta.storage.internal.FileNameUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.RemoteIterator;
-import org.apache.hadoop.fs.s3a.Listing;
-import org.apache.hadoop.fs.s3a.S3AFileStatus;
-import org.apache.hadoop.fs.s3a.S3AFileSystem;
-import org.apache.hadoop.fs.s3a.S3ListRequest;
-
-import static org.apache.hadoop.fs.s3a.S3AUtils.ACCEPT_ALL;
-import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -220,9 +213,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
      * the file system list and the cache list when `useCache` is on, otherwise
      * use file system list only.
-     *
-     * The S3ListRequest.v2 interface is used with a startAfter parameter to only list files
-     * which are lexicographically greater than resolvedPath.
      */
     private Iterator<FileStatus> listFromInternal(
             FileSystem fs,
@@ -235,23 +225,17 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             );
         }
 
-        S3AFileSystem s3afs = (S3AFileSystem) fs;
-        Listing listing = s3afs.getListing();
-        // List files lexicographically after resolvedPath inclusive within the same directory
-        RemoteIterator<S3AFileStatus> l = listing.createFileStatusListingIterator(resolvedPath,
-                S3ListRequest.v2(
-                        new ListObjectsV2Request()
-                                .withBucketName(s3afs.getBucket())
-                                .withMaxKeys(1000)
-                                .withPrefix(s3afs.pathToKey(parentPath))
-                                .withStartAfter(s3afs.pathToKey(resolvedPath))
-                ), ACCEPT_ALL,
-                new Listing.AcceptAllButSelfAndS3nDirs(resolvedPath)
-        );
-        S3AFileStatus[] statuses = iteratorToStatuses(l, new HashSet<>());
+        // This is needed for tests to pass
+        FileStatus[] statuses;
+        if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem) {
+            statuses = fs.listStatus(parentPath);
+        } else {
+            statuses = S3SingleDriverLogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath);
+        }
 
         final List<FileStatus> listedFromFs = Arrays
             .stream(statuses)
+            .filter(s -> s.getPath().getName().compareTo(resolvedPath.getName()) >= 0)
             .collect(Collectors.toList());
 
         final List<FileStatus> listedFromCache = useCache ?

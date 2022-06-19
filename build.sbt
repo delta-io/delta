@@ -17,7 +17,6 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.2.0"
-val hadoopVersion = "3.3.1"
 val scala212 = "2.12.14"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
@@ -65,7 +64,6 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
@@ -175,8 +173,8 @@ lazy val storage = (project in file("storage"))
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
 
       // Test Deps
       "org.scalatest" %% "scalatest" % "3.2.11" % "test",
