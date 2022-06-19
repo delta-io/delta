@@ -2,6 +2,7 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 # Delta Transaction Log Protocol
 
+- [Delta Transaction Log Protocol](#delta-transaction-log-protocol)
 - [Overview](#overview)
 - [Delta Table Specification](#delta-table-specification)
   - [File Types](#file-types)
@@ -10,6 +11,7 @@
     - [Checkpoints](#checkpoints)
     - [Last Checkpoint File](#last-checkpoint-file)
       - [JSON checksum](#json-checksum)
+        - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -19,6 +21,8 @@
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
 - [Column Mapping](#column-mapping)
+  - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
+  - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -29,7 +33,9 @@
   - [Append-only Tables](#append-only-tables)
   - [Column Invariants](#column-invariants)
   - [Generated Columns](#generated-columns)
+  - [Identity Columns](#identity-columns)
   - [Writer Version Requirements](#writer-version-requirements)
+- [Requirements for Readers](#requirements-for-readers)
 - [Appendix](#appendix)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
@@ -314,6 +320,7 @@ extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 tags | Map[String, String] | Map containing metadata about this file
+numRecords | Option[Long] | The number of records in this file.
 
 The following is an example `remove` action.
 ```
