@@ -1228,6 +1228,6 @@ class DeltaOptimizeBuilder(object):
             self._jbuilder.executeZOrderBy(_to_seq(
                         self._spark._sc,  # type: ignore[attr-defined]
                         cast(Iterable[Union[Column, str]], cols)
-                    )),
+                )),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
