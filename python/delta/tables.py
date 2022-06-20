@@ -1211,7 +1211,7 @@ class DeltaOptimizeBuilder(object):
     def executeZOrderBy(self, *cols:Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
         """
         Z-Order the data in the table using the given columns
-        
+
         :param cols: the Z-Order cols
         :type cols: str or list name of columns
 
@@ -1222,7 +1222,7 @@ class DeltaOptimizeBuilder(object):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
             if type(c) is not str:
-                self._raise_type_error("Z-Order column must be str.", [c])
+                self._raise_type_error("Z-order column must be str.", [c])
 
         return DataFrame(
             self._jbuilder.executeZOrderBy(_to_seq(
