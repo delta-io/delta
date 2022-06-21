@@ -296,10 +296,14 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
      */
     protected DeltaSource<RowData> initSourceAllColumns(String tablePath) {
 
-        Configuration hadoopConf = DeltaTestUtils.getHadoopConf();
+        // Making sure that we are using path with schema to file system "file://"
+        Configuration hadoopConf = DeltaTestUtils.getConfigurationWithMockFs();
+
+        Path path = Path.fromLocalFile(new File(tablePath));
+        assertThat(path.toUri().getScheme(), equalTo("file"));
 
         return DeltaSource.forBoundedRowData(
-                Path.fromLocalFile(new File(tablePath)),
+                path,
                 hadoopConf
             )
             .build();
@@ -313,7 +317,8 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
             String tablePath,
             String[] columnNames) {
 
-        Configuration hadoopConf = DeltaTestUtils.getHadoopConf();
+        // Making sure that we are using path with schema to file system "file://"
+        Configuration hadoopConf = DeltaTestUtils.getConfigurationWithMockFs();
 
         return DeltaSource.forBoundedRowData(
                 Path.fromLocalFile(new File(tablePath)),

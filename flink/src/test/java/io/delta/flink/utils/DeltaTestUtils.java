@@ -25,6 +25,8 @@ import org.apache.flink.streaming.api.operators.collect.ClientAndIterator;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Row;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileSystemTestHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,6 +43,22 @@ public class DeltaTestUtils {
         conf.set("parquet.compression", "SNAPPY");
         conf.set("io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID", "UTC");
         return conf;
+    }
+
+    /**
+     * Set up a simple hdfs mock as default filesystem. This FS should not be used by reference
+     * of DeltaLog. If used, and Delta log will use default filesystem (mockfs:///) path,
+     * it would return a null. This allows to verify that full paths, including schema are used
+     * and passed around.
+     */
+    public static org.apache.hadoop.conf.Configuration getConfigurationWithMockFs() {
+        org.apache.hadoop.conf.Configuration hadoopConf = DeltaTestUtils.getHadoopConf();
+
+        hadoopConf.set("fs.defaultFS", "mockfs:///");
+        hadoopConf.setClass("fs.mockfs.impl",
+            FileSystemTestHelper.MockFileSystem.class, FileSystem.class);
+
+        return hadoopConf;
     }
 
     ///////////////////////////////////////////////////////////////////////////

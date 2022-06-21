@@ -1,5 +1,6 @@
 package io.delta.flink;
 
+import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -16,6 +17,8 @@ import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import io.delta.flink.utils.TableUpdateDescriptor;
 import io.delta.flink.utils.TestDescriptor;
 import io.delta.flink.utils.TestParquetReader;
+import io.github.artsok.ParameterizedRepeatedIfExceptionsTest;
+import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
@@ -27,11 +30,10 @@ import org.apache.flink.table.data.util.DataFormatConverters;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
+import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
@@ -95,21 +97,34 @@ public class DeltaEndToEndExecutionITCaseTest {
         }
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L,
+        repeats = 3,
+        name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     public void testEndToEndBoundedStream(FailoverType failoverType) throws Exception {
         DeltaTestUtils.initTestForNonPartitionedLargeTable(sourceTablePath);
 
+        // Making sure that we are using path with schema to file system "file://"
+        Configuration hadoopConfiguration = DeltaTestUtils.getConfigurationWithMockFs();
+
+        Path sourceTablePath = Path.fromLocalFile(new File(this.sourceTablePath));
+        Path sinkTablePath = Path.fromLocalFile(new File(this.sinkTablePath));
+
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+
         DeltaSource<RowData> deltaSource = DeltaSource.forBoundedRowData(
-                new Path(sourceTablePath),
-                DeltaTestUtils.getHadoopConf()
+                sourceTablePath,
+                hadoopConfiguration
             )
             .build();
 
         RowType rowType = RowType.of(LARGE_TABLE_ALL_COLUMN_TYPES, LARGE_TABLE_ALL_COLUMN_NAMES);
         DeltaSinkInternal<RowData> deltaSink = DeltaSink.forRowData(
-                new Path(sinkTablePath),
-                DeltaTestUtils.getHadoopConf(),
+                sinkTablePath,
+                hadoopConfiguration,
                 rowType)
             .build();
 
@@ -129,24 +144,37 @@ public class DeltaEndToEndExecutionITCaseTest {
             miniClusterResource
         );
 
-        verifyDeltaTable(sinkTablePath, rowType, LARGE_TABLE_RECORD_COUNT);
+        verifyDeltaTable(this.sinkTablePath, rowType, LARGE_TABLE_RECORD_COUNT);
     }
 
-    @ParameterizedTest(name = "{index}: FailoverType = [{0}]")
+    @ParameterizedRepeatedIfExceptionsTest(
+        suspend = 2000L,
+        repeats = 3,
+        name = "{index}: FailoverType = [{0}]"
+    )
     @EnumSource(FailoverType.class)
     public void testEndToEndContinuousStream(FailoverType failoverType) throws Exception {
         DeltaTestUtils.initTestForNonPartitionedTable(sourceTablePath);
 
+        // Making sure that we are using path with schema to file system "file://"
+        Configuration hadoopConfiguration = DeltaTestUtils.getConfigurationWithMockFs();
+
+        Path sourceTablePath = Path.fromLocalFile(new File(this.sourceTablePath));
+        Path sinkTablePath = Path.fromLocalFile(new File(this.sinkTablePath));
+
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+
         DeltaSource<RowData> deltaSource = DeltaSource.forContinuousRowData(
-                new Path(sourceTablePath),
-                DeltaTestUtils.getHadoopConf()
+                sourceTablePath,
+                hadoopConfiguration
             )
             .build();
 
         RowType rowType = RowType.of(DATA_COLUMN_TYPES, DATA_COLUMN_NAMES);
         DeltaSinkInternal<RowData> deltaSink = DeltaSink.forRowData(
-                new Path(sinkTablePath),
-                DeltaTestUtils.getHadoopConf(),
+                sinkTablePath,
+                hadoopConfiguration,
                 rowType)
             .build();
 
@@ -179,26 +207,35 @@ public class DeltaEndToEndExecutionITCaseTest {
             miniClusterResource
         );
 
-        verifyDeltaTable(sinkTablePath, rowType, expectedRowCount);
+        verifyDeltaTable(this.sinkTablePath, rowType, expectedRowCount);
     }
 
-    @Test
+    @RepeatedIfExceptionsTest(suspend = 2000L, repeats = 3)
     public void testEndToEndReadAllDataTypes() throws Exception {
 
         // this test uses test-non-partitioned-delta-table-alltypes table. See README.md from
         // table's folder for detail information about this table.
         DeltaTestUtils.initTestForAllDataTypes(sourceTablePath);
 
+        // Making sure that we are using path with schema to file system "file://"
+        Configuration hadoopConfiguration = DeltaTestUtils.getConfigurationWithMockFs();
+
+        Path sourceTablePath = Path.fromLocalFile(new File(this.sourceTablePath));
+        Path sinkTablePath = Path.fromLocalFile(new File(this.sinkTablePath));
+
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+        assertThat(sinkTablePath.toUri().getScheme(), equalTo("file"));
+
         DeltaSource<RowData> deltaSource = DeltaSource.forBoundedRowData(
-                new Path(sourceTablePath),
-                DeltaTestUtils.getHadoopConf()
+                sourceTablePath,
+                hadoopConfiguration
             )
             .build();
 
         RowType rowType = RowType.of(ALL_DATA_TABLE_COLUMN_TYPES, ALL_DATA_TABLE_COLUMN_NAMES);
         DeltaSinkInternal<RowData> deltaSink = DeltaSink.forRowData(
-                new Path(sinkTablePath),
-                DeltaTestUtils.getHadoopConf(),
+                sinkTablePath,
+                hadoopConfiguration,
                 rowType)
             .build();
 
@@ -213,9 +250,21 @@ public class DeltaEndToEndExecutionITCaseTest {
 
         DeltaTestUtils.testBoundedStream(stream, miniClusterResource);
 
-        Snapshot snapshot = verifyDeltaTable(sinkTablePath, rowType, ALL_DATA_TABLE_RECORD_COUNT);
+        Snapshot snapshot = verifyDeltaTable(
+            this.sinkTablePath,
+            rowType,
+            ALL_DATA_TABLE_RECORD_COUNT
+        );
 
-        // read entire snapshot using delta standalone and check every column.
+        assertRowsFromSnapshot(snapshot);
+    }
+
+    /**
+     * Read entire snapshot using delta standalone and check every column.
+     * @param snapshot {@link Snapshot} to read data from.
+     */
+    private void assertRowsFromSnapshot(Snapshot snapshot) throws IOException {
+
         final AtomicInteger index = new AtomicInteger(0);
         try(CloseableIterator<RowRecord> iterator = snapshot.open()) {
             while (iterator.hasNext()) {
