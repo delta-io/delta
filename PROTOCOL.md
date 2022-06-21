@@ -2,7 +2,6 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 # Delta Transaction Log Protocol
 
-- [Delta Transaction Log Protocol](#delta-transaction-log-protocol)
 - [Overview](#overview)
 - [Delta Table Specification](#delta-table-specification)
   - [File Types](#file-types)
