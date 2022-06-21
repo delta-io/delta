@@ -1208,7 +1208,7 @@ class DeltaOptimizeBuilder(object):
         )
 
     @since(1.3)  # type: ignore[arg-type]
-    def executeZOrderBy(self, *cols:Union[str, List[str], Tuple[str, ...]]) -> DataFrame: 
+    def executeZOrderBy(self, *cols:Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
         """
         Z-Order the data in the table using the given columns
 

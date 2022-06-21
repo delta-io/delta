@@ -921,76 +921,76 @@ class DeltaTableTests(DeltaTestCase):
                     .withColumn("p", floor(col("value") % 10)) \
                     .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
 
-            # # create DeltaTable
-            # dt = DeltaTable.forPath(self.spark, self.tempFile)
+            # create DeltaTable
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
             
-            # # execute Z-Order Optimization
-            # optimizer = dt.optimize()
+            # execute Z-Order Optimization
+            optimizer = dt.optimize()
             
-            # result = optimizer.executeZOrderBy(["col1", "col2"])
-            # metrics = self.result.select("metrics.*").head()
+            result = optimizer.executeZOrderBy(["col1", "col2"])
+            metrics = self.result.select("metrics.*").head()
             
-            # print(result)
-            # print(metrics)
+            print(result)
+            print(metrics)
             
-            # # create DeltaTable
-            # dt = DeltaTable.forPath(self.spark, self.tempFile)
+            # create DeltaTable
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
             
-            # # execute Z-Order Optimization
-            # optimizer = dt.optimize()
+            # execute Z-Order Optimization
+            optimizer = dt.optimize()
             
-            # result = optimizer.executeZOrderBy(["col1", "col2"])
-            # metrics = self.result.select("metrics.*").head()
+            result = optimizer.executeZOrderBy(["col1", "col2"])
+            metrics = self.result.select("metrics.*").head()
             
-            # self.assertTrue(metrics.filesAdded.totalFiles == 10)
-            # self.assertTrue(metrics.filesRemoved.totalFiles == 39)
-            # self.assertTrue(metrics.filesAdded.min.get == 1235)
-            # self.assertTrue(metrics.filesAdded.max.get == 1252)
-            # self.assertTrue(metrics.filesRemoved.max.get == 1179)
-            # self.assertTrue(metrics.filesRemoved.min.get == 1082)
-            # self.assertTrue(metrics.totalFilesSkipped == 0)
-            # self.assertTrue(metrics.totalConsideredFiles == 39)
+            self.assertTrue(metrics.filesAdded.totalFiles == 10)
+            self.assertTrue(metrics.filesRemoved.totalFiles == 39)
+            self.assertTrue(metrics.filesAdded.min.get == 1235)
+            self.assertTrue(metrics.filesAdded.max.get == 1252)
+            self.assertTrue(metrics.filesRemoved.max.get == 1179)
+            self.assertTrue(metrics.filesRemoved.min.get == 1082)
+            self.assertTrue(metrics.totalFilesSkipped == 0)
+            self.assertTrue(metrics.totalConsideredFiles == 39)
 
-            # expStartCount = 39
-            # expStartSizes = 43456
+            expStartCount = 39
+            expStartSizes = 43456
 
-            # expZOrderMetrics = {
-            #     "strategyName": "all",
-            #     "inputCubeFiles": {
-            #             "num": 0,
-            #             "size": 0
-            #         },
-            #     "inputOtherFiles" : {
-            #             "num": expStartCount,
-            #             "size": expStartSizes
-            #         },
-            #     "inputNumCubes": 0,
-            #     "mergedFiles": {
-            #             "num": expStartCount,
-            #             "size": expStartSizes
-            #         },
-            #     "numOutputCubes" : 10
-            # }
+            expZOrderMetrics = {
+                "strategyName": "all",
+                "inputCubeFiles": {
+                        "num": 0,
+                        "size": 0
+                    },
+                "inputOtherFiles" : {
+                        "num": expStartCount,
+                        "size": expStartSizes
+                    },
+                "inputNumCubes": 0,
+                "mergedFiles": {
+                        "num": expStartCount,
+                        "size": expStartSizes
+                    },
+                "numOutputCubes" : 10
+            }
             
-            # actualZOrderMetrics = {
-            #     "strategyName": metrics.strategyName,
-            #     "inputCubeFiles": {
-            #             "num": metrics.inputCubeFiles.num,
-            #             "size": metrics.inputCubeFiles.size
-            #         },
-            #     "inputOtherFiles": {
-            #             "num": metrics.inputOtherFiles.num,
-            #             "size": metrics.inputOtherFiles.size
-            #         },
-            #     "inputNumCubes": metrics.inputNumCubes,
-            #     "mergedFiles": {
-            #             "num": metrics.mergedFiles.num,
-            #             "size": metrics.mergedFiles.size
-            #             },
-            #     "numOutputCubes": metrics.numOutputCubes
-            # }
+            actualZOrderMetrics = {
+                "strategyName": metrics.strategyName,
+                "inputCubeFiles": {
+                        "num": metrics.inputCubeFiles.num,
+                        "size": metrics.inputCubeFiles.size
+                    },
+                "inputOtherFiles": {
+                        "num": metrics.inputOtherFiles.num,
+                        "size": metrics.inputOtherFiles.size
+                    },
+                "inputNumCubes": metrics.inputNumCubes,
+                "mergedFiles": {
+                        "num": metrics.mergedFiles.num,
+                        "size": metrics.mergedFiles.size
+                        },
+                "numOutputCubes": metrics.numOutputCubes
+            }
 
-            # self.assertEqual(sorted(expZOrderMetrics.items()), sorted(actualZOrderMetrics.items()))
+            self.assertEqual(sorted(expZOrderMetrics.items()), sorted(actualZOrderMetrics.items()))
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
