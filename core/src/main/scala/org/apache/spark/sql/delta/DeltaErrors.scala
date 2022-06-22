@@ -207,7 +207,7 @@ trait DeltaErrorsBase
    *                 "ending"
    */
   def multipleCDCBoundaryException(position: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
       messageParameters = Array(position, position, position)
     )
@@ -245,14 +245,14 @@ trait DeltaErrorsBase
   }
 
   def nullableParentWithNotNullNestedField : Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NOT_NULL_NESTED_FIELD",
       messageParameters = Array.empty
     )
   }
 
   def constraintAlreadyExists(name: String, oldExpr: String): AnalysisException = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CONSTRAINT_ALREADY_EXISTS",
       messageParameters = Array(name, oldExpr)
     )
@@ -263,7 +263,7 @@ trait DeltaErrorsBase
   }
 
   def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CONSTRAINT_DOES_NOT_EXIST",
       messageParameters = Array(
         constraintName,
@@ -273,14 +273,14 @@ trait DeltaErrorsBase
   }
 
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
       messageParameters = Array(name, expr)
     )
   }
 
   def newCheckConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION",
       messageParameters = Array(s"$num", tableName, expr)
     )
@@ -288,14 +288,14 @@ trait DeltaErrorsBase
 
   def newNotNullViolated(
       num: Long, tableName: String, col: UnresolvedAttribute): AnalysisException = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NEW_NOT_NULL_VIOLATION",
       messageParameters = Array(s"$num", tableName, col.name)
     )
   }
 
   def useAddConstraints: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_ADD_CONSTRAINTS",
       messageParameters = Array.empty)
   }
@@ -318,7 +318,7 @@ trait DeltaErrorsBase
   }
 
   def staticPartitionsNotSupportedException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_STATIC_PARTITIONS",
       messageParameters = Array.empty
     )
@@ -334,7 +334,7 @@ trait DeltaErrorsBase
   def zOrderingOnColumnWithNoStatsException(
       colNames: Seq[String],
       spark: SparkSession): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS",
       messageParameters = Array(colNames.mkString("[", ", ", "]"),
         DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK.key)
@@ -351,7 +351,7 @@ trait DeltaErrorsBase
    * Throwable used when CDC options contain no 'start'.
    */
   def noStartVersionForCDC(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NO_START_FOR_CDC_READ",
       messageParameters = Array.empty
     )
@@ -361,7 +361,7 @@ trait DeltaErrorsBase
    * Throwable used when CDC is not enabled according to table metadata.
    */
   def changeDataNotRecordedException(version: Long, start: Long, end: Long): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_CHANGE_DATA",
       messageParameters = Array(start.toString, end.toString, version.toString,
         DeltaConfigs.CHANGE_DATA_FEED.key))
@@ -393,44 +393,44 @@ trait DeltaErrorsBase
   }
 
   def addColumnAtIndexLessThanZeroException(pos: String, col: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO",
       messageParameters = Array(pos, col))
   }
 
   def columnNameNotFoundException(colName: String, scheme: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_NOT_FOUND",
       messageParameters = Array(colName, scheme))
   }
 
   def foundDuplicateColumnsException(colType: String, duplicateCols: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
       messageParameters = Array(colType, duplicateCols))
   }
 
   def addColumnStructNotFoundException(pos: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND",
       messageParameters = Array(pos))
   }
 
   def operationNotSupportedException(
       operation: String, tableIdentifier: TableIdentifier): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_OPERATION_NOT_ALLOWED_DETAIL",
       messageParameters = Array(operation, tableIdentifier.toString))
   }
 
   def operationNotSupportedException(operation: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_OPERATION_NOT_ALLOWED",
       messageParameters = Array(operation))
   }
 
   def emptyDataException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_EMPTY_DATA", messageParameters = Array.empty)
   }
 
@@ -454,20 +454,20 @@ trait DeltaErrorsBase
   }
 
   def notADeltaTableException(deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_DELTA_TABLE",
       messageParameters = Array(s"$deltaTableIdentifier"))
   }
 
   def notADeltaTableException(
       operation: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ONLY_OPERATION",
       messageParameters = Array(s"$deltaTableIdentifier", s"$operation"))
   }
 
   def notADeltaTableException(operation: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
       messageParameters = Array(operation)
     )
@@ -475,7 +475,7 @@ trait DeltaErrorsBase
 
   def notADeltaSourceException(command: String, plan: Option[LogicalPlan] = None): Throwable = {
     val planName = if (plan.isDefined) plan.toString else ""
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SOURCE",
       messageParameters = Array(command, s"$planName")
     )
@@ -503,19 +503,19 @@ trait DeltaErrorsBase
     } else {
       ""
     }
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
       messageParameters = Array(schemaDiff.mkString("\n"), legacyFlagMessage)
     )
   }
 
   def incorrectArrayAccess(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS",
       messageParameters = Array.empty)
   }
   def invalidColumnName(name: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
       messageParameters = Array(name))
   }
@@ -527,13 +527,13 @@ trait DeltaErrorsBase
   }
 
   def invalidPartitionColumn(col: String, tbl: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_COLUMN",
       messageParameters = Array(col, tbl))
   }
 
   def invalidPartitionColumn(e: AnalysisException): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_COLUMN_NAME",
       messageParameters = Array.empty,
       cause = Option(e))
@@ -543,21 +543,21 @@ trait DeltaErrorsBase
       ts: String,
       format: String,
       cause: Option[Throwable] = None): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_TIMESTAMP_FORMAT",
       messageParameters = Array(ts, format),
       cause = cause)
   }
 
   def missingTableIdentifierException(operationName: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_OPERATION_MISSING_PATH",
       messageParameters = Array(operationName)
     )
   }
 
   def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW",
       messageParameters = Array(s"$view")
     )
@@ -570,12 +570,12 @@ trait DeltaErrorsBase
   }
 
   def notADeltaTable(table: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_NOT_A_DELTA_TABLE",
+    DeltaAnalysisException(errorClass = "DELTA_NOT_A_DELTA_TABLE",
       messageParameters = Array(table))
   }
 
   def unsupportedWriteStagedTable(tableName: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE",
       messageParameters = Array(tableName)
     )
@@ -588,7 +588,7 @@ trait DeltaErrorsBase
       nestedField: Option[String] = None): Throwable = {
     val nestedFieldStr = nestedField.map(f => s"not enough nested fields in $f")
       .getOrElse("not enough data columns")
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
       messageParameters = Array(table, nestedFieldStr, target.toString, query.toString))
   }
@@ -610,7 +610,7 @@ trait DeltaErrorsBase
       source: String,
       target: String,
       targetType: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_STRUCT_TYPE_MISMATCH",
       messageParameters = Array(source, targetType, target, tableName))
   }
@@ -619,7 +619,7 @@ trait DeltaErrorsBase
       oldSchema: StructType,
       newSchema: StructType,
       reason: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
       messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
     )
@@ -627,7 +627,7 @@ trait DeltaErrorsBase
 
   def ambiguousPartitionColumnException(
       columnName: String, colMatches: Seq[StructField]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_AMBIGUOUS_PARTITION_COLUMN",
       messageParameters = Array(formatColumn(columnName).toString,
         formatColumnList(colMatches.map(_.name)))
@@ -635,41 +635,41 @@ trait DeltaErrorsBase
   }
 
   def tableNotSupportedException(operation: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_TABLE_NOT_SUPPORTED_IN_OP",
       messageParameters = Array(operation)
     )
   }
 
   def vacuumBasePathMissingException(baseDeltaPath: Path): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION",
       messageParameters = Array(s"$baseDeltaPath")
     )
   }
 
   def unexpectedDataChangeException(op: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_DATA_CHANGE_FALSE",
       messageParameters = Array(op)
     )
   }
 
   def unknownConfigurationKeyException(confKey: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNKNOWN_CONFIGURATION",
       messageParameters = Array(confKey))
   }
 
   def cdcNotAllowedInThisVersion(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION",
       messageParameters = Array.empty
     )
   }
 
   def cdcWriteNotAllowedInThisVersion(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CHANGE_TABLE_FEED_DISABLED",
       messageParameters = Array.empty
     )
@@ -680,7 +680,7 @@ trait DeltaErrorsBase
   }
 
   def pathNotExistsException(path: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_PATH_DOES_NOT_EXIST",
+    DeltaAnalysisException(errorClass = "DELTA_PATH_DOES_NOT_EXIST",
       messageParameters = Array(path))
   }
 
@@ -689,7 +689,7 @@ trait DeltaErrorsBase
   }
 
   def pathAlreadyExistsException(path: Path): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_PATH_EXISTS",
       messageParameters = Array(s"$path")
     )
@@ -733,7 +733,7 @@ trait DeltaErrorsBase
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "MULTIPLE_LOAD_PATH",
       messageParameters = Array(paths.mkString("[", ",", "]")))
   }
@@ -745,14 +745,14 @@ trait DeltaErrorsBase
   }
 
   def partitionPathParseException(fragment: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_PATH",
       messageParameters = Array(fragment))
   }
 
   def partitionPathInvolvesNonPartitionColumnException(
       badColumns: Seq[String], fragment: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NON_PARTITION_COLUMN_SPECIFIED",
       messageParameters = Array(formatColumnList(badColumns), fragment)
     )
@@ -764,7 +764,7 @@ trait DeltaErrorsBase
     } else {
       ""
     }
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
       messageParameters = Array(msg)
     )
@@ -773,14 +773,14 @@ trait DeltaErrorsBase
   def replaceWhereMismatchException(
       replaceWhere: String,
       invariantViolation: InvariantViolationException): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
       messageParameters = Array(replaceWhere, invariantViolation.getMessage),
       cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
       messageParameters = Array(replaceWhere,
         s"Invalid data would be written to partitions $badPartitions."))
@@ -811,7 +811,7 @@ trait DeltaErrorsBase
   }
 
   def invalidTableValueFunction(function: String) : Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_TABLE_VALUE_FUNCTION",
       messageParameters = Array(function)
     )
@@ -878,21 +878,21 @@ trait DeltaErrorsBase
   }
 
   def streamWriteNullTypeException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE",
       messageParameters = Array.empty
     )
   }
 
   def schemaNotSetException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_NOT_SET",
       messageParameters = Array.empty
     )
   }
 
   def specifySchemaAtReadTimeException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SCHEMA_DURING_READ",
       messageParameters = Array.empty
     )
@@ -905,33 +905,33 @@ trait DeltaErrorsBase
   }
 
   def outputModeNotSupportedException(dataSource: String, outputMode: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_OUTPUT_MODE",
       messageParameters = Array(dataSource, outputMode)
     )
   }
 
   def updateSetColumnNotFoundException(col: String, colList: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_SET_COLUMN",
       messageParameters = Array(formatColumn(col), formatColumnList(colList)))
   }
 
   def updateSetConflictException(cols: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CONFLICT_SET_COLUMN",
       messageParameters = Array(formatColumnList(cols)))
   }
 
   def updateNonStructTypeFieldNotSupportedException(col: String, s: DataType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT",
       messageParameters = Array(s"${formatColumn(col)}", s"$s")
     )
   }
 
   def truncateTablePartitionNotSupportedException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED", messageParameters = Array.empty
     )
   }
@@ -942,31 +942,31 @@ trait DeltaErrorsBase
   }
 
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER",
       messageParameters = Array(name))
   }
 
   def bloomFilterOnNestedColumnNotSupportedException(name: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER",
       messageParameters = Array(name))
   }
 
   def bloomFilterOnColumnTypeNotSupportedException(name: String, dataType: DataType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER",
       messageParameters = Array(s"${dataType.catalogString}", name))
   }
 
   def bloomFilterMultipleConfForSingleColumnException(name: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER",
       messageParameters = Array(name))
   }
 
   def bloomFilterCreateOnNonExistingColumnsException(unknownColumns: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL",
       messageParameters = Array(unknownColumns.mkString(", ")))
   }
@@ -977,13 +977,13 @@ trait DeltaErrorsBase
   }
 
   def bloomFilterDropOnNonIndexedColumnException(name: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_DROP_BLOOM_FILTER_ON_NON_INDEXED_COLUMN",
       messageParameters = Array(name))
   }
 
   def bloomFilterDropOnNonExistingColumnsException(unknownColumns: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS",
       messageParameters = Array(unknownColumns.mkString(", "))
     )
@@ -1001,22 +1001,22 @@ trait DeltaErrorsBase
   }
 
   def cannotUpdateArrayField(table: String, field: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_ARRAY_FIELD",
+    DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_ARRAY_FIELD",
       messageParameters = Array(table, field))
   }
 
   def cannotUpdateMapField(table: String, field: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_MAP_FIELD",
+    DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_MAP_FIELD",
       messageParameters = Array(table, field))
   }
 
   def cannotUpdateStructField(table: String, field: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_STRUCT_FIELD",
+    DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_STRUCT_FIELD",
       messageParameters = Array(table, field))
   }
 
   def cannotUseDataTypeForPartitionColumnError(field: StructField): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_COLUMN_TYPE",
       messageParameters = Array(s"${field.name}", s"${field.dataType}")
     )
@@ -1040,35 +1040,35 @@ trait DeltaErrorsBase
 
   def columnOfTargetTableNotFoundInMergeException(targetCol: String,
       colNames: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_NOT_FOUND_IN_MERGE",
       messageParameters = Array(targetCol, colNames)
     )
   }
 
   def subqueryNotSupportedException(op: String, cond: Expression): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SUBQUERY",
       messageParameters = Array(op, cond.sql)
     )
   }
 
   def multiColumnInPredicateNotSupportedException(operation: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE",
       messageParameters = Array(operation)
     )
   }
 
   def nestedFieldNotSupported(operation: String, field: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION",
       messageParameters = Array(operation, field)
     )
   }
 
   def nestedFieldsNeedRename(columns : Set[String], baseSchema : StructType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NESTED_FIELDS_NEED_RENAME",
       messageParameters = Array(columns.mkString("[", ", ", "]"), formatSchema(baseSchema))
     )
@@ -1098,7 +1098,7 @@ trait DeltaErrorsBase
 
   def createExternalTableWithoutLogException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG",
       messageParameters = Array(tableName, path.toString,
       generateDocsLink(spark.sparkContext.getConf, "/index.html")))
@@ -1106,7 +1106,7 @@ trait DeltaErrorsBase
 
   def createExternalTableWithoutSchemaException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA",
       messageParameters = Array(tableName, path.toString,
         generateDocsLink(spark.sparkContext.getConf, "/index.html")))
@@ -1114,7 +1114,7 @@ trait DeltaErrorsBase
 
   def createManagedTableWithoutSchemaException(
       tableName: String, spark: SparkSession): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA",
       messageParameters = Array(tableName, s"""${generateDocsLink(spark.sparkContext.getConf,
         "/index.html")}""".stripMargin)
@@ -1122,7 +1122,7 @@ trait DeltaErrorsBase
   }
 
   def readTableWithoutSchemaException(identifier: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_READ_TABLE_WITHOUT_COLUMNS",
       messageParameters = Array(identifier))
   }
@@ -1132,7 +1132,7 @@ trait DeltaErrorsBase
       specifiedSchema: StructType,
       existingSchema: StructType,
       diffs: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CREATE_TABLE_SCHEME_MISMATCH",
       messageParameters = Array(path.toString,
         specifiedSchema.treeString, existingSchema.treeString,
@@ -1158,7 +1158,7 @@ trait DeltaErrorsBase
       path: Path,
       specifiedProperties: Map[String, String],
       existingProperties: Map[String, String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY",
       messageParameters = Array(path.toString,
         specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"),
@@ -1168,7 +1168,7 @@ trait DeltaErrorsBase
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
     val condStr = s"(condition = ${cond.sql})."
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
       messageParameters = Array(op, condStr)
     )
@@ -1176,14 +1176,14 @@ trait DeltaErrorsBase
 
   def nonDeterministicNotSupportedException(op: String, cond: Expression): Throwable = {
     val condStr = s"(condition = ${cond.sql})."
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
       messageParameters = Array(op, s"$condStr")
     )
   }
 
   def noHistoryFound(logPath: Path): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NO_COMMITS_FOUND",
       messageParameters = Array(logPath.toString))
   }
@@ -1211,7 +1211,7 @@ trait DeltaErrorsBase
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
       timestampString: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
       messageParameters = Array(s"$userTimestamp", s"$commitTs", timestampString)
     )
@@ -1237,7 +1237,7 @@ trait DeltaErrorsBase
       userVersion: Long,
       earliest: Long,
       latest: Long): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_RESTORE_TABLE_VERSION",
       messageParameters = Array(userVersion.toString, earliest.toString, latest.toString))
   }
@@ -1245,7 +1245,7 @@ trait DeltaErrorsBase
   def restoreTimestampGreaterThanLatestException(
       userTimestamp: String,
       latestTimestamp: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER",
       messageParameters = Array(userTimestamp, latestTimestamp)
     )
@@ -1261,14 +1261,14 @@ trait DeltaErrorsBase
   }
 
   def timeTravelNotSupportedException: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS",
       messageParameters = Array.empty
     )
   }
 
   def multipleTimeTravelSyntaxUsed: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS",
       messageParameters = Array.empty
     )
@@ -1280,7 +1280,7 @@ trait DeltaErrorsBase
   }
 
   def nonExistentColumnInSchema(column: String, schema: String): Throwable = {
-    new DeltaAnalysisException("DELTA_COLUMN_NOT_FOUND_IN_SCHEMA",
+    DeltaAnalysisException("DELTA_COLUMN_NOT_FOUND_IN_SCHEMA",
       Array(column, schema))
   }
 
@@ -1297,21 +1297,21 @@ trait DeltaErrorsBase
   }
 
   def invalidMergeClauseWhenNotMatched(clause: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE",
       messageParameters = Array(clause)
     )
   }
 
   def unexpectedPartialScan(path: Path): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNEXPECTED_PARTIAL_SCAN",
       messageParameters = Array(s"$path")
     )
   }
 
   def deltaLogAlreadyExistsException(path: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_LOG_ALREADY_EXISTS",
       messageParameters = Array(path)
     )
@@ -1324,13 +1324,13 @@ trait DeltaErrorsBase
   }
 
   def missingProviderForConvertException(path: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_PROVIDER_FOR_CONVERT",
       messageParameters = Array(path))
   }
 
   def convertNonParquetTablesException(ident: TableIdentifier, sourceName: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CONVERT_NON_PARQUET_TABLE",
       messageParameters = Array(sourceName, ident.toString)
     )
@@ -1344,7 +1344,7 @@ trait DeltaErrorsBase
 
   def unexpectedNumPartitionColumnsFromFileNameException(
       path: String, parsedCols: Seq[String], expectedCols: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME",
       messageParameters = Array(
         expectedCols.size.toString,
@@ -1370,7 +1370,7 @@ trait DeltaErrorsBase
 
   def alterTableSetLocationSchemaMismatchException(
       original: StructType, destination: StructType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_SET_LOCATION_SCHEMA_MISMATCH",
       messageParameters = Array(formatSchema(original), formatSchema(destination),
         DeltaSQLConf.DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK.key))
@@ -1385,7 +1385,7 @@ trait DeltaErrorsBase
   }
 
   def useSetLocation(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_LOCATION",
       messageParameters = Array.empty
     )
@@ -1399,7 +1399,7 @@ trait DeltaErrorsBase
   }
 
   def cannotReplaceMissingTableException(itableIdentifier: Identifier): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_REPLACE_MISSING_TABLE",
       messageParameters = Array(itableIdentifier.toString))
   }
@@ -1411,14 +1411,14 @@ trait DeltaErrorsBase
   }
 
   def cannotChangeProvider(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_PROVIDER",
       messageParameters = Array.empty
     )
   }
 
   def describeViewHistory: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY",
       messageParameters = Array.empty
     )
@@ -1460,7 +1460,7 @@ trait DeltaErrorsBase
   }
 
   def foundMapTypeColumnException(key: String, value: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_FOUND_MAP_TYPE_COLUMN",
       messageParameters = Array(key, value)
     )
@@ -1475,7 +1475,7 @@ trait DeltaErrorsBase
   }
 
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",
       messageParameters = Array(from.catalogString, to.catalogString)
     )
@@ -1521,7 +1521,7 @@ trait DeltaErrorsBase
 
   def configureSparkSessionWithExtensionAndCatalog(originalException: Throwable): Throwable = {
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
       messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
         catalogImplConfig, classOf[DeltaCatalog].getName),
@@ -1530,7 +1530,7 @@ trait DeltaErrorsBase
   }
 
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE",
       messageParameters = Array(originalException.getMessage),
       cause = Some(originalException))
@@ -1553,7 +1553,7 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
   }
 
@@ -1575,14 +1575,14 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_AGGREGATE_IN_GENERATED_COLUMN",
       messageParameters = Array(expr.sql.toString)
     )
   }
 
   def generatedColumnsUnsupportedExpression(expr: Expression): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
       messageParameters = Array(s"${expr.sql}")
     )
@@ -1592,7 +1592,7 @@ trait DeltaErrorsBase
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
       messageParameters = Array(column, exprType.sql, columnType.sql)
     )
@@ -1606,7 +1606,7 @@ trait DeltaErrorsBase
   }
 
   def cannotChangeDataType(msg: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
       messageParameters = Array(msg)
     )
@@ -1618,28 +1618,28 @@ trait DeltaErrorsBase
     val prettyMessage = (unsupportedDataType +: moreUnsupportedDataTypes)
       .map(dt => s"${dt.column}: ${dt.dataType}")
       .mkString("[", ", ", "]")
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DATA_TYPES",
       messageParameters = Array(prettyMessage, DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key)
     )
   }
 
   def tableAlreadyExists(table: CatalogTable): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ALREADY_EXISTS",
       messageParameters = Array(s"${table.identifier.quotedString}")
     )
   }
 
   def indexLargerThanStruct(pos: Int, column: StructField, len: Int): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INDEX_LARGER_THAN_STRUCT",
       messageParameters = Array(s"$pos", s"$column", s"$len")
     )
   }
 
   def indexLargerOrEqualThanStruct(pos: Int, len: Int): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT",
       messageParameters = Array(s"$pos", s"$len")
     )
@@ -1688,14 +1688,14 @@ trait DeltaErrorsBase
   }
 
   def cannotResolveColumn(fieldName: String, schema: StructType): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
       messageParameters = Array(fieldName, schema.treeString)
     )
   }
 
   def unsupportedTruncateSampleTables: Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TRUNCATE_SAMPLE_TABLES",
       messageParameters = Array.empty
     )
@@ -1709,7 +1709,7 @@ trait DeltaErrorsBase
   }
 
   def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED",
       messageParameters = Array(op, op))
   }
@@ -1798,23 +1798,23 @@ trait DeltaErrorsBase
 
   def columnRenameNotSupported: Throwable = {
     val adviceMsg = columnMappingAdviceMessage
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
+    DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
     val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage else ""
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
+    DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
   def dropNestedColumnsFromNonStructTypeException(struct : StructField) : Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
       messageParameters = Array(s"$struct")
     )
   }
 
   def dropPartitionColumnNotSupported(droppingPartCols: Seq[String]): Throwable = {
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_PARTITION_COLUMN",
+    DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_PARTITION_COLUMN",
       Array(droppingPartCols.mkString(",")))
   }
 
@@ -1828,7 +1828,7 @@ trait DeltaErrorsBase
         formatSchema(newSchema)))
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
       messageParameters = Array(columnMappingAdviceMessage),
       cause = Some(cause))
@@ -1858,7 +1858,7 @@ trait DeltaErrorsBase
   }
 
   def missingColumnsInInsertInto(column: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INSERT_COLUMN_MISMATCH",
       messageParameters = Array(column))
   }
@@ -1872,14 +1872,14 @@ trait DeltaErrorsBase
 
   def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
     val schemeConfStr = schemeConf.map("spark.delta.logStore." + _._1).mkString(", ")
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INVALID_LOGSTORE_CONF",
       messageParameters = Array(schemeConfStr)
     )
   }
 
   def ambiguousPathsInCreateTableException(identifier: String, location: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE",
       messageParameters = Array(identifier, location,
         DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key))
@@ -1997,7 +1997,7 @@ trait DeltaErrorsBase
   }
 
   def unsetNonExistentProperty(key: String, table: String): Throwable = {
-    new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
+    DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
   def identityColumnNotSupported(): Throwable = {
@@ -2049,21 +2049,21 @@ trait DeltaErrorsBase
   }
 
   def nonPartitionColumnReference(colName: String, partitionColumns: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_NON_PARTITION_COLUMN_REFERENCE",
       messageParameters = Array(colName, partitionColumns.mkString(", "))
     )
   }
 
   def missingColumn(attr: Attribute, targetAttrs: Seq[Attribute]): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_COLUMN",
       messageParameters = Array(attr.name, targetAttrs.map(_.name).mkString(", "))
     )
   }
 
   def missingPartitionColumn(col: String, schemaCatalog: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_MISSING_PARTITION_COLUMN",
       messageParameters = Array(col, schemaCatalog)
     )
@@ -2096,14 +2096,14 @@ trait DeltaErrorsBase
   }
 
   def failedScanWithHistoricalVersion(historicalVersion: Long): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION",
       messageParameters = Array(historicalVersion.toString)
     )
   }
 
   def failedRecognizePredicate(predicate: String, cause: Throwable): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_FAILED_RECOGNIZE_PREDICATE", messageParameters = Array(predicate),
       cause = Some(cause)
     )
@@ -2111,7 +2111,7 @@ trait DeltaErrorsBase
 
   def failedFindAttributeInOutputCollumns(newAttrName: String, targetCollNames: String): Throwable =
   {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS",
       messageParameters = Array(newAttrName, targetCollNames)
     )
@@ -2125,7 +2125,7 @@ trait DeltaErrorsBase
   }
 
   def unsupportSubqueryInPartitionPredicates(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES",
       messageParameters = Array.empty
     )
@@ -2145,27 +2145,27 @@ trait DeltaErrorsBase
   }
 
   def replaceWhereUsedInOverwrite(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
     )
   }
 
   def incorrectArrayAccessByName(rightName: String, wrongName: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
       messageParameters = Array(rightName, wrongName)
     )
   }
 
   def showPartitionInNotPartitionedTable(tableName: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE",
       messageParameters = Array(tableName)
     )
   }
 
   def duplicateColumnOnInsert(): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_INSERT",
       messageParameters = Array.empty
     )
@@ -2200,7 +2200,7 @@ trait DeltaErrorsBase
   }
 
   def createTableWithNonEmptyLocation(tableId: String, tableLocation: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION",
       messageParameters = Array(tableId, tableLocation)
     )
@@ -2213,7 +2213,7 @@ trait DeltaErrorsBase
   }
 
   def replaceWhereWithFilterDataChangeUnset(dataFilters: String): Throwable = {
-    new DeltaAnalysisException(
+    DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET",
       messageParameters = Array(dataFilters)
     )

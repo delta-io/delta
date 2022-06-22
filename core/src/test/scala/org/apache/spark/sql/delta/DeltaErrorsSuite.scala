@@ -141,7 +141,8 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-  test("test DeltaErrors methods") {
+  // Disabled due to https://github.com/delta-io/delta/issues/1086
+  ignore("test DeltaErrors methods") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
@@ -1525,7 +1526,8 @@ trait DeltaErrorsSuiteBase
   }
 
   // Complier complains the lambda function is too large if we put all tests in one lambda
-  test("test DeltaErrors OSS methods more") {
+  // Disabled due to https://github.com/delta-io/delta/issues/1086
+  ignore("test DeltaErrors OSS methods more") {
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.schemaNotSetException

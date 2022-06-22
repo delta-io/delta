@@ -45,3 +45,16 @@ class DeltaUnsupportedOperationException(
     with DeltaThrowable {
     override def getErrorClass: String = errorClass
 }
+
+object DeltaAnalysisException {
+  def apply(
+      errorClass: String,
+      messageParameters: Array[String],
+      cause: Option[Throwable] = None): AnalysisException = {
+    new AnalysisException(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+      errorClass = Some(errorClass),
+      messageParameters = messageParameters,
+      cause = cause)
+  }
+}
