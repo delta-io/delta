@@ -11,8 +11,13 @@ The provided PowerQuery/M function allows you to read a Delta Lake table directl
     - Azure Data Lake Store Gen1 (tested)
     - AWS S3 (not yet tested)
     - Local Hadoop / HDFS (partially tested, check `UseFileBuffer` option)
-- Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table
+- Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table ([details](#PartitionFilterFunction))
+- Support for File Pruning using file stats ([details](#StatsFilterFunction))
+- Support all simple and complex data types (struct, map, array, ...)
+- Added shortcut to read `COUNT` from `_delta_log` directly if possible
 - Support for Delta Lake time travel - e.g. `VERSION AS OF`
+	- also supports negative values for `VERSION AS OF` to easily access the previous version using a value of `-1`
+- Support for `TimeZoneOffset` to automatically convert all timestamps to a given timezone - e.g. `+2:00` 
 
 # Usage
 1. In PowerBI desktop, go to Home -> Queries -> Transform Data
@@ -48,6 +53,8 @@ An optional record that be specified to control the following options:
 ### **Version**
 A numeric value that defines historic specific version of the Delta Lake table you want to read. This is similar to specifying 
 `VERSION AS OF` When querying the Delta Lake table via SQL. Default is the most recent/current version.
+You can also specify a negative value to go backwards from the most recent/current version number.
+e.g using a value of `-1` to load the previous version of the Delta table.
 ### **UseFileBuffer** 
 Some data sources do not support streaming of binary files and you may receive an error message like **"Parquet.Document cannot be used with streamed binary values."**. To mitigate this issue, you can set `UseFileBuffer=true`. Details about this issue and implications are desribed [here](https://blog.crossjoin.co.uk/2021/03/07/parquet-files-in-power-bi-power-query-and-the-streamed-binary-values-error/).
 Please be aware that this option can have negative performance impact!
@@ -69,6 +76,17 @@ or even more lightweight
 ```
 
 It supports all possible variations that are supported by Power Query/M so you can also build complex partition filters.
+### **StatsFilterFunction**
+A fuction that is used to filter out files based on the min/max values in the delta log before actually reading the files. The function has to take 2 parameter of type `record` and must return a `logical` type (true/false). The first record passed to the function are the `minValues`, the second record are the `maxValues` from the file statistics. They can then be used in a similar way as the [PartitionFilterFunction](#partitionfilterfunction):
+Assuming your Delta Lake table is partitioned by Year and Month and you want to filter for `Year=2021` and `Month="Jan"` your function may look like this:
+```
+= (
+    minValues as record,
+    maxValues as record
+) as logical =>
+
+Record.Field(minValues, "ProductKey") <= 220 and Record.Field(maxValues, "OrderDateKey") >= 20080731
+```
 ### **IterateFolderContent**
 Some data sources (like Azure Data Lake Store Gen1) do not automatically expand all sub-folders to get the single files. To make the function work with those data sources you can set `IterateFolderContent=true`. 
 Please be aware that this option can have negative performance impact!
