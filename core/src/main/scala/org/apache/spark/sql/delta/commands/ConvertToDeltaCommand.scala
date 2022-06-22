@@ -351,10 +351,8 @@ abstract class ConvertToDeltaCommandBase(
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
-
-      commitLarge(
+      txn.commitLarge(
         spark,
-        txn,
         Iterator.single(txn.protocol) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
         getContext,
