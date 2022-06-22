@@ -166,7 +166,7 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        # run_sbt_tests(root_dir, scala_version)
+        run_sbt_tests(root_dir, scala_version)
         # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
         if scala_version is None or scala_version.startswith("2.12"):
             run_python_tests(root_dir)
