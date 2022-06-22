@@ -133,7 +133,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
           PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
         )
       }
-      mode.equalsIgnoreCase("DYNAMIC")
+      mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     }
   }
 }
