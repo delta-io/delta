@@ -1208,7 +1208,7 @@ class DeltaOptimizeBuilder(object):
         )
 
     @since(1.3)  # type: ignore[arg-type]
-    def executeZOrderBy(self, *cols:Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
+    def executeZOrderBy(self, *cols: Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
         """
         Z-Order the data in the table using the given columns
 
@@ -1222,12 +1222,14 @@ class DeltaOptimizeBuilder(object):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
             if type(c) is not str:
-                self._raise_type_error("Z-order column must be str.", [c])
+                errorMsg = "Z-order column must be str. "
+                errorMsg += "Found %s with type %s" % ((str(c)), str(type(c)))
+                raise TypeError(errorMsg)
 
         return DataFrame(
             self._jbuilder.executeZOrderBy(_to_seq(
-                    self._spark._sc,  # type: ignore[attr-defined]
-                    cast(Iterable[Union[Column, str]], cols)
+                self._spark._sc,  # type: ignore[attr-defined]
+                cast(Iterable[Union[Column, str]], cols)
             )),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )

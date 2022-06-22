@@ -27,7 +27,6 @@ from pyspark.sql.utils import AnalysisException, ParseException
 from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
 from delta.testing.utils import DeltaTestCase
 
-import json
 
 class DeltaTableTests(DeltaTestCase):
 
@@ -913,84 +912,61 @@ class DeltaTableTests(DeltaTestCase):
                          "Predicate references non-partition column 'value'. "
                          "Only the partition columns may be referenced: [key]")
 
-        def test_optimize_zorder_with_partition_column(self) -> None:
-            # write an unoptimized delta table
-            self.spark.createDataFrame([i for i in range(0, 100)], IntegerType()) \
-                    .withColumn("col1", floor(col("value") % 7)) \
-                    .withColumn("col2", floor(col("value") % 27)) \
-                    .withColumn("p", floor(col("value") % 10)) \
-                    .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
+    def test_optimize_zorder_by(self) -> None:
+        # write an unoptimized delta table
+        self.spark.createDataFrame([i for i in range(0, 100)], IntegerType()) \
+            .withColumn("col1", floor(col("value") % 7)) \
+            .withColumn("col2", floor(col("value") % 27)) \
+            .withColumn("p", floor(col("value") % 10)) \
+            .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
 
-            # create DeltaTable
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
+        # create DeltaTable
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
 
-            # execute Z-Order Optimization
-            optimizer = dt.optimize()
+        # execute Z-Order Optimization
+        optimizer = dt.optimize()
+        result = optimizer.executeZOrderBy(["col1", "col2"])
+        metrics = result.select("metrics.*").head()
 
-            result = optimizer.executeZOrderBy(["col1", "col2"])
-            metrics = self.result.select("metrics.*").head()
+        self.assertTrue(metrics.numFilesAdded == 10)
+        self.assertTrue(metrics.numFilesRemoved == 37)
+        self.assertTrue(metrics.totalFilesSkipped == 0)
+        self.assertTrue(metrics.totalConsideredFiles == 37)
+        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
+        self.assertTrue(metrics.zOrderStats.numOutputCubes == 10)
 
-            print(result)
-            print(metrics)
+        # negative test: Z-Order on partition column
+        def optimize() -> None:
+            dt.optimize().where("p = 1").executeZOrderBy(["p"])
+        self.__intercept(optimize,
+                         "p is a partition column. "
+                         "Z-Ordering can only be performed on data columns")
 
-            # create DeltaTable
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
+    def test_optimize_zorder_by_w_partition_filter(self) -> None:
+        # write an unoptimized delta table
+        df = self.spark.createDataFrame([i for i in range(0, 100)], IntegerType()) \
+            .withColumn("col1", floor(col("value") % 7)) \
+            .withColumn("col2", floor(col("value") % 27)) \
+            .withColumn("p", floor(col("value") % 10)) \
+            .repartition(4).write.partitionBy("p")
 
-            # execute Z-Order Optimization
-            optimizer = dt.optimize()
+        df.format("delta").save(self.tempFile)
 
-            result = optimizer.executeZOrderBy(["col1", "col2"])
-            metrics = self.result.select("metrics.*").head()
+        # create DeltaTable
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
 
-            self.assertTrue(metrics.filesAdded.totalFiles == 10)
-            self.assertTrue(metrics.filesRemoved.totalFiles == 39)
-            self.assertTrue(metrics.filesAdded.min.get == 1235)
-            self.assertTrue(metrics.filesAdded.max.get == 1252)
-            self.assertTrue(metrics.filesRemoved.max.get == 1179)
-            self.assertTrue(metrics.filesRemoved.min.get == 1082)
-            self.assertTrue(metrics.totalFilesSkipped == 0)
-            self.assertTrue(metrics.totalConsideredFiles == 39)
+        # execute Z-OrderBy
+        optimizer = dt.optimize().where("p = 2")
+        result = optimizer.executeZOrderBy(["col1", "col2"])
+        metrics = result.select("metrics.*").head()
 
-            expStartCount = 39
-            expStartSizes = 43456
-
-            expZOrderMetrics = {
-                "strategyName": "all",
-                "inputCubeFiles": {
-                        "num": 0,
-                        "size": 0
-                    },
-                "inputOtherFiles" : {
-                        "num": expStartCount,
-                        "size": expStartSizes
-                    },
-                "inputNumCubes": 0,
-                "mergedFiles": {
-                        "num": expStartCount,
-                        "size": expStartSizes
-                    },
-                "numOutputCubes" : 10
-            }
-
-            actualZOrderMetrics = {
-                "strategyName": metrics.strategyName,
-                "inputCubeFiles": {
-                        "num": metrics.inputCubeFiles.num,
-                        "size": metrics.inputCubeFiles.size
-                    },
-                "inputOtherFiles": {
-                        "num": metrics.inputOtherFiles.num,
-                        "size": metrics.inputOtherFiles.size
-                    },
-                "inputNumCubes": metrics.inputNumCubes,
-                "mergedFiles": {
-                        "num": metrics.mergedFiles.num,
-                        "size": metrics.mergedFiles.size
-                        },
-                "numOutputCubes": metrics.numOutputCubes
-            }
-
-            self.assertEqual(sorted(expZOrderMetrics.items()), sorted(actualZOrderMetrics.items()))
+        # assertions (partition 'p = 2' has four files)
+        self.assertTrue(metrics.numFilesAdded == 1)
+        self.assertTrue(metrics.numFilesRemoved == 4)
+        self.assertTrue(metrics.totalFilesSkipped == 0)
+        self.assertTrue(metrics.totalConsideredFiles == 4)
+        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
+        self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
