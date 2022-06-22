@@ -17,7 +17,6 @@ package org.example;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.configuration.RestOptions;
-import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
 import org.apache.flink.streaming.api.CheckpointingMode;
@@ -29,7 +28,8 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 public interface DeltaSinkLocalJobRunner {
 
     default MiniCluster getMiniCluster() {
-        final org.apache.flink.configuration.Configuration config = new org.apache.flink.configuration.Configuration();
+        final org.apache.flink.configuration.Configuration config =
+            new org.apache.flink.configuration.Configuration();
         config.setString(RestOptions.BIND_PORT, "18081-19000");
         final MiniClusterConfiguration cfg =
                 new MiniClusterConfiguration.Builder()

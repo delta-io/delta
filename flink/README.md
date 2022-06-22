@@ -7,25 +7,50 @@ Official Delta Lake connector for [Apache Flink](https://flink.apache.org/).
 ## Introduction
 
 Flink/Delta Connector is a JVM library to read and write data from Apache Flink applications to Delta tables
-utilizing [Delta Standalone JVM library](https://github.com/delta-io/connectors#delta-standalone). It includes:
+utilizing [Delta Standalone JVM library](https://github.com/delta-io/connectors#delta-standalone).
+The connector provides exactly-once delivery guarantees.
 
-- `DeltaSink` for writing data from Apache Flink to a Delta table
-- `DeltaSource` for reading Delta tables using Apache Flink (still in progress)
+Flink/Delta Connector  includes:
+- `DeltaSink` for writing data from Apache Flink to a Delta table.
+- `DeltaSource` for reading Delta tables using Apache Flink.
 
-#### Note:
-
-- `DeltaSink` provides exactly-once delivery guarantees.
-- Depending on the version of the connector you can use it with following Apache Flink versions:
+Depending on the version of the connector you can use it with following Apache Flink versions:
   
-  | connector's version  | Flink's version |
-  | :---: | :---: |
-  |    0.4.x    |    >= 1.12.0    |
-  
+| Connector's version | Flink's version |
+|:-------------------:|:---------------:|
+|  0.4.x (Sink Only)  |    >= 1.12.0    |
+|        0.5.x        |    >= 1.13.0    |
+
+<br>
+
 #### Known limitations:
 
-- Currently only `DeltaSink` is supported, and thus the connector supports writing to Delta tables, but does not support reading Delta tables.
 - The current version only supports Flink `Datastream` API. Support for Flink Table API / SQL, along with Flink Catalog's implementation for storing Delta table's metadata in an external metastore, are planned to be added in the next releases.
 - The current version only provides Delta Lake's transactional guarantees for tables stored on HDFS and Microsoft Azure Storage.
+
+### Delta Source
+#### Modes
+Delta Source can work in one of two modes:
+- `bounded` - suitable for batch jobs, where we want to read content of Delta table for specific Snapshot version only.
+- `continuous` - suitable for streaming jobs, where we want to read content of Delta table for specific snapshot version and continuously check Delta table for new changes and versions.
+
+The `DeltaSource` class provides factory methods to create sources for both modes.
+Please see [documentation](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) and examples for details.
+
+<br>
+
+#### Table schema discovery
+Flink Delta source connector will use Delta table log to discover columns and their types.
+If user did not specify any columns in source definition, all columns from underlying Delta table will be read.
+If user specified a collection of column names, using Delta source builder method, then only those columns will be read from underlying Delta table. 
+In both cases, Source connector will discover what are the Delta types for every column and will convert them to corresponding Flink types.
+
+<br>
+
+#### Partition column discovery
+Flink Delta source connector will use Delta table log to determine which columns are partition columns.
+No additional actions are needed from user end.
+
 
 ### Flink metrics
 #### Delta Sink
@@ -208,6 +233,118 @@ public class DeltaSinkExample {
             .build();
     stream.sinkTo(deltaSink);
     return stream;
+  }
+}
+```
+
+#### 3. Source creation for Delta table, to read all columns in bounded mode. Suitable for batch jobs.
+```java
+package com.example;
+
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.data.RowData;
+import org.apache.hadoop.conf.Configuration;
+
+public class DeltaSourceExample {
+
+  public DataStream<RowData> createBoundedDeltaSourceAllColumns(
+          StreamExecutionEnvironment env,
+          String deltaTablePath) {
+
+    DeltaSource<RowData> deltaSource = DeltaSource.forBoundedRowData(
+                    new Path(deltaTablePath),
+                    new Configuration())
+            .build();
+
+    return env.fromSource(deltaSource, WatermarkStrategy.noWatermarks(), "delta-source");
+  }
+}
+```
+
+#### 4. Source creation for Delta table, to read only user defined columns in bounded mode. Suitable for batch jobs.
+```java
+package com.example;
+
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.data.RowData;
+import org.apache.hadoop.conf.Configuration;
+
+public class DeltaSourceExample {
+
+  public DataStream<RowData> createBoundedDeltaSourceUserColumns(
+          StreamExecutionEnvironment env,
+          String deltaTablePath,
+          String[] columnNames) {
+
+    DeltaSource<RowData> deltaSource = DeltaSource.forBoundedRowData(
+                    new Path(deltaTablePath),
+                    new Configuration())
+            .columnNames(columnNames)
+            .build();
+
+    return env.fromSource(deltaSource, WatermarkStrategy.noWatermarks(), "delta-source");
+  }
+}
+```
+
+#### 5. Source creation for Delta table, to read all columns in continuous mode. Suitable for streaming jobs.
+```java
+package com.example;
+
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.data.RowData;
+import org.apache.hadoop.conf.Configuration;
+
+public class DeltaSourceExample {
+
+  public DataStream<RowData> createContinuousDeltaSourceAllColumns(
+          StreamExecutionEnvironment env,
+          String deltaTablePath) {
+
+    DeltaSource<RowData> deltaSource = DeltaSource.forContinuousRowData(
+                    new Path(deltaTablePath),
+                    new Configuration())
+            .build();
+
+    return env.fromSource(deltaSource, WatermarkStrategy.noWatermarks(), "delta-source");
+  }
+}
+```
+
+#### 6. Source creation for Delta table, to read only user defined columns in continuous mode. Suitable for streaming jobs.
+```java
+package com.example;
+
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.data.RowData;
+import org.apache.hadoop.conf.Configuration;
+
+public class DeltaSourceExample {
+
+  public DataStream<RowData> createContinuousDeltaSourceUserColumns(
+          StreamExecutionEnvironment env,
+          String deltaTablePath,
+          String[] columnNames) {
+
+    DeltaSource<RowData> deltaSource = DeltaSource.forContinuousRowData(
+                    new Path(deltaTablePath),
+                    new Configuration())
+            .columnNames(columnNames)
+            .build();
+
+    return env.fromSource(deltaSource, WatermarkStrategy.noWatermarks(), "delta-source");
   }
 }
 ```
