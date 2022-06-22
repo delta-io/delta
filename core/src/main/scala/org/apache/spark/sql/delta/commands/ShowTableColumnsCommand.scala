@@ -38,7 +38,7 @@ case class TableColumns(col_name: String)
  *
  * @param path  the file path where the Delta table located
  */
-case class ShowTableColumnsCommand(path: Path)
+case class ShowTableColumnsCommand(path: String)
   extends LeafRunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes
@@ -46,10 +46,10 @@ case class ShowTableColumnsCommand(path: Path)
   override def run(sparkSession: SparkSession): Seq[Row] = {
     // Return the schema from snapshot if it is an Delta table. Or raise `fileNotFoundException` if
     // it is a non-Delta table.
-    val deltaLog = DeltaLog.forTable(sparkSession, path)
+    val deltaLog = DeltaLog.forTable(sparkSession, new Path(path))
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (deltaLog.snapshot.version < 0) {
-        throw DeltaErrors.fileNotFoundException(path.toString)
+        throw DeltaErrors.notADeltaTableException("SHOW COLUMNS")
       } else {
         deltaLog.snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
       }

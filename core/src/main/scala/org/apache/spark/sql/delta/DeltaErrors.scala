@@ -2148,6 +2148,11 @@ trait DeltaErrorsBase
       messageParameters = Array(dataFilters)
     )
   }
+
+  def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"SHOW COLUMNS with conflicting databases: '$db' != '${tableID.database.get}'")
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
