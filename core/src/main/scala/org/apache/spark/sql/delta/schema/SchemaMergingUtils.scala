@@ -38,6 +38,51 @@ object SchemaMergingUtils {
 
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+
+  /**
+   * Returns pairs of (full column name path, field) in this schema as a list. For example, a schema
+   * like:
+   *   <field a>          | - a
+   *   <field 1>          | | - 1
+   *   <field 2>          | | - 2
+   *   <field b>          | - b
+   *   <field c>          | - c
+   *   <field `foo.bar`>  | | - `foo.bar`
+   *   <field 3>          |   | - 3
+   *   will return [
+   *     ([a], <field a>), ([a, 1], <field 1>), ([a, 2], <field 2>), ([b], <field b>),
+   *     ([c], <field c>), ([c, foo.bar], <field foo.bar>), ([c, foo.bar, 3], <field 3>)
+   *   ]
+   */
+  def explode(schema: StructType): Seq[(Seq[String], StructField)] = {
+    def recurseIntoComplexTypes(complexType: DataType): Seq[(Seq[String], StructField)] = {
+      complexType match {
+        case s: StructType => explode(s)
+        case a: ArrayType => recurseIntoComplexTypes(a.elementType)
+          .map { case (path, field) => (Seq("element") ++ path, field) }
+        case m: MapType =>
+          recurseIntoComplexTypes(m.keyType)
+            .map { case (path, field) => (Seq("key") ++ path, field) } ++
+          recurseIntoComplexTypes(m.valueType)
+            .map { case (path, field) => (Seq("value") ++ path, field) }
+        case _ => Nil
+      }
+    }
+
+    schema.flatMap {
+      case f @ StructField(name, s: StructType, _, _) =>
+        Seq((Seq(name), f)) ++
+          explode(s).map { case (path, field) => (Seq(name) ++ path, field) }
+      case f @ StructField(name, a: ArrayType, _, _) =>
+        Seq((Seq(name), f)) ++
+          recurseIntoComplexTypes(a).map { case (path, field) => (Seq(name) ++ path, field) }
+      case f @ StructField(name, m: MapType, _, _) =>
+        Seq((Seq(name), f)) ++
+          recurseIntoComplexTypes(m).map { case (path, field) => (Seq(name) ++ path, field) }
+      case f => (Seq(f.name), f) :: Nil
+    }
+  }
+
   /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
    *   | - a
@@ -50,30 +95,7 @@ object SchemaMergingUtils {
    *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
    */
   def explodeNestedFieldNames(schema: StructType): Seq[String] = {
-    def explode(schema: StructType): Seq[Seq[String]] = {
-      def recurseIntoComplexTypes(complexType: DataType): Seq[Seq[String]] = {
-        complexType match {
-          case s: StructType => explode(s)
-          case a: ArrayType => recurseIntoComplexTypes(a.elementType).map(Seq("element") ++ _)
-          case m: MapType =>
-            recurseIntoComplexTypes(m.keyType).map(Seq("key") ++ _) ++
-              recurseIntoComplexTypes(m.valueType).map(Seq("value") ++ _)
-          case _ => Nil
-        }
-      }
-
-      schema.flatMap {
-        case StructField(name, s: StructType, _, _) =>
-          Seq(Seq(name)) ++ explode(s).map(nested => Seq(name) ++ nested)
-        case StructField(name, a: ArrayType, _, _) =>
-          Seq(Seq(name)) ++ recurseIntoComplexTypes(a).map(nested => Seq(name) ++ nested)
-        case StructField(name, m: MapType, _, _) =>
-          Seq(Seq(name)) ++ recurseIntoComplexTypes(m).map(nested => Seq(name) ++ nested)
-        case f => Seq(f.name) :: Nil
-      }
-    }
-
-    explode(schema).map(UnresolvedAttribute.apply(_).name)
+    explode(schema).map { case (path, _) => path }.map(UnresolvedAttribute.apply(_).name)
   }
 
   /**

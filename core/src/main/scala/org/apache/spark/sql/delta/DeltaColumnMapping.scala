@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
   val MIN_WRITER_VERSION = 5
@@ -80,6 +80,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       newMode: DeltaColumnMappingMode): Boolean = {
     if (oldMode == newMode) true
     else oldMode == NoMapping && newMode == NameMapping
+  }
+
+  def isColumnMappingUpgrade(
+      oldMode: DeltaColumnMappingMode,
+      newMode: DeltaColumnMappingMode): Boolean = {
+    oldMode == NoMapping && newMode != NoMapping
   }
 
   /**
@@ -429,6 +435,75 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
+  /**
+   * Returns a map of physicalNamePath -> field for the given `schema`, where
+   * physicalNamePath is the [$parentPhysicalName, ..., $fieldPhysicalName] list of physical names
+   * for every field (including nested) in the `schema`.
+   *
+   * Must be called after `checkColumnIdAndPhysicalNameAssignments`, so that we know the schema
+   * is valid.
+   */
+  def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
+    val physicalSchema =
+      createPhysicalSchema(schema, schema, NameMapping, checkSupportedMode = false)
+
+    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
+
+    val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
+
+    physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
+  }
+
+  /**
+   * Returns true if Column Mapping mode is enabled and the newMetadata's schema, when compared to
+   * the currentMetadata's schema, is indicative of a DROP COLUMN operation.
+   *
+   * We detect DROP COLUMNS by checking if any physical name in `currentSchema` is missing in
+   * `newSchema`.
+   */
+  def isDropColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+
+    // We will need to compare the new schema's physical columns to the current schema's physical
+    // columns. So, they both must have column mapping enabled.
+    if (newMetadata.columnMappingMode == NoMapping ||
+      currentMetadata.columnMappingMode == NoMapping) {
+      return false
+    }
+
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+
+    // are any of the current physical names missing in the new schema?
+    currentPhysicalToLogicalMap
+      .keys
+      .exists { k => !newPhysicalToLogicalMap.contains(k) }
+  }
+
+  /**
+   * Returns true if Column Mapping mode is enabled and the newMetadata's schema, when compared to
+   * the currentMetadata's schema, is indicative of a RENAME COLUMN operation.
+   *
+   * We detect RENAME COLUMNS by checking if any two columns with the same physical name have
+   * different logical names
+   */
+  def isRenameColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+
+    // We will need to compare the new schema's physical columns to the current schema's physical
+    // columns. So, they both must have column mapping enabled.
+    if (newMetadata.columnMappingMode == NoMapping ||
+      currentMetadata.columnMappingMode == NoMapping) {
+      return false
+    }
+
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+
+    // do any two columns with the same physical name have different logical names?
+    currentPhysicalToLogicalMap
+      .exists { case (physicalPath, field) =>
+        newPhysicalToLogicalMap.get(physicalPath).exists(_.name != field.name)
+      }
+  }
 }
 
 object DeltaColumnMapping extends DeltaColumnMappingBase
