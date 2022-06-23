@@ -688,6 +688,32 @@ abstract class DeltaCDCSuiteBase
       }
     }
   }
+
+  test("should block CDC reads when Column Mapping enabled - batch") {
+    withTable("t1") {
+      sql(
+        s"""
+           |CREATE TABLE t1 (id LONG) USING DELTA
+           |TBLPROPERTIES(
+           |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name',
+           |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
+           |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
+           |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
+           |)
+           |""".stripMargin)
+      spark.range(10).write.format("delta").mode("append").saveAsTable("t1")
+
+      // case 1: batch read
+      spark.read.format("delta").table("t1").show()
+
+      // case 2: batch CDC read
+      val e = intercept[DeltaUnsupportedOperationException] {
+        cdcRead(new TableName("t1"), StartingVersion("0"), EndingVersion("1")).show()
+      }.getMessage
+      assert(e == "Change data feed (CDF) reads are currently not supported on tables with " +
+        "column mapping enabled.")
+    }
+  }
 }
 
 class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
