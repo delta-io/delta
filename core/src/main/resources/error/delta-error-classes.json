@@ -62,6 +62,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION" : {
+    "message" : [
+      "Operation \"<opName>\" is not allowed when the table has enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME COLUMN."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS" : {
     "message" : [
       "Cannot drop bloom filter indices for the following non-existent column(s): <unknownColumns>"

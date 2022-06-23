@@ -2214,6 +2214,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def blockColumnMappingAndCdcOperation(op: DeltaOperations.Operation): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION",
+      messageParameters = Array(op.name)
+    )
+  }
+
   def missingDeltaStorageJar(e: NoClassDefFoundError): Throwable = {
     // scalastyle:off line.size.limit
     new NoClassDefFoundError(

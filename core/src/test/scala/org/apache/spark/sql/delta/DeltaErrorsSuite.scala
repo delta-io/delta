@@ -2184,6 +2184,16 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
     }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Operation \"Manual Update\" is not allowed when the table has " +
+        "enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or " +
+        "RENAME COLUMN.")
+    }
   }
 }
 
