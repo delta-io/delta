@@ -936,6 +936,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def blockStreamingReadsOnColumnMappingEnabledTable: Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
+  }
+
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER",
