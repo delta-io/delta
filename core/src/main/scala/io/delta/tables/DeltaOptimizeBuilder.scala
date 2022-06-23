@@ -58,7 +58,7 @@ class DeltaOptimizeBuilder private(
   }
 
    /**
-   * Z-Order the data in the table using the given columns.
+   * Z-Order the data in selected partitions using the given columns.
    * @param columns Zero or more columns to order the data
    *                using Z-Order curves
    * @return DataFrame containing the OPTIMIZE execution metrics
