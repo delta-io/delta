@@ -2236,6 +2236,12 @@ trait DeltaErrorsBase
          |""".stripMargin)
     // scalastyle:on line.size.limit
   }
+
+  def blockCdfAndColumnMappingReads(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

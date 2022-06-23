@@ -777,6 +777,69 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       }
     }
   }
+
+  test("should block CDC reads when Column Mapping enabled - streaming") {
+    def assertError(f: => Any): Unit = {
+      val e = intercept[StreamingQueryException] {
+        f
+      }.getCause.getMessage
+      assert(e == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
+    }
+
+    Seq(0, 1).foreach { startingVersion =>
+      withClue(s"using CDC starting version $startingVersion") {
+        withTable("t1") {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            sql(
+              s"""
+                 |CREATE TABLE t1 (id LONG) USING DELTA
+                 |TBLPROPERTIES(
+                 |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
+                 |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
+                 |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
+                 |)
+                 |LOCATION '$path'
+                 |""".stripMargin)
+
+            spark.range(10).write.format("delta").mode("append").save(path)
+            spark.range(10, 20).write.format("delta").mode("append").save(path)
+
+            val df = spark.readStream
+              .format("delta")
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingVersion", startingVersion)
+              .load(path)
+
+            // case 1: column-mapping is enabled mid-stream
+            testStream(df)(
+              ProcessAllAvailable(),
+              Execute { _ =>
+                sql(s"""
+                       |ALTER TABLE t1
+                       |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
+                       |""".stripMargin)
+              },
+              AddToReservoir(dir, spark.range(10, 20).toDF()),
+              Execute { q =>
+                assertError {
+                  q.processAllAvailable()
+                }
+              }
+            )
+
+            // case 2: perform CDC stream read on table with column mapping already enabled
+            assertError {
+              val stream = df.writeStream.format("console").start()
+              stream.awaitTermination(2000)
+              stream.stop()
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
