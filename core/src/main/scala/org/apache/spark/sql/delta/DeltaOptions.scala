@@ -114,6 +114,10 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
 
   validateIdempotentWriteOptions()
 
+  /** Whether partitionOverwriteMode is provided as a DataFrameWriter option. */
+  val partitionOverwriteModeInOptions: Boolean =
+    options.contains(PARTITION_OVERWRITE_MODE_OPTION)
+
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
     if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
@@ -129,7 +133,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
           PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
         )
       }
-      mode.equalsIgnoreCase("DYNAMIC")
+      mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     }
   }
 }

@@ -1118,6 +1118,12 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
+    "message" : [
+      "A 'replaceWhere' expression and 'partitionOverwriteMode'='dynamic' cannot both be set in the DataFrameWriter options."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET" : {
     "message" : [
       "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false. Filters: <dataFilters>"
