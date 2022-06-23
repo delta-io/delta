@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -127,19 +127,27 @@ object SkippingEligibleExpression {
  * An extractor that matches on access of a skipping-eligible Literal. Delta tables track min/max
  * stats for a limited set of data types, and only Literals of those types are skipping-eligible.
  *
- * WARNING: This extractor needs to be kept in sync with StatisticsCollection.statsCollector.
- *
  * @return The Literal, if it is eligible. Otherwise, return None.
  */
 object SkippingEligibleLiteral {
   def unapply(arg: Literal): Option[Column] = {
-    if (isEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
+    if (SkippingEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
   }
+}
 
-  def isEligibleDataType(dt: DataType): Boolean = dt match {
+object SkippingEligibleDataType {
+  // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
+  def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | StringType => true
     case _ => false
   }
+
+  // Use these in `match` statements
+  def unapply(dataType: DataType): Option[DataType] = {
+    if (SkippingEligibleDataType(dataType)) Some(dataType) else None
+  }
+
+  def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
 private[stats] object DataSkippingReader {
@@ -240,7 +248,7 @@ trait DataSkippingReaderBase
     }
 
     lazy val ordering = TypeUtils.getInterpretedOrdering(dt)
-    if (!SkippingEligibleLiteral.isEligibleDataType(dt)) {
+    if (!SkippingEligibleDataType(dt)) {
       // Don't waste time building expressions for incompatible types
       None
     }

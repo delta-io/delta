@@ -117,26 +117,22 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       count(new Column("*")) as NUM_RECORDS,
       collectStats(MIN, statCollectionSchema) {
         // Truncate string min values as necessary
-        case (c, f) if f.dataType == StringType =>
+        case (c, SkippingEligibleDataType(StringType)) =>
           substring(min(c), 0, stringPrefix)
 
         // Collect all numeric min values
-        case (c, f) if f.dataType.isInstanceOf[NumericType] ||
-                       f.dataType == DateType ||
-                       f.dataType == TimestampType =>
+        case (c, SkippingEligibleDataType(_)) =>
           min(c)
       },
       collectStats(MAX, statCollectionSchema) {
         // Truncate and pad string max values as necessary
-        case (c, f) if f.dataType == StringType =>
+        case (c, SkippingEligibleDataType(StringType)) =>
           val udfTruncateMax =
             DeltaUDF.stringStringUdf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
         // Collect all numeric max values
-        case (c, f) if f.dataType.isInstanceOf[NumericType] ||
-                       f.dataType == DateType ||
-                       f.dataType == TimestampType =>
+        case (c, SkippingEligibleDataType(_)) =>
           max(c)
       },
       collectStats(NULL_COUNT, statCollectionSchema) {
@@ -147,22 +143,47 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
 
   /** Returns schema of the statistics collected. */
   lazy val statsSchema: StructType = {
-    recordFrameProfile("Delta", "StatisticsCollection.statsSchema") {
-      // We invoke the analyzer here to actually figure out what the schema of
-      // statistics column should be.
-      {
-        val s = Dataset.ofRows(spark, LocalRelation(dataSchema.toAttributes))
-          .select(statsCollector)
-          .schema
-          .find(_.name == "stats")
-          .get
-          .dataType
-          .asInstanceOf[StructType]
-        // We cannot write null types to Parquet, therefore we need to filter them out. minValues
-        // and maxValues can be null when we cannot collect stats on any of the data columns
-        StructType(s.filterNot(_.dataType.isInstanceOf[NullType])).asNullable
+    // In order to get the Delta min/max stats schema from table schema, we do 1) replace field
+    // name with physical name 2) set nullable to true 3) only keep stats eligible fields
+    // 4) omits metadata in table schema as Delta stats schema does not need the metadata
+    def getMinMaxStatsSchema(schema: StructType): Option[StructType] = {
+      val fields = schema.fields.flatMap {
+        case f@StructField(_, dataType: StructType, _, _) =>
+          getMinMaxStatsSchema(dataType).map { newDataType =>
+            StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)
+          }
+        case f@StructField(_, SkippingEligibleDataType(dataType), _, _) =>
+          Some(StructField(DeltaColumnMapping.getPhysicalName(f), dataType))
+        case _ => None
       }
+      if (fields.nonEmpty) Some(StructType(fields)) else None
     }
+
+    // In order to get the Delta null count schema from table schema, we do 1) replace field name
+    // with physical name 2) set nullable to true 3) use LongType for all fields
+    // 4) omits metadata in table schema as Delta stats schema does not need the metadata
+    def getNullCountSchema(schema: StructType): Option[StructType] = {
+      val fields = schema.fields.flatMap {
+        case f@StructField(_, dataType: StructType, _, _) =>
+          getNullCountSchema(dataType).map { newDataType =>
+            StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)
+          }
+        case f: StructField =>
+          Some(StructField(DeltaColumnMapping.getPhysicalName(f), LongType))
+      }
+      if (fields.nonEmpty) Some(StructType(fields)) else None
+    }
+
+    val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionSchema)
+    val nullCountSchemaOpt = getNullCountSchema(statCollectionSchema)
+
+    val fields = Array("numRecords" -> LongType) ++
+      minMaxStatsSchemaOpt.map("minValues" -> _) ++
+      minMaxStatsSchemaOpt.map("maxValues" -> _) ++
+      nullCountSchemaOpt.map("nullCount" -> _)
+    StructType(fields.map {
+      case (name, dataType) => StructField(name, dataType)
+    })
   }
 
   /**
