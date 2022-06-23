@@ -2176,6 +2176,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
     }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockCdfAndColumnMappingReads()
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
+    }
   }
 }
 
