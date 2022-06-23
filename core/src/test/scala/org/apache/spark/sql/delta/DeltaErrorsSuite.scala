@@ -2186,6 +2186,15 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockCdfAndColumnMappingReads()
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
         throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
       }
       assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION")
