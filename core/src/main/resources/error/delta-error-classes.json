@@ -1411,6 +1411,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS" : {
+    "message" : [
+      "Streaming reads from a Delta table with column mapping enabled are not supported."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
     "message" : [
       "Writing data with column mapping mode is not supported."
