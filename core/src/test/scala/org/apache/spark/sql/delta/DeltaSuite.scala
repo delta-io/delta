@@ -859,8 +859,39 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test(
-    "batch write: append, dynamic partition overwrite option not supported with replaceWhere") {
+  test("batch write: append, dynamic partition overwrite conf, replaceWhere takes precedence") {
+    // when dynamic partition overwrite mode is enabled in the spark configuration, and a
+    // replaceWhere expression is provided, we delete data according to the replaceWhere expression
+    withSQLConf(
+      DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true",
+      SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq((5, "x")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select($"value").as[Int], 2, 5)
+      }
+    }
+  }
+
+  test("batch write: append, replaceWhere + dynamic partition overwrite enabled in options") {
+    // when dynamic partition overwrite mode is enabled in the DataFrameWriter options, and
+    // a replaceWhere expression is provided, we throw an error
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
@@ -873,113 +904,79 @@ class DeltaSuite extends QueryTest
           .mode("append")
           .save(tempDir.getCanonicalPath)
 
-        val e = intercept[AnalysisException] {
+        val e = intercept[IllegalArgumentException] {
           Seq((3, "x"), (5, "x")).toDF("value", "part2")
             .withColumn("part1", $"value" % 2)
             .write
             .format("delta")
             .partitionBy("part1", "part2")
             .mode("overwrite")
-            .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
             .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
             .save(tempDir.getCanonicalPath)
         }
-        assert(e.getMessage ===
-          "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
-      }
-    }
-  }
-
-  test(
-    "batch write: append, dynamic partition overwrite conf not supported with replaceWhere") {
-    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-      withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
-        withTempDir { tempDir =>
-          def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-          Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
-            .withColumn("part1", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part1", "part2")
-            .mode("append")
-            .save(tempDir.getCanonicalPath)
-
-          val e = intercept[AnalysisException] {
-            Seq((3, "x"), (5, "x")).toDF("value", "part2")
-              .withColumn("part1", $"value" % 2)
-              .write
-              .format("delta")
-              .partitionBy("part1", "part2")
-              .mode("overwrite")
-              .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
-              .save(tempDir.getCanonicalPath)
-          }
-          assert(e.getMessage ===
-            "'replaceWhere' cannot be used when 'partitionOverwriteMode' is set to 'DYNAMIC'")
-        }
+        assert(e.getMessage === "A 'replaceWhere' expression and " +
+          "'partitionOverwriteMode'='dynamic' cannot both be set in the DataFrameWriter options.")
       }
     }
   }
 
   test("batch write: append, dynamic partition overwrite set via conf") {
-    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-      withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
-        withTempDir { tempDir =>
-          def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+    withSQLConf(
+      DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true",
+      SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
-          Seq(1, 2, 3).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .mode("append")
-            .save(tempDir.getCanonicalPath)
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
 
-          Seq(1, 5).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .mode("overwrite")
-            .save(tempDir.getCanonicalPath)
-          checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
-        }
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
       }
     }
   }
 
-  test(
-    "batch write: append, dynamic partition overwrite set via conf and overridden via option") {
-    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-      withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
-        withTempDir { tempDir =>
-          def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+  test("batch write: append, dynamic partition overwrite set via conf and overridden via option") {
+    withSQLConf(
+      DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true",
+      SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
-          Seq(1, 2, 3).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .mode("append")
-            .save(tempDir.getCanonicalPath)
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
 
-          Seq(1, 5).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "static")
-            .mode("overwrite")
-            .save(tempDir.getCanonicalPath)
-          checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
-        }
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "static")
+          .mode("overwrite")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
       }
     }
   }
 
-  test(
-    "batch write: append, overwrite without partitions should ignore partition overwrite mode") {
+  test("batch write: append, overwrite without partitions should ignore partition overwrite mode") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
@@ -999,6 +996,34 @@ class DeltaSuite extends QueryTest
           .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
           .save(tempDir.getCanonicalPath)
         checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
+      }
+    }
+  }
+
+  test("batch write: append, overwrite non-partitioned table with replaceWhere ignores partition " +
+    "overwrite mode option") {
+    // we check here that setting both replaceWhere and dynamic partition overwrite in the
+    // DataFrameWriter options is allowed for a non-partitioned table
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
       }
     }
   }

@@ -1601,6 +1601,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "No file found in the directory: dir.")
     }
     {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.replaceWhereUsedWithDynamicPartitionOverwrite()
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE")
+      assert(e.getMessage == "A 'replaceWhere' expression and 'partitionOverwriteMode'='dynamic' " +
+        "cannot both be set in the DataFrameWriter options.")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereUsedInOverwrite()
       }
