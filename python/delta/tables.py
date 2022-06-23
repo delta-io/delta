@@ -1206,3 +1206,30 @@ class DeltaOptimizeBuilder(object):
             self._jbuilder.executeCompaction(),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
+
+    @since(1.3)  # type: ignore[arg-type]
+    def executeZOrderBy(self, *cols: Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
+        """
+        Z-Order the data in selected partitions using the given columns.
+
+        :param cols: the Z-Order cols
+        :type cols: str or list name of columns
+
+        :return: DataFrame containing the OPTIMIZE execution metrics
+        :rtype: pyspark.sql.DataFrame
+        """
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                errorMsg = "Z-order column must be str. "
+                errorMsg += "Found %s with type %s" % ((str(c)), str(type(c)))
+                raise TypeError(errorMsg)
+
+        return DataFrame(
+            self._jbuilder.executeZOrderBy(_to_seq(
+                self._spark._sc,  # type: ignore[attr-defined]
+                cast(Iterable[Union[Column, str]], cols)
+            )),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
