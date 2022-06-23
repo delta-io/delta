@@ -30,6 +30,13 @@ private[internal] object LogStoreProvider extends LogStoreProvider
 
 private[internal] trait LogStoreProvider {
 
+  // We accept keys with the `spark.` prefix to maintain compatibility with delta-spark
+  val acceptedLogStoreClassConfKeyRegex =
+    f"((?:spark.)?${StandaloneHadoopConf.LOG_STORE_CLASS_KEY}|" +
+    f"${StandaloneHadoopConf.LEGACY_LOG_STORE_CLASS_KEY})"
+      .replace(""".""", """\.""")
+  val acceptedLogStoreSchemeConfKeyRegex = """(?:spark\.)?delta\.logStore\.\w+\.impl"""
+
   val logStoreClassConfKey: String = StandaloneHadoopConf.LOG_STORE_CLASS_KEY
   val defaultLogStoreClass: String = classOf[DelegatingLogStore].getName
 
@@ -38,6 +45,7 @@ private[internal] trait LogStoreProvider {
 
   def createLogStore(hadoopConf: Configuration): LogStore = {
     checkLogStoreConfConflicts(hadoopConf)
+    normalizeHadoopConf(hadoopConf)
     val logStoreClassName = hadoopConf.get(logStoreClassConfKey, defaultLogStoreClass)
     createLogStoreWithClassName(logStoreClassName, hadoopConf)
   }
@@ -63,12 +71,61 @@ private[internal] trait LogStoreProvider {
     }
   }
 
-  def checkLogStoreConfConflicts(hadoopConf: Configuration): Unit = {
-    val classConf = Option(hadoopConf.get(logStoreClassConfKey))
-    val schemeConf = hadoopConf.getValByRegex("""delta\.logStore\.\w+\.impl""")
+  /**
+   * Normalizes LogStore hadoop configs.
+   * - For each config, check that the values are consistent across all accepted keys. Throw an
+   *   error if they are not.
+   * - Set the "normalized" key to such value. This means future accesses can exclusively use the
+   *   normalized keys.
+   *
+   * For scheme conf keys:
+   * - We accept 'delta.logStore.{scheme}.impl' and 'spark.delta.logStore.{scheme}.impl'
+   * - The normalized key is 'delta.logStore.{scheme}.impl'
+   *
+   * For class conf key:
+   * - We accept 'delta.logStore.class', 'spark.delta.logStore.class', and
+   *   'io.delta.standalone.LOG_STORE_CLASS_KEY' (legacy).
+   * - The normalized key is 'delta.logStore.class'
+   */
+  def normalizeHadoopConf(hadoopConf: Configuration): Unit = {
+    // LogStore scheme conf keys
+    val schemeConfs = hadoopConf.getValByRegex(acceptedLogStoreSchemeConfKeyRegex).asScala
+    schemeConfs.filter(_._1.startsWith("spark.")).foreach { case (key, value) =>
+      val normalizedKey = key.stripPrefix("spark.")
+      Option(hadoopConf.get(normalizedKey)) match {
+        case Some(normalValue) =>
+          // The normalized key is also present in the hadoopConf. Check that they store
+          // the same value, otherwise throw an error.
+          if (value != normalValue) {
+            throw DeltaErrors.inconsistentLogStoreConfs(
+              Seq((key, value), (normalizedKey, normalValue)))
+          }
+        case None =>
+          // The normalized key is not present in the hadoopConf. Set the normalized key to the
+          // provided value.
+          hadoopConf.set(normalizedKey, value)
+      }
+    }
 
-    if (classConf.nonEmpty && !schemeConf.isEmpty()) {
-      throw DeltaErrors.logStoreConfConflicts(schemeConf.keySet().asScala.toSeq)
+    // LogStore class conf key
+    val classConfs = hadoopConf.getValByRegex(acceptedLogStoreClassConfKeyRegex).asScala
+    if (classConfs.values.toSet.size > 1) {
+      // More than one class conf key are set to different values
+      throw DeltaErrors.inconsistentLogStoreConfs(classConfs.iterator.toSeq)
+    } else if (classConfs.size > 0) {
+      // Set the normalized key to the provided value.
+      hadoopConf.set(logStoreClassConfKey, classConfs.values.head)
+    }
+  }
+
+  def checkLogStoreConfConflicts(hadoopConf: Configuration): Unit = {
+    val classConf = hadoopConf.getValByRegex(acceptedLogStoreClassConfKeyRegex)
+    val schemeConf = hadoopConf.getValByRegex(acceptedLogStoreSchemeConfKeyRegex)
+
+    if (!classConf.isEmpty() && !schemeConf.isEmpty()) {
+      throw DeltaErrors.logStoreConfConflicts(
+        classConf.keySet().asScala.toSeq,
+        schemeConf.keySet().asScala.toSeq)
     }
   }
 }

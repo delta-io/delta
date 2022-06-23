@@ -17,16 +17,25 @@
 package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
 
 import io.delta.standalone.exceptions.DeltaStandaloneException
 
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.{DelegatingLogStore, LogStoreProvider}
 
 class LogStoreProviderSuite extends FunSuite {
 
   private def fakeSchemeWithNoDefault = "fake"
   private val customLogStoreClassName = classOf[UserDefinedLogStore].getName
+
+  private val sparkClassKey = "spark." + LogStoreProvider.logStoreClassConfKey
+  private val legacyClassKey = StandaloneHadoopConf.LEGACY_LOG_STORE_CLASS_KEY
+  private val normalClassKey = LogStoreProvider.logStoreClassConfKey
+
+  private def sparkPrefixLogStoreSchemeConfKey(scheme: String) =
+    "spark." + LogStoreProvider.logStoreSchemeConfKey(scheme)
 
   private def newHadoopConf(confs: Seq[(String, String)]): Configuration = {
     val hadoopConf = new Configuration()
@@ -37,19 +46,22 @@ class LogStoreProviderSuite extends FunSuite {
   private def testClassAndSchemeConfSet(scheme: String, classConf: String, schemeConf: String)
     : Unit = {
 
-    val classConfKey = LogStoreProvider.logStoreClassConfKey
-    val schemeConfKey = LogStoreProvider.logStoreSchemeConfKey(scheme)
-    val hadoopConf = newHadoopConf(
-      Seq((classConfKey, classConf), (schemeConfKey, schemeConf))
-    )
-
-    val e = intercept[IllegalArgumentException](
-      LogStoreProvider.createLogStore(hadoopConf)
-    )
-    assert(e.getMessage.contains(
-      "(`io.delta.standalone.LOG_STORE_CLASS_KEY`) and " +
-        f"(`${LogStoreProvider.logStoreSchemeConfKey(scheme)}`) cannot be set at the same time"
-    ))
+    val schemeConfKeys = Seq(LogStoreProvider.logStoreSchemeConfKey(scheme),
+      sparkPrefixLogStoreSchemeConfKey(scheme))
+    val classConfKeys = Seq(legacyClassKey, sparkClassKey, normalClassKey)
+    schemeConfKeys.foreach{ schemeKey =>
+      classConfKeys.foreach { classKey =>
+        val hadoopConf = newHadoopConf(
+          Seq((classKey, classConf), (schemeKey, schemeConf))
+        )
+        val e = intercept[IllegalArgumentException](
+          LogStoreProvider.createLogStore(hadoopConf)
+        )
+        assert(e.getMessage.contains(
+          s"(`$classKey`) and (`$schemeKey`) cannot be set at the same time"
+        ))
+      }
+    }
   }
 
   test("class-conf = set, scheme has no default, scheme-conf = set") {
@@ -62,6 +74,93 @@ class LogStoreProviderSuite extends FunSuite {
     testClassAndSchemeConfSet("s3a", customLogStoreClassName,
       DelegatingLogStore.defaultAzureLogStoreClassName
     )
+  }
+
+  test("normalizeHadoopConf - scheme conf keys") {
+    Seq(
+      fakeSchemeWithNoDefault, // scheme with no default
+      "s3a" // scheme with default
+    ).foreach { scheme =>
+
+        for (hadoopConf <- Seq(
+          // set only spark-prefixed key
+          newHadoopConf(Seq(
+            (sparkPrefixLogStoreSchemeConfKey(scheme), customLogStoreClassName)
+          )),
+          // set both spark-prefixed key and normalized key to same value
+          newHadoopConf(Seq(
+            (sparkPrefixLogStoreSchemeConfKey(scheme), customLogStoreClassName),
+            (LogStoreProvider.logStoreSchemeConfKey(scheme), customLogStoreClassName)
+          ))
+        )) {
+          val logStore =
+            LogStoreProvider.createLogStore(hadoopConf).asInstanceOf[DelegatingLogStore]
+          assert(logStore.getDelegate(new Path(s"$scheme://dummy")).getClass.getName ==
+            customLogStoreClassName)
+          // normalized key is set
+          assert(hadoopConf.get(LogStoreProvider.logStoreSchemeConfKey(scheme)) ==
+            customLogStoreClassName)
+        }
+
+        // set both spark-prefixed key and normalized key to inconsistent values
+        val hadoopConf = newHadoopConf(Seq(
+          (sparkPrefixLogStoreSchemeConfKey(scheme), customLogStoreClassName),
+          (LogStoreProvider.logStoreSchemeConfKey(scheme),
+            "io.delta.standalone.internal.storage.AzureLogStore")
+        ))
+        val e = intercept[IllegalArgumentException](
+          LogStoreProvider.createLogStore(hadoopConf)
+        )
+        assert(e.getMessage.contains(
+          s"(${sparkPrefixLogStoreSchemeConfKey(scheme)} = $customLogStoreClassName, " +
+            s"${LogStoreProvider.logStoreSchemeConfKey(scheme)} = " +
+            s"io.delta.standalone.internal.storage.AzureLogStore) cannot be set to different " +
+            s"values. Please only set one of them, or set them to the same value."
+        ))
+      }
+  }
+
+  test("normalizeHadoopConf - class conf keys") {
+    // combinations of legacy, spark-prefixed and normalized class conf set to same value
+    Seq(Some(legacyClassKey), None).foreach { legacyConf =>
+      Seq(Some(sparkClassKey), None).foreach { sparkPrefixConf =>
+        Seq(Some(normalClassKey), None).foreach { normalConf =>
+          if (legacyConf.nonEmpty || sparkPrefixConf.nonEmpty || normalConf.nonEmpty) {
+            val hadoopConf = new Configuration()
+            legacyConf.foreach(hadoopConf.set(_, customLogStoreClassName))
+            sparkPrefixConf.foreach(hadoopConf.set(_, customLogStoreClassName))
+            normalConf.foreach(hadoopConf.set(_, customLogStoreClassName))
+
+            assert(LogStoreProvider.createLogStore(hadoopConf).getClass.getName ==
+              customLogStoreClassName)
+            // normalized key is set
+            assert(hadoopConf.get(normalClassKey) == customLogStoreClassName)
+          }
+        }
+      }
+    }
+
+    // combinations of legacy, spark-prefixed and normalized class conf set to inconsistent values
+    for ((key1, key2) <- Seq(
+      (legacyClassKey, sparkClassKey),
+      (normalClassKey, legacyClassKey),
+      (normalClassKey, sparkClassKey)
+    )) {
+      val hadoopConf = newHadoopConf(Seq(
+        (key1, customLogStoreClassName),
+        (key2, "io.delta.standalone.internal.storage.AzureLogStore")
+      ))
+      val e = intercept[IllegalArgumentException] {
+        LogStoreProvider.createLogStore((hadoopConf))
+      }
+      assert(
+        e.getMessage.contains("cannot be set to different values. Please only set one of them, " +
+        "or set them to the same value.")
+        && e.getMessage.contains(s"$key1 = $customLogStoreClassName")
+          &&e.getMessage.contains(s"$key2 = io.delta.standalone.internal.storage.AzureLogStore")
+
+      )
+    }
   }
 
   test("DelegatingLogStore is default") {

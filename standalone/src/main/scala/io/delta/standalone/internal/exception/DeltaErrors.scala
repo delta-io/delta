@@ -325,11 +325,19 @@ private[internal] object DeltaErrors {
       s"$exprName expression requires $expectedType type. But found ${realTypes.mkString(", ")}");
   }
 
-  def logStoreConfConflicts(schemeConf: Seq[String]): Throwable = {
+  def logStoreConfConflicts(classConf: Seq[String], schemeConf: Seq[String]): Throwable = {
     val schemeConfStr = schemeConf.mkString(", ")
+    val classConfStr = classConf.mkString(", ")
     new IllegalArgumentException(
-      s"(`${StandaloneHadoopConf.LOG_STORE_CLASS_KEY}`) and (`${schemeConfStr}`)" +
+      s"(`$classConfStr`) and (`$schemeConfStr`)" +
         " cannot be set at the same time. Please set only one group of them.")
+  }
+
+  def inconsistentLogStoreConfs(setKeys: Seq[(String, String)]): Throwable = {
+    val setKeyStr = setKeys.map(_.productIterator.mkString(" = ")).mkString(", ")
+    new IllegalArgumentException(
+      s"($setKeyStr) cannot be set to different values. Please only set one of them, or set them " +
+        s"to the same value.")
   }
 
   def partitionColumnsNotFoundException(partCols: Seq[String], schema: StructType): Throwable = {

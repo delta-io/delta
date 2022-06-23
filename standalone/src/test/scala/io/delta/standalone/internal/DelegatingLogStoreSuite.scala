@@ -43,7 +43,7 @@ class DelegatingLogStoreSuite extends FunSuite {
 
     val hadoopConf = new Configuration()
     val schemeConfKey = LogStoreProvider.logStoreSchemeConfKey(scheme)
-    schemeConf.map(hadoopConf.set(schemeConfKey, _))
+    schemeConf.foreach(hadoopConf.set(schemeConfKey, _))
 
     val delegatingLogStore = new DelegatingLogStore(hadoopConf)
     val actualLogStore = delegatingLogStore.getDelegate(
