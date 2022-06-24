@@ -19,16 +19,17 @@ package org.apache.spark.sql.delta
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
 class DeltaConfigSuite extends SparkFunSuite
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaSQLCommandTest {
 
   test("parseCalendarInterval") {
     for (input <- Seq("5 MINUTES", "5 minutes", "5 Minutes", "inTERval 5 minutes")) {
@@ -114,6 +115,47 @@ class DeltaConfigSuite extends SparkFunSuite
              |""".stripMargin)
       }
       assert(e.getMessage.contains("not a valid INTERVAL"))
+    }
+  }
+
+  test("DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES = true") {
+    withSQLConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key -> "true") {
+      // (1) we can set arbitrary table properties
+      withTempDir { tempDir =>
+        sql(
+          s"""CREATE TABLE delta.`${tempDir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES ('delta.autoOptimize.autoCompact' = true)
+             |""".stripMargin)
+      }
+
+      // (2) we still validate matching properties
+      withTempDir { tempDir =>
+        val e = intercept[IllegalArgumentException] {
+          sql(
+            s"""CREATE TABLE delta.`${tempDir.getCanonicalPath}` (id bigint) USING delta
+               |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 foo')
+               |""".stripMargin)
+        }
+        assert(e.getMessage.contains("not a valid INTERVAL"))
+      }
+    }
+  }
+
+  test("we don't allow arbitrary delta-prefixed table properties") {
+
+    // standard behavior
+    withSQLConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key -> "false") {
+      val e = intercept[AnalysisException] {
+        withTempDir { tempDir =>
+          sql(
+            s"""CREATE TABLE delta.`${tempDir.getCanonicalPath}` (id bigint) USING delta
+               |TBLPROPERTIES ('delta.foo' = true)
+               |""".stripMargin)
+        }
+      }
+      var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
+        "allowArbitraryProperties.enabled=true in the Spark session configuration."
+      assert(e.getMessage == msg)
     }
   }
 }
