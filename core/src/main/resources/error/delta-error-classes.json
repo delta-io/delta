@@ -1320,7 +1320,8 @@
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
-      "Unknown configuration was specified: <config>"
+      "Unknown configuration was specified: <config>",
+      "To disable this check, set allowArbitraryProperties.enabled=true in the Spark session configuration."
     ],
     "sqlState" : "0A000"
   },
