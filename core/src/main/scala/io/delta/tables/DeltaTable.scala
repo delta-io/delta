@@ -201,7 +201,7 @@ class DeltaTable private[tables](
    *     .executeCompaction();
    * }}}
    *
-   * @since 1.3.0
+   * @since 2.0.0
    */
   def optimize(): DeltaOptimizeBuilder = {
     DeltaOptimizeBuilder(sparkSession,
