@@ -778,8 +778,10 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
+      var msg = "Unknown configuration was specified: confKey\nTo disable this check, set " +
+        "allowArbitraryProperties.enabled=true in the Spark session configuration."
       assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
-      assert(e.getMessage == "Unknown configuration was specified: confKey")
+      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaAnalysisException] {

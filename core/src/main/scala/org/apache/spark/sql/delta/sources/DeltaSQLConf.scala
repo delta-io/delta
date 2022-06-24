@@ -746,6 +746,22 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val ALLOW_ARBITRARY_TABLE_PROPERTIES =
+    buildConf("allowArbitraryProperties.enabled")
+      .doc(
+      """Whether we allow arbitrary Delta table properties. When this is enabled, table properties
+          |with the prefix 'delta.' are not checked for validity. Table property validity is based
+          |on the current Delta version being used and feature support in that version. Arbitrary
+          |properties without the 'delta.' prefix are always allowed regardless of this config.
+          |
+          |Please use with caution. When enabled, there will be no warning when unsupported table
+          |properties for the Delta version being used are set, or when properties are set
+          |incorrectly (for example, misspelled).""".stripMargin
+      )
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
