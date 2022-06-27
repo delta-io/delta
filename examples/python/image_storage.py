@@ -36,6 +36,11 @@ builder = (
     .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
     .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
 )
+
+# This is only for testing staged release artifacts. Ignore this completely.
+if os.getenv('EXTRA_MAVEN_REPO'):
+    builder = builder.config("spark.jars.repositories", os.getenv('EXTRA_MAVEN_REPO'))
+
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 # Flowers dataset from the TensorFlow team - https://www.tensorflow.org/datasets/catalog/tf_flowers

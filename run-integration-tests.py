@@ -68,7 +68,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
-    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py"}
+    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py"}
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
                   if path.isfile(path.join(test_dir, f)) and
@@ -201,14 +201,17 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
     env = {}
     if extra_maven_repo:
         env["EXTRA_MAVEN_REPO"] = extra_maven_repo
-    test_file = path.join(root_dir, path.join("examples", "python", "using_with_pip.py"))
-    test_cmd = ["python3", test_file]
-    print("Test command: %s" % str(test_cmd))
-    try:
-        run_cmd(test_cmd, stream_output=True, env=env)
-    except:
-        print("Failed pip installation tests in %s" % (test_file))
-        raise
+    tests = ["image_storage.py", "using_with_pip.py"]
+    for test in tests:
+        test_file = path.join(root_dir, path.join("examples", "python", test))
+        print("\nRunning Python tests in %s\n=============" % test_file)
+        test_cmd = ["python3", test_file]
+        print("Test command: %s" % str(test_cmd))
+        try:
+            run_cmd(test_cmd, stream_output=True, env=env)
+        except:
+            print("Failed pip installation tests in %s" % (test_file))
+            raise
 
 
 def clear_artifact_cache():
