@@ -609,7 +609,7 @@ private[delta] object PartitionUtils {
     }
 
     if (partitionColumns.nonEmpty && partitionColumns.size == schema.fields.length) {
-      throw new DeltaAnalysisException(
+      throw DeltaAnalysisException(
         errorClass = "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION",
         Array.empty)
     }

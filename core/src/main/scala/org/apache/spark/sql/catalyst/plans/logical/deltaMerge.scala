@@ -158,7 +158,7 @@ object DeltaMergeIntoClause {
         case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
         case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
         case other =>
-          throw new DeltaAnalysisException(
+          throw DeltaAnalysisException(
             errorClass = "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY",
             messageParameters = Array(s"${other.getClass}", s"$other"))
       }
@@ -281,7 +281,7 @@ object DeltaMergeInto {
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
-      throw new DeltaAnalysisException(
+      throw DeltaAnalysisException(
         errorClass = "DELTA_MERGE_MISSING_WHEN",
         messageParameters = Array.empty
       )
@@ -289,14 +289,14 @@ object DeltaMergeInto {
 
     // check that only last MATCHED clause omits the condition
     if (matchedClauses.length > 1 && !matchedClauses.init.forall(_.condition.nonEmpty)) {
-      throw new DeltaAnalysisException(
+      throw DeltaAnalysisException(
         errorClass = "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
     // check that only last NOT MATCHED clause omits the condition
     if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
-      throw new DeltaAnalysisException(
+      throw DeltaAnalysisException(
         errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }

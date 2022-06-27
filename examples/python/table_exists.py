@@ -23,7 +23,7 @@ def exists(spark, filepath):
     try:
         spark.read.load(path=filepath, format="delta")
     except AnalysisException as exception:
-        if "is not a Delta table" in exception.desc:
+        if "is not a Delta table" in exception.desc or "Path does not exist" in exception.desc:
             return False
         raise exception
     return True
@@ -48,6 +48,18 @@ assert not exists(spark, filepath)
 print(f"Creating delta table at {filepath}")
 data = spark.range(0, 5)
 data.write.format("delta").save(filepath)
+
+# After 1.2, there has been a change in code
+# (https://github.com/delta-io/delta/commit/11fb2eadf3ead06fa1bcb049e7dcc925e211) that
+# throws `AnalysisException` instead of expected `DeltaAnalysisException` by this test
+# To test there are no `DeltaAnalysisException`s are thrown, run the optimize command
+# TODO: clean this test. Currently the test name is `table_exists` but we have optimize
+# here.
+try:
+    spark.sql(f"OPTIMIZE delta.`{filepath}` WHERE id = 2")
+except AnalysisException as exception:
+    if "Predicate references non-partition column 'id'" not in exception.desc:
+        raise exception
 
 # Verify table now exists
 print(f"Verifying table exists at {filepath}")

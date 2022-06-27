@@ -114,7 +114,7 @@ object SchemaMergingUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"$x"
       }
-      throw new DeltaAnalysisException(
+      throw DeltaAnalysisException(
         errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
         messageParameters = Array(colType, duplicateColumns.mkString(", ")))
     }
@@ -172,7 +172,7 @@ object SchemaMergingUtils {
                 if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
                     !equalsIgnoreCaseAndCompatibleNullability(
                       currentField.dataType, updateField.dataType)) {
-                  throw new DeltaAnalysisException(
+                  throw DeltaAnalysisException(
                     errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
                     messageParameters = Array(currentField.name, currentField.dataType.sql,
                       updateField.dataType.sql)
@@ -227,16 +227,16 @@ object SchemaMergingUtils {
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
-            throw new DeltaAnalysisException(
+            throw DeltaAnalysisException(
               errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(
                 s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
-            throw new DeltaAnalysisException(
+            throw DeltaAnalysisException(
               errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
-            throw new DeltaAnalysisException(
+            throw DeltaAnalysisException(
               errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"scale $leftScale and $rightScale"))
           }

@@ -22,7 +22,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
@@ -344,7 +344,7 @@ class DeltaWriteConfigsSuite extends QueryTest
 
             val log = (outputLoc, outputMode) match {
               case ("path", "c_or_r_replace") =>
-                intercept[DeltaAnalysisException] {
+                intercept[AnalysisException] {
                   tblBuilder.location(dir.getCanonicalPath).execute()
                 }
                 null

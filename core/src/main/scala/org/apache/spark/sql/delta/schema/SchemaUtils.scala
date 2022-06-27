@@ -121,12 +121,12 @@ object SchemaUtils extends DeltaLogging {
         struct(nested: _*).alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new DeltaAnalysisException(
+        throw DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new DeltaAnalysisException(
+        throw DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
