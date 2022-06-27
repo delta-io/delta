@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.example;
+package org.example.sink;
+
+import java.util.UUID;
 
 import io.delta.flink.sink.DeltaSink;
-import org.apache.commons.io.FileUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
 import org.apache.hadoop.conf.Configuration;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.UUID;
+import org.utils.DeltaExampleSourceFunction;
+import org.utils.Utils;
+import org.utils.job.DeltaSinkClusterJobExampleBase;
 
 /**
  * Demonstrates how the Flink Delta Sink can be used to write data to Delta table.
@@ -32,7 +32,7 @@ import java.util.UUID;
  * This application is supposed to be run on a Flink cluster. When run it will start to generate
  * data to the underlying Delta table under directory of `/tmp/delta-flink-example/<UUID>`.
  */
-public class DeltaSinkExampleCluster extends DeltaSinkExampleBase {
+public class DeltaSinkExampleCluster extends DeltaSinkClusterJobExampleBase {
 
     static String TABLE_PATH = "/tmp/delta-flink-example/" +
                                    UUID.randomUUID().toString().replace("-", "");
@@ -41,26 +41,39 @@ public class DeltaSinkExampleCluster extends DeltaSinkExampleBase {
         new DeltaSinkExampleCluster().run(TABLE_PATH);
     }
 
+    /**
+     * An example of using Flink Delta Sink in streaming pipeline.
+     */
     @Override
-    DeltaSink<RowData> getDeltaSink(String tablePath) {
+    public StreamExecutionEnvironment createPipeline(
+            String tablePath,
+            int sourceParallelism,
+            int sinkParallelism) {
+
+        DeltaSink<RowData> deltaSink = getDeltaSink(tablePath);
+        StreamExecutionEnvironment env = getStreamExecutionEnvironment();
+
+        // Using Flink Delta Sink in processing pipeline
+        env
+            .addSource(new DeltaExampleSourceFunction())
+            .setParallelism(sourceParallelism)
+            .sinkTo(deltaSink)
+            .name("MyDeltaSink")
+            .setParallelism(sinkParallelism);
+
+        return env;
+    }
+
+    /**
+     * An example of Flink Delta Sink configuration.
+     */
+    @Override
+    public DeltaSink<RowData> getDeltaSink(String tablePath) {
         return DeltaSink
             .forRowData(
                 new Path(TABLE_PATH),
                 new Configuration(),
-                ROW_TYPE)
+                Utils.FULL_SCHEMA_ROW_TYPE)
             .build();
-    }
-    
-    @Override
-    void run(String tablePath) throws Exception {
-        System.out.println("Will use table path: " + tablePath);
-        File tableDir = new File(tablePath);
-        if (tableDir.exists()) {
-            FileUtils.cleanDirectory(tableDir);
-        } else {
-            tableDir.mkdirs();
-        }
-        StreamExecutionEnvironment env = getFlinkStreamExecutionEnvironment(tablePath, 1, 1);
-        env.execute("TestJob");
     }
 }

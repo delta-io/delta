@@ -13,72 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.example;
+package org.utils.job;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.Collections;
 
 import io.delta.flink.sink.DeltaSink;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.logical.VarCharType;
+import org.utils.Utils;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
 
-public abstract class DeltaSinkExampleBase implements DeltaSinkLocalJobRunner {
-
-    static String resolveExampleTableAbsolutePath(String resourcesTableDir) {
-        String rootPath = Paths.get(".").toAbsolutePath().normalize().toString();
-        return rootPath.endsWith("flink-example") ?
-                   rootPath + "/src/main/resources/" + resourcesTableDir :
-                   rootPath + "/flink-example/src/main/resources/" + resourcesTableDir;
-    }
+public abstract class DeltaSinkLocalJobExampleBase implements DeltaExampleLocalJobRunner {
 
     static int PRINT_PAD_LENGTH = 4;
 
-    public static final RowType ROW_TYPE = new RowType(Arrays.asList(
-        new RowType.RowField("f1", new VarCharType(VarCharType.MAX_LENGTH)),
-        new RowType.RowField("f2", new VarCharType(VarCharType.MAX_LENGTH)),
-        new RowType.RowField("f3", new IntType())
-    ));
-
-    void run(String tablePath) throws Exception {
+    public void run(String tablePath) throws Exception {
         System.out.println("Will use table path: " + tablePath);
-        File tableDir = new File(tablePath);
-        if (tableDir.exists()) {
-            FileUtils.cleanDirectory(tableDir);
-        } else {
-            tableDir.mkdirs();
-        }
-        StreamExecutionEnvironment env = getFlinkStreamExecutionEnvironment(tablePath, 2, 3);
+
+        Utils.prepareDirs(tablePath);
+        StreamExecutionEnvironment env = createPipeline(tablePath, 2, 3);
         runFlinkJobInBackground(env);
         printDeltaTableRows(tablePath);
     }
 
-    abstract DeltaSink<RowData> getDeltaSink(String tablePath);
-
-    StreamExecutionEnvironment getFlinkStreamExecutionEnvironment(String tablePath,
-                                                                  int sourceParallelism,
-                                                                  int sinkParallelism) {
-        DeltaSink<RowData> deltaSink = getDeltaSink(tablePath);
-        StreamExecutionEnvironment env = getStreamExecutionEnvironment();
-        env.addSource(new DeltaSinkExampleSourceFunction())
-            .setParallelism(sourceParallelism)
-            .sinkTo(deltaSink)
-            .name("MyDeltaSink")
-            .setParallelism(sinkParallelism);
-        return env;
-    }
+    public abstract DeltaSink<RowData> getDeltaSink(String tablePath);
 
     public static void printDeltaTableRows(String tablePath) throws InterruptedException {
         DeltaLog deltaLog =
