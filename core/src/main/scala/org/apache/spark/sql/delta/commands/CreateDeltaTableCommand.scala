@@ -133,7 +133,7 @@ case class CreateDeltaTableCommand(
             }
             val actions = writer.write(txn, sparkSession)
             val op = getOperation(txn.metadata, isManagedTable, Some(options))
-            txn.commit(actions, op)
+              txn.commit(actions, op)
           case cmd: RunnableCommand =>
             result = cmd.run(sparkSession)
           case other =>
