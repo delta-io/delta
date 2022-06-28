@@ -279,8 +279,8 @@
       "configurations when creating the SparkSession as shown below.",
       "",
       "  SparkSession.builder()",
-      "    .option(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")",
-      "    .option(\"<catalogKey>\", \"<catalogClassName>\")",
+      "    .config(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")",
+      "    .config(\"<catalogKey>\", \"<catalogClassName>\")",
       "    ...",
       "    .build()",
       ""
