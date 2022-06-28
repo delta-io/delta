@@ -496,6 +496,19 @@ trait DeltaConfigsBase extends DeltaLogging {
     opt => opt.forall(isValidIntervalConfigValue),
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
+   * The isolation level of a table defines the degree to which a transaction must be isolated from
+   * modifications made by concurrent transactions. Delta supports two isolation levels:
+   * Serializable and WriteSerializable. The default is Serializable.
+   */
+  val ISOLATION_LEVEL = buildConfig[IsolationLevel](
+    "isolationLevel",
+    Serializable.toString,
+    IsolationLevel.fromString(_),
+    _ => true,
+    "needs to be Serializable or WriteSerializable"
+  )
 }
 
 object DeltaConfigs extends DeltaConfigsBase
