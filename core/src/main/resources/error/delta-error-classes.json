@@ -282,7 +282,7 @@
       "    .config(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")",
       "    .config(\"<catalogKey>\", \"<catalogClassName>\")",
       "    ...",
-      "    .build()",
+      "    .getOrCreate()",
       ""
     ],
     "sqlState" : "42000"

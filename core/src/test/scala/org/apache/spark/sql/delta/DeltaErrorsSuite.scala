@@ -1768,7 +1768,7 @@ trait DeltaErrorsSuiteBase
            |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
-           |    .build()
+           |    .getOrCreate()
            |""".stripMargin
       assert(e.getMessage == msg)
     }
