@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.io.FileNotFoundException
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -30,6 +31,9 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
   with SharedSparkSession  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
+
+  val catalogAndSchema =
+      "default."
 
   protected def checkResult(
     result: DataFrame,
@@ -142,11 +146,11 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       sql(s"CREATE TABLE $tblName2 USING DELTA LOCATION '$tempDir'")
       checkResult(
         sql(s"DESCRIBE DETAIL $tblName1"),
-        Seq(s"default.$tblName1"),
+        Seq(s"$catalogAndSchema$tblName1"),
         Seq("name"))
       checkResult(
         sql(s"DESCRIBE DETAIL $tblName2"),
-        Seq(s"default.$tblName2"),
+        Seq(s"$catalogAndSchema$tblName2"),
         Seq("name"))
       checkResult(
         sql(s"DESCRIBE DETAIL delta.`$tempDir`"),

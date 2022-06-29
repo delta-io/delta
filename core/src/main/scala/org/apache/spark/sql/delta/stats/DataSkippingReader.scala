@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -85,18 +85,14 @@ private [stats] object DataSkippingPredicate {
  * NOTE: This check is sufficient for safe use of NULL_COUNT stats, but safe use of MIN and MAX
  * stats requires additional restrictions on column data type (see SkippingEligibleLiteral).
  *
- * @return The path to the column, if it exists and is eligible. Otherwise, return None.
+ * @return The path to the column and the column's data type if it exists and is eligible.
+ *         Otherwise, return None.
  */
 object SkippingEligibleColumn {
-  def unapply(arg: Expression): Option[Seq[String]] = {
-    // The arg isn't always resolved yet, but if it is we can save time and effort by rejecting
-    // non-atomic types, since they are never eligible for skipping. Otherwise, (resolved or
-    // not) the final type checking occurs in getStatsColumnOpt after full resolution.
-    if (arg.resolved && !arg.dataType.isInstanceOf[AtomicType]) {
-      None
-    } else {
-      searchChain(arg)
-    }
+  def unapply(arg: Expression): Option[(Seq[String], DataType)] = {
+    // Only atomic types are eligible for skipping, and args should always be resolved by now.
+    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType]
+    if (eligible) searchChain(arg).map(_ -> arg.dataType) else None
   }
 
   private def searchChain(arg: Expression): Option[Seq[String]] = arg match {
@@ -111,22 +107,47 @@ object SkippingEligibleColumn {
 }
 
 /**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the expression,
+ *         3) [[DataSkippingPredicateBuilder]] that builds the data skipping predicate for the
+ *         expression, if the given expression is eligible. Otherwise, return None.
+ */
+object SkippingEligibleExpression {
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
+/**
  * An extractor that matches on access of a skipping-eligible Literal. Delta tables track min/max
  * stats for a limited set of data types, and only Literals of those types are skipping-eligible.
- *
- * WARNING: This extractor needs to be kept in sync with StatisticsCollection.statsCollector.
  *
  * @return The Literal, if it is eligible. Otherwise, return None.
  */
 object SkippingEligibleLiteral {
   def unapply(arg: Literal): Option[Column] = {
-    if (isEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
+    if (SkippingEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
   }
+}
 
-  def isEligibleDataType(dt: DataType): Boolean = dt match {
+object SkippingEligibleDataType {
+  // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
+  def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | StringType => true
     case _ => false
   }
+
+  // Use these in `match` statements
+  def unapply(dataType: DataType): Option[DataType] = {
+    if (SkippingEligibleDataType(dataType)) Some(dataType) else None
+  }
+
+  def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
 private[stats] object DataSkippingReader {
@@ -187,6 +208,8 @@ trait DataSkippingReaderBase
 
   protected def withStatsInternal: DataFrame = withStatsCache.getDS
 
+  private val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
+
   /** All files with the statistics column dropped completely. */
   def withNoStats: DataFrame = allFiles.drop("stats")
 
@@ -208,17 +231,24 @@ trait DataSkippingReaderBase
   // spanned by the list's smallest and largest elements.
   private def constructLiteralInListDataFilters(a: Expression, possiblyNullValues: Seq[Any]):
       Option[DataSkippingPredicate] = {
-    val dt = a.dataType
     // The Ordering we use for sorting cannot handle null values, and these can anyway
     // be safely ignored because they will never cause an IN-list predicate to return TRUE.
     val values = possiblyNullValues.filter(_ != null)
-    lazy val ordering = TypeUtils.getInterpretedOrdering(dt)
     if (values.isEmpty) {
       // Handle the trivial empty case even for otherwise ineligible types.
       // NOTE: SQL forbids empty in-list, but InSubqueryExec could have an empty subquery result
       // or IN-list may contain only NULLs.
-      Some(DataSkippingPredicate(falseLiteral))
-    } else if (!SkippingEligibleLiteral.isEligibleDataType(dt)) {
+      return Some(DataSkippingPredicate(falseLiteral))
+    }
+
+    val (pathToColumn, dt, builder) = SkippingEligibleExpression.unapply(a).getOrElse {
+      // The expression is not eligible for skipping, and we can stop constructing data filters
+      // for the expression by simply returning None.
+      return None
+    }
+
+    lazy val ordering = TypeUtils.getInterpretedOrdering(dt)
+    if (!SkippingEligibleDataType(dt)) {
       // Don't waste time building expressions for incompatible types
       None
     }
@@ -325,7 +355,7 @@ trait DataSkippingReaderBase
     // to TRUE *UNLESS* we can prove that `a` would not evaluate to TRUE for any row the file might
     // contain. Thus, if the rewritten form of the skipping predicate does not evaluate to TRUE, at
     // least one of the skipping predicates must not have evaluated to TRUE, which in turn means we
-    // were able to prove that `a` and/or `b` will not evaulate to TRUE for any row of the file. If
+    // were able to prove that `a` and/or `b` will not evaluate to TRUE for any row of the file. If
     // that is the case, then `AND(a, b)` also cannot evaluate to TRUE for any row of the file,
     // which proves we have a valid data skipping predicate.
     //
@@ -374,7 +404,7 @@ trait DataSkippingReaderBase
     //
     // Similar to AND case, if the rewritten predicate does not evaluate to TRUE, then it means that
     // neither `constructDataFilters(a)` nor `constructDataFilters(b)` evaluated to TRUE, which in
-    // turn means that neither `a` nor `b` could evaulate to TRUE for any row the file might
+    // turn means that neither `a` nor `b` could evaluate to TRUE for any row the file might
     // contain, which proves we have a valid data skipping predicate.
     //
     // Unlike AND, a single leg of an OR expression provides no filtering power -- we can only
@@ -395,47 +425,32 @@ trait DataSkippingReaderBase
       constructDataFilters(And(Not(e1), Not(e2)))
 
     // Match any file whose null count is larger than zero.
-    case IsNull(SkippingEligibleColumn(a)) =>
-      val nullCountCol = StatsColumn(NULL_COUNT, a)
-      getStatsColumnOpt(nullCountCol).map { nullCount =>
-        DataSkippingPredicate(nullCount > Literal(0), nullCountCol)
+    case IsNull(SkippingEligibleColumn(a, _)) =>
+      statsProvider.getPredicateWithStatType(a, NULL_COUNT) { nullCount =>
+        nullCount > Literal(0)
       }
     case Not(IsNull(e)) =>
       constructDataFilters(IsNotNull(e))
 
     // Match any file whose null count is less than the row count.
-    case IsNotNull(SkippingEligibleColumn(a)) =>
+    case IsNotNull(SkippingEligibleColumn(a, _)) =>
       val nullCountCol = StatsColumn(NULL_COUNT, a)
       val numRecordsCol = StatsColumn(NUM_RECORDS)
-      getStatsColumnOpt(nullCountCol).flatMap { nullCount =>
-        getStatsColumnOpt(numRecordsCol).map { numRecords =>
-          DataSkippingPredicate(nullCount < numRecords, nullCountCol, numRecordsCol)
-        }
+      statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
+        (nullCount, numRecords) => nullCount < numRecords
       }
     case Not(IsNotNull(e)) =>
       constructDataFilters(IsNull(e))
 
     // Match any file whose min/max range contains the requested point.
-    case EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
-      val minCol = StatsColumn(MIN, a)
-      val maxCol = StatsColumn(MAX, a)
-      getStatsColumnOpt(minCol).flatMap { min =>
-        getStatsColumnOpt(maxCol).map { max =>
-          DataSkippingPredicate(min <= v && max >= v, minCol, maxCol)
-        }
-      }
+    case EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.equalTo(statsProvider, c, v)
     case EqualTo(v: Literal, a) =>
       constructDataFilters(EqualTo(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
-    case Not(EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v))) =>
-      val minCol = StatsColumn(MIN, a)
-      val maxCol = StatsColumn(MAX, a)
-      getStatsColumnOpt(minCol).flatMap { min =>
-        getStatsColumnOpt(maxCol).map { max =>
-          DataSkippingPredicate(!(min === v && max === v), minCol, maxCol)
-        }
-      }
+    case Not(EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v))) =>
+      builder.notEqualTo(statsProvider, c, v)
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
 
@@ -453,44 +468,33 @@ trait DataSkippingReaderBase
       constructDataFilters(Not(EqualNullSafe(a, v)))
 
     // Match any file whose min is less than the requested upper bound.
-    case LessThan(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
-      val minCol = StatsColumn(MIN, a)
-      getStatsColumnOpt(minCol).map { min =>
-        DataSkippingPredicate(min < v, minCol)
-      }
+    case LessThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.lessThan(statsProvider, c, v)
     case LessThan(v: Literal, a) =>
       constructDataFilters(GreaterThan(a, v))
     case Not(LessThan(a, b)) =>
       constructDataFilters(GreaterThanOrEqual(a, b))
 
     // Match any file whose min is less than or equal to the requested upper bound
-    case LessThanOrEqual(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
-      val minCol = StatsColumn(MIN, a)
-      getStatsColumnOpt(minCol).map { min =>
-        DataSkippingPredicate(min <= v, minCol)
-      }
+    case LessThanOrEqual(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.lessThanOrEqual(statsProvider, c, v)
     case LessThanOrEqual(v: Literal, a) =>
       constructDataFilters(GreaterThanOrEqual(a, v))
     case Not(LessThanOrEqual(a, b)) =>
       constructDataFilters(GreaterThan(a, b))
 
     // Match any file whose max is larger than the requested lower bound.
-    case GreaterThan(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
-      val maxCol = StatsColumn(MAX, a)
-      getStatsColumnOpt(maxCol).map { max =>
-        DataSkippingPredicate(max > v, maxCol)
-      }
+    case GreaterThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.greaterThan(statsProvider, c, v)
     case GreaterThan(v: Literal, a) =>
       constructDataFilters(LessThan(a, v))
     case Not(GreaterThan(a, b)) =>
       constructDataFilters(LessThanOrEqual(a, b))
 
     // Match any file whose max is larger than or equal to the requested lower bound.
-    case GreaterThanOrEqual(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
-      val maxCol = StatsColumn(MAX, a)
-      getStatsColumnOpt(maxCol).map { max =>
-        DataSkippingPredicate(max >= v, maxCol)
-      }
+    case GreaterThanOrEqual(
+        SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      builder.greaterThanOrEqual(statsProvider, c, v)
     case GreaterThanOrEqual(v: Literal, a) =>
       constructDataFilters(LessThanOrEqual(a, v))
     case Not(GreaterThanOrEqual(a, b)) =>
@@ -498,16 +502,10 @@ trait DataSkippingReaderBase
 
     // Similar to an equality test, except comparing against a prefix of the min/max stats, and
     // neither commutative nor invertible.
-    case StartsWith(SkippingEligibleColumn(a), v @ Literal(s: UTF8String, StringType)) =>
-      val sLen = s.numChars()
-      val minCol = StatsColumn(MIN, a)
-      val maxCol = StatsColumn(MAX, a)
-      getStatsColumnOpt(minCol).flatMap { min =>
-        getStatsColumnOpt(maxCol).map { max =>
-          DataSkippingPredicate(
-            substring(min, 0, sLen) <= v && substring(max, 0, sLen) >= v,
-            minCol, maxCol)
-        }
+    case StartsWith(SkippingEligibleColumn(a, _), v @ Literal(s: UTF8String, StringType)) =>
+      statsProvider.getPredicateWithStatTypes(a, MIN, MAX) { (min, max) =>
+        val sLen = s.numChars()
+        substring(min, 0, sLen) <= v && substring(max, 0, sLen) >= v
       }
 
     // We can only handle-IN lists whose values can all be statically evaluated to literals.
@@ -608,8 +606,9 @@ trait DataSkippingReaderBase
    * Returns an expression to access the given statistics for a specific column, or a NULL
    * literal expression if that column does not exist.
    */
-  final protected def getStatsColumnOrNullLiteral(statType: String, pathToColumn: Seq[String] = Nil)
-      : Column =
+  final protected[delta] def getStatsColumnOrNullLiteral(
+      statType: String,
+      pathToColumn: Seq[String] = Nil) : Column =
     getStatsColumnOpt(statType, pathToColumn).getOrElse(lit(null))
 
   /** Overload for convenience working with StatsColumn helpers */
@@ -617,7 +616,7 @@ trait DataSkippingReaderBase
     getStatsColumnOpt(stat.statType, stat.pathToColumn)
 
   /** Overload for convenience working with StatsColumn helpers */
-  final protected def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
+  final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
     getStatsColumnOrNullLiteral(stat.statType, stat.pathToColumn)
 
   /**
@@ -652,9 +651,9 @@ trait DataSkippingReaderBase
           // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
           // separate NULL checks we emit for those columns will force the overall validation
           // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
-          (getStatsColumnOrNullLiteral(stat).isNotNull ||
+          getStatsColumnOrNullLiteral(stat).isNotNull ||
             (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
-              getStatsColumnOrNullLiteral(NUM_RECORDS)))
+              getStatsColumnOrNullLiteral(NUM_RECORDS))
         case _ =>
           // Other stats, such as NULL_COUNT and NUM_RECORDS stat, merely need to be non-NULL
           getStatsColumnOrNullLiteral(stat).isNotNull
@@ -670,12 +669,17 @@ trait DataSkippingReaderBase
     val bytesCompressed = $"size"
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
 
-    val accumulator = new ArrayAccumulator(3)
+    val accumulator = new ArrayAccumulator(
+      3
+    )
+
     spark.sparkContext.register(accumulator)
 
     // The arguments (order and datatype) must match the encoders defined in the
     // `sizeCollectorInputEncoders` value.
-    val collector = (include: Boolean, bytesCompressed: java.lang.Long, rows: java.lang.Long) => {
+    val collector = (include: Boolean,
+                     bytesCompressed: java.lang.Long,
+                     rows: java.lang.Long) => {
       if (include) {
         accumulator.add((0, bytesCompressed)) /* count bytes of AddFiles */
         accumulator.add((1, Option(rows).map(_.toLong).getOrElse(-1L))) /* count rows in AddFiles */

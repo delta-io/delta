@@ -194,16 +194,12 @@ trait OpenSourceDataFrameWriterV2Tests
       spark.table("table_name"),
       Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2").withColumn("id", $"id" - 2)
-        .writeTo("table_name").overwritePartitions()
-    }
-    assert(e.getMessage.contains(
-      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
+    spark.table("source2").withColumn("id", $"id" - 2)
+      .writeTo("table_name").overwritePartitions()
 
     checkAnswer(
       spark.table("table_name"),
-      Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+      Seq(Row(1L, "a"), Row(2L, "d"), Row(3L, "e"), Row(4L, "f")))
   }
 
   test("OverwritePartitions: overwrite all rows if not partitioned") {
@@ -217,11 +213,11 @@ trait OpenSourceDataFrameWriterV2Tests
       spark.table("table_name"),
       Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2").writeTo("table_name").overwritePartitions()
-    }
-    assert(e.getMessage.contains(
-      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
+    spark.table("source2").writeTo("table_name").overwritePartitions()
+
+    checkAnswer(
+      spark.table("table_name"),
+      Seq(Row(4L, "d"), Row(5L, "e"), Row(6L, "f")))
   }
 
   test("OverwritePartitions: by name not position") {
@@ -234,8 +230,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .writeTo("table_name").overwritePartitions()
     }
 
-    assert(e.getMessage.contains(
-      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
+    assert(e.getMessage.contains("schema mismatch"))
 
     checkAnswer(
       spark.table("table_name"),

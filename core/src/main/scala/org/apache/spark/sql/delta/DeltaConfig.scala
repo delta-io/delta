@@ -21,6 +21,7 @@ import java.util.{HashMap, Locale}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -150,12 +151,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
         // This is a CHECK constraint, we should allow it.
         kv
-      case (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
-          .map(_(value))
-          .getOrElse {
-            throw DeltaErrors.unknownConfigurationKeyException(key)
-          }
+      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
+        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta."))) match {
+          case Some(deltaConfig) => deltaConfig(value) // validate the value
+          case None if
+            SparkSession.active.sessionState.conf
+              .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
+            =>
+            logConsole(s"You are setting a property: $key that is not recognized by this " +
+              s"version of Delta")
+            kv
+          case None => throw DeltaErrors.unknownConfigurationKeyException(key)
+        }
       case keyvalue @ (key, _) =>
         if (entries.containsKey(key.toLowerCase(Locale.ROOT))) {
           logConsole(

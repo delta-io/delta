@@ -22,8 +22,8 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.SQLConfHelper
-import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
-import org.apache.spark.sql.catalyst.expressions.{Alias, ArrayTransform, Attribute, AttributeReference, CreateNamedStruct, Expression, ExtractValue, GetArrayItem, GetStructField, LambdaFunction, Literal, NamedExpression, NamedLambdaVariable}
+import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.types._
 
@@ -65,23 +65,55 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
 
         (fromExpression.dataType, dataType) match {
           case (ArrayType(_: StructType, _), ArrayType(toEt: StructType, toContainsNull)) =>
-            // generate a lambda function to cast each array item into to element struct type.
-            val structConverter: (Expression, Expression) => Expression = (_, i) =>
-              castIfNeeded(GetArrayItem(fromExpression, i), toEt, allowStructEvolution)
-            val transformLambdaFunc = {
-              val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
-              val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
-              LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
+            fromExpression match {
+              // If fromExpression is an array function returning an array, cast the
+              // underlying array first and then perform the function on the transformed array.
+              case ArrayUnion(leftExpression, rightExpression) =>
+                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
+                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                ArrayUnion(castedLeft, castedRight)
+
+              case ArrayIntersect(leftExpression, rightExpression) =>
+                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
+                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                ArrayIntersect(castedLeft, castedRight)
+
+              case ArrayExcept(leftExpression, rightExpression) =>
+                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
+                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                ArrayExcept(castedLeft, castedRight)
+
+              case ArrayRemove(leftExpression, rightExpression) =>
+                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
+                // ArrayRemove removes all elements that equal to element from the given array.
+                // In this case, the element to be removed also needs to be casted into the target
+                // array's element type.
+                val castedRight = castIfNeeded(rightExpression, toEt, allowStructEvolution)
+                ArrayRemove(castedLeft, castedRight)
+
+              case ArrayDistinct(expression) =>
+                val castedExpr = castIfNeeded(expression, dataType, allowStructEvolution)
+                ArrayDistinct(castedExpr)
+
+              case _ =>
+                // generate a lambda function to cast each array item into to element struct type.
+                val structConverter: (Expression, Expression) => Expression = (_, i) =>
+                  castIfNeeded(GetArrayItem(fromExpression, i), toEt, allowStructEvolution)
+                val transformLambdaFunc = {
+                  val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
+                  val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
+                  LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
+                }
+                // Transforms every element in the array using the lambda function.
+                // Because castIfNeeded is called recursively for array elements, which
+                // generates nullable expression, ArrayTransform will generate an ArrayType with
+                // containsNull as true. Thus, the ArrayType to be casted to need to have
+                // containsNull as true to avoid casting failures.
+                cast(
+                  ArrayTransform(fromExpression, transformLambdaFunc),
+                  ArrayType(toEt, containsNull = true)
+                )
             }
-            // Transforms every element in the array using the lambda function.
-            // Because castIfNeeded is called recursively for array elements, which
-            // generates nullable expression, ArrayTransform will generate an ArrayType with
-            // containsNull as true. Thus, the ArrayType to be casted to need to have containsNull
-            // as true to avoid casting failures.
-            cast(
-              ArrayTransform(fromExpression, transformLambdaFunc),
-              ArrayType(toEt, containsNull = true)
-            )
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

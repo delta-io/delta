@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
@@ -386,6 +386,12 @@ case class DeltaSource(
       }
     }
 
+    // If the table has column mapping enabled, throw an error. With column mapping, certain schema
+    // changes are possible (rename a column or drop a column) which don't work well with streaming.
+    if (deltaLog.snapshot.metadata.columnMappingMode != NoMapping) {
+      throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable
+    }
+
     var iter = if (isStartingVersion) {
       Iterator(1, 2).flatMapWithClose {  // so that the filterAndIndexDeltaLogs call is lazy
         case 1 => getSnapshotAt(fromVersion).toClosable
@@ -704,6 +710,10 @@ case class DeltaSource(
    * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
    */
   protected lazy val getStartingVersion: Option[Long] = {
+    // Note: returning a version beyond latest snapshot version won't be a problem as callers
+    // of this function won't use the version to retrieve snapshot(refer to [[getStartingOffset]]).
+    val allowOutOfRange =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
     /** DeltaOption validates input and ensures that only one is provided. */
     if (options.startingVersion.isDefined) {
       val v = options.startingVersion.get match {
@@ -712,7 +722,7 @@ case class DeltaSource(
         case StartingVersion(version) =>
           // when starting from a given version, we don't need the snapshot of this version. So
           // `mustBeRecreatable` is set to `false`.
-          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false)
+          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
           version
       }
       Some(v)
@@ -722,7 +732,11 @@ case class DeltaSource(
         version = None,
         creationSource = Some("deltaSource"))
       Some(DeltaSource
-        .getStartingVersionFromTimestamp(spark, deltaLog, tt.getTimestamp(spark.sessionState.conf)))
+        .getStartingVersionFromTimestamp(
+          spark,
+          deltaLog,
+          tt.getTimestamp(spark.sessionState.conf),
+          allowOutOfRange))
     } else {
       None
     }
@@ -736,17 +750,22 @@ object DeltaSource {
    * - Otherwise, we return the earliest commit version
    *   with a timestamp greater than the provided one.
    * - If the provided timestamp is larger than the timestamp
-   *   of any committed version, we throw an error.
+   *   of any committed version, and canExceedLatest is disabled we throw an error.
+   * - If the provided timestamp is larger than the timestamp
+   *   of any committed version, and canExceedLatest is enabled we return a version that is greater
+   *   than deltaLog.snapshot.version by one
    *
    * @param spark - current spark session
    * @param deltaLog - Delta log of the table for which we find the version.
    * @param timestamp - user specified timestamp
+   * @param canExceedLatest - if true, version can be greater than the latest snapshot commit
    * @return - corresponding version number for timestamp
    */
   def getStartingVersionFromTimestamp(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      timestamp: Timestamp): Long = {
+      timestamp: Timestamp,
+      canExceedLatest: Boolean = false): Long = {
     val tz = spark.sessionState.conf.sessionLocalTimeZone
     val commit = deltaLog.history.getActiveCommitAtTime(
       timestamp,
@@ -760,7 +779,10 @@ object DeltaSource {
       // commit.timestamp is not the same, so this commit is a commit before the timestamp and
       // the next version if exists should be the earliest commit after the timestamp.
       // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
-      if (commit.version + 1 <= deltaLog.snapshot.version) {
+      //
+      // Note2: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
+      // timestamp, caller doesn't expect exception, and can handle the non-existent version.
+      if (commit.version + 1 <= deltaLog.snapshot.version || canExceedLatest) {
         commit.version + 1
       } else {
         val commitTs = new Timestamp(commit.timestamp)

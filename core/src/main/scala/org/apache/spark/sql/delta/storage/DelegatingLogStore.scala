@@ -20,6 +20,7 @@ import java.util.Locale
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -152,6 +153,14 @@ class DelegatingLogStore(hadoopConf: Configuration)
 }
 
 object DelegatingLogStore {
+
+  try {
+    // load any arbitrary delta-storage class to ensure the dependency has been included
+    classOf[io.delta.storage.LogStore]
+  } catch {
+    case e: NoClassDefFoundError =>
+      throw DeltaErrors.missingDeltaStorageJar(e)
+  }
 
   /**
    * Java LogStore (io.delta.storage) implementations are now the default.

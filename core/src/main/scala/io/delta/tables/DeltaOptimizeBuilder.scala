@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.annotation._
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.parser.ParseException
 
 /**
@@ -53,11 +54,26 @@ class DeltaOptimizeBuilder private(
    * @return DataFrame containing the OPTIMIZE execution metrics
    */
   def executeCompaction(): DataFrame = {
+    execute(Seq.empty)
+  }
+
+   /**
+   * Z-Order the data in selected partitions using the given columns.
+   * @param columns Zero or more columns to order the data
+   *                using Z-Order curves
+   * @return DataFrame containing the OPTIMIZE execution metrics
+   */
+  def executeZOrderBy(columns: String *): DataFrame = {
+    val attrs = columns.map(c => UnresolvedAttribute(c))
+    execute(attrs)
+  }
+
+  private def execute(zOrderBy: Seq[UnresolvedAttribute]): DataFrame = {
     val tableId: TableIdentifier = sparkSession
       .sessionState
       .sqlParser
       .parseTableIdentifier(tableIdentifier)
-    val optimize = OptimizeTableCommand(None, Some(tableId), partitionFilter)(zOrderBy = Seq.empty)
+    val optimize = OptimizeTableCommand(None, Some(tableId), partitionFilter)(zOrderBy = zOrderBy)
     toDataset(sparkSession, optimize)
   }
 }

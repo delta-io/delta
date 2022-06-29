@@ -21,6 +21,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
@@ -242,18 +243,35 @@ class DeltaOptionSuite extends QueryTest
     }
   }
 
-  test("partitionOverwriteMode is set to invalid value in options") {
-    withTempDir { tempDir =>
-      val invalidMode = "ADAPTIVE"
-      val e = intercept[IllegalArgumentException] {
-        Seq(1, 2, 3).toDF
-          .withColumn("part", $"value" % 2)
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .option("partitionOverwriteMode", invalidMode)
-          .save(tempDir.getAbsolutePath)
+  test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = true: " +
+    "partitionOverwriteMode is set to invalid value in options") {
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val invalidMode = "ADAPTIVE"
+        val e = intercept[IllegalArgumentException] {
+          Seq(1, 2, 3).toDF
+            .withColumn("part", $"value" % 2)
+            .write
+            .format("delta")
+            .partitionBy("part")
+            .option("partitionOverwriteMode", invalidMode)
+            .save(tempDir.getAbsolutePath)
+        }
+        assert(e.getMessage ===
+          DeltaErrors.illegalDeltaOptionException(
+            PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
+          ).getMessage
+        )
       }
+    }
+  }
+
+  test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = false: " +
+    "partitionOverwriteMode is set to invalid value in options") {
+    // partitionOverwriteMode is ignored and no error is thrown
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
+      withTempDir { tempDir =>
+        val invalidMode = "ADAPTIVE"
       assert(e.getMessage ===
         DeltaErrors.illegalDeltaOptionException(
           PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"

@@ -114,18 +114,27 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
 
   validateIdempotentWriteOptions()
 
+  /** Whether partitionOverwriteMode is provided as a DataFrameWriter option. */
+  val partitionOverwriteModeInOptions: Boolean =
+    options.contains(PARTITION_OVERWRITE_MODE_OPTION)
+
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
-    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    val acceptable = Seq("STATIC", "DYNAMIC")
-    if (!acceptable.exists(mode.equalsIgnoreCase(_))) {
-      val acceptableStr = acceptable.map("'" + _ + "'").mkString(" or ")
-      throw DeltaErrors.illegalDeltaOptionException(
-        PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
-      )
+    if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
+      // If dynamic partition overwrite mode is disabled, fallback to the default behavior
+      false
+    } else {
+      val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
+        .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+      if (!DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
+        val acceptableStr =
+          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
+        throw DeltaErrors.illegalDeltaOptionException(
+          PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
+        )
+      }
+      mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     }
-    mode.equalsIgnoreCase("DYNAMIC")
   }
 }
 
@@ -211,7 +220,12 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
+
   val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
+  val PARTITION_OVERWRITE_MODE_DYNAMIC = "DYNAMIC"
+  val PARTITION_OVERWRITE_MODE_STATIC = "STATIC"
+  val PARTITION_OVERWRITE_MODE_VALUES =
+    Set(PARTITION_OVERWRITE_MODE_STATIC, PARTITION_OVERWRITE_MODE_DYNAMIC)
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000

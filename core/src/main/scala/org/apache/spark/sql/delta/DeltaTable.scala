@@ -31,8 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expression, NamedExpression, Or, PredicateHelper, SubqueryExpression}
-import org.apache.spark.sql.catalyst.planning.PhysicalOperation
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -56,9 +55,13 @@ object DeltaTable {
  */
 object DeltaFullTable {
   def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
-    case PhysicalOperation(_, filters, lr @ DeltaTable(index: TahoeLogFileIndex)) =>
+    // `DeltaFullTable` is not only used to match a certain query pattern, but also does
+    // some validations to throw errors. We need to match both Project and Filter here,
+    // so that we can check if Filter is present or not during validations.
+    case NodeWithOnlyDeterministicProjectAndFilter(DeltaTable(index: TahoeLogFileIndex)) =>
       if (!index.deltaLog.tableExists) return None
-      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && filters.isEmpty) {
+      val hasFilter = a.find(_.isInstanceOf[Filter]).isDefined
+      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && !hasFilter) {
         Some(index)
       } else if (index.versionToUse.nonEmpty) {
         throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
@@ -72,11 +75,21 @@ object DeltaFullTable {
   }
 }
 
+// TODO: remove this after Spark 3.4 is released.
+object NodeWithOnlyDeterministicProjectAndFilter {
+  def unapply(plan: LogicalPlan): Option[LogicalPlan] = plan match {
+    case Project(projectList, child) if projectList.forall(_.deterministic) => unapply(child)
+    case Filter(cond, child) if cond.deterministic => unapply(child)
+    case _ => Some(plan)
+  }
+}
+
 object DeltaTableUtils extends PredicateHelper
   with DeltaLogging {
 
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
+
 
   /**
    * Check whether the provided table name is a Delta table based on information from the Catalog.
@@ -375,14 +388,15 @@ object DeltaTableUtils extends PredicateHelper
   def resolveTimeTravelVersion(
       conf: SQLConf,
       deltaLog: DeltaLog,
-      tt: DeltaTimeTravelSpec): (Long, String) = {
+      tt: DeltaTimeTravelSpec,
+      canReturnLastCommit: Boolean = false): (Long, String) = {
     if (tt.version.isDefined) {
       val userVersion = tt.version.get
       deltaLog.history.checkVersionExists(userVersion)
       userVersion -> "version"
     } else {
       val timestamp = tt.getTimestamp(conf)
-      deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
+      deltaLog.history.getActiveCommitAtTime(timestamp, canReturnLastCommit).version -> "timestamp"
     }
   }
 

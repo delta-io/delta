@@ -16,19 +16,35 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+
+import scala.collection.immutable.SortedMap
+
 import org.apache.spark.sql.delta.DeltaThrowableHelper.{deltaErrorClassSource, deltaErrorClassToInfoMap, sparkErrorClassesMap}
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION
 import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.core.util.{DefaultIndenter, DefaultPrettyPrinter}
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import org.apache.commons.io.IOUtils
+import org.apache.commons.io.{FileUtils, IOUtils}
 
 import org.apache.spark.{ErrorInfo, SparkFunSuite}
 
 /** Test suite for Delta Throwables. */
 class DeltaThrowableSuite extends SparkFunSuite {
+
+   /* Used to regenerate the error class file. Run:
+   {{{
+      SPARK_GENERATE_GOLDEN_FILES=1 build/sbt \
+        "sql/testOnly *DeltaThrowableSuite -- -t \"Error classes are correctly formatted\""
+   }}}
+   */
+  private val regenerateGoldenFiles: Boolean = System.getenv("SPARK_GENERATE_GOLDEN_FILES") == "1"
+
   def checkIfUnique(ss: Seq[Any]): Unit = {
     val duplicatedKeys = ss.groupBy(identity).mapValues(_.size).filter(_._2 > 1).keys.toSeq
     assert(duplicatedKeys.isEmpty)
@@ -60,19 +76,39 @@ class DeltaThrowableSuite extends SparkFunSuite {
   }
 
   test("Delta error classes are correctly formatted") {
-    val errorClassFileContents = IOUtils.toString(deltaErrorClassSource.openStream())
+    lazy val ossDeltaErrorFile = new File(getWorkspaceFilePath(
+      "delta", "core", "src", "main", "resources", "error").toFile,
+      "delta-error-classes.json")
+    val errorClassFileContents = {
+      IOUtils.toString(deltaErrorClassSource.openStream())
+    }
     val mapper = JsonMapper.builder()
       .addModule(DefaultScalaModule)
       .enable(SerializationFeature.INDENT_OUTPUT)
       .build()
-    val rewrittenString = mapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-      .setSerializationInclusion(Include.NON_ABSENT)
-      .writeValueAsString(deltaErrorClassToInfoMap)
-    assert(rewrittenString.trim == errorClassFileContents.trim)
+    val prettyPrinter = new DefaultPrettyPrinter()
+      .withArrayIndenter(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE)
+    val rewrittenString = {
+      val writer = mapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+        .setSerializationInclusion(Include.NON_ABSENT)
+        .writer(prettyPrinter)
+      writer.writeValueAsString(deltaErrorClassToInfoMap)
+    }
+
+    if (regenerateGoldenFiles) {
+      if (rewrittenString.trim != errorClassFileContents.trim) {
+        logInfo(s"Regenerating error class file $ossDeltaErrorFile")
+        Files.delete(ossDeltaErrorFile.toPath)
+        FileUtils.writeStringToFile(ossDeltaErrorFile, rewrittenString, StandardCharsets.UTF_8)
+      }
+    } else {
+      assert(rewrittenString.trim == errorClassFileContents.trim)
+    }
   }
 
   test("Delta message format invariants") {
-    val messageFormats = deltaErrorClassToInfoMap.values.toSeq.map(_.messageFormat)
+    val messageFormats =
+    deltaErrorClassToInfoMap.values.toSeq.map(_.messageFormat)
     checkCondition(messageFormats, s => s != null)
     checkIfUnique(messageFormats)
   }

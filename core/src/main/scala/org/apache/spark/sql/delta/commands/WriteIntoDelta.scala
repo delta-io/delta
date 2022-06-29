@@ -56,8 +56,13 @@ import org.apache.spark.sql.types.{StringType, StructType}
  *
  * In combination with `Overwrite` dynamic partition overwrite mode (option `partitionOverwriteMode`
  * set to `dynamic`, or in spark conf `spark.sql.sources.partitionOverwriteMode` set to `dynamic`)
- * is also supported. However a `replaceWhere` option can not be used while dynamic partition mode
- * is enabled.
+ * is also supported.
+ *
+ * Dynamic partition overwrite mode conflicts with `replaceWhere`:
+ *   - If a `replaceWhere` option is provided, and dynamic partition overwrite mode is enabled in
+ *   the DataFrameWriter options, an error will be thrown.
+ *   - If a `replaceWhere` option is provided, and dynamic partition overwrite mode is enabled in
+ *   the spark conf, data will be overwritten according to the `replaceWhere` expression
  *
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
@@ -137,15 +142,23 @@ case class WriteIntoDelta(
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
 
     val useDynamicPartitionOverwriteMode = {
-      val useDynamic = txn.metadata.partitionColumns.nonEmpty &&
-        options.isDynamicPartitionOverwriteMode
-      options.replaceWhere.foreach { _ =>
-        if (useDynamic) {
-          throw new AnalysisException(s"'${DeltaOptions.REPLACE_WHERE_OPTION}' cannot be used" +
-            s" when '${DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION}' is set to 'DYNAMIC'")
+      if (txn.metadata.partitionColumns.isEmpty) {
+        // We ignore dynamic partition overwrite mode for non-partitioned tables
+        false
+      } else if (options.replaceWhere.nonEmpty) {
+        if (options.partitionOverwriteModeInOptions && options.isDynamicPartitionOverwriteMode) {
+          // replaceWhere and dynamic partition overwrite conflict because they both specify which
+          // data to overwrite. We throw an error when:
+          // 1. replaceWhere is provided in a DataFrameWriter option
+          // 2. partitionOverwriteMode is set to "dynamic" in a DataFrameWriter option
+          throw DeltaErrors.replaceWhereUsedWithDynamicPartitionOverwrite()
+        } else {
+          // If replaceWhere is provided, we do not use dynamic partition overwrite, even if it's
+          // enabled in the spark session configuration, since generally query-specific configs take
+          // precedence over session configs
+          false
         }
-      }
-      useDynamic
+      } else options.isDynamicPartitionOverwriteMode
     }
 
     // Validate partition predicates
@@ -251,6 +264,10 @@ case class WriteIntoDelta(
     }
 
     val fileActions = if (rearrangeOnly) {
+      val changeFiles = newFiles.collect { case c: AddCDCFile => c }
+      if (changeFiles.nonEmpty) {
+        throw DeltaErrors.unexpectedChangeFilesFound(changeFiles.mkString("\n"))
+      }
       addFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map {
           case add: AddFile => add.copy(dataChange = !rearrangeOnly)

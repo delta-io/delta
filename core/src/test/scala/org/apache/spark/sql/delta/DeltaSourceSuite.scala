@@ -31,6 +31,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
@@ -1313,6 +1314,80 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test(s"block streaming reads from a column mapping enabled table") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      withTable("t1") {
+        sql(
+          s"""
+             |CREATE TABLE t1 (value STRING) USING DELTA
+             |TBLPROPERTIES(
+             |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
+             |${DeltaConfigs.MIN_READER_VERSION.key} = '2',
+             |${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
+             |) LOCATION '$path'
+             |""".stripMargin)
+
+        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
+            .write.format("delta").mode("append").saveAsTable("t1")
+
+        Seq(true, false).foreach { isStartVersion0 =>
+          withClue(s"isStartVersion0 = $isStartVersion0") {
+            var dfr = spark.readStream.format("delta")
+            if (isStartVersion0) {
+              // By default the stream starts at the latest version in the table
+              dfr = dfr.option("startingVersion", "0")
+            }
+            val df = dfr.load(path).filter($"value" contains "keep")
+
+            val ex = intercept[Exception] {
+              testStream(df)(ProcessAllAvailable())
+            }
+            assert(ex.getMessage contains
+              "Streaming reads from a Delta table with column mapping enabled are not supported.")
+          }
+        }
+      }
+    }
+  }
+
+  test("block streaming reads after a table is upgraded with column mapping") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      withTable("t1") {
+        sql(s"CREATE TABLE t1 (value STRING) USING DELTA LOCATION '$path'")
+
+        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
+            .write.format("delta").mode("append").saveAsTable("t1")
+
+        val df = spark.readStream
+            .format("delta")
+            .load(path)
+            .filter($"value" contains "keep")
+
+        val ex = intercept[Exception] {
+          testStream(df)(
+            ProcessAllAvailable(),
+            Execute { _ =>
+              sql(
+                s"""
+                   |ALTER TABLE t1
+                   |SET TBLPROPERTIES (
+                   |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+                   |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5',
+                   |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
+                   |""".stripMargin)
+            },
+            AddToReservoir(inputDir, Seq("keep7", "drop2").toDF()),
+            ProcessAllAvailable()
+          )
+        }
+        assert(ex.getMessage contains
+          "Streaming reads from a Delta table with column mapping enabled are not supported.")
+      }
+    }
+  }
+
   test("startingVersion latest") {
     withTempDir { dir =>
       withTempView("startingVersionTest") {
@@ -1800,7 +1875,10 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
             }
           },
           // should have another batch with diff schema and should fail
-          ExpectFailure[AssertionError](t => assert(t.getMessage.contains("Invalid batch")))
+          ExpectFailure[SparkException] { t =>
+            assert(t.asInstanceOf[SparkThrowable].getErrorClass === "INTERNAL_ERROR")
+            assert(t.getCause.getMessage.contains("Invalid batch"))
+          }
         )
 
         // Restart the stream from the same checkpoint should pick up the new schema
@@ -1888,18 +1966,6 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
 
 }
 
-
-class DeltaSourceNameColumnMappingSuite extends DeltaSourceColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def runOnlyTests = Seq(
-    "basic",
-    "maxBytesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: metadata checkpoint",
-    "allow to change schema before starting a streaming query"
-  )
-
-}
 
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.

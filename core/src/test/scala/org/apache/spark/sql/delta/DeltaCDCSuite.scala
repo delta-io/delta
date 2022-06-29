@@ -22,6 +22,7 @@ import java.util.Date
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -29,6 +30,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit}
+import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StructType}
 
@@ -36,6 +38,8 @@ abstract class DeltaCDCSuiteBase
   extends QueryTest
   with SharedSparkSession  with CheckCDCAnswer
   with DeltaSQLCommandTest {
+
+  import testImplicits._
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
@@ -109,6 +113,38 @@ abstract class DeltaCDCSuiteBase
     } else {
       readDf.write.format("delta")
         .saveAsTable(dstTbl)
+    }
+  }
+
+  private val validTimestampFormats =
+    Seq("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd")
+  private val invalidTimestampFormats =
+    Seq("yyyyMMddHHmmssSSS")
+
+  (validTimestampFormats ++ invalidTimestampFormats).foreach { formatStr =>
+    val isValid = validTimestampFormats.contains(formatStr)
+    val isValidStr = if (isValid) "valid" else "invalid"
+
+    test(s"CDF timestamp format - $formatStr is $isValidStr") {
+      withTable("src") {
+        createTblWithThreeVersions(tblName = Some("src"))
+
+        val timestamp = new SimpleDateFormat(formatStr).format(new Date(1))
+
+        def doRead(): Unit = {
+          cdcRead(new TableName("src"), StartingTimestamp(timestamp), EndingVersion("1"))
+        }
+
+        if (isValid) {
+          doRead()
+        } else {
+          val e = intercept[AnalysisException] {
+            doRead()
+          }.getMessage()
+          assert(e.contains("The provided timestamp"))
+          assert(e.contains("cannot be converted to a valid timestamp"))
+        }
+      }
     }
   }
 
@@ -526,6 +562,156 @@ abstract class DeltaCDCSuiteBase
         }
         assert(e.getMessage === DeltaErrors.changeDataNotRecordedException(
           firstDisabledVersion, start, end).getMessage)
+      }
+    }
+  }
+
+  test("changes - start timestamp exceeding latest commit timestamp") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+        val path = tempDir.getAbsolutePath
+        createTblWithThreeVersions(path = Some(path))
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        // modify timestamps
+        // version 0
+        modifyDeltaTimestamp(deltaLog, 0, 0)
+
+        // version 1
+        modifyDeltaTimestamp(deltaLog, 1, 1000)
+
+        // version 2
+        modifyDeltaTimestamp(deltaLog, 2, 2000)
+
+        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(3000))
+        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(4000))
+
+        val readDf = cdcRead(
+          new TablePath(path),
+          StartingTimestamp(tsStart),
+          EndingTimestamp(tsEnd))
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, tempDir),
+          readDf,
+          sqlContext.emptyDataFrame)
+      }
+    }
+  }
+
+  test("changes - end timestamp exceeding latest commit timestamp") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+        createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+        // modify timestamps
+        // version 0
+        modifyDeltaTimestamp(deltaLog, 0, 0)
+
+        // version 1
+        modifyDeltaTimestamp(deltaLog, 1, 1000)
+
+        // version 2
+        modifyDeltaTimestamp(deltaLog, 2, 2000)
+
+        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(0))
+        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+          .format(new Date(4000))
+
+        val readDf = cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, tempDir),
+          readDf,
+          spark.range(30)
+            .withColumn("_change_type", lit("insert"))
+            .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+      }
+    }
+  }
+
+  test("should block CDC reads when Column Mapping enabled - batch") {
+    withTable("t1") {
+      sql(
+        s"""
+          |CREATE TABLE t1 (id LONG) USING DELTA
+          |TBLPROPERTIES(
+          |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name',
+          |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
+          |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
+          |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
+          |)
+          |""".stripMargin)
+      spark.range(10).write.format("delta").mode("append").saveAsTable("t1")
+
+      // case 1: batch read
+      spark.read.format("delta").table("t1").show()
+
+      // case 2: batch CDC read
+      val e = intercept[DeltaUnsupportedOperationException] {
+        cdcRead(new TableName("t1"), StartingVersion("0"), EndingVersion("1")).show()
+      }.getMessage
+      assert(e == "Change data feed (CDF) reads are currently not supported on tables with " +
+        "column mapping enabled.")
+    }
+  }
+
+  test("batch write: append, dynamic partition overwrite + CDF") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+        checkAnswer(
+          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("0"), EndingVersion("0"))
+            .drop(CDC_COMMIT_TIMESTAMP),
+          Row("a", "x", "insert", 0) :: Row("b", "y", "insert", 0) ::
+            Row("c", "x", "insert", 0) :: Nil
+        )
+
+        // ovewrite nothing
+        Seq(("d", "z")).toDF("value", "part")
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
+          ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
+        checkAnswer(
+          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("1"), EndingVersion("1"))
+            .drop(CDC_COMMIT_TIMESTAMP),
+          Row("d", "z", "insert", 1) :: Nil
+        )
+
+        // overwrite partition `part`="x"
+        Seq(("a", "x"), ("e", "x")).toDF("value", "part")
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
+          ("a", "x"), ("b", "y"), ("d", "z"), ("e", "x"))
+        checkAnswer(
+          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("2"), EndingVersion("2"))
+            .drop(CDC_COMMIT_TIMESTAMP),
+          Row("a", "x", "delete", 2) :: Row("c", "x", "delete", 2) ::
+            Row("a", "x", "insert", 2) :: Row("e", "x", "insert", 2) :: Nil
+        )
       }
     }
   }

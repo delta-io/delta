@@ -1070,5 +1070,4 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         simpleDF.filter("id % 2 == 1").filter("id % 3 == 1").select("id"))
     }
   }
-
 }

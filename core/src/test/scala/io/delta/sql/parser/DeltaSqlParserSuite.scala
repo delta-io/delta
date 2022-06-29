@@ -66,6 +66,10 @@ class DeltaSqlParserSuite extends SparkFunSuite {
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY col1, col2.subcol") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Some("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
+
+    assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY (col1, col2.subcol)") ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Some("part = 1"))(
+        Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
   }
 
   test("OPTIMIZE command new tokens are non-reserved keywords") {

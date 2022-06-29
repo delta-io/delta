@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -230,6 +231,56 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         }
         stream.stop()
         assert(e.cause.getMessage === pair._2)
+      }
+    }
+  }
+
+  test("check starting[Version/Timestamp] > latest version without error") {
+    Seq("version", "timestamp").foreach { target =>
+      withTempDir { inputDir =>
+        withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+          // version 0
+          Seq(1, 2, 3).toDF("id").write.delta(inputDir.toString)
+          val inputPath = inputDir.getAbsolutePath
+          val deltaLog = DeltaLog.forTable(spark, inputPath)
+          modifyDeltaTimestamp(deltaLog, 0, 1000)
+
+          val deltaTable = io.delta.tables.DeltaTable.forPath(inputPath)
+
+          // Pick both the timestamp and version beyond latest commmit's version.
+          val df = if (target == "timestamp") {
+            // build dataframe with starting timestamp option.
+            val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+              .format(new Date(2000))
+            spark.readStream
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingTimestamp", startTs)
+              .format("delta")
+              .load(inputDir.toString)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+          } else {
+            assert(target == "version")
+            // build dataframe with starting version option.
+            spark.readStream
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingVersion", 1)
+              .format("delta")
+              .load(inputDir.toString)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+          }
+
+          testStream(df)(
+            ProcessAllAvailable(),
+            // Expect empty update from the read stream.
+            CheckAnswer(),
+            // Verify new updates after the start timestamp/version can be read.
+            Execute { _ =>
+              deltaTable.update(expr("id == 1"), Map("id" -> lit("4")))
+            },
+            ProcessAllAvailable(),
+            CheckAnswer((1, "update_preimage", 1), (4, "update_postimage", 1))
+          )
+        }
       }
     }
   }
@@ -723,6 +774,69 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         q.processAllAvailable()
       } finally {
         q.stop()
+      }
+    }
+  }
+
+  test("should block CDC reads when Column Mapping enabled - streaming") {
+    def assertError(f: => Any): Unit = {
+      val e = intercept[StreamingQueryException] {
+        f
+      }.getCause.getMessage
+      assert(e == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
+    }
+
+    Seq(0, 1).foreach { startingVersion =>
+      withClue(s"using CDC starting version $startingVersion") {
+        withTable("t1") {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            sql(
+              s"""
+                 |CREATE TABLE t1 (id LONG) USING DELTA
+                 |TBLPROPERTIES(
+                 |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
+                 |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
+                 |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
+                 |)
+                 |LOCATION '$path'
+                 |""".stripMargin)
+
+            spark.range(10).write.format("delta").mode("append").save(path)
+            spark.range(10, 20).write.format("delta").mode("append").save(path)
+
+            val df = spark.readStream
+              .format("delta")
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingVersion", startingVersion)
+              .load(path)
+
+            // case 1: column-mapping is enabled mid-stream
+            testStream(df)(
+              ProcessAllAvailable(),
+              Execute { _ =>
+                sql(s"""
+                       |ALTER TABLE t1
+                       |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
+                       |""".stripMargin)
+              },
+              AddToReservoir(dir, spark.range(10, 20).toDF()),
+              Execute { q =>
+                assertError {
+                  q.processAllAvailable()
+                }
+              }
+            )
+
+            // case 2: perform CDC stream read on table with column mapping already enabled
+            assertError {
+              val stream = df.writeStream.format("console").start()
+              stream.awaitTermination(2000)
+              stream.stop()
+            }
+          }
+        }
       }
     }
   }

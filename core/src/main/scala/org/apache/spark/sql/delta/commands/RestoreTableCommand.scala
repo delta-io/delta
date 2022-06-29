@@ -156,9 +156,8 @@ case class RestoreTableCommand(
 
         txn.updateMetadata(snapshotToRestore.metadata)
 
-        commitLarge(
+        txn.commitLarge(
           spark,
-          txn,
           addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
