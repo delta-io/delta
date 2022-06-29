@@ -677,16 +677,6 @@ object Checkpoints extends DeltaLogging {
         col("add.tags")) ++
         additionalCols: _*
       ))
-    ).withColumn("remove",
-      when(col("remove").isNotNull, struct(
-        col("remove.path"),
-        col("remove.deletionTimestamp"),
-        col("remove.dataChange"),
-        col("remove.extendedFileMetadata"),
-        col("remove.partitionValues"),
-        col("remove.size"),
-        col("remove.tags")
-      ))
     )
   }
 
