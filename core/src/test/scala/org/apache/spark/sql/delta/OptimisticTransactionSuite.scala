@@ -218,7 +218,7 @@ class OptimisticTransactionSuite
         modificationTime = 1,
         dataChange = true)
     ))
-  
+
   check(
     "delete / read",
     conflicts = true,

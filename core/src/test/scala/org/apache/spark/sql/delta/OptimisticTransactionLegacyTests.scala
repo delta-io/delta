@@ -80,7 +80,7 @@ trait OptimisticTransactionLegacyTests
       val txn = log.startTransaction()
       // reads the table
       txn.filterFiles()
-      val winningTxn = log.startTransaction()        
+      val winningTxn = log.startTransaction()
       winningTxn.commit(addA :: Nil, ManualUpdate)
       txn.commit(addB :: Nil, ManualUpdate)
       checkAnswer(log.update().allFiles.select("path"), Row("a") :: Row("b") :: Nil)
