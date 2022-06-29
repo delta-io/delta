@@ -286,7 +286,7 @@ trait Checkpoints extends DeltaLogging {
   protected def metadata: Metadata
 
   /** Used to clean up stale log files. */
-  protected def doLogCleanup(): Unit
+  protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
   def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
@@ -344,7 +344,7 @@ trait Checkpoints extends DeltaLogging {
     val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
     val json = CheckpointMetaData.serializeToJson(checkpointMetaData, lastCheckpointChecksumEnabled)
     store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
-    doLogCleanup()
+    doLogCleanup(snapshotToCheckpoint)
   }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
