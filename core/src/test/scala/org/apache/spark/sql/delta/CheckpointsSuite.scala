@@ -32,6 +32,7 @@ import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 
 class CheckpointsSuite extends QueryTest
@@ -204,6 +205,54 @@ class CheckpointsSuite extends QueryTest
             Seq("txn", "add", "remove", "metaData", "protocol"))
         }
       }
+    }
+  }
+
+  test("checkpoint does not contain remove.numRecords field") {
+    withTempDir { tempDir =>
+      var expectedRemoveFileSchema = Seq(
+        "path",
+        "deletionTimestamp",
+        "dataChange",
+        "extendedFileMetadata",
+        "partitionValues",
+        "size",
+        "tags")
+      val tablePath = tempDir.getAbsolutePath
+      // Append rows [0, 9] to table and merge tablePath.
+      spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+      spark.range(5, 15).createOrReplaceTempView("src")
+      sql(
+        s"""
+           |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+           |WHEN MATCHED THEN DELETE
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      deltaLog.checkpoint()
+      var checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
+      var checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
+      var removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+      assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+      checkAnswer(
+        spark.sql(s"select * from delta.`$tablePath`"),
+        Seq(0, 1, 2, 3, 4, 10, 11, 12, 13, 14).map { i => Row(i) })
+      // Append rows [0, 9] to table and merge one more time.
+      spark.range(end = 10).write.format("delta").mode("append").save(tablePath)
+      sql(
+        s"""
+           |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+           |WHEN MATCHED THEN DELETE
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin)
+      deltaLog.checkpoint()
+      checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
+      checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
+      removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+      assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+      checkAnswer(
+        spark.sql(s"select * from delta.`$tablePath`"),
+        Seq(0, 0, 1, 1, 2, 2, 3, 3, 4, 4).map { i => Row(i) })
     }
   }
 }
