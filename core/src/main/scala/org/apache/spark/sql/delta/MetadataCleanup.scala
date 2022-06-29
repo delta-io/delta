@@ -41,14 +41,14 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(): Unit = {
+  override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
     if (enableExpiredLogCleanup) {
-      cleanUpExpiredLogs()
+      cleanUpExpiredLogs(snapshotToCleanup)
     }
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
-  private[delta] def cleanUpExpiredLogs(): Unit = {
+  private[delta] def cleanUpExpiredLogs(snapshotToCleanup: Snapshot): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
       val fileCutOffTime = truncateDay(clock.getTimeMillis() - deltaRetentionMillis).getTime
       val formattedDate = fileCutOffTime.toGMTString
