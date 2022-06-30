@@ -93,9 +93,7 @@ case class DeleteCommand(
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
-      Seq(
-        Row(this.metrics.getOrElse("numDeletedRows", 0))
-      )
+      Seq(Row(this.metrics.get("numDeletedRows").map(_.value).getOrElse(0L)))
     }
   }
 
