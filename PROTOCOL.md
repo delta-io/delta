@@ -527,8 +527,28 @@ When the table property `delta.appendOnly` is set to `true`:
 
 ## Column Invariants
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
- - The value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
+ - The value of `delta.invariants` SHOULD be parsed as a JSON string containing a boolean SQL expression at the key `expression.expression`. (That is, `{"expression": {"expression": "<SQL STRING>"}}`
  - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
+
+For example, given the schema string:
+
+```json
+{
+    "type": "struct",
+    "fields": [
+        {
+            "name": "x",
+            "type": "integer",
+            "nullable": true,
+            "metadata": {
+                "delta.invariants": "{\"expression\": { \"expression\": \"x > 3\"} }"
+            }
+        }
+    ]
+}
+```
+
+Any writer should reject any write that contains data where `x <= 3`.
 
 ## Generated Columns
 
