@@ -272,11 +272,14 @@ class DeltaOptionSuite extends QueryTest
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
       withTempDir { tempDir =>
         val invalidMode = "ADAPTIVE"
-      assert(e.getMessage ===
-        DeltaErrors.illegalDeltaOptionException(
-          PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
-        ).getMessage
-      )
+        Seq(1, 2, 3).toDF
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .option("partitionOverwriteMode", invalidMode)
+          .save(tempDir.getAbsolutePath)
+      }
     }
   }
 }
