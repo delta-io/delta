@@ -81,6 +81,29 @@ case class DeleteCommand(
 
   override lazy val metrics = createMetrics
 
+  sealed trait RowDeletion
+
+  case class RowInFilesDeletion(rowCount: Long) extends RowDeletion
+
+  case object FilePruningAtPartitionBoundary extends RowDeletion
+
+  private def deletionResultFromMetrics: RowDeletion = {
+    val deletedRows = this.metrics.get("numDeletedRows").map(_.value).getOrElse(0L)
+    if(deletedRows > 0) {
+      RowInFilesDeletion(deletedRows)
+    } else {
+      val deletedFiles = this.metrics.get("numRemovedFiles").map(_.value).getOrElse(0L)
+      if(deletedFiles > 0) {
+        FilePruningAtPartitionBoundary
+      }
+      else {
+        RowInFilesDeletion(0)
+      }
+    }
+  }
+
+
+
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
       deltaLog.assertRemovable()
@@ -93,7 +116,11 @@ case class DeleteCommand(
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
-      Seq(Row(this.metrics.get("numDeletedRows").map(_.value).getOrElse(0L)))
+      val knownDeletedRows = deletionResultFromMetrics match {
+        case RowInFilesDeletion(deletedRows) => deletedRows
+        case FilePruningAtPartitionBoundary => -1
+      }
+      Seq(Row(knownDeletedRows))
     }
   }
 
