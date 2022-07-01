@@ -137,6 +137,15 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Gets the metadata related to the table and present as a dataframe.
+   *
+   * @since 2.0.0
+   */
+  def details(): DataFrame = {
+    executeDetail(Option(deltaLog.dataPath.toString), tableId = table.getTableIdentifierIfExists)
+  }
+
+  /**
    * Generate a manifest for the given Delta Table
    *
    * @param mode Specifies the mode for the generation of the manifest.

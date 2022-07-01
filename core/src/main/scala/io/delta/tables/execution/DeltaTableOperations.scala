@@ -17,15 +17,13 @@
 package io.delta.tables.execution
 
 import scala.collection.Map
-
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, RestoreTableCommand, VacuumCommand}
+import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, RestoreTableCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
-
-import org.apache.spark.sql.{functions, Column, DataFrame}
+import org.apache.spark.sql.{Column, DataFrame, functions}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -50,6 +48,12 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     val history = deltaLog.history
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
+  }
+
+  protected def executeDetail(path: Option[String],
+                                tableId: Option[TableIdentifier] = None): DataFrame = {
+    val detail = DescribeDeltaDetailCommand(path, tableId)
+    toDataset(sparkSession, detail)
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
