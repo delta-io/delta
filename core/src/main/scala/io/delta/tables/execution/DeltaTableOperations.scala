@@ -45,8 +45,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeHistory(
       deltaLog: DeltaLog,
-      limit: Option[Int] = None,
-      tableId: Option[TableIdentifier] = None): DataFrame = {
+      limit: Option[Int] = None): DataFrame = {
     val history = deltaLog.history
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
@@ -73,9 +72,8 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeVacuum(
       deltaLog: DeltaLog,
-      retentionHours: Option[Double],
-      tableId: Option[TableIdentifier] = None): DataFrame = {
-    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+      retentionHours: Option[Double]): DataFrame = {
+    VacuumCommand.gc(sparkSession, deltaLog, dryRun = false, retentionHours)
     sparkSession.emptyDataFrame
   }
 
