@@ -90,6 +90,21 @@ class DeltaDropColumnSuite extends QueryTest
     }
   }
 
+  dropTest("drop column - basic - path based table") { drop =>
+    withTempDir { dir =>
+      simpleNestedData.write.mode("overwrite").format("delta").save(dir.getCanonicalPath)
+      alterTableWithProps(s"delta.`${dir.getCanonicalPath}`", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+
+      // drop single column
+      drop(s"delta.`${dir.getCanonicalPath}`", "arr" :: Nil)
+      checkAnswer(spark.read.format("delta").load(dir.getCanonicalPath),
+        simpleNestedData.drop("arr"))
+    }
+  }
+
   dropTest("dropped columns can no longer be queried") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
