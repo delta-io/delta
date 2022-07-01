@@ -80,13 +80,16 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       )
     }
   }
+
+  test("delta table: SQL details using table path") {
+    describeDeltaDetailTest(f => s"'${f.toString()}'")
   }
 
-  test("delta table: delta table identifier") {
+  test("delta table: SQL details using table identifier") {
     describeDeltaDetailTest(f => s"delta.`${f.toString()}`")
   }
 
-  test("non-delta table: table name") {
+  test("non-delta table: SQL details using table name") {
     withTable("describe_detail") {
       sql(
         """
@@ -107,7 +110,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  test("non-delta table: path") {
+  test("non-delta table: SQL details using table path") {
     val tempDir = Utils.createTempDir().toString
     Seq(1 -> 1).toDF("column1", "column2")
       .write
@@ -121,7 +124,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       Seq("location"))
   }
 
-  test("non-delta table: path doesn't exist") {
+  test("non-delta table: SQL details when table path doesn't exist") {
     val tempDir = Utils.createTempDir()
     tempDir.delete()
     val e = intercept[FileNotFoundException] {
@@ -130,7 +133,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     assert(e.getMessage.contains(tempDir.toString))
   }
 
-  test("delta table: table name") {
+  test("delta table: SQL details using table name") {
     withTable("describe_detail") {
       sql(
         """
