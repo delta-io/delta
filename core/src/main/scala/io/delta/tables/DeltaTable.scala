@@ -135,6 +135,14 @@ class DeltaTable private[tables](
   def history(): DataFrame = {
     executeHistory(deltaLog)
   }
+
+  /**
+   * Get the details of a Delta table such as the format, name, and size.
+   *
+   * @since 2.0.0
+   */
+  def details(): DataFrame = {
+    executeDetails(deltaLog.dataPath.toString, table.getTableIdentifierIfExists)
   }
 
   /**
