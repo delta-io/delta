@@ -58,8 +58,28 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       Seq("format", "partitionColumns", "numFiles"))
   }
 
-  test("delta table: path") {
-    describeDeltaDetailTest(f => s"'${f.toString()}'")
+  test("delta table: Scala details using table path") {
+    val tempDir = Utils.createTempDir().toString
+    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
+
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir)
+    checkAnswer(
+      deltaTable.details().select("format"),
+      Seq(Row("delta"))
+    )
+  }
+
+  test("delta table: Scala details using table name") {
+    withTable("delta_test") {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("delta_test")
+
+      val deltaTable = io.delta.tables.DeltaTable.forName(spark, "delta_test")
+      checkAnswer(
+        deltaTable.details().select("format"),
+        Seq(Row("delta"))
+      )
+    }
+  }
   }
 
   test("delta table: delta table identifier") {
