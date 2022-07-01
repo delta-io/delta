@@ -1085,16 +1085,42 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       .flatMap(splitConjunctivePredicates)
   }
 
-  protected def filesRead(deltaLog: DeltaLog, predicate: String): Int =
-    getFilesRead(deltaLog, predicate).size
+  /**
+   * Returns the number of files that should be included in a scan after applying the given
+   * predicate on a snapshot of the Delta log.
+   *
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The number of files that should be included in a scan after applying the predicate.
+   */
+  protected def filesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Int =
+    getFilesRead(deltaLog, predicate, checkEmptyUnusedFilters).size
 
-  protected def getFilesRead(deltaLog: DeltaLog, predicate: String): Seq[AddFile] = {
+  /**
+   * Returns the files that should be included in a scan after applying the given predicate on
+   * a snapshot of the Delta log.
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The files that should be included in a scan after applying the predicate.
+   */
+  protected def getFilesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
     val parsed = parse(deltaLog, predicate)
     val res = deltaLog.snapshot.filesForScan(projection = Nil, parsed)
     assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
     assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
     assert(res.scanned.files.get == res.files.size)
     assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
+    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
     res.files
   }
 
@@ -1145,10 +1171,11 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       log: DeltaLog,
       hits: Seq[String],
       misses: Seq[String],
-      data: String): Unit = {
+      data: String,
+      checkEmptyUnusedFiltersForHits: Boolean): Unit = {
     hits.foreach { predicate =>
       Given(predicate)
-      if (filesRead(log, predicate) != 1) {
+      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) != 1) {
         failPretty(s"Expected hit but got miss for $predicate", predicate, data)
       }
     }
@@ -1174,7 +1201,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       hits: Seq[String],
       misses: Seq[String],
       sqlConfs: Seq[(String, String)] = Nil,
-      indexedCols: Int = defaultNumIndexedCols): Unit = {
+      indexedCols: Int = defaultNumIndexedCols,
+      checkEmptyUnusedFiltersForHits: Boolean = false): Unit = {
     test(s"data skipping by stats - $name") {
       withSQLConf(sqlConfs: _*) {
         val jsonRecords = data.split("\n").toSeq
@@ -1190,7 +1218,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
           setNumIndexedColumns(r.dataPath.toString, indexedCols)
           df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
         }
-        checkSkipping(r, hits, misses, data)
+        checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
       }
     }
   }
