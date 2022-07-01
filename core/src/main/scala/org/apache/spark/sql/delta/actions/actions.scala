@@ -379,6 +379,7 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /** The number of records contained inside the removed file. */
+  @JsonIgnore
   var numRecords: Option[Long] = None
 
   @JsonIgnore
