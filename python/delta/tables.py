@@ -278,6 +278,23 @@ class DeltaTable(object):
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
+    @since(2.0)  # type: ignore[arg-type]
+    def details(self) -> DataFrame:
+        """
+        Get the details of a Delta table such as the format, name, and size.
+
+        Example::
+
+            detailsDF = deltaTable.details() # get the full details of the table
+
+        :return Information of the table (format, name, size, etc.)
+        :rtype: pyspark.sql.DataFrame
+        """
+        return DataFrame(
+            self._jdt.details(),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
+
     @classmethod
     @since(0.4)  # type: ignore[arg-type]
     def convertToDelta(
