@@ -325,6 +325,16 @@ class DeltaTableTests(DeltaTestCase):
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
+    def test_details(self) -> None:
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+        details = dt.details()
+        self.__checkAnswer(
+            details.select('format'),
+            [Row('delta')],
+            StructType([StructField('format', StringType(), True)])
+        )
+
     def test_vacuum(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
