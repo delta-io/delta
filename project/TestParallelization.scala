@@ -58,7 +58,7 @@ object TestParallelization {
     val groupCount = groups.size
 
     override def add(testDefinition: TestDefinition): GroupingStrategy = {
-      val groupIdx = testDefinition.name.hashCode % groupCount
+      val groupIdx = math.abs(testDefinition.name.hashCode % groupCount)
       val currentGroup = groups(groupIdx)
       val updatedGroup = currentGroup.withTests(
         currentGroup.tests :+ testDefinition
