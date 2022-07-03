@@ -10,7 +10,14 @@ object TestParallelization {
       val grouping = tests.foldLeft(groupingStrategy) {
         case (strategy, testDefinition) => strategy.add(testDefinition)
       }
-      grouping.testGroups
+      val logger = streams.value.log
+      logger.info(s"Tests will be grouped in ${grouping.testGroups.size} groups")
+      val groups = grouping.testGroups
+      groups.foreach{
+          group =>
+            logger.info(s"${group.name} contains ${group.tests.size} tests")
+      }
+      groups
     }
   )
 
@@ -77,7 +84,7 @@ object TestParallelization {
 
     def apply(groupCount: Int,
               baseDir: File, forkOptionsTemplate: ForkOptions): GroupingStrategy = {
-      val testGroups = (0 to groupCount).map {
+      val testGroups = (0 until groupCount).map {
         groupIdx =>
           val forkOptions = forkOptionsTemplate.withRunJVMOptions(
             runJVMOptions = forkOptionsTemplate.runJVMOptions ++

@@ -49,7 +49,6 @@ lazy val core = (project in file("core"))
     mimaSettings,
     unidocSettings,
     releaseSettings,
-    TestParallelization.testGroupingInDifferentJVMSettings ++ TestParallelization.simpleGroupingStrategySettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
@@ -123,7 +122,8 @@ lazy val core = (project in file("core"))
            |}
            |""".stripMargin)
       Seq(file)
-    }
+    },
+    TestParallelization.testGroupingInDifferentJVMSettings ++ TestParallelization.simpleGroupingStrategySettings,
   )
 
 lazy val contribs = (project in file("contribs"))
