@@ -22,9 +22,14 @@ object TestParallelization {
       val groupsCount = (Test / forkTestJVMCount).value
       val baseJvmDir = baseDirectory.value
       SimpleHashStrategy(groupsCount, baseJvmDir, defaultForkOptions.value)
+    },
+    Test / parallelExecution := true,
+    Global / concurrentRestrictions := {
+      Seq(Tags.limit(Tags.ForkedTestGroup, (Test / forkTestJVMCount).value))
     }
-
   )
+
+
   val forkTestJVMCount = SettingKey[Int]("fork test jvm count",
     "The number of separate JVM to use for tests"
   )
