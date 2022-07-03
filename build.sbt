@@ -15,6 +15,7 @@
  */
 
 import java.nio.file.Files
+import TestParallelization._
 
 val sparkVersion = "3.2.0"
 val scala212 = "2.12.14"
@@ -48,6 +49,7 @@ lazy val core = (project in file("core"))
     mimaSettings,
     unidocSettings,
     releaseSettings,
+    TestParallelization.testGroupingInDifferentJVMSettings ++ TestParallelization.simpleGroupingStrategySettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
