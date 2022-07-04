@@ -39,8 +39,11 @@
 package io.delta.sql.parser
 
 import java.util.Locale
+
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.catalyst.TimeTravel
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
@@ -50,6 +53,7 @@ import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -58,7 +62,6 @@ import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException,
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.types._
 
 /**
@@ -338,17 +341,9 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case None => tableName
     }
 
-    DeltaTableIdentifier(spark, tableIdentifier) match {
-      // If `tableIdentifier` is a Delta table, get `tablePath` from `path` or `metadata.location`.
-      // If `tableIdentifier` is a non-Delta table or a view, return `null` to fallback to Spark's
-      // own parser.
-      case Some(id) if id.path.nonEmpty =>
-        ShowTableColumnsCommand(id.path.get)
-      case Some(id) if id.table.nonEmpty =>
-        ShowTableColumnsCommand(
-          spark.sessionState.catalog.getTableMetadata(tableIdentifier).location.toString)
-      case _ => null
-    }
+    DeltaTableIdentifier(spark, tableIdentifier).map( id =>
+      ShowTableColumnsCommand(id)
+    ).orNull
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

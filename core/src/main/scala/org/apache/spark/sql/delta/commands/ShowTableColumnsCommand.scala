@@ -17,10 +17,11 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 /**
@@ -36,17 +37,17 @@ case class TableColumns(col_name: String)
  *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
  * }}}
  *
- * @param path  the file path where the Delta table located
+ * @param tableID  the identifier of the Delta table
  */
-case class ShowTableColumnsCommand(path: String)
+case class ShowTableColumnsCommand(tableID: DeltaTableIdentifier)
   extends LeafRunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    // Return the schema from snapshot if it is an Delta table. Or raise `fileNotFoundException` if
-    // it is a non-Delta table.
-    val deltaLog = DeltaLog.forTable(sparkSession, new Path(path))
+    // Return the schema from snapshot if it is an Delta table. Or raise
+    // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
+    val deltaLog = DeltaLog.forTable(sparkSession, tableID)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (deltaLog.snapshot.version < 0) {
         throw DeltaErrors.notADeltaTableException("SHOW COLUMNS")
