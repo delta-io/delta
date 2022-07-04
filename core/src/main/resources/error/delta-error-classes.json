@@ -62,6 +62,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" : {
+    "message" : [
+      "Change data feed (CDF) reads are currently not supported on tables with column mapping enabled."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION" : {
     "message" : [
       "Operation \"<opName>\" is not allowed when the table has enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME COLUMN."
@@ -1314,7 +1320,8 @@
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
-      "Unknown configuration was specified: <config>"
+      "Unknown configuration was specified: <config>",
+      "To disable this check, set allowArbitraryProperties.enabled=true in the Spark session configuration."
     ],
     "sqlState" : "0A000"
   },
@@ -1402,6 +1409,12 @@
       "Schema changes are not allowed during the change of column mapping mode.",
       "",
       ""
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS" : {
+    "message" : [
+      "Streaming reads from a Delta table with column mapping enabled are not supported."
     ],
     "sqlState" : "0A000"
   },

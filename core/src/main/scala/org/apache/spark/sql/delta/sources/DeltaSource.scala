@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
@@ -384,6 +384,12 @@ case class DeltaSource(
             }
           }
       }
+    }
+
+    // If the table has column mapping enabled, throw an error. With column mapping, certain schema
+    // changes are possible (rename a column or drop a column) which don't work well with streaming.
+    if (deltaLog.snapshot.metadata.columnMappingMode != NoMapping) {
+      throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable
     }
 
     var iter = if (isStartingVersion) {

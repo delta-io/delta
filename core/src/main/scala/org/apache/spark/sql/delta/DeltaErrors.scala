@@ -936,6 +936,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def blockStreamingReadsOnColumnMappingEnabledTable: Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
+  }
+
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER",
@@ -2235,6 +2240,12 @@ trait DeltaErrorsBase
          |https://docs.delta.io/latest/porting.html#delta-lake-1-1-or-below-to-delta-lake-1-2-or-above.
          |""".stripMargin)
     // scalastyle:on line.size.limit
+  }
+
+  def blockCdfAndColumnMappingReads(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
+    )
   }
 
   def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {

@@ -778,8 +778,10 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
+      var msg = "Unknown configuration was specified: confKey\nTo disable this check, set " +
+        "allowArbitraryProperties.enabled=true in the Spark session configuration."
       assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
-      assert(e.getMessage == "Unknown configuration was specified: confKey")
+      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2164,6 +2166,15 @@ trait DeltaErrorsSuiteBase
         "Can only drop nested columns from StructType. Found StructField(invalid1,StringType,true)")
     }
     {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Streaming reads from a Delta table with column mapping enabled are not supported.")
+    }
+    {
       val columnsThatNeedRename = Set("c0", "c1")
       val schema = StructType(Seq(StructField("schema1", StringType)))
       val e = intercept[DeltaAnalysisException] {
@@ -2183,6 +2194,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockCdfAndColumnMappingReads()
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {

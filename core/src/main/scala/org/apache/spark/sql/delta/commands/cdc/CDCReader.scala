@@ -20,7 +20,7 @@ import java.sql.Timestamp
 
 import scala.collection.mutable.ListBuffer
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaOperations, DeltaParquetFileFormat, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaOperations, DeltaParquetFileFormat, DeltaTableUtils, DeltaTimeTravelSpec, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -261,6 +261,12 @@ object CDCReader extends DeltaLogging {
     }
 
     val snapshot = deltaLog.snapshot
+
+    // If the table has column mapping enabled, throw an error. With column mapping, certain schema
+    // changes are possible (rename a column or drop a column) which don't work well with CDF.
+    if (snapshot.metadata.columnMappingMode != NoMapping) {
+      throw DeltaErrors.blockCdfAndColumnMappingReads()
+    }
 
     // A map from change version to associated commit timestamp.
     val timestampsByVersion: Map[Long, Timestamp] =
