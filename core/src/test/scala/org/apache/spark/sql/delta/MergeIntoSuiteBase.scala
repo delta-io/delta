@@ -4478,6 +4478,184 @@ abstract class MergeIntoSuiteBase
     Seq(500000, 100000).toDF("key")
   )
 
+  testEvolution("test array_union with schema evolution")(
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2010 to 2019).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i").as("location")
+            )
+          }: _*)),
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at")
+            )
+          }: _*)),
+    update(set = "openings = array_union(s.openings, s.openings)") :: insert("*") :: Nil,
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(null).cast(StringType).as("location")
+            )
+          }: _*)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match"
+  )
+
+  testEvolution("test array_intersect with schema evolution")(
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2010 to 2019).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i").as("location")
+            )
+          }: _*)),
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at")
+            )
+          }: _*)),
+    update(set = "openings = array_intersect(s.openings, s.openings)") :: insert("*") :: Nil,
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(null).cast(StringType).as("location")
+            )
+          }: _*)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match"
+  )
+
+  testEvolution("test array_except with schema evolution")(
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2010 to 2020).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i").as("location")
+            )
+          }: _*)),
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at")
+            )
+          }: _*)),
+    update(set = "openings = array_except(s.openings, s.openings)") :: insert("*") :: Nil,
+    Seq(1).toDF("key")
+      .withColumn(
+        "openings",
+        array().cast(
+          new ArrayType(
+            new StructType()
+              .add("opened_at", StringType)
+              .add("opened_with", StringType)
+              .add("location", StringType),
+            true
+          )
+        )
+      ),
+    expectErrorWithoutEvolutionContains = "All nested columns must match"
+  )
+
+  testEvolution("test array_remove with schema evolution")(
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2010 to 2019).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i").as("location")
+            )
+          }: _*)),
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2020 to 8020).map { i =>
+            struct(
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at")
+            )
+          }: _*)),
+    update(
+      set = "openings = array_remove(s.openings," +
+        "named_struct('opened_with', cast(null as string)," +
+        "'opened_at', '2020-01-19T09:29:00.000+0000'))") :: insert("*") :: Nil,
+    Seq(1).toDF("key")
+      .withColumn(
+        "openings",
+        array((2021 to 8020).map { i =>
+          struct(
+            lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+            lit(null).cast(StringType).as("opened_with"),
+            lit(null).cast(StringType).as("location")
+          )
+        }: _*)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match"
+  )
+
+  testEvolution("test array_distinct with schema evolution")(
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          (2010 to 2019).map { i =>
+            struct(
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i").as("location")
+            )
+          }: _*
+        )),
+    Seq(1).toDF("key")
+      .withColumn("openings",
+        array(
+          ((2020 to 8020) ++ (2020 to 8020)).map { i =>
+            struct(
+              lit(null).cast(StringType).as("opened_with"),
+              lit(s"$i-01-19T09:29:00.000+0000").as("opened_at")
+            )
+          }: _*
+        )),
+    update(set = "openings = array_distinct(s.openings)") :: insert("*") :: Nil,
+    Seq(1).toDF("key")
+      .withColumn(
+        "openings",
+        array((2020 to 8020).map { i =>
+          struct(
+            lit(s"$i-01-19T09:29:00.000+0000").as("opened_at"),
+            lit(null).cast(StringType).as("opened_with"),
+            lit(null).cast(StringType).as("location")
+          )
+        }: _*)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match"
+  )
+
   testEvolution("void columns are not allowed")(
     targetData = Seq((1, 1)).toDF("key", "value"),
     sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),

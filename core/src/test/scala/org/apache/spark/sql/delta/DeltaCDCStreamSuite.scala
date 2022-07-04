@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -230,6 +231,56 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         }
         stream.stop()
         assert(e.cause.getMessage === pair._2)
+      }
+    }
+  }
+
+  test("check starting[Version/Timestamp] > latest version without error") {
+    Seq("version", "timestamp").foreach { target =>
+      withTempDir { inputDir =>
+        withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
+          // version 0
+          Seq(1, 2, 3).toDF("id").write.delta(inputDir.toString)
+          val inputPath = inputDir.getAbsolutePath
+          val deltaLog = DeltaLog.forTable(spark, inputPath)
+          modifyDeltaTimestamp(deltaLog, 0, 1000)
+
+          val deltaTable = io.delta.tables.DeltaTable.forPath(inputPath)
+
+          // Pick both the timestamp and version beyond latest commmit's version.
+          val df = if (target == "timestamp") {
+            // build dataframe with starting timestamp option.
+            val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+              .format(new Date(2000))
+            spark.readStream
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingTimestamp", startTs)
+              .format("delta")
+              .load(inputDir.toString)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+          } else {
+            assert(target == "version")
+            // build dataframe with starting version option.
+            spark.readStream
+              .option(DeltaOptions.CDC_READ_OPTION, "true")
+              .option("startingVersion", 1)
+              .format("delta")
+              .load(inputDir.toString)
+              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+          }
+
+          testStream(df)(
+            ProcessAllAvailable(),
+            // Expect empty update from the read stream.
+            CheckAnswer(),
+            // Verify new updates after the start timestamp/version can be read.
+            Execute { _ =>
+              deltaTable.update(expr("id == 1"), Map("id" -> lit("4")))
+            },
+            ProcessAllAvailable(),
+            CheckAnswer((1, "update_preimage", 1), (4, "update_postimage", 1))
+          )
+        }
       }
     }
   }

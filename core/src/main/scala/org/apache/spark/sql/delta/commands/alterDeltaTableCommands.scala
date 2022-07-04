@@ -46,7 +46,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
 
   def table: DeltaTableV2
 
-  protected def startTransaction(): OptimisticTransaction = {
+  protected def startTransaction(spark: SparkSession): OptimisticTransaction = {
     val txn = table.deltaLog.startTransaction()
     if (txn.readVersion == -1) {
       throw DeltaErrors.notADeltaTableException(table.name())
@@ -102,7 +102,7 @@ case class AlterTableSetPropertiesDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
 
       val metadata = txn.metadata
       val filteredConfs = configuration.filterKeys {
@@ -147,7 +147,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
       val metadata = txn.metadata
 
       val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
@@ -192,7 +192,7 @@ case class AlterTableAddColumnsDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addColumns") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
 
       if (SchemaUtils.filterRecursively(
             StructType(colsToAddWithPosition.map {
@@ -284,7 +284,7 @@ case class AlterTableDropColumnsDeltaCommand(
     }
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropColumns") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
       val metadata = txn.metadata
       if (txn.metadata.columnMappingMode == NoMapping) {
         throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = true)
@@ -340,7 +340,7 @@ case class AlterTableChangeColumnDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.changeColumns") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
       val metadata = txn.metadata
       val oldSchema = metadata.schema
       val resolver = sparkSession.sessionState.conf.resolver
@@ -397,8 +397,16 @@ case class AlterTableChangeColumnDeltaCommand(
       }
 
       txn.updateMetadata(newMetadata)
-      txn.commit(Nil, DeltaOperations.ChangeColumn(
-        columnPath, columnName, newColumn, colPosition.map(_.toString)))
+
+      if (newColumn.name != columnName) {
+        // record column rename separately
+        txn.commit(Nil, DeltaOperations.RenameColumn(
+          columnPath :+ columnName,
+          columnPath :+ newColumn.name))
+      } else {
+        txn.commit(Nil, DeltaOperations.ChangeColumn(
+          columnPath, columnName, newColumn, colPosition.map(_.toString)))
+      }
 
       Seq.empty[Row]
     }
@@ -506,52 +514,6 @@ case class AlterTableChangeColumnDeltaCommand(
 }
 
 /**
- * A command to replace columns for a Delta table, support changing the comment of a column,
- * reordering columns, and loosening nullabilities.
- *
- * The syntax of using this command in SQL is:
- * {{{
- *   ALTER TABLE table_identifier REPLACE COLUMNS (col_spec[, col_spec ...]);
- * }}}
- */
-case class AlterTableReplaceColumnsDeltaCommand(
-    table: DeltaTableV2,
-    columns: Seq[StructField])
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
-
-  override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.replaceColumns") {
-      val txn = startTransaction()
-
-      val metadata = txn.metadata
-      val existingSchema = metadata.schema
-
-      val resolver = sparkSession.sessionState.conf.resolver
-      val changingSchema = StructType(columns)
-
-      SchemaUtils.canChangeDataType(existingSchema, changingSchema, resolver,
-        txn.metadata.columnMappingMode).foreach { operation =>
-        throw DeltaErrors.alterTableReplaceColumnsException(
-          existingSchema, changingSchema, operation)
-      }
-
-      val newSchema = SchemaUtils.changeDataType(existingSchema, changingSchema, resolver)
-        .asInstanceOf[StructType]
-
-      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
-
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
-      txn.updateMetadata(newMetadata)
-      txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
-
-      Seq.empty[Row]
-    }
-  }
-}
-
-/**
  * A command to change the location of a Delta table. Effectively, this only changes the symlink
  * in the Hive MetaStore from one Delta table to another.
  *
@@ -630,7 +592,7 @@ case class AlterTableAddConstraintDeltaCommand(
       throw DeltaErrors.invalidConstraintName(name)
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
 
       Constraints.getExprTextByName(name, txn.metadata, sparkSession).foreach { oldExpr =>
         throw DeltaErrors.constraintAlreadyExists(name, oldExpr)
@@ -682,7 +644,7 @@ case class AlterTableDropConstraintDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropConstraint") {
-      val txn = startTransaction()
+      val txn = startTransaction(sparkSession)
 
       val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
       if (oldExprText.isEmpty && !ifExists && !sparkSession.sessionState.conf.getConf(

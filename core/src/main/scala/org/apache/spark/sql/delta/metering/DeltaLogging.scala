@@ -95,7 +95,18 @@ trait DeltaLogging
   }
 
   /**
-   * Used to report the duration as well as the success or failure of an operation.
+   * Used to report the duration as well as the success or failure of an operation on a `tahoePath`.
+   */
+  protected def recordDeltaOperationForTablePath[A](
+      tablePath: String,
+      opType: String,
+      tags: Map[TagDefinition, String] = Map.empty)(
+      thunk: => A): A = {
+    recordDeltaOperationInternal(Map(TAG_TAHOE_PATH -> tablePath), opType, tags)(thunk)
+  }
+
+  /**
+   * Used to report the duration as well as the success or failure of an operation on a `deltaLog`.
    */
   protected def recordDeltaOperation[A](
       deltaLog: DeltaLog,
@@ -109,6 +120,13 @@ trait DeltaLogging
     } else {
       Map.empty
     }
+    recordDeltaOperationInternal(tableTags, opType, tags)(thunk)
+  }
+
+  private def recordDeltaOperationInternal[A](
+      tableTags: Map[TagDefinition, String],
+      opType: String,
+      tags: Map[TagDefinition, String])(thunk: => A): A = {
     recordOperation(
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {
@@ -117,6 +135,7 @@ trait DeltaLogging
         }
     }
   }
+
   protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
     // future work to capture runtime information ...
     thunk

@@ -157,15 +157,19 @@ class DeltaHistoryManager(
   /**
    * Check whether the given version exists.
    * @param mustBeRecreatable whether the snapshot of this version needs to be recreated.
+   * @param allowOutOfRange whether to allow the version is exceeding the latest snapshot version.
    */
-  def checkVersionExists(version: Long, mustBeRecreatable: Boolean = true): Unit = {
+  def checkVersionExists(
+      version: Long,
+      mustBeRecreatable: Boolean = true,
+      allowOutOfRange: Boolean = false): Unit = {
     val earliest = if (mustBeRecreatable) {
       getEarliestReproducibleCommit
     } else {
       getEarliestDeltaFile(deltaLog)
     }
     val latest = deltaLog.update().version
-    if (version < earliest || version > latest) {
+    if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw VersionNotFoundException(version, earliest, latest)
     }
   }

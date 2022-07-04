@@ -37,7 +37,8 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+  with MergeIntoMetricsBase {
 
   import testImplicits._
 
@@ -235,7 +236,7 @@ trait DescribeDeltaHistorySuiteBase
            |tblproperties (delta.appendOnly=true)
          """.stripMargin)
       checkLastOperation(
-        spark.sessionState.catalog.defaultTablePath(TableIdentifier("delta_test")).toString,
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq(
           "CREATE TABLE",
           "true",
@@ -312,13 +313,13 @@ trait DescribeDeltaHistorySuiteBase
             |  'key' = 'value'
             |)""".stripMargin)
       checkLastOperation(
-        spark.sessionState.catalog.defaultTablePath(TableIdentifier("delta_test")).toString,
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq("SET TBLPROPERTIES", """{"delta.checkpointInterval":"20","key":"value"}"""),
         Seq($"operation", $"operationParameters.properties"))
 
       sql("ALTER TABLE delta_test UNSET TBLPROPERTIES ('key')")
       checkLastOperation(
-        spark.sessionState.catalog.defaultTablePath(TableIdentifier("delta_test")).toString,
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq("UNSET TBLPROPERTIES", """["key"]""", "true"),
         Seq($"operation", $"operationParameters.properties", $"operationParameters.ifExists"))
     }
@@ -332,7 +333,7 @@ trait DescribeDeltaHistorySuiteBase
       val column3 = """{"name":"v3","type":"long","nullable":true,"metadata":{}}"""
       val column4 = """{"name":"v4","type":"integer","nullable":true,"metadata":{}}"""
       checkLastOperation(
-        spark.sessionState.catalog.defaultTablePath(TableIdentifier("delta_test")).toString,
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq("ADD COLUMNS",
           s"""[{"column":$column3},{"column":$column4,"position":"AFTER v1"}]"""),
         Seq($"operation", $"operationParameters.columns"))
@@ -345,7 +346,7 @@ trait DescribeDeltaHistorySuiteBase
 
       sql("ALTER TABLE delta_test CHANGE COLUMN v1 v1 integer AFTER v2")
       checkLastOperation(
-        spark.sessionState.catalog.defaultTablePath(TableIdentifier("delta_test")).toString,
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq("CHANGE COLUMN",
           s"""{"name":"v1","type":"integer","nullable":true,"metadata":{}}""",
           "AFTER v2"),

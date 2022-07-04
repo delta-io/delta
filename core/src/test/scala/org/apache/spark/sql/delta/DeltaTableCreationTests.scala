@@ -2241,6 +2241,7 @@ class DeltaTableCreationSuite
     }
   }
 
+
   test("do not store write options in the catalog - DataFrameWriterV2") {
     withTempDir { dir =>
       withTable("t") {

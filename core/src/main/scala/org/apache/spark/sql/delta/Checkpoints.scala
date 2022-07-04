@@ -617,8 +617,7 @@ object Checkpoints extends DeltaLogging {
     }
 
     if (numOfFiles.value != snapshot.numOfFiles) {
-      throw new IllegalStateException(
-        "State of the checkpoint doesn't match that of the snapshot.")
+      throw DeltaErrors.checkpointMismatchWithSnapshot
     }
 
     // Attempting to write empty checkpoint

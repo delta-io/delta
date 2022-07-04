@@ -87,7 +87,7 @@ statement
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | OPTIMIZE (path=STRING | table=qualifiedName)
-        (WHERE partitionPredicate = exprToken)?
+        (WHERE partitionPredicate = predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
         ((IN | FROM) schemaName=identifier)?                            #showColumns
@@ -142,6 +142,13 @@ number
 
 constraint
     : CHECK '(' exprToken+ ')'                                 #checkConstraint
+    ;
+
+// We don't have an expression rule in our grammar here, so we just grab the tokens and defer
+// parsing them to later. Although this is the same as `exprToken`, we have to re-define it to
+// workaround an ANTLR issue (https://github.com/delta-io/delta/issues/1205)
+predicateToken
+    :  .+?
     ;
 
 // We don't have an expression rule in our grammar here, so we just grab the tokens and defer

@@ -141,27 +141,12 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
                 Nil
               case fa: FileAction =>
-                val filePath = stringToPath(fa.path)
-                val validFileOpt = if (filePath.isAbsolute) {
-                  val maybeRelative =
-                    DeltaFileOperations.tryRelativizePath(fs, reservoirBase,
-                      filePath, relativizeIgnoreError)
-                  if (maybeRelative.isAbsolute) {
-                    // This file lives outside the directory of the table
-                    None
-                  } else {
-                    Option(pathToString(maybeRelative))
-                  }
-                } else {
-                  Option(pathToString(filePath))
-                }
-                validFileOpt.toSeq.flatMap { f =>
-                  // paths are relative so provide '/' as the basePath.
-                  allValidFiles(f, isBloomFiltered).flatMap { file =>
-                    val dirs = getAllSubdirs("/", file, fs)
-                    dirs ++ Iterator(file)
-                  }
-                }
+                getValidRelativePathsAndSubdirs(
+                  fa,
+                  fs,
+                  reservoirBase,
+                  relativizeIgnoreError,
+                  isBloomFiltered)
               case _ => Nil
             }
           }
@@ -349,10 +334,42 @@ trait VacuumCommandImpl extends DeltaCommand {
 
   protected def pathToString(path: Path): String = path.toUri.toString
 
+  /** Returns the relative path of a file action or None if the file lives outside of the table. */
+  protected def getActionRelativePath(
+      action: FileAction,
+      fs: FileSystem,
+      basePath: Path,
+      relativizeIgnoreError: Boolean): Option[String] = {
+    val filePath = stringToPath(action.path)
+    if (filePath.isAbsolute) {
+      val maybeRelative =
+        DeltaFileOperations.tryRelativizePath(fs, basePath, filePath, relativizeIgnoreError)
+      if (maybeRelative.isAbsolute) {
+        // This file lives outside the directory of the table.
+        None
+      } else {
+        Some(pathToString(maybeRelative))
+      }
+    } else {
+      Some(pathToString(filePath))
+    }
+  }
+
+
   /**
-   * This is used to create the list of files we want to retain during GC.
+   * Returns the relative paths of all files and subdirectories for this action that must be
+   * retained during GC.
    */
-  protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
+  protected def getValidRelativePathsAndSubdirs(
+      action: FileAction,
+      fs: FileSystem,
+      basePath: Path,
+      relativizeIgnoreError: Boolean,
+      isBloomFiltered: Boolean): Seq[String] = {
+    getActionRelativePath(action, fs, basePath, relativizeIgnoreError).map { relativePath =>
+      Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
+    }.getOrElse(Seq.empty)
+  }
 }
 
 case class DeltaVacuumStats(

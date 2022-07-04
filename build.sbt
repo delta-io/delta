@@ -31,7 +31,11 @@ lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version,
   crossScalaVersions := all_scala_versions,
-  fork := true
+  fork := true,
+  scalacOptions ++= Seq("-target:jvm-1.8"),
+  javacOptions ++= Seq("-source", "1.8"),
+  // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
+  Compile / compile / javacOptions ++= Seq("-target", "1.8")
 )
 
 lazy val core = (project in file("core"))
@@ -84,7 +88,6 @@ lazy val core = (project in file("core"))
     Test / parallelExecution := false,
 
     scalacOptions ++= Seq(
-      "-target:jvm-1.8",
       "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
     ),
 
@@ -136,10 +139,6 @@ lazy val contribs = (project in file("contribs"))
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
-
-    scalacOptions ++= Seq(
-      "-target:jvm-1.8"
-    ),
 
     javaOptions += "-Xmx1024m",
 

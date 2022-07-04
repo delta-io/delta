@@ -144,7 +144,7 @@ abstract class ConvertToDeltaCommandBase(
   private def convertMetadata(
       catalogTable: CatalogTable,
       sessionCatalog: SessionCatalog): Unit = {
-    val newCatalog = catalogTable.copy(
+    var newCatalog = catalogTable.copy(
       provider = Some("delta"),
       // TODO: Schema changes unfortunately doesn't get reflected in the HiveMetaStore. Should be
       // fixed in Apache Spark
@@ -241,7 +241,10 @@ abstract class ConvertToDeltaCommandBase(
             collectStats = false,
             catalogTable = catalogTable.map(t => t.identifier.toString)))
       }
-      convertMetadata(catalogTable.get, spark.sessionState.catalog)
+      convertMetadata(
+        catalogTable.get,
+        spark.sessionState.catalog
+      )
     } else {
       logConsole("The table you are trying to convert is already a delta table")
     }
@@ -348,10 +351,8 @@ abstract class ConvertToDeltaCommandBase(
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
-
-      commitLarge(
+      txn.commitLarge(
         spark,
-        txn,
         Iterator.single(txn.protocol) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
         getContext,
@@ -362,7 +363,10 @@ abstract class ConvertToDeltaCommandBase(
 
     // If there is a catalog table, convert metadata
     if (convertProperties.catalogTable.isDefined) {
-      convertMetadata(convertProperties.catalogTable.get, spark.sessionState.catalog)
+      convertMetadata(
+        convertProperties.catalogTable.get,
+        spark.sessionState.catalog
+      )
     }
 
     Seq.empty[Row]
@@ -582,7 +586,7 @@ class ParquetTable(
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
     var numFiles = 0L
     var dataSchema: StructType = StructType(Seq())
-    recordDeltaOperation(null, "delta.convert.schemaInference") {
+    recordDeltaOperationForTablePath(basePath, "delta.convert.schemaInference") {
       initialList.grouped(schemaBatchSize).foreach { batch =>
         numFiles += batch.size
         // Obtain a union schema from all files.

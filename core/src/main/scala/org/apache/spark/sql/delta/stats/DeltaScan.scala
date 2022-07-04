@@ -38,21 +38,22 @@ case class DataSize(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     rows: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    files: Option[Long] = None)
+    files: Option[Long] = None
+    )
 
 object DataSize {
   def apply(a: ArrayAccumulator): DataSize = {
     DataSize(
       Option(a.value(0)).filterNot(_ == -1),
       Option(a.value(1)).filterNot(_ == -1),
-      Option(a.value(2)).filterNot(_ == -1))
+      Option(a.value(2)).filterNot(_ == -1)
+    )
   }
 }
 
 object DeltaDataSkippingType extends Enumeration {
   type DeltaDataSkippingType = Value
   // V1: code path in DataSkippingReader.scala, which needs StateReconstruction
-  // V2: code path in DataSkippingReaderV2.scala, which does NOT need StateReconstruction
   // noSkipping: no skipping and get all files from the Delta table
   // partitionFiltering: filtering and skipping based on partition columns
   // dataSkipping: filtering and skipping based on stats columns

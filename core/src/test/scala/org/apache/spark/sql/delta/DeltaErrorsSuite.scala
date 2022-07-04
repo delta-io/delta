@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{PrintWriter, StringWriter}
+import java.io.{FileNotFoundException, PrintWriter, StringWriter}
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -1601,6 +1601,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "No file found in the directory: dir.")
     }
     {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.replaceWhereUsedWithDynamicPartitionOverwrite()
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE")
+      assert(e.getMessage == "A 'replaceWhere' expression and 'partitionOverwriteMode'='dynamic' " +
+        "cannot both be set in the DataFrameWriter options.")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereUsedInOverwrite()
       }
@@ -2008,6 +2016,15 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unexpectedChangeFilesFound("a.parquet")
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_CHANGE_FILES_FOUND")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == """Change files found in a dataChange = false transaction. Files:
+                               |a.parquet""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.logFailedIntegrityCheck(2, "option1")
       }
       assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
@@ -2050,6 +2067,132 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_UNRECOGNIZED_FILE_ACTION")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Unrecognized file action invalidAction with type invalidClass.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.streamWriteNullTypeException
+      }
+      assert(e.getErrorClass == "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Delta doesn't accept NullTypes in the schema for streaming writes.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unexpectedAlias("alias1")
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_ALIAS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Expected Alias but got alias1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nullableParentWithNotNullNestedField
+      }
+      assert(e.getErrorClass == "DELTA_NOT_NULL_NESTED_FIELD")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "A non-nullable nested field can't be added to a nullable parent. " +
+        "Please set the nullability of the parent column accordingly.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.useAddConstraints
+      }
+      assert(e.getErrorClass == "DELTA_ADD_CONSTRAINTS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.deltaSourceIgnoreChangesError(10, "removedFile")
+      }
+      assert(e.getErrorClass == "DELTA_SOURCE_TABLE_IGNORE_CHANGES")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "Detected a data update (for example removedFile) in the source table at version " +
+          "10. This is currently not supported. If you'd like to ignore updates, set the " +
+          "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
+          "please restart this query with a fresh checkpoint directory.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.deltaLogAlreadyExistsException("path")
+      }
+      assert(e.getErrorClass == "DELTA_LOG_ALREADY_EXISTS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "A Delta log already exists at path")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.missingPartFilesException(10L, new FileNotFoundException("reason"))
+      }
+      assert(e.getErrorClass == "DELTA_MISSING_PART_FILES")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Couldn't find all part files of the checkpoint version: 10")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.checkConstraintNotBoolean("name1", "expr1")
+      }
+      assert(e.getErrorClass == "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "CHECK constraint 'name1' (expr1) should be a boolean expression.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.checkpointMismatchWithSnapshot
+      }
+      assert(e.getErrorClass == "DELTA_CHECKPOINT_SNAPSHOT_MISMATCH")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "State of the checkpoint doesn't match that of the snapshot.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.notADeltaTableException("operation1")
+      }
+      assert(e.getErrorClass == "DELTA_ONLY_OPERATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "operation1 is only supported for Delta tables.")
+    }
+    {
+      val invalidStruct = StructField("invalid1", StringType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(invalidStruct)
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Can only drop nested columns from StructType. Found StructField(invalid1,StringType,true)")
+    }
+    {
+      val columnsThatNeedRename = Set("c0", "c1")
+      val schema = StructType(Seq(StructField("schema1", StringType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nestedFieldsNeedRename(columnsThatNeedRename, schema)
+      }
+      assert(e.getErrorClass == "DELTA_NESTED_FIELDS_NEED_RENAME")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Nested fields need renaming to avoid data loss. Fields:\n[c0, c1].\n" +
+          s"Original schema:\n${schema.treeString}")
+    }
+    {
+      val locations = Seq("location1", "location2")
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Operation \"Manual Update\" is not allowed when the table has " +
+        "enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or " +
+        "RENAME COLUMN.")
     }
   }
 }

@@ -123,7 +123,7 @@ case class DeleteCommand(
     var numCopiedRows: Option[Long] = None
 
     val startTime = System.nanoTime()
-    val numFilesTotal = deltaLog.snapshot.numOfFiles
+    val numFilesTotal = txn.snapshot.numOfFiles
 
     val deleteActions: Seq[Action] = condition match {
       case None =>

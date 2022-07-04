@@ -31,6 +31,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
@@ -1800,7 +1801,10 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
             }
           },
           // should have another batch with diff schema and should fail
-          ExpectFailure[AssertionError](t => assert(t.getMessage.contains("Invalid batch")))
+          ExpectFailure[SparkException] { t =>
+            assert(t.asInstanceOf[SparkThrowable].getErrorClass === "INTERNAL_ERROR")
+            assert(t.getCause.getMessage.contains("Invalid batch"))
+          }
         )
 
         // Restart the stream from the same checkpoint should pick up the new schema
