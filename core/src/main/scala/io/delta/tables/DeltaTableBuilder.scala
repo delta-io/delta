@@ -109,7 +109,8 @@ class DeltaTableBuilder private[tables](
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
   private var location: Option[String] = None
   private var tblComment: Option[String] = None
-  private var properties = CaseInsensitiveMap[String](Map.empty)
+  private var forceTablePropertyLowerCase: Boolean = false
+  private var properties = Map.empty[String, String]
 
   private val FORMAT_NAME: String = "delta"
 
@@ -275,7 +276,9 @@ class DeltaTableBuilder private[tables](
   /**
    * :: Evolving ::
    *
-   * Specify a key-value pair to tag the table definition.
+   * Specify a key-value pair to tag the table definition, respecting case sensitiveness of the key.
+   * In previous versions of Delta, keys were turned to lowercase. To maintain the old behavior
+   * please use {@link io.delta.tables.DeltaTableBuilder.forceTablePropertyLowerCase(Boolean)}
    *
    * @param key string the table property key
    * @param value string the table property value
@@ -286,6 +289,27 @@ class DeltaTableBuilder private[tables](
     this.properties = this.properties + (key -> value)
     this
   }
+
+  /**
+   * :: Evolving ::
+   *
+   * Specify whether table properties should be automatically converted to lower case.
+   * This allow to respect the past behaviour of the DeltaTableBuilder compatibility. See
+   * {@link io.delta.tables.DeltaTableBuilder.property()}
+   *
+   * @param forceTablePropertyLowerCase the value of the flag.
+   *                                    If true, table properties will be converted to lowercase
+   * @since 1.3.0
+   */
+  @Evolving
+  def forceTablePropertyLowerCase(forceTablePropertyLowerCase: Boolean): DeltaTableBuilder = {
+    this.forceTablePropertyLowerCase = forceTablePropertyLowerCase
+    if(this.forceTablePropertyLowerCase) {
+      this.properties = CaseInsensitiveMap[String](this.properties)
+    }
+    this
+  }
+
 
   /**
    * :: Evolving ::

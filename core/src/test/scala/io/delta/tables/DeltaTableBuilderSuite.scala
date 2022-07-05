@@ -17,15 +17,17 @@
 package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
+
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
+
+import java.io.File
 
 class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
@@ -44,14 +46,14 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
    * write correct table metadata into the transaction logs.
    */
   protected def verifyTestTableMetadata(
-      table: String,
-      schemaString: String,
-      generatedColumns: Map[String, String] = Map.empty,
-      colComments: Map[String, String] = Map.empty,
-      colNullables: Set[String] = Set.empty,
-      tableComment: Option[String] = None,
-      partitionCols: Seq[String] = Seq.empty,
-      tableProperty: Option[(String, String)] = None): Unit = {
+                                         table: String,
+                                         schemaString: String,
+                                         generatedColumns: Map[String, String] = Map.empty,
+                                         colComments: Map[String, String] = Map.empty,
+                                         colNullables: Set[String] = Set.empty,
+                                         tableComment: Option[String] = None,
+                                         partitionCols: Seq[String] = Seq.empty,
+                                         tableProperty: Option[(String, String)] = None): Unit = {
     val deltaLog = if (table.startsWith("delta.")) {
       DeltaLog.forTable(spark, table.stripPrefix("delta.`").stripSuffix("`"))
     } else {
@@ -97,7 +99,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithNameAndLocation(
-      testName: String)(createFunc: (String, String) => Unit): Unit = {
+                                                    testName: String)(createFunc: (String, String) => Unit): Unit = {
     test(testName + ": external - with location and name") {
       withTempPath { path =>
         withTable(testName) {
@@ -115,7 +117,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithLocationOnly(
-      testName: String)(createFunc: String => Unit): Unit = {
+                                                 testName: String)(createFunc: String => Unit): Unit = {
     test(testName + ": external - location only") {
       withTempPath { path =>
         withTable(testName) {
@@ -133,9 +135,9 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   def defaultCreateTableBuilder(
-      ifNotExists: Boolean,
-      tableName: Option[String] = None,
-      location: Option[String] = None): DeltaTableBuilder = {
+                                 ifNotExists: Boolean,
+                                 tableName: Option[String] = None,
+                                 location: Option[String] = None): DeltaTableBuilder = {
     val tableBuilder = if (ifNotExists) {
       io.delta.tables.DeltaTable.createIfNotExists()
     } else {
@@ -145,9 +147,9 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   def defaultReplaceTableBuilder(
-      orCreate: Boolean,
-      tableName: Option[String] = None,
-      location: Option[String] = None): DeltaTableBuilder = {
+                                  orCreate: Boolean,
+                                  tableName: Option[String] = None,
+                                  location: Option[String] = None): DeltaTableBuilder = {
     var tableBuilder = if (orCreate) {
       io.delta.tables.DeltaTable.createOrReplace()
     } else {
@@ -157,7 +159,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   private def defaultTableBuilder(
-      builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]) = {
+                                   builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]) = {
     var tableBuilder = builder
     if (tableName.nonEmpty) {
       tableBuilder = tableBuilder.tableName(tableName.get)
@@ -366,4 +368,87 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         e.getMessage.contains("is not a valid name"))
     }
   }
+
+  test("delta table property case") {
+
+    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar")
+
+    val lowerCaseEnforcedConfig = preservedCaseConfig.map{
+      case (key, value) => (key.toLowerCase, value) // scalastyle:off caselocale
+    }
+
+    sealed trait DeltaTablePropertySetOperation {
+
+      def setTableProperty(tablePath: String): Unit
+
+      def expectedConfig: Map[String, String]
+
+    }
+
+    trait CasePreservingTablePropertySetOperation extends DeltaTablePropertySetOperation {
+
+      val expectedConfig = preservedCaseConfig
+
+    }
+    case object SetPropertyThroughCreate extends CasePreservingTablePropertySetOperation {
+
+      def setTableProperty(tablePath: String): Unit = sql(
+        s"CREATE TABLE delta.`$tablePath`(id INT) " +
+          s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar') "
+      )
+
+    }
+    case object SetPropertyThroughAlter extends CasePreservingTablePropertySetOperation {
+
+      def setTableProperty(tablePath: String): Unit = {
+        spark.range(1, 10).write.format("delta").save(tablePath)
+        sql(s"ALTER TABLE delta.`$tablePath` " +
+          s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar')")
+      }
+
+    }
+
+    case class SetPropertyThroughTableBuilder(backwardCompatible: Boolean) extends
+      DeltaTablePropertySetOperation {
+
+      def tableBuilder: DeltaTableBuilder = DeltaTable.create().
+        forceTablePropertyLowerCase(backwardCompatible)
+
+      def setTableProperty(tablePath: String): Unit = {
+        tableBuilder
+          .location(tablePath)
+          .property("delta.appendOnly", "true")
+          .property("Foo", "Bar")
+          .execute()
+      }
+
+      override lazy val expectedConfig : Map[String, String] = {
+        if (backwardCompatible) {
+          lowerCaseEnforcedConfig
+        }
+        else {
+          preservedCaseConfig
+        }
+      }
+    }
+    val examples = Seq(
+      SetPropertyThroughCreate,
+      SetPropertyThroughAlter,
+      SetPropertyThroughTableBuilder(true),
+      SetPropertyThroughTableBuilder(false),
+    )
+
+    for (example <- examples) {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath()
+        example.setTableProperty(path)
+        val config = DeltaLog.forTable(spark, path).snapshot.metadata.configuration
+        assert(
+          config == example.expectedConfig,
+          s"$example's result is not correct: $config")
+      }
+    }
+
+  }
+
 }
