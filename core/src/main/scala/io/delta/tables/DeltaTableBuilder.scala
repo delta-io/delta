@@ -276,7 +276,7 @@ class DeltaTableBuilder private[tables](
   /**
    * :: Evolving ::
    *
-   * Specify a key-value pair to tag the table definition, respecting case sensitiveness of the key.
+   * Specify a key-value pair to tag the table definition, respecting the case of the key.
    * In previous versions of Delta, keys were turned to lowercase. To maintain the old behavior
    * please use {@link io.delta.tables.DeltaTableBuilder.forceTablePropertyLowerCase(Boolean)}
    *

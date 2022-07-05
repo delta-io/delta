@@ -411,11 +411,9 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     case class SetPropertyThroughTableBuilder(backwardCompatible: Boolean) extends
       DeltaTablePropertySetOperation {
 
-      def tableBuilder: DeltaTableBuilder = DeltaTable.create().
-        forceTablePropertyLowerCase(backwardCompatible)
-
       def setTableProperty(tablePath: String): Unit = {
-        tableBuilder
+        DeltaTable.create().
+          forceTablePropertyLowerCase(backwardCompatible)
           .location(tablePath)
           .property("delta.appendOnly", "true")
           .property("Foo", "Bar")
