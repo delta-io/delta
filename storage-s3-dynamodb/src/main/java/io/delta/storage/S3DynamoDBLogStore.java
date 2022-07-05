@@ -277,13 +277,25 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         };
     }
 
+    private boolean readsCredsFromHadoopConf(Class<?> awsCredentialsProviderClass) {
+        return Arrays.stream(awsCredentialsProviderClass.getConstructors())
+                .anyMatch(constructor -> constructor.getParameterCount() == 1 &&
+                        Arrays.equals(constructor.getParameterTypes(), new Class[]{Configuration.class}));
+    }
+
     private AmazonDynamoDBClient getClient() throws java.io.IOException {
         try {
-            final AWSCredentialsProvider auth =
-                (AWSCredentialsProvider) Class.forName(credentialsProviderName)
-                    .getConstructor()
-                    .newInstance();
-            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
+            Class<?> awsCredentialsProviderClass = Class.forName(credentialsProviderName);
+            final AWSCredentialsProvider awsCredentialsProvider;
+            if (readsCredsFromHadoopConf(awsCredentialsProviderClass))
+                awsCredentialsProvider = (AWSCredentialsProvider) awsCredentialsProviderClass
+                        .getConstructor(Configuration.class)
+                        .newInstance(initHadoopConf());
+            else
+                awsCredentialsProvider =
+                        (AWSCredentialsProvider) awsCredentialsProviderClass.getConstructor().newInstance();
+
+            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
             return client;
         } catch (
