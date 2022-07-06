@@ -484,8 +484,8 @@ trait DeltaTableCreationTests
               .option("path", dir2.getCanonicalPath)
               .saveAsTable("delta_test")
           }.getMessage
-          assert(ex.contains("The location of the existing table `default`.`delta_test`"))
-
+          assert(ex.contains("The location of the existing table"))
+          assert(ex.contains("`default`.`delta_test`"))
           checkAnswer(
             spark.table("delta_test"), Row(1L, "a") :: Nil)
         }
