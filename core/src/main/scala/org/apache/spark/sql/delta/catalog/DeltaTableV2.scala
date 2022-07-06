@@ -289,3 +289,10 @@ private class WriteIntoDeltaBuilder(
     }
   }
 }
+
+object DeltaTableV2 {
+  val PROP_LOCATION = "location"
+  val PROP_TYPE = "Type"
+  val PROP_DELTA_MIN_READER_VERSION = "delta.minReaderVersion"
+  val PROP_DELTA_MAX_READER_VERSION = "delta.maxReaderVersion"
+}
