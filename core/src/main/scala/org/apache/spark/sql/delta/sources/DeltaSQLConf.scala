@@ -762,6 +762,19 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTATABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
+    buildConf("deltaTableBuilder.forceTablePropertyLowerCase.enabled")
+      .internal()
+      .doc(
+        """Whether the table properties should be set to lower case.
+          |Turn on this flag if you want the table properties created via DeltaTableBuilder
+          | to be backward compatible.
+          | Please note that if you provide an override for a default value, the case of the
+          | property for the default value will be used
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

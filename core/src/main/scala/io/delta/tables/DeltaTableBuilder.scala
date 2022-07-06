@@ -17,17 +17,17 @@
 package io.delta.tables
 
 import scala.collection.mutable
-
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
 import io.delta.tables.execution._
-
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTableStatement, ReplaceTableStatement}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /**
@@ -109,8 +109,16 @@ class DeltaTableBuilder private[tables](
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
   private var location: Option[String] = None
   private var tblComment: Option[String] = None
-  private var forceTablePropertyLowerCase: Boolean = false
-  private var properties = Map.empty[String, String]
+  private var properties = {
+    if (spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTATABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE)
+    ) {
+      CaseInsensitiveMap(Map.empty[String, String])
+    }
+    else {
+      Map.empty[String, String]
+    }
+  }
 
   private val FORMAT_NAME: String = "delta"
 
@@ -278,7 +286,8 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a key-value pair to tag the table definition, respecting the case of the key.
    * In previous versions of Delta, keys were turned to lowercase. To maintain the old behavior
-   * please use {@link io.delta.tables.DeltaTableBuilder.forceTablePropertyLowerCase(Boolean)}
+   * please set [[DeltaSQLConf.DELTATABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE]] on your
+   * Spark Session
    *
    * @param key string the table property key
    * @param value string the table property value
@@ -287,26 +296,6 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def property(key: String, value: String): DeltaTableBuilder = {
     this.properties = this.properties + (key -> value)
-    this
-  }
-
-  /**
-   * :: Evolving ::
-   *
-   * Specify whether table properties should be automatically converted to lower case.
-   * This allow to respect the past behaviour of the DeltaTableBuilder compatibility. See
-   * {@link io.delta.tables.DeltaTableBuilder.property()}
-   *
-   * @param forceTablePropertyLowerCase the value of the flag.
-   *                                    If true, table properties will be converted to lowercase
-   * @since 1.3.0
-   */
-  @Evolving
-  def forceTablePropertyLowerCase(forceTablePropertyLowerCase: Boolean): DeltaTableBuilder = {
-    this.forceTablePropertyLowerCase = forceTablePropertyLowerCase
-    if(this.forceTablePropertyLowerCase) {
-      this.properties = CaseInsensitiveMap[String](this.properties)
-    }
     this
   }
 

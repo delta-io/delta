@@ -371,10 +371,17 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
 
   test("delta table property case") {
 
-    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar")
+    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
 
     val lowerCaseEnforcedConfig = preservedCaseConfig.map{
-      case (key, value) => (key.toLowerCase, value) // scalastyle:off caselocale
+      case (key, value) if !key.contains("delta") =>
+         /* Required since when reading from the snapshot the table property
+            will be merged with default configs using a case-insensitive table
+            and the value appendOnly from the default will dominate
+          */
+
+        (key.toLowerCase, value) // scalastyle:off caselocale
+      case x => x
     }
 
     sealed trait DeltaTablePropertySetOperation {
@@ -394,7 +401,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
 
       def setTableProperty(tablePath: String): Unit = sql(
         s"CREATE TABLE delta.`$tablePath`(id INT) " +
-          s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar') "
+          s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar' ) "
       )
 
     }
@@ -403,7 +410,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       def setTableProperty(tablePath: String): Unit = {
         spark.range(1, 10).write.format("delta").save(tablePath)
         sql(s"ALTER TABLE delta.`$tablePath` " +
-          s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar')")
+          s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar')")
       }
 
     }
@@ -417,6 +424,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
           .location(tablePath)
           .property("delta.appendOnly", "true")
           .property("Foo", "Bar")
+          .property("foo", "Bar")
           .execute()
       }
 
