@@ -763,7 +763,7 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTATABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
+  val TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
     buildConf("deltaTableBuilder.forceTablePropertyLowerCase.enabled")
       .internal()
       .doc(

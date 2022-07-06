@@ -24,6 +24,8 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
@@ -419,13 +421,21 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       DeltaTablePropertySetOperation {
 
       def setTableProperty(tablePath: String): Unit = {
-        DeltaTable.create().
-          forceTablePropertyLowerCase(backwardCompatible)
-          .location(tablePath)
-          .property("delta.appendOnly", "true")
-          .property("Foo", "Bar")
-          .property("foo", "Bar")
-          .execute()
+        val confItem = DeltaSQLConf.TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE
+        val previousValue = spark.sessionState.conf.getConf(confItem)
+        try {
+          spark.conf.set(confItem.key, backwardCompatible)
+          DeltaTable.create()
+            .location(tablePath)
+            .property("delta.appendOnly", "true")
+            .property("Foo", "Bar")
+            .property("foo", "Bar")
+            .execute()
+        }
+        finally {
+          spark.conf.set(confItem.key, previousValue)
+        }
+
       }
 
       override lazy val expectedConfig : Map[String, String] = {
