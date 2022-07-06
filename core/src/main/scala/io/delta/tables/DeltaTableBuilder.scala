@@ -286,7 +286,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a key-value pair to tag the table definition, respecting the case of the key.
    * In previous versions of Delta, keys were turned to lowercase. To maintain the old behavior
-   * please set [[DeltaSQLConf.TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE]] on your
+   * please set deltaTableBuilder.forceTablePropertyLowerCase.enabled to true in your
    * Spark Session
    *
    * @param key string the table property key
