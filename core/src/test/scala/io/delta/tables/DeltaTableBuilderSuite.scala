@@ -101,7 +101,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithNameAndLocation(
-                                                    testName: String)(createFunc: (String, String) => Unit): Unit = {
+                                                    testName: String)
+                                                  (createFunc: (String, String) => Unit): Unit = {
     test(testName + ": external - with location and name") {
       withTempPath { path =>
         withTable(testName) {
@@ -119,7 +120,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithLocationOnly(
-                                                 testName: String)(createFunc: String => Unit): Unit = {
+                                                 testName: String)
+                                               (createFunc: String => Unit): Unit = {
     test(testName + ": external - location only") {
       withTempPath { path =>
         withTable(testName) {
@@ -161,7 +163,10 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   private def defaultTableBuilder(
-                                   builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]) = {
+                                   builder: DeltaTableBuilder,
+                                   tableName: Option[String],
+                                   location: Option[String]
+     ) = {
     var tableBuilder = builder
     if (tableName.nonEmpty) {
       tableBuilder = tableBuilder.tableName(tableName.get)
@@ -451,7 +456,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       SetPropertyThroughCreate,
       SetPropertyThroughAlter,
       SetPropertyThroughTableBuilder(true),
-      SetPropertyThroughTableBuilder(false),
+      SetPropertyThroughTableBuilder(false)
     )
 
     for (example <- examples) {
