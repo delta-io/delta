@@ -128,6 +128,26 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
+//  test(testName = "Test DDL with Generated Column Expression SHOW CREATE TABLE") {
+//    val table = "people10m"
+//    val cmd = s"""CREATE TABLE $table (
+//                |  id INT,
+//                |  firstName STRING,
+//                |  middleName STRING,
+//                |  lastName STRING,
+//                |  gender STRING,
+//                |  birthDate TIMESTAMP,
+//                |  dateOfBirth DATE GENERATED ALWAYS AS (CAST(birthDate AS DATE)),
+//                |  ssn STRING,
+//                |  salary INT
+//                |)
+//                |USING DELTA
+//                |PARTITIONED BY (gender)""".stripMargin
+//    sql(cmd)
+//    val ddl = getShowCreateTable(table)
+//    assert(ddl.contains("dateOfBirth DATE GENERATED ALWAYS AS (CAST(birthDate AS DATE))"))
+//  }
+
   test(testName = "Test DDL with full variations Recreate from DDL SHOW CREATE TABLE") {
     withTempDir { foo =>
       val table = "some_external_table"
