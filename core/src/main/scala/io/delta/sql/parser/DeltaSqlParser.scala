@@ -78,6 +78,12 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
     }
   }
 
+  /**
+   * This API is used just for parsing the SELECT queries. Delta parser doesn't override
+   * the Spark parser, that means this can be delegated directly to the Spark parser.
+   */
+  override def parseQuery(sqlText: String): LogicalPlan = delegate.parseQuery(sqlText)
+
   // scalastyle:off line.size.limit
   /**
    * Fork from `org.apache.spark.sql.catalyst.parser.AbstractSqlParser#parse(java.lang.String, scala.Function1)`.

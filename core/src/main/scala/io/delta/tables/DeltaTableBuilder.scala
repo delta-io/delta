@@ -24,7 +24,9 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTableStatement, ReplaceTableStatement}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedDBObjectName
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LeafNode, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
@@ -320,37 +322,30 @@ class DeltaTableBuilder private[tables](
       colNames.map(name => DeltaTableUtils.parseColToTransform(name))
     }.getOrElse(Seq.empty[Transform])
 
+    val tableSpec = org.apache.spark.sql.catalyst.plans.logical.TableSpec(
+      properties = properties,
+      provider = Some(FORMAT_NAME),
+      options = Map.empty,
+      location = location,
+      serde = None,
+      comment = tblComment,
+      external = false)
 
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
-        CreateTableStatement(
-          table,
+        CreateTable(
+          UnresolvedDBObjectName(table, isNamespace = false),
           StructType(columns.toSeq),
           partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          false,
-          ifNotExists
-        )
+          tableSpec,
+          ifNotExists)
       case ReplaceTableOptions(orCreate) =>
-        ReplaceTableStatement(
-          table,
+        ReplaceTable(
+          UnresolvedDBObjectName(table, isNamespace = false),
           StructType(columns.toSeq),
           partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          orCreate
-        )
+          tableSpec,
+          orCreate)
     }
     val qe = spark.sessionState.executePlan(stmt)
     // call `QueryExecution.toRDD` to trigger the execution of commands.
