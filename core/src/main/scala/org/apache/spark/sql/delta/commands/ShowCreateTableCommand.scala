@@ -34,7 +34,9 @@ import scala.collection.mutable.ArrayBuffer
 
 /**
  * A command for describing the details of a table such as the format, name, and size.
- * Implementation partially reused from https://github.com/apache/spark/blob/branch-3.3/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/v2/ShowCreateTableExec.scala
+ * Implementation partially reused
+ * from [https://github.com/apache/spark/blob/branch-3.3/
+ * sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/v2/ShowCreateTableExec.scala]
  */
 case class ShowCreateTableCommand(table: Option[TableIdentifier])
   extends LeafRunnableCommand with DeltaCommand {
