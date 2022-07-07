@@ -82,7 +82,7 @@ class DeltaWriteConfigsSuite extends QueryTest
 
     println("DeltaTableBuilder Test Output")
     dtb_output.toSeq
-      .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option (lowercase)",
+      .toDF("Output Location", "Output Mode",
         s"Contains No-Prefix Option", "Contains Prefix-Option", "ERROR", "Config")
       .show(100, false)
 
@@ -300,14 +300,14 @@ class DeltaWriteConfigsSuite extends QueryTest
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   |Output Location|Output Mode   |Contains No-Prefix Option (lowercase)|Contains No-Prefix Option|Contains Prefix-Option|ERROR|Config                                                                                 |
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
-  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
   |path           |c_or_r_replace|false                                |false                    |false                 |true |                                                                                       |
-  |table          |create        |true                                 |false                    |true                  |false|dataskippingnumindexedcols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
-  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |table          |create        |true                                 |false                    |true                  |false|dataSkippingNumIndexedCols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   */
   // scalastyle:on line.size.limit
@@ -373,7 +373,6 @@ class DeltaWriteConfigsSuite extends QueryTest
                 val answer_prefix = config.contains(config_prefix)
 
                 assert(answer_no_prefix) // bizarre!
-                assert(!answer_no_prefix)
                 assert(answer_prefix)
                 assert(config.size == 2) // bizarre!
 
