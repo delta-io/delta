@@ -530,7 +530,7 @@ When the table property `delta.appendOnly` is set to `true`:
  - The value of `delta.invariants` SHOULD be parsed as a JSON string containing a boolean SQL expression at the key `expression.expression` (that is, `{"expression": {"expression": "<SQL STRING>"}}`).
  - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
 
-For example, given the schema string:
+For example, given the schema string (pretty printed for readability. The entire schema string in the log should be a single JSON line):
 
 ```json
 {
@@ -548,7 +548,7 @@ For example, given the schema string:
 }
 ```
 
-Writers should reject any transaction that contains data where `x <= 3`.
+Writers should reject any transaction that contains data where the expression `x > 3` returns `false` or `null`.
 
 ## Generated Columns
 
