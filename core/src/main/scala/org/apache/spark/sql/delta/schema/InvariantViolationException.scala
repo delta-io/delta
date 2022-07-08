@@ -47,7 +47,7 @@ object DeltaInvariantViolationException {
     if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
       return new DeltaInvariantViolationException(
         errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
-        messageParameters = Array.empty)
+        messageParameters = Array(constraint.expression.toString))
     }
 
     // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
