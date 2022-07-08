@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
+import org.apache.spark.sql.types.StructType
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
@@ -58,6 +59,18 @@ private[delta] class CurrentTransactionInfo(
     case _: Metadata => true
     case _ => false
   }
+
+
+  /**
+   * Partition schema corresponding to the read snapshot for this transaction.
+   * NOTE: In conflict detection, we should be careful around whether we want to use the new schema
+   * which this txn wants to update OR the old schema from the read snapshot.
+   * e.g. the ConcurrentAppend check makes sure that no new files have been added concurrently
+   * that this transaction should have read. So this should use the read snapshot partition schema
+   * and not the new partition schema which this txn is introducing. Using the new schema can cause
+   * issues.
+   */
+  val partitionSchemaAtReadTime: StructType = readSnapshot.metadata.partitionSchema
 }
 
 /**
@@ -179,9 +192,11 @@ private[delta] class ConflictChecker(
 
       import spark.implicits._
       val predicatesMatchingAddedFiles = ExpressionSet(
-        currentTransactionInfo.readPredicates).iterator.flatMap { p =>
+          currentTransactionInfo.readPredicates).iterator.flatMap { p =>
+        // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
+        // beginning.
         val conflictingFile = DeltaLog.filterFileList(
-          currentTransactionInfo.metadata.partitionSchema,
+          partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
 
         conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
@@ -268,7 +283,7 @@ private[delta] class ConflictChecker(
 
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
-    val partitionColumns = currentTransactionInfo.metadata.partitionSchema
+    val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
     if (partitionColumns.isEmpty) {
       "the root of the table"
     } else {
