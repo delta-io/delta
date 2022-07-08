@@ -358,7 +358,7 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = withDmqTag {
-    recordFrameProfile("Delta", "Checkpoints.loadMetadataFromFile") {
+    recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
         val validate = spark.sessionState.conf.getConf(
