@@ -480,13 +480,11 @@ abstract class DeleteSuiteBase extends QueryTest
       }
     }
   }
-
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
     expectedErrorClassForSQLTempView = "MISSING_COLUMN",
     expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
   )
-
 
   // Need to be able to override this, because it works in some configurations.
   protected def testSuperSetColsTempView(): Unit = {
