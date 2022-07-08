@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types._
 
 import java.io.File
 import scala.reflect.io.Directory
@@ -128,25 +129,24 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-//  test(testName = "Test DDL with Generated Column Expression SHOW CREATE TABLE") {
-//    val table = "people10m"
-//    val cmd = s"""CREATE TABLE $table (
-//                |  id INT,
-//                |  firstName STRING,
-//                |  middleName STRING,
-//                |  lastName STRING,
-//                |  gender STRING,
-//                |  birthDate TIMESTAMP,
-//                |  dateOfBirth DATE GENERATED ALWAYS AS (CAST(birthDate AS DATE)),
-//                |  ssn STRING,
-//                |  salary INT
-//                |)
-//                |USING DELTA
-//                |PARTITIONED BY (gender)""".stripMargin
-//    sql(cmd)
-//    val ddl = getShowCreateTable(table)
-//    assert(ddl.contains("dateOfBirth DATE GENERATED ALWAYS AS (CAST(birthDate AS DATE))"))
-//  }
+  test(testName = "Test Generated Column Results in Exception for SHOW CREATE TABLE") {
+    val table = "people10m"
+    io.delta.tables.DeltaTable.create(spark)
+    .tableName(table)
+      .addColumn("id", "INT")
+      .addColumn("birthDate", "TIMESTAMP")
+      .addColumn(io.delta.tables.DeltaTable.columnBuilder("c2")
+                 .dataType(DateType)
+                 .generatedAlwaysAs("CAST(birthDate AS DATE)")
+                 .build())
+    .execute()
+    val e = intercept[UnsupportedOperationException] {
+      getShowCreateTable(table)
+    }
+    deleteTableAndData(table)
+    assert(e.getMessage.contains("contains generated columns"))
+
+  }
 
   test(testName = "Test DDL with full variations Recreate from DDL SHOW CREATE TABLE") {
     withTempDir { foo =>
@@ -166,6 +166,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
       assert(ddl.equals(ddl1))
     }
   }
+
 
   /**
    * Delete managed table and ensure that the disk cleanup occurs

@@ -1718,6 +1718,12 @@ trait DeltaErrorsBase
     new UnsupportedOperationException(
       s"The Delta table configuration $prop cannot be specified by the user")
 
+  def cannotShowCreateGeneratedColumnsProperty(table: String): Throwable =
+    new UnsupportedOperationException(
+      s"""The Delta table $table contains generated columns and
+         |this operation is currently not supported.""".stripMargin
+    )
+
   /**
    * We have plans to support more column mapping modes, but they are not implemented yet,
    * so we error for now to be forward compatible with tables created in the future.

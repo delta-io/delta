@@ -24,7 +24,9 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Table, TableCatalog}
 import org.apache.spark.sql.catalyst.util.escapeSingleQuotedString
+import org.apache.spark.sql.delta.DeltaErrors.cannotShowCreateGeneratedColumnsProperty
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.unsafe.types.UTF8String
@@ -72,6 +74,11 @@ case class ShowCreateTableCommand(table: Option[TableIdentifier])
   }
 
   private def showTableDataColumns(table: Table, builder: mutable.StringBuilder): Unit = {
+    val tableSchema = table.asInstanceOf[DeltaTableV2].deltaLog.snapshot.metadata.schema
+    if (tableSchema.exists(column => column.metadata.contains(
+      DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY))) {
+      throw cannotShowCreateGeneratedColumnsProperty(table.name())
+    }
     val columns = CharVarcharUtils.getRawSchema(table.schema()).fields.map(_.toDDL)
     builder ++= concatByMultiLines(columns)
   }
