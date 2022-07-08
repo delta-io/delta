@@ -299,7 +299,6 @@ class DeltaTableBuilder private[tables](
     this
   }
 
-
   /**
    * :: Evolving ::
    *

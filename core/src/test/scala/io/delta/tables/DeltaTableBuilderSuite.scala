@@ -48,14 +48,14 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
    * write correct table metadata into the transaction logs.
    */
   protected def verifyTestTableMetadata(
-                                         table: String,
-                                         schemaString: String,
-                                         generatedColumns: Map[String, String] = Map.empty,
-                                         colComments: Map[String, String] = Map.empty,
-                                         colNullables: Set[String] = Set.empty,
-                                         tableComment: Option[String] = None,
-                                         partitionCols: Seq[String] = Seq.empty,
-                                         tableProperty: Option[(String, String)] = None): Unit = {
+      table: String,
+      schemaString: String,
+      generatedColumns: Map[String, String] = Map.empty,
+      colComments: Map[String, String] = Map.empty,
+      colNullables: Set[String] = Set.empty,
+      tableComment: Option[String] = None,
+      partitionCols: Seq[String] = Seq.empty,
+      tableProperty: Option[(String, String)] = None): Unit = {
     val deltaLog = if (table.startsWith("delta.")) {
       DeltaLog.forTable(spark, table.stripPrefix("delta.`").stripSuffix("`"))
     } else {
@@ -101,8 +101,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithNameAndLocation(
-                                                    testName: String)
-                                                  (createFunc: (String, String) => Unit): Unit = {
+      testName: String)(createFunc: (String, String) => Unit): Unit = {
     test(testName + ": external - with location and name") {
       withTempPath { path =>
         withTable(testName) {
@@ -120,8 +119,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   protected def testCreateTableWithLocationOnly(
-                                                 testName: String)
-                                               (createFunc: String => Unit): Unit = {
+      testName: String)(createFunc: String => Unit): Unit = {
     test(testName + ": external - location only") {
       withTempPath { path =>
         withTable(testName) {
@@ -139,9 +137,9 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   def defaultCreateTableBuilder(
-                                 ifNotExists: Boolean,
-                                 tableName: Option[String] = None,
-                                 location: Option[String] = None): DeltaTableBuilder = {
+      ifNotExists: Boolean,
+      tableName: Option[String] = None,
+      location: Option[String] = None): DeltaTableBuilder = {
     val tableBuilder = if (ifNotExists) {
       io.delta.tables.DeltaTable.createIfNotExists()
     } else {
@@ -151,9 +149,9 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   def defaultReplaceTableBuilder(
-                                  orCreate: Boolean,
-                                  tableName: Option[String] = None,
-                                  location: Option[String] = None): DeltaTableBuilder = {
+      orCreate: Boolean,
+      tableName: Option[String] = None,
+      location: Option[String] = None): DeltaTableBuilder = {
     var tableBuilder = if (orCreate) {
       io.delta.tables.DeltaTable.createOrReplace()
     } else {
@@ -163,10 +161,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   private def defaultTableBuilder(
-                                   builder: DeltaTableBuilder,
-                                   tableName: Option[String],
-                                   location: Option[String]
-     ) = {
+      builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]) = {
     var tableBuilder = builder
     if (tableName.nonEmpty) {
       tableBuilder = tableBuilder.tableName(tableName.get)

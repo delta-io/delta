@@ -771,7 +771,7 @@ trait DeltaSQLConfBase {
           |Turn on this flag if you want the table properties created via DeltaTableBuilder
           | to be backward compatible.
           | Please note that if you provide an override for a default value, the case of the
-          | property for the default value will be used
+          | property for the default value will be used.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
