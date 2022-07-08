@@ -226,6 +226,7 @@ class OptimizeExecutor(
       optimizeStats.numBatches = jobs.size
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
+      optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
 
       if (isMultiDimClustering) {
         val inputFileStats =
