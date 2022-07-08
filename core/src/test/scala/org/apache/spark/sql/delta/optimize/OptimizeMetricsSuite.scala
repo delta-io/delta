@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.optimize
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderFileStats, ZOrderStats}
+import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -85,6 +85,13 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("totalSize", LongType, nullable = false)
     ))
 
+    val parallelismMetricsSchema = StructType(Seq(
+      StructField("maxClusterActiveParallelism", LongType, nullable = true),
+      StructField("minClusterActiveParallelism", LongType, nullable = true),
+      StructField("maxSessionActiveParallelism", LongType, nullable = true),
+      StructField("minSessionActiveParallelism", LongType, nullable = true)
+    ))
+
     val optimizeMetricsSchema = StructType(Seq(
       StructField("numFilesAdded", LongType, nullable = false),
       StructField("numFilesRemoved", LongType, nullable = false),
@@ -99,7 +106,10 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("numFilesSkippedToReduceWriteAmplification", LongType, nullable = false),
       StructField("numBytesSkippedToReduceWriteAmplification", LongType, nullable = false),
       StructField("startTimeMs", LongType, nullable = false),
-      StructField("endTimeMs", LongType, nullable = false)
+      StructField("endTimeMs", LongType, nullable = false),
+      StructField("totalClusterParallelism", LongType, nullable = false),
+      StructField("totalScheduledTasks", LongType, nullable = false),
+      StructField("autoCompactParallelismStats", parallelismMetricsSchema, nullable = true)
     ))
     val optimizeSchema = StructType(Seq(
       StructField("path", StringType, nullable = true),
@@ -175,7 +185,9 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         totalFilesSkipped = 1,
         preserveInsertionOrder = preserveInsertionOrder,
         startTimeMs = actMetrics.startTimeMs,
-        endTimeMs = actMetrics.endTimeMs)
+        endTimeMs = actMetrics.endTimeMs,
+        totalClusterParallelism = 2,
+        totalScheduledTasks = 0)
 
       assert(actMetrics === expMetrics)
     }
