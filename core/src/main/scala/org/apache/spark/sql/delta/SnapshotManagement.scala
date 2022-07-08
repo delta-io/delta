@@ -102,7 +102,7 @@ trait SnapshotManagement { self: DeltaLog =>
   private final def listDeltaAndCheckpointFiles(
       startVersion: Long,
       versionToLoad: Option[Long]): Option[Array[FileStatus]] =
-    recordFrameProfile("Delta", "SnapshotManagement.listDeltaAndCheckpointFiles") {
+    recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
       listFromOrNone(startVersion).map { _
         // Pick up all checkpoint and delta files
         .filter { file => isDeltaCommitOrCheckpointFile(file.getPath) }
