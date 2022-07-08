@@ -195,7 +195,8 @@ class CaseSensitivitySuite extends QueryTest
             .option("replaceWhere", "key = 2") // note the different case
             .save(path)
         }
-        assert(e.getErrorClass == "MISSING_COLUMN")
+        // The error class is renamed in Spark 3.4
+        assert(e.getErrorClass == "UNRESOLVED_COLUMN" || e.getErrorClass == "MISSING_COLUMN" )
       }
 
       checkAnswer(
