@@ -247,7 +247,8 @@ private[internal] object Checkpoints extends Logging {
 
     val writerOptions = ParquetWriter.Options(
       compressionCodecName = CompressionCodecName.SNAPPY,
-      timeZone = deltaLog.timezone
+      timeZone = deltaLog.timezone,
+      hadoopConf = deltaLog.hadoopConf
     )
     val writer = ParquetWriter.writer[SingleAction](writtenPath, writerOptions)
 

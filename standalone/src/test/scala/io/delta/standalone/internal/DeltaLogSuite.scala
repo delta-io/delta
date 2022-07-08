@@ -37,7 +37,7 @@ import io.delta.standalone.types.{BooleanType, IntegerType, LongType, StringType
 
 import io.delta.standalone.internal.actions.{Action, AddFile, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import io.delta.standalone.internal.util.{ConversionUtils, FakeFileSystem, FileNames}
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.internal.util.TestUtils._
 
@@ -658,6 +658,23 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         } else {
           assert(log.getVersionAtOrAfterTimestamp(nowEpochMs + i * 1000 + 1) == i + 1)
         }
+      }
+    }
+  }
+
+  test("checkpoint write should use DeltaLog.hadoopConf") {
+    withLogForWritableGoldenTable("data-reader-primitives") { _log =>
+      val conf = FakeFileSystem.newConfiguration()
+      // Use `fake` scheme so that we will fail if we have any code that doesn't use the right conf
+      val path = new Path("fake://" + _log.getPath.toUri.getRawPath)
+      val log = DeltaLog.forTable(conf, path)
+      log.asInstanceOf[DeltaLogImpl].checkpoint()
+      log.startTransaction().commit(Nil, new Operation(Operation.Name.WRITE), "engineInfo")
+      val iter = log.snapshot().open()
+      try {
+        assert(iter.asScala.size == 11)
+      } finally {
+        iter.close()
       }
     }
   }
