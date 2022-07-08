@@ -375,22 +375,15 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
 
     val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
 
-    val lowerCaseEnforcedConfig = preservedCaseConfig.map{
-      case (key, value) if !key.contains("delta") =>
-         /* Required since when reading from the snapshot the table property
-            will be merged with default configs using a case-insensitive table
-            and the value appendOnly from the default will dominate
-          */
-
-        (key.toLowerCase, value) // scalastyle:off caselocale
-      case x => x
-    }
+    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
 
     sealed trait DeltaTablePropertySetOperation {
 
       def setTableProperty(tablePath: String): Unit
 
       def expectedConfig: Map[String, String]
+
+      def description:String
 
     }
 
@@ -406,6 +399,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
           s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar' ) "
       )
 
+      val description = "Setting Table Property at Table Creation"
+
     }
     case object SetPropertyThroughAlter extends CasePreservingTablePropertySetOperation {
 
@@ -414,6 +409,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         sql(s"ALTER TABLE delta.`$tablePath` " +
           s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar')")
       }
+
+      val description = "Setting Table Property via Table Alter"
 
     }
 
@@ -435,7 +432,6 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         finally {
           spark.conf.set(confItem.key, previousValue)
         }
-
       }
 
       override lazy val expectedConfig : Map[String, String] = {
@@ -446,23 +442,29 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
           preservedCaseConfig
         }
       }
+
+      val description = s"Setting Table Property on DeltaTableBuilder." +
+        s" Backward compatible enabled = ${backwardCompatible}"
     }
     val examples = Seq(
       SetPropertyThroughCreate,
       SetPropertyThroughAlter,
-      SetPropertyThroughTableBuilder(true),
-      SetPropertyThroughTableBuilder(false)
+      SetPropertyThroughTableBuilder(backwardCompatible = true),
+      SetPropertyThroughTableBuilder(backwardCompatible = false)
     )
 
     for (example <- examples) {
-      withTempDir { dir =>
-        val path = dir.getCanonicalPath()
-        example.setTableProperty(path)
-        val config = DeltaLog.forTable(spark, path).snapshot.metadata.configuration
-        assert(
-          config == example.expectedConfig,
-          s"$example's result is not correct: $config")
+      withClue(example.description) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath()
+          example.setTableProperty(path)
+          val config = DeltaLog.forTable(spark, path).snapshot.metadata.configuration
+          assert(
+            config == example.expectedConfig,
+            s"$example's result is not correct: $config")
+        }
       }
+
     }
 
   }

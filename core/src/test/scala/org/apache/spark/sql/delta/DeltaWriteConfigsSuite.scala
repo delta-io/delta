@@ -27,6 +27,18 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 
+trait BaseDeltaWriteConfigSuite {
+
+  val config_no_prefix = "dataSkippingNumIndexedCols"
+  val config_no_prefix_value = "33"
+
+  val config_prefix = "delta.deletedFileRetentionDuration"
+  val config_prefix_value = "interval 2 weeks"
+
+  protected val dtb_output =
+    new ListBuffer[(String, String, Boolean, Boolean, Boolean, Boolean, String)]
+}
+
 /**
  * This test suite tests all (or nearly-all) combinations of ways to write configs to a delta table.
  *
@@ -44,13 +56,8 @@ import org.apache.spark.sql.types.StringType
  * At the end of the test suite, it prints out summary tables all of the cases above.
  */
 class DeltaWriteConfigsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaSQLCommandTest with BaseDeltaWriteConfigSuite {
 
-  val config_no_prefix = "dataSkippingNumIndexedCols"
-  val config_no_prefix_value = "33"
-
-  val config_prefix = "delta.deletedFileRetentionDuration"
-  val config_prefix_value = "interval 2 weeks"
 
   val config_no_prefix_2 = "logRetentionDuration"
   val config_no_prefix_2_value = "interval 60 days"
@@ -82,7 +89,7 @@ class DeltaWriteConfigsSuite extends QueryTest
 
     println("DeltaTableBuilder Test Output")
     dtb_output.toSeq
-      .toDF("Output Location", "Output Mode",
+      .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option (lowercase)",
         s"Contains No-Prefix Option", "Contains Prefix-Option", "ERROR", "Config")
       .show(100, false)
 
@@ -100,8 +107,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   private val dfw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
   private val dsw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
   private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
-  private val dtb_output =
-    new ListBuffer[(String, String, Boolean, Boolean, Boolean, String)]
+
   private val sql_output =
     new ListBuffer[(
       String, String, String, Boolean,
@@ -294,96 +300,6 @@ class DeltaWriteConfigsSuite extends QueryTest
     }
   }
 
-  // scalastyle:off line.size.limit
-  /*
-  DeltaTableBuilder Test Output
-  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
-  |Output Location|Output Mode   |Contains No-Prefix Option (lowercase)|Contains No-Prefix Option|Contains Prefix-Option|ERROR|Config                                                                                 |
-  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
-  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  |path           |c_or_r_replace|false                                |false                    |false                 |true |                                                                                       |
-  |table          |create        |true                                 |false                    |true                  |false|dataSkippingNumIndexedCols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
-  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
-  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
-  */
-  // scalastyle:on line.size.limit
-  Seq("path", "table").foreach { outputLoc =>
-    Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
-      val testName = s"DeltaTableBuilder - outputLoc=$outputLoc & outputMode=$outputMode"
-      test(testName) {
-        withTempDir { dir =>
-          withTable("tbl") {
-
-            if (outputMode.contains("replace")) {
-              outputLoc match {
-                case "path" =>
-                  io.delta.tables.DeltaTable.create()
-                    .addColumn("bar", StringType).location(dir.getCanonicalPath).execute()
-                case "table" =>
-                  io.delta.tables.DeltaTable.create()
-                    .addColumn("bar", StringType).tableName("tbl").execute()
-              }
-            }
-
-            var tblBuilder = outputMode match {
-              case "create" =>
-                io.delta.tables.DeltaTable.create()
-              case "replace" =>
-                io.delta.tables.DeltaTable.replace()
-              case "c_or_r_create" | "c_or_r_replace" =>
-                io.delta.tables.DeltaTable.createOrReplace()
-            }
-
-            tblBuilder.addColumn("foo", StringType)
-            tblBuilder = tblBuilder.property(config_no_prefix, config_no_prefix_value)
-            tblBuilder = tblBuilder.property(config_prefix, config_prefix_value)
-
-            val log = (outputLoc, outputMode) match {
-              case ("path", "c_or_r_replace") =>
-                intercept[DeltaAnalysisException] {
-                  tblBuilder.location(dir.getCanonicalPath).execute()
-                }
-                null
-              case ("path", _) =>
-                tblBuilder.location(dir.getCanonicalPath).execute()
-                DeltaLog.forTable(spark, dir)
-              case ("table", _) =>
-                tblBuilder.tableName("tbl").execute()
-                DeltaLog.forTable(spark, TableIdentifier("tbl"))
-            }
-
-            log match {
-              case null =>
-                // CREATE OR REPLACE seems broken when using path and the table already exists
-                // with a different schema.
-                // DeltaAnalysisException: The specified schema does not match the existing schema
-                // ...
-                // Specified schema is missing field(s): bar
-                // Specified schema has additional field(s): foo
-                assert(outputLoc == "path" && outputMode == "c_or_r_replace")
-                dtb_output += ((outputLoc, outputMode, false, false, true, ""))
-              case _ =>
-                val config = log.snapshot.metadata.configuration
-
-                val answer_no_prefix = config.contains(config_no_prefix)
-                val answer_prefix = config.contains(config_prefix)
-
-                assert(answer_no_prefix) // bizarre!
-                assert(answer_prefix)
-                assert(config.size == 2) // bizarre!
-
-                dtb_output += ((outputLoc, outputMode,
-                  answer_no_prefix, answer_prefix, false, config.mkString(",")))
-            }
-          }
-        }
-      }
-    }
-  }
 
   // scalastyle:off line.size.limit
   /*
@@ -534,6 +450,107 @@ class DeltaWriteConfigsSuite extends QueryTest
                   config.mkString(",")
                 ))
               }
+            }
+          }
+        }
+      }
+    }
+  }
+
+}
+
+class DeltaWriteConfigsTableBuilderSuite extends QueryTest
+  with SharedSparkSession  with DeltaSQLCommandTest with BaseDeltaWriteConfigSuite{
+
+
+  // scalastyle:off line.size.limit
+  /*
+  DeltaTableBuilder Test Output
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
+  |Output Location|Output Mode   |Contains No-Prefix Option (lowercase)|Contains No-Prefix Option|Contains Prefix-Option|ERROR|Config                                                                                 |
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
+  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |c_or_r_replace|false                                |false                    |false                 |true |                                                                                       |
+  |table          |create        |true                                 |false                    |true                  |false|dataSkippingNumIndexedCols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
+  */
+
+  // scalastyle:on line.size.limit
+  Seq("path", "table").foreach { outputLoc =>
+    Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
+      val testName = s"DeltaTableBuilder - outputLoc=$outputLoc & outputMode=$outputMode"
+      test(testName) {
+        withTempDir { dir =>
+          withTable("tbl") {
+
+            if (outputMode.contains("replace")) {
+              outputLoc match {
+                case "path" =>
+                  io.delta.tables.DeltaTable.create()
+                    .addColumn("bar", StringType).location(dir.getCanonicalPath).execute()
+                case "table" =>
+                  io.delta.tables.DeltaTable.create()
+                    .addColumn("bar", StringType).tableName("tbl").execute()
+              }
+            }
+
+            var tblBuilder = outputMode match {
+              case "create" =>
+                io.delta.tables.DeltaTable.create()
+              case "replace" =>
+                io.delta.tables.DeltaTable.replace()
+              case "c_or_r_create" | "c_or_r_replace" =>
+                io.delta.tables.DeltaTable.createOrReplace()
+            }
+
+            tblBuilder.addColumn("foo", StringType)
+            tblBuilder = tblBuilder.property(config_no_prefix, config_no_prefix_value)
+            tblBuilder = tblBuilder.property(config_prefix, config_prefix_value)
+
+            val log = (outputLoc, outputMode) match {
+              case ("path", "c_or_r_replace") =>
+                intercept[DeltaAnalysisException] {
+                  tblBuilder.location(dir.getCanonicalPath).execute()
+                }
+                null
+              case ("path", _) =>
+                tblBuilder.location(dir.getCanonicalPath).execute()
+                DeltaLog.forTable(spark, dir)
+              case ("table", _) =>
+                tblBuilder.tableName("tbl").execute()
+                DeltaLog.forTable(spark, TableIdentifier("tbl"))
+            }
+
+            log match {
+              case null =>
+                // CREATE OR REPLACE seems broken when using path and the table already exists
+                // with a different schema.
+                // DeltaAnalysisException: The specified schema does not match the existing schema
+                // ...
+                // Specified schema is missing field(s): bar
+                // Specified schema has additional field(s): foo
+                assert(outputLoc == "path" && outputMode == "c_or_r_replace")
+                dtb_output += ((outputLoc, outputMode, false, false, false, true, ""))
+              case _ =>
+                val config = log.snapshot.metadata.configuration
+
+                val answer_no_prefix_lowercase =
+                  config.contains(config_no_prefix.toLowerCase(Locale.ROOT))
+                val answer_no_prefix = config.contains(config_no_prefix)
+                val answer_prefix = config.contains(config_prefix)
+
+                assert(!answer_no_prefix_lowercase)
+                assert(answer_no_prefix)
+                assert(answer_prefix)
+                assert(config.size == 2)
+
+                dtb_output += ((outputLoc, outputMode, answer_no_prefix_lowercase,
+                  answer_no_prefix, answer_prefix, false, config.mkString(",")))
             }
           }
         }
