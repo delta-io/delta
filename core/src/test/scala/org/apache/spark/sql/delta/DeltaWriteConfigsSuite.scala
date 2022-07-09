@@ -82,7 +82,7 @@ class DeltaWriteConfigsSuite extends QueryTest
 
     println("DeltaTableBuilder Test Output")
     dtb_output.toSeq
-      .toDF("Output Location", "Output Mode",
+      .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option (lowercase)",
         s"Contains No-Prefix Option", "Contains Prefix-Option", "ERROR", "Config")
       .show(100, false)
 
@@ -101,7 +101,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   private val dsw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
   private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
   private val dtb_output =
-    new ListBuffer[(String, String, Boolean, Boolean, Boolean, String)]
+    new ListBuffer[(String, String, Boolean, Boolean, Boolean, Boolean, String)]
   private val sql_output =
     new ListBuffer[(
       String, String, String, Boolean,
@@ -365,18 +365,21 @@ class DeltaWriteConfigsSuite extends QueryTest
                 // Specified schema is missing field(s): bar
                 // Specified schema has additional field(s): foo
                 assert(outputLoc == "path" && outputMode == "c_or_r_replace")
-                dtb_output += ((outputLoc, outputMode, false, false, true, ""))
+                dtb_output += ((outputLoc, outputMode, false, false, false, true, ""))
               case _ =>
                 val config = log.snapshot.metadata.configuration
 
+                val answer_no_prefix_lowercase =
+                  config.contains(config_no_prefix.toLowerCase(Locale.ROOT))
                 val answer_no_prefix = config.contains(config_no_prefix)
                 val answer_prefix = config.contains(config_prefix)
 
+                assert(!answer_no_prefix_lowercase)
                 assert(answer_no_prefix)
                 assert(answer_prefix)
                 assert(config.size == 2)
 
-                dtb_output += ((outputLoc, outputMode,
+                dtb_output += ((outputLoc, outputMode, answer_no_prefix,
                   answer_no_prefix, answer_prefix, false, config.mkString(",")))
             }
           }
