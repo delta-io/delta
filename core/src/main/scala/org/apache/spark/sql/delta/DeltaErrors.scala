@@ -1779,8 +1779,7 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
       messageParameters = Array(
         s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
-        s"$oldProtocol"))
+        columnMappingAdviceMessage))
   }
 
   private def columnMappingAdviceMessage: String = {
