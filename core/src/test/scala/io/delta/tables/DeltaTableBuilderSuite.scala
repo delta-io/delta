@@ -383,7 +383,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
 
       def expectedConfig: Map[String, String]
 
-      def description:String
+      def description: String
 
     }
 
