@@ -1785,9 +1785,9 @@ trait DeltaErrorsBase
   private def columnMappingAdviceMessage: String = {
     s"""
        |Please upgrade your Delta table to reader version 2 and writer version 5
-       | and change the column mapping mode to 'name' mapping. You can use the following command:
+       |and change the column mapping mode to 'name' mapping. You can use the following command:
        |
-       | ALTER TABLE <table_name> SET TBLPROPERTIES (
+       |ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
        |   'delta.minReaderVersion' = '2',
        |   'delta.minWriterVersion' = '5')

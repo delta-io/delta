@@ -417,9 +417,9 @@ trait DeltaErrorsSuiteBase
            |Your current table protocol version does not support changing column mapping modes
            |using delta.columnMapping.mode.
            |Please upgrade your Delta table to reader version 2 and writer version 5
-           | and change the column mapping mode to 'name' mapping. You can use the following command:
+           |and change the column mapping mode to 'name' mapping. You can use the following command:
            |
-           | ALTER TABLE <table_name> SET TBLPROPERTIES (
+           |ALTER TABLE <table_name> SET TBLPROPERTIES (
            |   'delta.columnMapping.mode' = 'name',
            |   'delta.minReaderVersion' = '2',
            |   'delta.minWriterVersion' = '5')
