@@ -710,16 +710,19 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table.
+   * Check if the provided `identifier` string represents a Delta table.
+   * Identifier strings can be either a path or a table name.
+   * In the case of a file path, it checks if it is the root of a Delta
+   * table.
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * An example would be
+   * Examples are as follows:
    * {{{
-   *   DeltaTable.isDeltaTable(spark, "/path/to/table")
+   *   DeltaTable.isDeltaTable("path/to/table")
+   *   DeltaTable.isDeltaTable("MyDeltaTable")
    * }}}
    *
    * @since 0.4.0
