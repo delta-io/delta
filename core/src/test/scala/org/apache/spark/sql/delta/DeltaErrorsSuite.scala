@@ -1767,10 +1767,10 @@ trait DeltaErrorsSuiteBase
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-           |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+           |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
-           |    .build()
+           |    .getOrCreate()
            |""".stripMargin
       assert(e.getMessage == msg)
     }
