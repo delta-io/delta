@@ -24,6 +24,8 @@ import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
  * a dependency for tests in core.
  */
 public class S3LogStoreUtil {
+    private S3LogStoreUtil() {}
+
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
