@@ -429,8 +429,7 @@ trait DeltaErrorsSuiteBase
            |   'delta.columnMapping.mode' = 'name',
            |   'delta.minReaderVersion' = '2',
            |   'delta.minWriterVersion' = '5')
-           |
-    """.stripMargin)
+           |""".stripMargin)
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
