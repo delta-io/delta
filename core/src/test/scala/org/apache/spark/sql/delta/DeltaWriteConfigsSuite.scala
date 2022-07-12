@@ -406,7 +406,7 @@ class DeltaWriteConfigsSuite extends QueryTest
                 dtb_output += DeltaTableBuilderAPITestOutput(
                   outputLocation = outputLoc,
                   outputMode = outputMode,
-                  containsNoPrefixOptionLowerCase = answer_no_prefix,
+                  containsNoPrefixOptionLowerCase = answer_no_prefix_lowercase,
                   containsNoPrefixOption = answer_no_prefix,
                   containsPrefixOption = answer_prefix,
                   error = false,
