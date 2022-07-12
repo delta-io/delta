@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, DeltaScanGeneratorBase, FileSizeHistogram}
+import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, FileSizeHistogram}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}

@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.Path
 
 /** Helper for creating file names for specific commits / checkpoints. */
 object FileNames {

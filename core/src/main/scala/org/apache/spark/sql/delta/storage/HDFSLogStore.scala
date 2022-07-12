@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.{IOException, _}
-import java.lang.reflect.InvocationTargetException
+import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.{EnumSet, UUID}
+import java.util.EnumSet
 
 import scala.util.control.NonFatal
 

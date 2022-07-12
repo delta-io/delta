@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.SQLConfHelper
-import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.types._

@@ -21,8 +21,8 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
-import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.types.{MetadataBuilder, StructType}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types.StructType
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
