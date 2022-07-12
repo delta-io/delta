@@ -1382,7 +1382,13 @@
     "message" : [
       "",
       "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.<advice>"
+      "using <config>.",
+      "",
+      "Required Delta protocol version for column mapping:",
+      "<requiredVersion>",
+      "Your table's current Delta protocol version:",
+      "<currentVersion>",
+      "<advice>"
     ],
     "sqlState" : "0A000"
   },
