@@ -32,6 +32,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.io.CountingOutputStream;
 import io.delta.storage.internal.FileNameUtils;
+import io.delta.storage.internal.S3LogStoreUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -230,7 +231,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem) {
             statuses = fs.listStatus(parentPath);
         } else {
-            statuses = S3SingleDriverLogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath);
+            statuses = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath);
         }
 
         final List<FileStatus> listedFromFs = Arrays

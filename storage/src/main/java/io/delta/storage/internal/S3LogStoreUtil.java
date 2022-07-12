@@ -1,4 +1,4 @@
-package io.delta.storage;
+package io.delta.storage.internal;
 
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import org.apache.hadoop.fs.FileStatus;
@@ -23,12 +23,12 @@ import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
  * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without needing to load this as
  * a dependency for tests in core.
  */
-class S3SingleDriverLogStoreUtil {
+public class S3LogStoreUtil {
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
      */
-    static FileStatus[] s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
+    public static FileStatus[] s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
         S3AFileSystem s3afs = (S3AFileSystem) fs;
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
