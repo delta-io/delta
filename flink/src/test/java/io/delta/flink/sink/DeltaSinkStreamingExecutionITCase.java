@@ -19,8 +19,9 @@
 package io.delta.flink.sink;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -29,8 +30,11 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
+import io.delta.flink.sink.utils.CheckpointCountingSource;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.TestParquetReader;
@@ -54,13 +58,19 @@ import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunctio
 import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.types.Row;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.rules.TemporaryFolder;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.actions.AddFile;
@@ -69,57 +79,117 @@ import io.delta.standalone.actions.CommitInfo;
 /**
  * Tests the functionality of the {@link DeltaSink} in STREAMING mode.
  */
-@RunWith(Parameterized.class)
-public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSinkITCase {
+public class DeltaSinkStreamingExecutionITCase {
+
+    private static final int NUM_SOURCES = 4;
+
+    private static final int NUM_SINKS = 3;
+
+    private static final int NUM_RECORDS = 10000;
+
+    private static final double FAILOVER_RATIO = 0.4;
+
+    public static final TemporaryFolder TMP_FOLDER = new TemporaryFolder();
 
     private static final Map<String, CountDownLatch> LATCH_MAP = new ConcurrentHashMap<>();
 
-    @Parameterized.Parameters(
-        name = "triggerFailover = {0}, isPartitioned = {1}"
-    )
-    public static Collection<Object[]> params() {
-        return Arrays.asList(
-            new Object[]{false, false},
-            new Object[]{false, true},
-            new Object[]{true, false},
-            new Object[]{true, true}
-        );
-    }
-
-    @Parameterized.Parameter(1)
-    public Boolean isPartitioned;
-
     private String latchId;
+
     private String deltaTablePath;
 
-    @Before
-    public void setup() {
-        this.latchId = UUID.randomUUID().toString();
-        LATCH_MAP.put(latchId, new CountDownLatch(NUM_SOURCES * 2));
-        try {
-            deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-            if (isPartitioned) {
-                DeltaTestUtils.initTestForPartitionedTable(deltaTablePath);
-            } else {
-                DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Weren't able to setup the test dependencies", e);
-        }
+    @BeforeAll
+    public static void beforeAll() throws IOException {
+        TMP_FOLDER.create();
     }
 
-    @After
+    @AfterAll
+    public static void afterAll() {
+        TMP_FOLDER.delete();
+    }
+
+    @BeforeEach
+    public void setup() throws IOException {
+        deltaTablePath = TMP_FOLDER.newFolder().getAbsolutePath();
+        this.latchId = UUID.randomUUID().toString();
+        LATCH_MAP.put(latchId, new CountDownLatch(NUM_SOURCES * 2));
+    }
+
+    @AfterEach
     public void teardown() {
         LATCH_MAP.remove(latchId);
     }
 
-    @Override
-    @Test
-    public void testFileSink() throws Exception {
-        runDeltaSinkTest();
+    private static Stream<Arguments> deltaSinkArguments() {
+        return Stream.of(
+            Arguments.of(false, false),
+            Arguments.of(false, true),
+            Arguments.of(true, false),
+            Arguments.of(true, true)
+        );
     }
 
-    public void runDeltaSinkTest() throws Exception {
+    @ParameterizedTest(name = "triggerFailover = {0}, isPartitioned = {1}")
+    @MethodSource("deltaSinkArguments")
+    public void testFileSink(boolean isPartitioned, boolean triggerFailover) throws Exception {
+
+        initSourceFolder(isPartitioned, deltaTablePath);
+
+        runDeltaSinkTest(deltaTablePath, triggerFailover, isPartitioned);
+    }
+
+    /**
+     * This test verifies if Flink Delta Source created Delta checkpoint after 10 commits.
+     * This tests produces records using {@link CheckpointCountingSource} until at most 12 Flink
+     * checkpoints will be created.
+     * For every Flink checkpoint the {@link CheckpointCountingSource} produces new batch of
+     * records.
+     * After approximately 10 Flink checkpoints there should be a Delta checkpoint created.
+     */
+    @Test
+    public void testSinkDeltaCheckpoint() throws Exception {
+
+        DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+
+        StreamExecutionEnvironment env = getTestStreamEnv(false); // no failover
+        env.addSource(new CheckpointCountingSource(1_000, 12))
+            .setParallelism(1)
+            .sinkTo(DeltaSinkTestUtils.createDeltaSink(deltaTablePath, false)) // not partitioned
+            .setParallelism(3);
+
+        StreamGraph streamGraph = env.getStreamGraph();
+        try (MiniCluster miniCluster = DeltaSinkTestUtils.getMiniCluster()) {
+            miniCluster.start();
+            miniCluster.executeJobBlocking(streamGraph.getJobGraph());
+        }
+
+        // Now there should be a Delta Checkpoint under _delta_log folder.
+        List<String> deltaCheckpointFiles = getDeltaCheckpointFiles(deltaTablePath);
+        assertThat(
+            "Missing Delta's last checkpoint file",
+            deltaCheckpointFiles.contains("_last_checkpoint"),
+            equalTo(true)
+        );
+        assertThat(
+            "Missing Delta's checkpoint file",
+            deltaCheckpointFiles.contains("00000000000000000010.checkpoint.parquet"),
+            equalTo(true)
+        );
+    }
+
+    private List<String> getDeltaCheckpointFiles(String deltaTablePath) throws IOException {
+        try (Stream<Path> stream = Files.list(Paths.get(deltaTablePath + "/_delta_log/"))) {
+            return stream
+                .filter(file -> !Files.isDirectory(file))
+                .map(file -> file.getFileName().toString())
+                .filter(fileName -> !fileName.endsWith(".json"))
+                .collect(Collectors.toList());
+        }
+    }
+
+    public void runDeltaSinkTest(
+            String deltaTablePath,
+            boolean triggerFailover,
+            boolean isPartitioned) throws Exception {
         // GIVEN
         DeltaLog deltaLog = DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), deltaTablePath);
         List<AddFile> initialDeltaFiles = deltaLog.snapshot().getAllFiles();
@@ -129,7 +199,7 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
             .readAndValidateAllTableRecords(deltaLog);
         assertEquals(2, initialTableRecordsCount);
 
-        JobGraph jobGraph = createJobGraph(deltaTablePath);
+        JobGraph jobGraph = createJobGraph(deltaTablePath, triggerFailover, isPartitioned);
 
         // WHEN
         try (MiniCluster miniCluster = DeltaSinkTestUtils.getMiniCluster()) {
@@ -171,9 +241,11 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
      * Creating the testing job graph in streaming mode. The graph created is [Source] -> [Delta
      * Sink]. The source would trigger failover if required.
      */
-    @Override
-    protected JobGraph createJobGraph(String path) {
-        StreamExecutionEnvironment env = getTestStreamEnv();
+    protected JobGraph createJobGraph(
+            String deltaTablePath,
+            boolean triggerFailover,
+            boolean isPartitioned) {
+        StreamExecutionEnvironment env = getTestStreamEnv(triggerFailover);
 
         env.addSource(new DeltaStreamingExecutionTestSource(latchId, NUM_RECORDS, triggerFailover))
             .setParallelism(NUM_SOURCES)
@@ -184,13 +256,13 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         return streamGraph.getJobGraph();
     }
 
-    private StreamExecutionEnvironment getTestStreamEnv() {
+    private StreamExecutionEnvironment getTestStreamEnv(boolean triggerFailover) {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         Configuration config = new Configuration();
         config.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.STREAMING);
         env.configure(config, getClass().getClassLoader());
-        env.enableCheckpointing(10, CheckpointingMode.EXACTLY_ONCE);
+        env.enableCheckpointing(1000, CheckpointingMode.EXACTLY_ONCE);
 
         if (triggerFailover) {
             env.setRestartStrategy(RestartStrategies.fixedDelayRestart(1, Time.milliseconds(100)));
@@ -199,6 +271,20 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         }
 
         return env;
+    }
+
+    private String initSourceFolder(boolean isPartitioned, String deltaTablePath) {
+        try {
+            if (isPartitioned) {
+                DeltaTestUtils.initTestForPartitionedTable(deltaTablePath);
+            } else {
+                DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+            }
+
+            return deltaTablePath;
+        } catch (IOException e) {
+            throw new RuntimeException("Weren't able to setup the test dependencies", e);
+        }
     }
 
     ///////////////////////////////////////////////////////////////////////////
