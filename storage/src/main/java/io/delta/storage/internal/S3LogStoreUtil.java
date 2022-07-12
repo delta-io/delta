@@ -51,7 +51,8 @@ public class S3LogStoreUtil {
      * Subtract one from the last byte of key to get the key which is lexicographically right before key.
      */
     static String keyBefore(String key) {
-        byte[] bytes = key.getBytes();if(bytes.length == 0 || bytes[bytes.length - 1] <= 1) throw new IllegalArgumentException("Empty or invalid key: " + key);
+        byte[] bytes = key.getBytes();
+        if(bytes.length == 0 || bytes[bytes.length - 1] <= 1) throw new IllegalArgumentException("Empty or invalid key: " + key);
         bytes[bytes.length-1] -= 1;
         return new String(bytes);
     }
