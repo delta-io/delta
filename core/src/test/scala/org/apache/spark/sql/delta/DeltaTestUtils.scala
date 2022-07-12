@@ -34,6 +34,8 @@ import org.apache.spark.sql.util.QueryExecutionListener
 
 trait DeltaTestUtilsBase {
 
+  final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+
   /**
    * Helper class for to ensure initial commits contain a Metadata action.
    */
