@@ -39,4 +39,9 @@ class S3LogStoreUtilTest extends AnyFunSuite {
     assert(Seq(1.toByte, 1.toByte)
        == S3LogStoreUtil.keyBefore(new String(Seq(1.toByte, 2.toByte).toArray)).getBytes.toList)
   }
+
+  test("keyBefore with emojis") {
+    assert("♥a" == S3LogStoreUtil.keyBefore("♥b"))
+  }
+
 }
