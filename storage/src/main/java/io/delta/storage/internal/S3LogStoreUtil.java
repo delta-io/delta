@@ -40,10 +40,19 @@ public class S3LogStoreUtil {
                                 .withBucketName(s3afs.getBucket())
                                 .withMaxKeys(1000)
                                 .withPrefix(s3afs.pathToKey(parentPath))
-                                .withStartAfter(s3afs.pathToKey(resolvedPath))
+                                .withStartAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                 ), ACCEPT_ALL,
-                new Listing.AcceptAllButSelfAndS3nDirs(resolvedPath)
+                new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
         );
         return iteratorToStatuses(l, new HashSet<>());
+    }
+
+    /**
+     * Subtract one from the last byte of key to get the key which is lexicographically right before key.
+     */
+    static String keyBefore(String key) {
+        byte[] bytes = key.getBytes();if(bytes.length == 0 || bytes[bytes.length - 1] <= 1) throw new IllegalArgumentException("Empty or invalid key: " + key);
+        bytes[bytes.length-1] -= 1;
+        return new String(bytes);
     }
 }
