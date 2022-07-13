@@ -19,6 +19,7 @@ package io.delta.standalone.util;
 import org.apache.parquet.schema.MessageType;
 
 import io.delta.standalone.types.StructType;
+
 import io.delta.standalone.internal.util.SparkToParquetSchemaConverter;
 
 /**

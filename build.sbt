@@ -372,6 +372,7 @@ lazy val hive2Tez = (project in file("hive2-tez")) settings (
  * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT-javadoc.jar
  */
 lazy val standaloneCosmetic = project
+  .dependsOn(standaloneParquet)
   .settings(
     name := "delta-standalone",
     commonSettings,
@@ -404,13 +405,30 @@ def scalaCollectionPar(version: String) = version match {
     case _ => Seq()
 }
 
+/**
+ * The public API ParquetSchemaConverter exposes Parquet classes in its methods so we cannot apply
+ * shading rules on it. However, sbt-assembly doesn't allow excluding a single file. Hence, we
+ * create a separate project to skip the shading.
+ */
+lazy val standaloneParquet = (project in file("standalone-parquet"))
+  .dependsOn(standalone % "provided")
+  .settings(
+    name := "delta-standalone-parquet",
+    commonSettings,
+    skipReleaseSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+    )
+  )
+
 lazy val standalone = (project in file("standalone"))
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings(
     name := "delta-standalone-original",
     commonSettings,
     skipReleaseSettings,
-    mimaSettings,
+    mimaSettings, // TODO(scott): move this to standaloneCosmetic
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(

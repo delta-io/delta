@@ -15,7 +15,6 @@
  */
 
 import com.typesafe.tools.mima.core._
-import com.typesafe.tools.mima.core.ProblemFilters._
 
 /**
  * The list of Mima errors to exclude in the Standalone project.
@@ -41,7 +40,11 @@ object StandaloneMimaExcludes {
 
     // Public API changes in 0.4.0 -> 0.5.0
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getVersionBeforeOrAtTimestamp"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getVersionAtOrAfterTimestamp")
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getVersionAtOrAfterTimestamp"),
+
+    // ParquetSchemaConverter etc. were moved to project standalone-parquet
+    ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.util.ParquetSchemaConverter"),
+    ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.util.ParquetSchemaConverter$ParquetOutputTimestampType")
 
     // scalastyle:on line.size.limit
   )

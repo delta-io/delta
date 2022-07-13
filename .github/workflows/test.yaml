@@ -33,7 +33,7 @@ jobs:
         run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
         if: startsWith(matrix.scala, '2.12.')
       - name: Run Delta Standalone tests
-        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test
+        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test
       - name: Run Hive 3 tests
         run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
       - name: Run Hive 2 tests

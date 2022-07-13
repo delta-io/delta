@@ -313,7 +313,7 @@ private[standalone] class SparkToParquetSchemaConverter(
   }
 }
 
-private[internal] object ParquetSchemaConverter {
+private object ParquetSchemaConverter {
   val SPARK_PARQUET_SCHEMA_NAME = "spark_schema"
 
   val EMPTY_MESSAGE: MessageType =
