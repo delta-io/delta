@@ -5,6 +5,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.s3a.{S3AFileSystem, UploadInfo}
 import org.scalatest.Tag
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalactic.source
 
 import java.net.URI
 import java.nio.file.Paths
@@ -13,8 +14,10 @@ import scala.math.ceil
 import scala.math.round
 
 class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
-  private val bucket = "some-bucket"
-  private val keyPrefix = "s3_log_store_util_test"
+  private val runIntegrationTests: Boolean =
+    System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED").toBoolean
+  private val bucket = System.getenv("S3_LOG_STORE_UTIL_TEST_BUCKET")
+  private val keyPrefix = System.getenv("S3_LOG_STORE_UTIL_TEST_KEY_PREFIX")
   private val fs = new S3AFileSystem()
   private val configuration = new Configuration()
   configuration.set( // for local testing only
@@ -37,9 +40,10 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private def version(path: Path): Int
   = path.getName.takeWhile(_ != '.').toInt
 
-  private val integrationTestTag = Tag("integration-test")
+  private val integrationTestTag = Tag("IntegrationTest")
 
-  def integrationTest(name: String)(testFun: => Any): Unit = test(name, integrationTestTag)(testFun)
+  def integrationTest(name: String)(testFun: => Any)(implicit pos: source.Position): Unit =
+    if (runIntegrationTests) test(name, integrationTestTag)(testFun)(pos)
 
   integrationTest("setup delta logs") {
     val uploads = Seq(
