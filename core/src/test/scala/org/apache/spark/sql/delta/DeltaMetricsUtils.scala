@@ -48,26 +48,31 @@ object DeltaMetricsUtils
   def checkOperationMetrics(
       expectedMetrics: Map[String, Long],
       operationMetrics: Map[String, Long]): Unit = {
-
     val sep = System.lineSeparator() * 2
     val failMessages = expectedMetrics.flatMap { case (metric, expectedValue) =>
-      val metricAbsent = if (!operationMetrics.contains(metric)) {
+      // Check missing metrics.
+      var errMsg = if (!operationMetrics.contains(metric)) {
         Some(
           s"""The recorded operation metrics does not contain metric: $metric"
-             | ExpectedMetrics = ${expectedMetrics}
-             | ActualMetrics = ${operationMetrics}
+             | ExpectedMetrics = $expectedMetrics
+             | ActualMetrics = $operationMetrics
              |""".stripMargin)
       } else {
         None
       }
-      val negativeMetric =
-        if (operationMetrics.contains(metric) && operationMetrics(metric) < 0) {
+
+      // Check negative values.
+      errMsg = errMsg.orElse {
+        if (operationMetrics(metric) < 0) {
           Some(s"Invalid non-positive value for metric $metric: ${operationMetrics(metric)}")
         } else {
           None
         }
-      val wrongValue =
-        if (operationMetrics.contains(metric) && expectedValue != operationMetrics(metric)) {
+      }
+
+      // Check unexpected values.
+      errMsg = errMsg.orElse {
+        if (expectedValue != operationMetrics(metric)) {
           Some(
             s"""The recorded metric for $metric does not equal the expected value.
                | Expected = ${expectedMetrics(metric)}
@@ -78,7 +83,8 @@ object DeltaMetricsUtils
         } else {
           None
         }
-      metricAbsent ++ negativeMetric ++ wrongValue
+      }
+      errMsg
     }.mkString(sep, sep, sep).trim
     assert(failMessages.isEmpty)
   }

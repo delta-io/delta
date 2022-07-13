@@ -97,6 +97,7 @@ object DeltaOperations {
         strMetrics -= "numCopiedRows"
         strMetrics -= "numAddedFiles"
       }
+
       strMetrics
     }
     override def changesData: Boolean = true
