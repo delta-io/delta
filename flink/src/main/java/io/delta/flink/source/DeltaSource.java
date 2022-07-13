@@ -25,8 +25,8 @@ import io.delta.standalone.actions.AddFile;
  * <pre>
  *     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
  *     ...
- *     // {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED} mode.
- *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.boundedRowDataSourceBuilder(
+ *     // Bounded mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.forBoundedRowData(
  *                new Path("s3://some/path"),
  *                new Configuration()
  *             )
@@ -36,8 +36,8 @@ import io.delta.standalone.actions.AddFile;
  *     env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source")
  *
  *     ..........
- *     // {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode.
- *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.continuousRowDataSourceBuilder(
+ *     // Continuous mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.forContinuousRowData(
  *                new Path("s3://some/path"),
  *                new Configuration()
  *               )
@@ -53,8 +53,8 @@ import io.delta.standalone.actions.AddFile;
  * <pre>
  *     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
  *     ...
- *     // {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED} mode.
- *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.boundedRowDataSourceBuilder(
+ *     // Bounded mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.forBoundedRowData(
  *                new Path("s3://some/path"),
  *                new Configuration()
  *             )
@@ -65,8 +65,8 @@ import io.delta.standalone.actions.AddFile;
  *     env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source")
  *
  *     ..........
- *     // {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode.
- *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.continuousRowDataSourceBuilder(
+ *     // Continuous mode.
+ *     DeltaSource&lt;RowData&gt; deltaSink = DeltaSource.forContinuousRowData(
  *                new Path("s3://some/path"),
  *                new Configuration()
  *               )
@@ -111,6 +111,12 @@ public class DeltaSource<T> extends DeltaSourceInternal<T> {
         super(tablePath, readerFormat, splitEnumeratorProvider, configuration, sourceConfiguration);
     }
 
+    /**
+     * Creates an instance of Delta source builder for Bounded mode and for {@code RowData}
+     * elements.
+     * @param tablePath Path to Delta table to read data from.
+     * @param hadoopConfiguration Hadoop configuration.
+     */
     public static RowDataBoundedDeltaSourceBuilder forBoundedRowData(
             Path tablePath,
             Configuration hadoopConfiguration) {
@@ -121,6 +127,12 @@ public class DeltaSource<T> extends DeltaSourceInternal<T> {
             new BoundedSnapshotSupplierFactory());
     }
 
+    /**
+     * Creates an instance of Delta source builder for Continuous mode and for {@code RowData}
+     * elements.
+     * @param tablePath Path to Delta table to read data from.
+     * @param hadoopConfiguration Hadoop configuration.
+     */
     public static RowDataContinuousDeltaSourceBuilder forContinuousRowData(
             Path tablePath,
             Configuration hadoopConfiguration) {

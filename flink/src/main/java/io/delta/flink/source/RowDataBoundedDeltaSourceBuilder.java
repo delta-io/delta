@@ -15,8 +15,8 @@ import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION;
 
 /**
- * A builder class for {@link DeltaSource} for a stream of {@link RowData}. Created source instance
- * will operate in {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED} mode.
+ * A builder class for {@link DeltaSource} for a stream of {@link RowData} where the created source
+ * instance will operate in Bounded mode.
  * <p>
  * For most common use cases use {@link DeltaSource#forBoundedRowData} utility method to instantiate
  * the source. After instantiation of this builder you can either call {@link
