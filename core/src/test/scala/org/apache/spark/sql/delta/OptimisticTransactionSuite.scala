@@ -124,7 +124,7 @@ class OptimisticTransactionSuite
     errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
 
   check(
-    "add / read + write with ignoreReadChanges",
+    "add / read + write with ignoreReadChanges = true",
     conflicts = false,
     setup = Seq(
       Metadata(
@@ -137,10 +137,7 @@ class OptimisticTransactionSuite
     ),
     concurrentWrites = Seq(
       AddFile("a", Map("x" -> "1"), 1, 1, dataChange = true)),
-    actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)),
-    // commit info should show operation as truncate, because that's the operation used by the
-    // harness
-    errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
+    actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)))
 
   check(
     "add / read + no write",  // no write = no real conflicting change even though data was added

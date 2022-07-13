@@ -494,11 +494,12 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
         !isLastCommitBlindAppend,
         "joining with target table in the query should have isBlindAppend = false")
 
-      // Join with the table should have isBlindAppend = false if ignoreReadChanges option is set
+      // Join with the table should have isBlindAppend = true if ignoreReadChanges = true
       appendToTable(inputDataStream.join(tableData, "value"), Map("ignoreReadChanges" -> "true"))
       assert(
         isLastCommitBlindAppend,
-        "joining with target table in the query should respect isBlindAppend = true option")
+        "joining with target table in the query should have isBlindAppend = true" +
+          " if ignoreReadChanges = true")
     }
   }
 
