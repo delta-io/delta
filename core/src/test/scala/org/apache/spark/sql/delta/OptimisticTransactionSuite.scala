@@ -124,6 +124,25 @@ class OptimisticTransactionSuite
     errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
 
   check(
+    "add / read + write with ignoreReadChanges",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"))
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(1)) :: Nil),
+      t => t.ignoreReadChanges()
+    ),
+    concurrentWrites = Seq(
+      AddFile("a", Map("x" -> "1"), 1, 1, dataChange = true)),
+    actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)),
+    // commit info should show operation as truncate, because that's the operation used by the
+    // harness
+    errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
+
+  check(
     "add / read + no write",  // no write = no real conflicting change even though data was added
     conflicts = false,        // so this should not conflict
     setup = Seq(

@@ -107,7 +107,8 @@ private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
     winningCommitVersion: Long,
-    isolationLevel: IsolationLevel) extends DeltaLogging {
+    isolationLevel: IsolationLevel,
+    ignoreReadChanges: Boolean) extends DeltaLogging {
 
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
@@ -124,8 +125,10 @@ private[delta] class ConflictChecker(
   def checkConflicts(): CurrentTransactionInfo = {
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
-    checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
-    checkForDeletedFilesAgainstCurrentTxnReadFiles()
+    if (!ignoreReadChanges) {
+      checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
+      checkForDeletedFilesAgainstCurrentTxnReadFiles()
+    }
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
     logMetrics()
