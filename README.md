@@ -58,7 +58,7 @@ We welcome contributions to Delta Lake Connectors repository. We use [GitHub Pul
 There are two mediums of communication within the Delta Lake community.
 
 - Public Slack Channel
-  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtNTY1NDg0ODcxOTI1LWJkZGU3ZmQ3MjkzNmY2ZDM0NjNlYjE4MWIzYjg2OWM1OTBmMWIxZTllMjg3ZmJkNjIwZmE1ZTZkMmQ0OTk5ZjA)
+  - [Register here](https://go.delta.io/slack)
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
