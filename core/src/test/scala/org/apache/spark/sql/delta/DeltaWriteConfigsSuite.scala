@@ -17,11 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
-
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
@@ -39,12 +37,12 @@ import org.apache.spark.sql.types.StringType
  * - using table name or table path
  * X
  * - CREATE or REPLACE or CREATE OR REPLACE (table already exists) OR CREATE OR REPLACE (table
- *   doesn't already exist)
+ * doesn't already exist)
  *
  * At the end of the test suite, it prints out summary tables all of the cases above.
  */
 class DeltaWriteConfigsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession with DeltaSQLCommandTest {
 
   val config_no_prefix = "dataSkippingNumIndexedCols"
   val config_no_prefix_value = "33"
@@ -96,7 +94,6 @@ class DeltaWriteConfigsSuite extends QueryTest
     // scalastyle:on println
     super.afterAll()
   }
-
 
 
   private val dfw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
@@ -574,30 +571,29 @@ class DeltaWriteConfigsSuite extends QueryTest
       }
     }
   }
-
 }
+
 // Need to be outside to be stable references for Spark to generate the case classes
 case class DeltaFrameStreamAPITestOutput(outputLocation: String,
-                                         outputMode: String,
-                                         containsNoPrefixOption: Boolean,
-                                         containsPrefixOption: Boolean,
-                                         config: String)
+    outputMode: String,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    config: String)
 
 case class DeltaTableBuilderAPITestOutput(outputLocation: String,
-                                          outputMode: String,
-                                          containsNoPrefixOptionLowerCase: Boolean,
-                                          containsNoPrefixOption: Boolean,
-                                          containsPrefixOption: Boolean,
-                                          error: Boolean,
-                                          config: String)
+    outputMode: String,
+    containsNoPrefixOptionLowerCase: Boolean,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    error: Boolean,
+    config: String)
 
 case class SQLAPIOutput(outputLocation: String,
-                        confiInput: String,
-                        sqlOperation: String,
-                        asSelect: Boolean,
-                        containsOptionNoPrefix: String,
-                        containsOptionPrefix: String,
-                        containsTblPropertiesNoPrefix: String,
-                        containsTblPropertiesPrefix: String,
-                        config: String
-                       )
+    confiInput: String,
+    sqlOperation: String,
+    asSelect: Boolean,
+    containsOptionNoPrefix: String,
+    containsOptionPrefix: String,
+    containsTblPropertiesNoPrefix: String,
+    containsTblPropertiesPrefix: String,
+    config: String)
