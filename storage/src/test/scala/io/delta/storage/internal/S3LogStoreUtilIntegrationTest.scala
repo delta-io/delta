@@ -37,7 +37,11 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private def version(path: Path): Int
   = path.getName.takeWhile(_ != '.').toInt
 
-  test("setup delta logs") {
+  private val integrationTestTag = Tag("integration-test")
+
+  def integrationTest(name: String)(testFun: => Any): Unit = test(name, integrationTestTag)(testFun)
+
+  integrationTest("setup delta logs") {
     val uploads = Seq(
       touch(s"$keyPrefix/empty/some.json"),
       touch(s"$keyPrefix/small/_delta_log/%020d.json".format(1)),
@@ -49,13 +53,13 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     uploads.foreach(_.getUpload.waitForUploadResult())
   }
 
-  test("empty") {
+  integrationTest("empty") {
     val resolvedPath = path("empty", 0)
     val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
     assert(response.isEmpty)
   }
 
-  test("small") {
+  integrationTest("small") {
     Seq(0, 1, 2, 3).foreach(v => {
       val resolvedPath = path("small", v)
       val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
@@ -63,7 +67,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     })
   }
 
-  test("medium") {
+  integrationTest("medium") {
     Seq(1, 2, 3, 5, 10, 11, 12).foreach(v => {
       val resolvedPath = path("medium", v)
       val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
@@ -71,7 +75,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     })
   }
 
-  test("large") {
+  integrationTest("large") {
     Seq(0, 1, 3, 5, 500, 998, 999, 1000, 1001).foreach(v => {
       val resolvedPath = path("large", v)
       val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
@@ -79,7 +83,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     })
   }
 
-  test("xlarge, also verify number of list requests") {
+  integrationTest("xlarge, also verify number of list requests") {
     Seq(0, 1, 999, 2999, 5001, 9998, 9999, 10000, 10001).foreach(v => {
       val startCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
