@@ -64,7 +64,8 @@ case class UpdateCommand(
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
-    "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated")
+    "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
+    "numTouchedRows" -> createMetric(sc, "number of rows touched (copied + updated)")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -181,12 +182,23 @@ case class UpdateCommand(
       metrics("scanTimeMs").set(scanTimeMs)
       metrics("rewriteTimeMs").set(rewriteTimeMs)
       // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
-      // the BasicWriteStatsTracker. This is for case #2 where the entire partition is re-written.
+      // the BasicWriteStatsTracker. This is for case 2 where the update condition contains only
+      // metadata predicates and so the entire partition is re-written.
       val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
-      if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
-        metrics("numUpdatedRows").set(outputRows)
+      if (metrics("numUpdatedRows").value == 0 && outputRows != 0 &&
+        metrics("numCopiedRows").value == 0) {
+        // We know that numTouchedRows = numCopiedRows + numUpdatedRows.
+        // Since an entire partition was re-written, no rows were copied.
+        // So numTouchedRows == numUpdateRows
+        metrics("numUpdatedRows").set(metrics("numTouchedRows").value)
+      } else {
+        // This is for case 3 where the update condition contains both metadata and data predicates
+        // so relevant files will have some rows updated and some rows copied. We don't need to
+        // consider case 1 here, where no files match the update condition, as we know that
+        // `totalActions` is empty.
+        metrics("numCopiedRows").set(
+          metrics("numTouchedRows").value - metrics("numUpdatedRows").value)
       }
-      metrics("numCopiedRows").set(outputRows - metrics("numUpdatedRows").value)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(totalActions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
@@ -231,11 +243,21 @@ case class UpdateCommand(
     val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
     val targetDf = Dataset.ofRows(spark, newTarget)
 
+    // Number of total rows that we have seen, i.e. are either copying or updating (sum of both).
+    // This will be used later, along with numUpdatedRows, to determine numCopiedRows.
+    val numTouchedRows = metrics("numTouchedRows")
+    val numTouchedRowsUdf = udf { () =>
+      numTouchedRows += 1
+      true
+    }.asNondeterministic()
+
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
       target,
       updateExpressions,
       condition,
-      targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition)),
+      targetDf
+        .filter(numTouchedRowsUdf())
+        .withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition)),
       UpdateCommand.shouldOutputCdc(txn))
 
     txn.writeFiles(updatedDataFrame)
