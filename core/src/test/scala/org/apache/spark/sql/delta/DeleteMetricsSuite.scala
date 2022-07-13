@@ -191,6 +191,7 @@ class DeleteMetricsSuite extends QueryTest
     rewriteTimeMs = 0
   )
 
+
   testDeleteMetrics("delete from empty table") { testConfig =>
     for (where <- Seq("", "1 = 1", "1 != 1", "id > 50")) {
       def executeTest: Unit = runDeleteAndCheckMetrics(
@@ -305,7 +306,8 @@ class DeleteMetricsSuite extends QueryTest
 
   for (whereClause <- Seq("id = 0", "id >= 49 and id < 50")) {
     testDeleteMetrics(s"delete one row with where = `$whereClause`") { testConfig =>
-      val numRemovedFiles = 1
+      var numAddedFiles = 1
+      var numRemovedFiles = 1
       val numRemovedRows = 1
       var numCopiedRows = 19
       runDeleteAndCheckMetrics(
@@ -314,7 +316,7 @@ class DeleteMetricsSuite extends QueryTest
         expectedOperationMetrics = Map(
           "numCopiedRows" -> numCopiedRows,
           "numDeletedRows" -> numRemovedRows,
-          "numAddedFiles" -> 1,
+          "numAddedFiles" -> numAddedFiles,
           "numRemovedFiles" -> numRemovedFiles,
           "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) 1 else 0 }
         ),
@@ -335,9 +337,7 @@ class DeleteMetricsSuite extends QueryTest
         "numDeletedRows" -> numRemovedRows,
         "numAddedFiles" -> 0,
         "numRemovedFiles" -> numRemovedFiles,
-        "numAddedChangeFiles" -> {
-          if (testConfig.cdfEnabled) 1 else 0
-        }
+        "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) 1 else 0 }
       ),
       testConfig = testConfig
     )
@@ -355,7 +355,7 @@ class DeleteMetricsSuite extends QueryTest
   }
 
   testDeleteMetrics("delete one row per file") { testConfig =>
-    val numRemovedFiles = 5
+    var numRemovedFiles = 5
     val numRemovedRows = 5
     var numCopiedRows = 95
     var numAddedFiles = if (testConfig.partitioned) 5 else 2
@@ -367,13 +367,9 @@ class DeleteMetricsSuite extends QueryTest
         "numDeletedRows" -> numRemovedRows,
         "numAddedFiles" -> numAddedFiles,
         "numRemovedFiles" -> numRemovedFiles,
-        "numAddedChangeFiles" -> {
-          if (testConfig.cdfEnabled) {
-            if (testConfig.partitioned) 5 else 2
-          } else 0
-        }
+        "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) numAddedFiles else 0 }
       ),
-      testConfig = testConfig
+    testConfig = testConfig
     )
   }
 
