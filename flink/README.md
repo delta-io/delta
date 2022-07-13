@@ -44,8 +44,9 @@ See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink
 
 ### Known limitations
 
-- The current version only supports Flink `Datastream` API. Support for Flink Table API / SQL, along with Flink Catalog's implementation for storing Delta table's metadata in an external metastore, are planned to be added in the next releases.
-- The current version only provides Delta Lake's transactional guarantees for tables stored on HDFS and Microsoft Azure Storage.
+- The current version only supports Flink `Datastream` API. Support for Flink Table API / SQL, along with Flink Catalog's implementation for storing Delta table's metadata in an external metastore, are planned to be added in a future release.
+- For GCP Object Storage, the current version only supports reading. Writing to GCP Object Storage is not supported. This is due to Flink not supporting recoverable writes to GCS, which was added in Flink [1.15](https://issues.apache.org/jira/browse/FLINK-11838).
+- For AWS S3 storage, in order to ensure concurrent transactional writes from different clusters, use [multiclass configuration guidelines](https://docs.delta.io/latest/delta-storage.html#multi-cluster-setup). Please see [example](#3-sink-creation-with-multi-cluster-support-for-delta-standalone) for how to use this configuration in Flink Delta Sink. 
 
 ## Delta Sink
 
@@ -101,12 +102,6 @@ write data to a partitioned table using one partitioning column `surname`.
 import io.delta.flink.sink.DeltaBucketAssigner;
 import io.delta.flink.sink.DeltaSinkBuilder;
 
-public static final RowType ROW_TYPE = new RowType(Arrays.asList(
-    new RowType.RowField("name", new VarCharType(VarCharType.MAX_LENGTH)),
-    new RowType.RowField("surname", new VarCharType(VarCharType.MAX_LENGTH)),
-    new RowType.RowField("age", new IntType())
-));
-
 public DataStream<RowData> createDeltaSink(
         DataStream<RowData> stream,
         String deltaTablePath) {
@@ -117,6 +112,31 @@ public DataStream<RowData> createDeltaSink(
             new Configuration(),
             rowType)
         .withPartitionColumns(partitionCols)
+        .build();
+    stream.sinkTo(deltaSink);
+    return stream;
+}
+```
+#### 3. Sink creation with multi cluster support for Delta standalone
+In this example we will show how to create `DeltaSink` with [multi-cluster configuration](https://docs.delta.io/latest/delta-storage.html#multi-cluster-setup).
+
+```java
+public DataStream<RowData> createDeltaSink(
+        DataStream<RowData> stream,
+        String deltaTablePath) {
+    String[] partitionCols = { "surname" };
+
+    Configuration configuration = new Configuration();
+    configuration.set("spark.hadoop.fs.s3a.access.key", "USE_YOUR_S3_ACCESS_KEY_HERE");
+    configuration.set("spark.hadoop.fs.s3a.secret.key", "USE_YOUR_S3_SECRET_KEY_HERE");
+    configuration.set("spark.delta.logStore.s3a.impl", "io.delta.storage.S3DynamoDBLogStore");
+    configuration.set("spark.io.delta.storage.S3DynamoDBLogStore.ddb.region", "eu-central-1");
+        
+    DeltaSink<RowData> deltaSink = DeltaSink
+        .forRowData(
+            new Path(deltaTablePath),
+            configuration,
+            rowType)
         .build();
     stream.sinkTo(deltaSink);
     return stream;
