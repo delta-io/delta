@@ -1,5 +1,6 @@
-package io.delta.storage.internal
+package io.delta.storage.integration
 
+import io.delta.storage.internal.S3LogStoreUtil
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.s3a.{S3AFileSystem, UploadInfo}
