@@ -20,6 +20,7 @@ package io.delta.tables
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
@@ -28,7 +29,6 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
-import java.io.File
 
 class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
@@ -453,7 +453,6 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         }
       }
     }
-
   }
 
 }
