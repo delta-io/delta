@@ -17,9 +17,11 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
+
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
