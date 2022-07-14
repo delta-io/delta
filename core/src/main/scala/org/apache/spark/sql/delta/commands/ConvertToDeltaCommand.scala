@@ -677,15 +677,15 @@ object ConvertToDeltaCommand {
       DeltaColumnMapping.getPhysicalName(f)
     }).getOrElse(Nil)
     val file = targetFile.fileStatus
-    val path = file.getPath
+    val path = file.getHadoopPath
     val partition = targetFile.partitionValues.getOrElse {
       // partition values are not provided by the source table format, so infer from the file path
-      val pathStr = file.getPath.toUri.toString
+      val pathStr = file.getHadoopPath.toUri.toString
       val dateFormatter = DateFormatter()
       val timestampFormatter =
         TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
       val resolver = conf.resolver
-      val dir = if (file.isDir) file.getPath else file.getPath.getParent
+      val dir = if (file.isDir) file.getHadoopPath else file.getHadoopPath.getParent
       val (partitionOpt, _) = PartitionUtils.parsePartition(
         dir,
         typeInference = false,

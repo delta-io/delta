@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
+import java.util.Objects
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
@@ -26,7 +27,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
@@ -657,6 +658,48 @@ object SnapshotManagement {
         s"file version: $v to compute Snapshot")
     }
   }
+}
+
+/** A serializable variant of HDFS's FileStatus. */
+case class SerializableFileStatus(
+    path: String,
+    length: Long,
+    isDir: Boolean,
+    modificationTime: Long) {
+
+  // Important note! This is very expensive to compute, but we don't want to cache it
+  // as a `val` because Paths internally contain URIs and therefore consume lots of memory.
+  def getHadoopPath: Path = new Path(path)
+
+  def toFileStatus: FileStatus = {
+    new LocatedFileStatus(
+      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
+      Array.empty[BlockLocation])
+  }
+
+  override def equals(obj: Any): Boolean = obj match {
+    case other: SerializableFileStatus =>
+      // We only compare the paths to stay consistent with FileStatus.equals.
+      Objects.equals(path, other.path)
+    case _ => false
+  }
+
+  override def hashCode(): Int = {
+    // We only use the path to stay consistent with FileStatus.hashCode.
+    Objects.hashCode(path)
+  }
+}
+
+object SerializableFileStatus {
+  def fromStatus(status: FileStatus): SerializableFileStatus = {
+    SerializableFileStatus(
+      Option(status.getPath).map(_.toString).orNull,
+      status.getLen,
+      status.isDirectory,
+      status.getModificationTime)
+  }
+
+  val EMPTY: SerializableFileStatus = fromStatus(new FileStatus())
 }
 
 /**
