@@ -17,6 +17,7 @@
 package io.delta.tables
 
 import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
 import io.delta.tables.execution._
 import org.apache.spark.annotation._
