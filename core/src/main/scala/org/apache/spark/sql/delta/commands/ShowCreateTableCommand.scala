@@ -15,6 +15,7 @@
  */
 
 package org.apache.spark.sql.delta.commands
+
 import org.apache.hadoop.fs.Path
 
 import scala.collection.JavaConverters._
@@ -25,6 +26,7 @@ import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Table, TableCatalog}
 import org.apache.spark.sql.catalyst.util.escapeSingleQuotedString
 import org.apache.spark.sql.delta.DeltaErrors.cannotShowCreateGeneratedColumnsProperty
+import org.apache.spark.sql.delta.DeltaTableIdentifier
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -40,17 +42,17 @@ import scala.collection.mutable.ArrayBuffer
  * from [https://github.com/apache/spark/blob/branch-3.3/
  * sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/v2/ShowCreateTableExec.scala]
  */
-case class ShowCreateTableCommand(table: Option[TableIdentifier])
+case class ShowCreateTableCommand(tableID: DeltaTableIdentifier)
   extends LeafRunnableCommand with DeltaCommand {
 
-  case class ShowCreateTableOutput(ddl: String)
+  case class ShowCreateTableOutput(createtab_stmt: String)
 
   override val output: Seq[Attribute] = ExpressionEncoder[ShowCreateTableOutput]().
     schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val builder = new mutable.StringBuilder
-    val md = sparkSession.sessionState.catalog.getTableMetadata(table.get)
+    val md = sparkSession.sessionState.catalog.getTableMetadata(tableID.table.get)
     val dt = DeltaTableV2(sparkSession, new Path(md.location), Option(md))
     showCreateTable(dt, builder)
     Seq(Row(UTF8String.fromString(builder.toString)))
@@ -84,9 +86,7 @@ case class ShowCreateTableCommand(table: Option[TableIdentifier])
   }
 
   private def showTableUsing(table: Table, builder: mutable.StringBuilder): Unit = {
-    Option(table.properties.get(TableCatalog.PROP_PROVIDER))
-      .map("USING " + escapeSingleQuotedString(_) + "\n")
-      .foreach(builder.append)
+    builder.append("USING delta\n")
   }
 
   private def showTableOptions(
@@ -105,7 +105,7 @@ case class ShowCreateTableCommand(table: Option[TableIdentifier])
   private def showTablePartitioning(table: Table, builder: mutable.StringBuilder): Unit = {
     if (!table.partitioning.isEmpty) {
       val transforms = new ArrayBuffer[String]
-      table.partitioning.map {t =>
+      table.partitioning.map { t =>
         transforms += t.describe()
       }
       if (transforms.nonEmpty) {

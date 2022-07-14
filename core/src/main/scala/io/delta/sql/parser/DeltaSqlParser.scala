@@ -199,11 +199,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitShowCreateTable(ctx: DeltaSqlBaseParser.ShowCreateTableContext): LogicalPlan = withOrigin(ctx) {
     val tableIdentifier = visitTableIdentifier(ctx.table)
-    if (DeltaLog.forTable(SparkSession.active, tableIdentifier).tableExists) {
-      ShowCreateTableCommand(Option(tableIdentifier))
-    } else {
-      null
-    }
+    val spark = SparkSession.active
+    DeltaTableIdentifier(spark, tableIdentifier).map { id =>
+      ShowCreateTableCommand(id)
+    }.orNull
   }
 
   override def visitDescribeDeltaHistory(

@@ -17,7 +17,8 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.QueryTest
+
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -28,100 +29,89 @@ import scala.reflect.io.Directory
 class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   test(testName = "Test DDL Output for External Table SHOW CREATE TABLE") {
-    withTempDir {  foo =>
-      val table = "external_table"
-      val fooPath = foo.getCanonicalPath
-      sql(s"CREATE TABLE `$table` (id LONG) USING delta LOCATION '$fooPath'")
-      val ddl = getShowCreateTable(table)
-      assert(ddl.contains("CREATE TABLE"))
-      assert(ddl.contains("'external' = 'true'"))
-      assert(ddl.contains(s"LOCATION 'file:$fooPath'"))
-      assert(ddl.contains("USING delta"))
+    withTempDir { foo =>
+      withTable("external_table") {
+        val table = "external_table"
+        val fooPath = foo.getCanonicalPath
+        sql(s"CREATE TABLE `$table` (id LONG) USING delta LOCATION '$fooPath'")
+        val ddl = getShowCreateTable(table)
+        assert(ddl.contains("CREATE TABLE"))
+        assert(ddl.contains("'external' = 'true'"))
+        assert(ddl.contains(s"LOCATION 'file:$fooPath'"))
+        assert(ddl.contains("USING delta"))
+      }
     }
   }
 
   test(testName = "Test DDL Output for Managed Table SHOW CREATE TABLE") {
     val table = "managed_table"
-    sql(s"CREATE TABLE `$table` (id LONG) USING delta")
-    val ddl = getShowCreateTable(table)
-    assert(ddl.contains("CREATE TABLE"))
-    assert(!ddl.contains("'external' = 'false'"))
-    assert(ddl.contains("'Type' = 'MANAGED'"))
-    assert(ddl.contains("USING delta"))
-    deleteTableAndData(table)
+    withTable(table) {
+      sql(s"CREATE TABLE `$table` (id LONG) USING delta")
+      val ddl = getShowCreateTable(table)
+      assert(ddl.contains("CREATE TABLE"))
+      assert(!ddl.contains("'external' = 'false'"))
+      assert(ddl.contains("'Type' = 'MANAGED'"))
+      assert(ddl.contains("USING delta"))
+    }
   }
 
   test(testName = "Test Recreate table using DDL SHOW CREATE TABLE") {
     val table = "managed_table"
-    sql(s"CREATE TABLE `$table` (id LONG) USING delta")
-    val ddl = getShowCreateTable(table)
-    deleteTableAndData(table)
-    sql(ddl)
-    deleteTableAndData(table)
+    var ddl = ""
+    withTable(table) {
+      sql(s"CREATE TABLE `$table` (id LONG) USING delta")
+      ddl = getShowCreateTable(table)
+    }
+
+    withTable(table) {
+      sql(ddl)
+    }
   }
 
   test(testName = "Test DDL Idempotency SHOW CREATE TABLE") {
     val table = "managed_table"
-    sql(s"CREATE TABLE `$table` (id LONG) USING delta")
-    val ddl = getShowCreateTable(table)
-    deleteTableAndData(table)
-    sql(ddl)
-    val ddl1 = getShowCreateTable(table)
-    deleteTableAndData(table)
+    var ddl, ddl1 = ""
+    withTable(table) {
+      sql(s"CREATE TABLE `$table` (id LONG) USING delta")
+      ddl = getShowCreateTable(table)
+    }
+
+    withTable(table) {
+      sql(ddl)
+      ddl1 = getShowCreateTable(table)
+    }
     assert(ddl1.equals(ddl)) // table DDL are the same
   }
 
   test(testName = "Test DDL Comment SHOW CREATE TABLE") {
     val table = "managed_table"
     val comment = "This is a random comment on the table"
-    sql(s"CREATE TABLE `$table` (id LONG) USING delta COMMENT '$comment'")
-    val ddl = getShowCreateTable(table)
-    deleteTableAndData(table)
-    assert(ddl.contains(s"COMMENT '$comment'"))
+    withTable(table) {
+      sql(s"CREATE TABLE `$table` (id LONG) USING delta COMMENT '$comment'")
+      val ddl = getShowCreateTable(table)
+      assert(ddl.contains(s"COMMENT '$comment'"))
+    }
   }
 
   test(testName = "Test DDL Partition SHOW CREATE TABLE") {
     val table = "managed_table"
-    sql(
-      s"""CREATE TABLE $table (id INT, name STRING, age INT) USING delta
-         | PARTITIONED BY (age)""".stripMargin)
-    val ddl = getShowCreateTable(table)
-    assert(ddl.contains("PARTITIONED BY (age)"))
-    deleteTableAndData(table)
+    withTable(table) {
+      sql(
+        s"""CREATE TABLE $table (id INT, name STRING, age INT) USING delta
+           | PARTITIONED BY (age)""".stripMargin)
+      val ddl = getShowCreateTable(table)
+      assert(ddl.contains("PARTITIONED BY (age)"))
+    }
   }
 
   test(testName = "Test DDL Random Table Property SHOW CREATE TABLE") {
     val table = "managed_table"
-    sql(
-      s"""CREATE TABLE $table (id INT, name STRING, age INT) USING delta
-         | PARTITIONED BY (age) TBLPROPERTIES
-         | ('foo'='bar','bar'='foo')""".stripMargin)
-    val ddl = getShowCreateTable(table)
-    deleteTableAndData(table)
-    assert(ddl.contains("PARTITIONED BY (age)"))
-    assert(ddl.contains("TBLPROPERTIES"))
-    assert(ddl.contains("'foo' = 'bar'"))
-    assert(ddl.contains("'bar' = 'foo'"))
-  }
-
-  test(testName = "Test DDL with full variations SHOW CREATE TABLE") {
-    withTempDir { foo =>
-      val table = "some_external_table"
-      val fooPath = foo.getCanonicalPath
+    withTable(table) {
       sql(
-        s"""CREATE TABLE $table (id INT COMMENT "some id", name STRING, age INT) USING delta
-           | LOCATION "$fooPath"
-           | PARTITIONED BY (age)
-           | TBLPROPERTIES
-           | ('foo'='bar','bar'='foo')
-           | COMMENT "some comment"""".stripMargin)
+        s"""CREATE TABLE $table (id INT, name STRING, age INT) USING delta
+           | PARTITIONED BY (age) TBLPROPERTIES
+           | ('foo'='bar','bar'='foo')""".stripMargin)
       val ddl = getShowCreateTable(table)
-      deleteTableAndData(table)
-      assert(ddl.contains("CREATE TABLE"))
-      assert(ddl.contains("`id` INT COMMENT 'some id'"))
-      assert(ddl.contains("'Type' = 'EXTERNAL'"))
-      assert(ddl.contains(s"LOCATION 'file:$fooPath'"))
-      assert(ddl.contains("USING delta"))
       assert(ddl.contains("PARTITIONED BY (age)"))
       assert(ddl.contains("TBLPROPERTIES"))
       assert(ddl.contains("'foo' = 'bar'"))
@@ -129,67 +119,105 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
+  test(testName = "Test DDL Random Option SHOW CREATE TABLE") {
+    val table = "managed_table"
+    withTable(table) {
+      sql(
+        s"""CREATE TABLE $table (id INT, name STRING, age INT) USING delta
+           | OPTIONS ('foo'='bar','bar'='foo')""".stripMargin)
+      val ddl = getShowCreateTable(table)
+      assert(ddl.contains("OPTIONS"))
+      assert(ddl.contains("'foo' = 'bar'"))
+      assert(ddl.contains("'bar' = 'foo'"))
+    }
+  }
+
+  test(testName = "Test DDL with full variations SHOW CREATE TABLE") {
+    withTempDir { foo =>
+      val table = "some_external_table"
+      withTable(table) {
+        val fooPath = foo.getCanonicalPath
+        sql(
+          s"""CREATE TABLE $table (id INT COMMENT "some id", name STRING, age INT) USING delta
+             | LOCATION "$fooPath"
+             | OPTIONS ('option1'='test')
+             | PARTITIONED BY (age)
+             | TBLPROPERTIES
+             | ('foo'='bar','bar'='foo')
+             | COMMENT "some comment"""".stripMargin)
+        val ddl = getShowCreateTable(table)
+        assert(ddl.contains("CREATE TABLE"))
+        assert(ddl.contains("`id` INT COMMENT 'some id'"))
+        assert(ddl.contains("'Type' = 'EXTERNAL'"))
+        assert(ddl.contains(s"LOCATION 'file:$fooPath'"))
+        assert(ddl.contains("USING delta"))
+        assert(ddl.contains("PARTITIONED BY (age)"))
+        assert(ddl.contains("TBLPROPERTIES"))
+        assert(ddl.contains("'foo' = 'bar'"))
+        assert(ddl.contains("'bar' = 'foo'"))
+        assert(ddl.contains("OPTIONS"))
+        assert(ddl.contains("'option1' = 'test'"))
+      }
+    }
+  }
+
   test(testName = "Test Generated Column Results in Exception for SHOW CREATE TABLE") {
     val table = "people10m"
-    io.delta.tables.DeltaTable.create(spark)
-    .tableName(table)
-      .addColumn("id", "INT")
-      .addColumn("birthDate", "TIMESTAMP")
-      .addColumn(io.delta.tables.DeltaTable.columnBuilder("c2")
-                 .dataType(DateType)
-                 .generatedAlwaysAs("CAST(birthDate AS DATE)")
-                 .build())
-    .execute()
-    val e = intercept[UnsupportedOperationException] {
-      getShowCreateTable(table)
+    withTable(table) {
+      io.delta.tables.DeltaTable.create(spark)
+        .tableName(table)
+        .addColumn("id", "INT")
+        .addColumn("birthDate", "TIMESTAMP")
+        .addColumn(io.delta.tables.DeltaTable.columnBuilder("c2")
+          .dataType(DateType)
+          .generatedAlwaysAs("CAST(birthDate AS DATE)")
+          .build())
+        .execute()
+      val e = intercept[UnsupportedOperationException] {
+        getShowCreateTable(table)
+      }
+      assert(e.getMessage.contains("contains generated columns"))
     }
-    deleteTableAndData(table)
-    assert(e.getMessage.contains("contains generated columns"))
-
   }
 
   test(testName = "Test DDL with full variations Recreate from DDL SHOW CREATE TABLE") {
+    val table = "some_external_table"
+    var ddl = ""
     withTempDir { foo =>
-      val table = "some_external_table"
       val fooPath = foo.getCanonicalPath
-      sql(
-        s"""CREATE TABLE $table (id INT COMMENT "some id", name STRING, age INT) USING delta
-           | LOCATION "$fooPath"
-           | PARTITIONED BY (age)
-           | TBLPROPERTIES
-           | ('foo'='bar','bar'='foo')
-           | COMMENT "some comment"""".stripMargin)
-      val ddl = getShowCreateTable(table)
-      deleteTableAndData(table)
-      sql(ddl)
-      val ddl1 = getShowCreateTable(table)
-      assert(ddl.equals(ddl1))
+      withTable(table) {
+        sql(
+          s"""CREATE TABLE $table (id INT COMMENT "some id", name STRING, age INT) USING delta
+             | LOCATION "$fooPath"
+             | PARTITIONED BY (age)
+             | TBLPROPERTIES
+             | ('foo'='bar','bar'='foo')
+             | COMMENT "some comment"""".stripMargin)
+        ddl = getShowCreateTable(table)
+      }
+
+      // delete the underlying external table
+      val directory = new Directory(new File(fooPath))
+      directory.deleteRecursively()
+
+      withTable(table) {
+        sql(ddl)
+        val ddl1 = getShowCreateTable(table)
+        assert(ddl.equals(ddl1))
+      }
     }
   }
 
 
   /**
-   * Delete managed table and ensure that the disk cleanup occurs
-   * right away so the table can be immediately recreated
-   * @param tableName name of the table
-   */
-  def deleteTableAndData(tableName: String): Unit = {
-    val ddf = sql(s"DESCRIBE FORMATTED $tableName")
-    val location = ddf.collect.toSeq.filter(x =>
-      x.get(0).toString=="Location").head.get(1).toString
-    sql(s"DROP TABLE `$tableName`")
-    val directory = new Directory(new File(location.substring(5)))
-    directory.deleteRecursively()
-  }
-
-  /**
    * Helper method to get the show create table output as a string
+   *
    * @param tableName name of the table
    * @return ddl of the table
    */
   def getShowCreateTable(tableName: String): String = {
-    val df = sql(s"SHOW CREATE TABLE $tableName")
-    val rows = df.collectAsList()
-    rows.get(0).get(0).toString
+    lazy val sparkSession: SparkSession = SparkSession.active
+    import sparkSession.implicits._
+    sql(s"SHOW CREATE TABLE $tableName").as[String].collect().head
   }
 }
