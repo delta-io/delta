@@ -203,7 +203,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a column.
    *
-   * @param colName  string the column name
+   * @param colName string the column name
    * @param dataType string the DDL data type
    * @param nullable boolean whether the column is nullable
    * @since 1.0.0
