@@ -581,7 +581,7 @@ class DeltaTable(object):
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def optimize(self) -> "DeltaOptimizeBuilder":
         """
         Optimize the data layout of the table. This returns
@@ -1174,13 +1174,13 @@ class DeltaOptimizeBuilder(object):
 
     Use :py:meth:`delta.tables.DeltaTable.optimize` to create an instance of this class.
 
-    .. versionadded:: 1.3.0
+    .. versionadded:: 2.0.0
     """
     def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def where(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
         """
         Apply partition filter on this optimize command builder to limit
@@ -1194,7 +1194,7 @@ class DeltaOptimizeBuilder(object):
         self._jbuilder = self._jbuilder.where(partitionFilter)
         return self
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def executeCompaction(self) -> DataFrame:
         """
         Compact the small files in selected partitions.
@@ -1207,7 +1207,7 @@ class DeltaOptimizeBuilder(object):
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def executeZOrderBy(self, *cols: Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
         """
         Z-Order the data in selected partitions using the given columns.

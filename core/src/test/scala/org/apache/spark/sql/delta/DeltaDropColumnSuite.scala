@@ -90,6 +90,21 @@ class DeltaDropColumnSuite extends QueryTest
     }
   }
 
+  dropTest("drop column - basic - path based table") { drop =>
+    withTempDir { dir =>
+      simpleNestedData.write.mode("overwrite").format("delta").save(dir.getCanonicalPath)
+      alterTableWithProps(s"delta.`${dir.getCanonicalPath}`", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+
+      // drop single column
+      drop(s"delta.`${dir.getCanonicalPath}`", "arr" :: Nil)
+      checkAnswer(spark.read.format("delta").load(dir.getCanonicalPath),
+        simpleNestedData.drop("arr"))
+    }
+  }
+
   dropTest("dropped columns can no longer be queried") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
@@ -102,12 +117,12 @@ class DeltaDropColumnSuite extends QueryTest
       val err1 = intercept[AnalysisException] {
         spark.table("t1").where("a = 'str1'").collect()
       }.getMessage
-      assert(err1.contains("does not exist") || err1.contains("cannot resolve"))
+      assert(err1.contains("cannot be resolved") || err1.contains("cannot resolve"))
 
       val err2 = intercept[AnalysisException] {
         spark.table("t1").select("min(a)").collect()
       }.getMessage
-      assert(err2.contains("does not exist") || err2.contains("cannot resolve"))
+      assert(err2.contains("cannot be resolved") || err2.contains("cannot resolve"))
     }
   }
 

@@ -263,14 +263,14 @@ def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
 def getPrevVersion(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
-  val majorToLastMinorVersions = Map(
-    0 -> 8
+  val lastVersionInMajorVersion = Map(
+    0 -> "0.8.0",
+    1 -> "1.2.1"
   )
-  if (minor == 0) {  // 1.0.0
-    val prevMinor = majorToLastMinorVersions.getOrElse(major - 1, {
-      throw new Exception(s"Last minor version of ${major - 1}.x.x not configured.")
+  if (minor == 0) {  // 1.0.0 or 2.0.0
+    lastVersionInMajorVersion.getOrElse(major - 1, {
+      throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
     })
-    s"${major - 1}.$prevMinor.0"  // 1.0.0 -> 0.8.0
   } else if (patch == 0) {
     s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
   } else {

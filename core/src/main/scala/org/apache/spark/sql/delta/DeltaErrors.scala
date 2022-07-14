@@ -2253,6 +2253,11 @@ trait DeltaErrorsBase
       errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
     )
   }
+
+  def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"SHOW COLUMNS with conflicting databases: '$db' != '${tableID.database.get}'")
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

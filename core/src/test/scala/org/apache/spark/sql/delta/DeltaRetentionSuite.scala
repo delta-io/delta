@@ -60,7 +60,7 @@ class DeltaRetentionSuite extends QueryTest
 
       val initialFiles = getLogFiles(logPath)
       // Shouldn't clean up, no checkpoint, no expired files
-      log.cleanUpExpiredLogs()
+      log.cleanUpExpiredLogs(log.snapshot)
 
       assert(initialFiles === getLogFiles(logPath))
 
@@ -68,14 +68,14 @@ class DeltaRetentionSuite extends QueryTest
         intervalStringToMillis("interval 1 day"))
 
       // Shouldn't clean up, no checkpoint, although all files have expired
-      log.cleanUpExpiredLogs()
+      log.cleanUpExpiredLogs(log.snapshot)
       assert(initialFiles === getLogFiles(logPath))
 
       log.checkpoint()
 
       val expectedFiles = Seq("04.json", "04.checkpoint.parquet")
       // after checkpointing, the files should be cleared
-      log.cleanUpExpiredLogs()
+      log.cleanUpExpiredLogs(log.snapshot)
       val afterCleanup = getLogFiles(logPath)
       assert(initialFiles !== afterCleanup)
       assert(expectedFiles.forall(suffix => afterCleanup.exists(_.getName.endsWith(suffix))),
@@ -115,7 +115,7 @@ class DeltaRetentionSuite extends QueryTest
         middleStartIndex, middleStartIndex + log.checkpointInterval).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 2 day"))
-      log.cleanUpExpiredLogs()
+      log.cleanUpExpiredLogs(log.snapshot)
 
       val minDeltaFile =
         getDeltaFiles(logPath).map(f => FileNames.deltaVersion(new Path(f.toString))).min
@@ -196,7 +196,7 @@ class DeltaRetentionSuite extends QueryTest
         .filterNot(f => initialFiles.contains(f))
         .foreach(f => f.setLastModified(clock.getTimeMillis()))
 
-      log.cleanUpExpiredLogs()
+      log.cleanUpExpiredLogs(log.snapshot)
       val afterCleanup = getLogFiles(logPath)
       initialFiles.foreach { file =>
         assert(!afterCleanup.contains(file))
