@@ -15,7 +15,7 @@ import scala.math.round
 
 class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private val runIntegrationTests: Boolean =
-    System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED").toBoolean
+    Option(System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED")).exists(_.toBoolean)
   private val bucket = System.getenv("S3_LOG_STORE_UTIL_TEST_BUCKET")
   private val keyPrefix = System.getenv("S3_LOG_STORE_UTIL_TEST_KEY_PREFIX")
   private val fs = new S3AFileSystem()
