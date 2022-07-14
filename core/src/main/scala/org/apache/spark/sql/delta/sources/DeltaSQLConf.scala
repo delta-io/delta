@@ -770,7 +770,7 @@ trait DeltaSQLConfBase {
         """Whether the keys of table properties should be set to lower case.
           | Turn on this flag if you want keys of table properties not starting with delta
           | to be backward compatible when the table is created via DeltaTableBuilder
-          | Please note that if you provide an override for a default value, the case of the
+          | Please note that if you set this to true, the lower case of the
           | key property for the default value will be used.
           |""".stripMargin)
       .booleanConf
