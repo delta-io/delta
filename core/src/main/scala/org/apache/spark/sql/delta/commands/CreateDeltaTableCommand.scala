@@ -98,7 +98,6 @@ case class CreateDeltaTableCommand(
       table
     }
 
-
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
@@ -225,7 +224,6 @@ case class CreateDeltaTableCommand(
       result
     }
   }
-
 
   private def getProvidedMetadata(table: CatalogTable, schemaString: String): Metadata = {
     Metadata(
