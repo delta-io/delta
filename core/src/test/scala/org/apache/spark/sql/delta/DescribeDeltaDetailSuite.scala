@@ -52,21 +52,19 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       .format("delta")
       .partitionBy("column1")
       .save(tempDir.toString())
+
+    // Check SQL details
     checkResult(
       sql(s"DESCRIBE DETAIL ${f(tempDir)}"),
       Seq("delta", Array("column1"), 1),
       Seq("format", "partitionColumns", "numFiles"))
-  }
 
-  test("delta table: Scala details using table path") {
-    val tempDir = Utils.createTempDir().toString
-    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
-
-    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir)
-    checkAnswer(
-      deltaTable.details().select("format"),
-      Seq(Row("delta"))
-    )
+    // Check Scala details
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.toString)
+    checkResult(
+      deltaTable.details(),
+      Seq("delta", Array("column1"), 1),
+      Seq("format", "partitionColumns", "numFiles"))
   }
 
   test("delta table: Scala details using table name") {
@@ -81,11 +79,11 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  test("delta table: SQL details using table path") {
+  test("delta table: path") {
     describeDeltaDetailTest(f => s"'${f.toString()}'")
   }
 
-  test("delta table: SQL details using table identifier") {
+  test("delta table: delta table identifier") {
     describeDeltaDetailTest(f => s"delta.`${f.toString()}`")
   }
 
