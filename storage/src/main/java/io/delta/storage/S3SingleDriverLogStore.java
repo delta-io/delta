@@ -39,6 +39,8 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
+import org.apache.hadoop.util.VersionInfo;
+import org.apache.hadoop.util.VersionUtil;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -226,9 +228,10 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             );
         }
 
-        // This is needed for tests to pass
         FileStatus[] statuses;
-        if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem) {
+        if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem // This is needed for tests to pass
+            || VersionUtil.compareVersions("3.3.1", VersionInfo.getVersion()) > 0 // The methods used in S3LogStoreUtil are only available from Hadoop version 3.3.0
+        ) {
             statuses = fs.listStatus(parentPath);
         } else {
             statuses = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath);
