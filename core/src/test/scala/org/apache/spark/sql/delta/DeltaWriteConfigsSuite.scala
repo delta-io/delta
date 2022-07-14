@@ -574,13 +574,15 @@ class DeltaWriteConfigsSuite extends QueryTest
 }
 
 // Need to be outside to be stable references for Spark to generate the case classes
-case class DeltaFrameStreamAPITestOutput(outputLocation: String,
+case class DeltaFrameStreamAPITestOutput(
+    outputLocation: String,
     outputMode: String,
     containsNoPrefixOption: Boolean,
     containsPrefixOption: Boolean,
     config: String)
 
-case class DeltaTableBuilderAPITestOutput(outputLocation: String,
+case class DeltaTableBuilderAPITestOutput(
+    outputLocation: String,
     outputMode: String,
     containsNoPrefixOptionLowerCase: Boolean,
     containsNoPrefixOption: Boolean,
@@ -588,7 +590,8 @@ case class DeltaTableBuilderAPITestOutput(outputLocation: String,
     error: Boolean,
     config: String)
 
-case class SQLAPIOutput(outputLocation: String,
+case class SQLAPIOutput(
+    outputLocation: String,
     confiInput: String,
     sqlOperation: String,
     asSelect: Boolean,

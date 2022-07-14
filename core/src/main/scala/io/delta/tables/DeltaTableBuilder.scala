@@ -103,8 +103,8 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
  */
 @Evolving
 class DeltaTableBuilder private[tables](
-                                         spark: SparkSession,
-                                         builderOption: DeltaTableBuilderOptions) {
+    spark: SparkSession,
+    builderOption: DeltaTableBuilderOptions) {
   private var identifier: String = null
   private var partitioningColumns: Option[Seq[String]] = None
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
@@ -168,7 +168,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a column.
    *
-   * @param colName  string the column name
+   * @param colName string the column name
    * @param dataType string the DDL data type
    * @since 1.0.0
    */
@@ -185,7 +185,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a column.
    *
-   * @param colName  string the column name
+   * @param colName string the column name
    * @param dataType dataType the DDL data type
    * @since 1.0.0
    */
@@ -220,7 +220,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a column.
    *
-   * @param colName  string the column name
+   * @param colName string the column name
    * @param dataType dataType the DDL data type
    * @param nullable boolean whether the column is nullable
    * @since 1.0.0
@@ -284,7 +284,7 @@ class DeltaTableBuilder private[tables](
    *
    * Specify a key-value pair to tag the table definition.
    *
-   * @param key   string the table property key
+   * @param key string the table property key
    * @param value string the table property value
    * @since 1.0.0
    */
@@ -315,7 +315,7 @@ class DeltaTableBuilder private[tables](
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
 
     if (DeltaTableUtils.isValidPath(tableId) && location.nonEmpty
-      && tableId.table != location.get) {
+        && tableId.table != location.get) {
       throw DeltaErrors.analysisException(
         s"Creating path-based Delta table with a different location isn't supported. "
           + s"Identifier: $identifier, Location: ${location.get}")
@@ -365,7 +365,7 @@ class DeltaTableBuilder private[tables](
 
     // Return DeltaTable Object.
     if (DeltaTableUtils.isValidPath(tableId)) {
-      DeltaTable.forPath(location.get)
+        DeltaTable.forPath(location.get)
     } else {
       DeltaTable.forName(this.identifier)
     }
