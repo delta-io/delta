@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -36,7 +37,10 @@ class UpdateMetricsSuite extends QueryTest
   /**
    * Case class to parameterize tests.
    */
-  case class TestConfiguration(partitioned: Boolean, cdfEnabled: Boolean)
+  case class TestConfiguration(
+      partitioned: Boolean,
+      cdfEnabled: Boolean
+  )
 
   /**
    * Case class to parameterize metric results.
@@ -50,12 +54,15 @@ class UpdateMetricsSuite extends QueryTest
    */
   protected def testUpdateMetrics(name: String)(testFn: TestConfiguration => Unit): Unit = {
     for {
-      partitioned <- Seq(true, false)
-      cdfEnabled <- Seq(true, false)
+      partitioned <- BOOLEAN_DOMAIN
+      cdfEnabled <- BOOLEAN_DOMAIN
     } {
-      val testConfig = TestConfiguration(partitioned = partitioned, cdfEnabled = cdfEnabled)
-      val testName = s"update-metrics: $name - Partitioned = $partitioned, cdfEnabled = " +
-        s"$cdfEnabled"
+      val testConfig =
+        TestConfiguration(partitioned = partitioned,
+          cdfEnabled = cdfEnabled
+        )
+      var testName =
+        s"update-metrics: $name - Partitioned = $partitioned, cdfEnabled = $cdfEnabled"
       test(testName) {
         testFn(testConfig)
       }
@@ -136,7 +143,6 @@ class UpdateMetricsSuite extends QueryTest
       testConfig: TestConfiguration): Unit = {
     // Run the update capture and get all metrics.
     val results = runUpdateAndCaptureMetrics(table, where, testConfig)
-
 
     // Check operation metrics schema.
     val unknownKeys = results.operationMetrics.keySet -- DeltaOperationMetrics.UPDATE --
