@@ -123,7 +123,7 @@ lazy val core = (project in file("core"))
            |""".stripMargin)
       Seq(file)
     },
-    TestParallelization.testGroupingInDifferentJVMSettings ++ TestParallelization.simpleGroupingStrategySettings,
+    TestParallelization.settings,
   )
 
 lazy val contribs = (project in file("contribs"))
