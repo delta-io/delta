@@ -19,13 +19,16 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     Option(System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED")).exists(_.toBoolean)
   private val bucket = System.getenv("S3_LOG_STORE_UTIL_TEST_BUCKET")
   private val keyPrefix = System.getenv("S3_LOG_STORE_UTIL_TEST_KEY_PREFIX")
-  private val fs = new S3AFileSystem()
+  private lazy val fs: S3AFileSystem = {
+    val fs = new S3AFileSystem()
+    fs.initialize(new URI(s"s3a://$bucket"), configuration)
+    fs
+  }
   private val configuration = new Configuration()
   configuration.set( // for local testing only
     "fs.s3a.aws.credentials.provider",
     "com.amazonaws.auth.profile.ProfileCredentialsProvider"
   )
-  fs.initialize(new URI(s"s3a://$bucket"), configuration)
 
   private val file = Paths.get("/tmp/tmp.json").toFile
 
