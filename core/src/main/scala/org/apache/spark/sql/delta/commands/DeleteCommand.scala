@@ -18,15 +18,14 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, FileAction}
-import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
+import org.apache.spark.sql.delta.commands.DeleteCommand.{FINDING_TOUCHED_FILES_MSG, rewritingFilesMsg}
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, If, InputFileName, Literal, Not}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
@@ -34,6 +33,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{lit, typedLit, udf}
+import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
@@ -83,6 +83,8 @@ case class DeleteCommand(
 
   sealed trait RowDeletion
 
+  override val output: Seq[Attribute] = Seq(AttributeReference("numDeletedRows", LongType)())
+
   case class RowInFilesDeletion(rowCount: Long) extends RowDeletion
 
   case object FilePruningAtPartitionBoundary extends RowDeletion
@@ -101,8 +103,6 @@ case class DeleteCommand(
       }
     }
   }
-
-
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
