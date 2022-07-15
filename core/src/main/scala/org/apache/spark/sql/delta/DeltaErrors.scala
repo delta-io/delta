@@ -386,6 +386,12 @@ trait DeltaErrorsBase
         s"Start version cannot be greater than the latest version of the table($latest).")
   }
 
+  def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
+    new IllegalArgumentException(
+      s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +
+        s"different versions ${version1} and ${version2}.")
+  }
+
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_UNEXPECTED_CHANGE_FILES_FOUND",
