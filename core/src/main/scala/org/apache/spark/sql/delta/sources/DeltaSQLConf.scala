@@ -670,6 +670,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val GENERATED_COLUMN_ALLOW_NULLABLE =
+    buildConf("generatedColumn.allowNullableIngest.enabled")
+      .internal()
+      .doc("When enabled this will allow tables with generated columns enabled to be able " +
+        "to write data without providing values for a nullable column via DataFrame.write")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
