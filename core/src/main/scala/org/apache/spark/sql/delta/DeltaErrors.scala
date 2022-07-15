@@ -1786,20 +1786,20 @@ trait DeltaErrorsBase
       messageParameters = Array(
         s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
         s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
-        s"$oldProtocol"))
+        s"$oldProtocol",
+        columnMappingAdviceMessage))
   }
 
   private def columnMappingAdviceMessage: String = {
     s"""
        |Please upgrade your Delta table to reader version 2 and writer version 5
-       | and change the column mapping mode to 'name' mapping. You can use the following command:
+       |and change the column mapping mode to 'name' mapping. You can use the following command:
        |
-       | ALTER TABLE <table_name> SET TBLPROPERTIES (
+       |ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
        |   'delta.minReaderVersion' = '2',
        |   'delta.minWriterVersion' = '5')
-       |
-    """.stripMargin
+       |""".stripMargin
   }
 
   def columnRenameNotSupported: Throwable = {

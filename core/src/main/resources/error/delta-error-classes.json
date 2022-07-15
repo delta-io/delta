@@ -1388,10 +1388,7 @@
       "<requiredVersion>",
       "Your table's current Delta protocol version:",
       "<currentVersion>",
-      "",
-      "Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.",
-      "",
-      ""
+      "<advice>"
     ],
     "sqlState" : "0A000"
   },
