@@ -232,6 +232,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected var commitAttemptStartTime: Long = _
 
+  /**
+   * Tracks actions within the transaction, will commit along with the passed-in actions in the
+   * commit function.
+   */
+  protected val actions = new ArrayBuffer[Action]
+
+  /**
+   * Record a SetTransaction action that will be committed as part of this transaction.
+   */
+  def updateSetTransaction(appId: String, version: Long, lastUpdate: Option[Long]): Unit = {
+    actions += SetTransaction(appId, version, lastUpdate)
+  }
+
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
 
@@ -580,6 +593,30 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
+   * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
+   */
+  protected def checkForSetTransactionConflictAndDedup(actions: Seq[Action]): Seq[Action] = {
+    val finalActions = new ArrayBuffer[Action]
+    val txnIdToVersionMap = new mutable.HashMap[String, Long].empty
+    for (action <- actions) {
+      action match {
+        case st: SetTransaction =>
+          txnIdToVersionMap.get(st.appId).map { version =>
+            if (version != st.version) {
+              throw DeltaErrors.setTransactionVersionConflict(st.appId, version, st.version)
+            }
+          } getOrElse {
+            txnIdToVersionMap += (st.appId -> st.version)
+            finalActions += action
+          }
+        case _ => finalActions += action
+      }
+    }
+    finalActions.toSeq
+  }
+
+  /**
    * We want to future-proof and explicitly block any occurrences of
    * - table has CDC enabled and there are FileActions to write, AND
    * - table has column mapping enabled and there is a column mapping related metadata action
@@ -636,8 +673,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Check for CDC metadata columns
       performCdcMetadataCheck()
 
+      // Check for internal SetTransaction conflicts and dedup.
+      val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
+
       // Try to commit at the next version.
-      val preparedActions = prepareCommit(actions, op)
+      val preparedActions = prepareCommit(finalActions, op)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
