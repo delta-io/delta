@@ -237,4 +237,14 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
       }
     )
   }
+
+  test("Delta Lake issue 1229: able to read a checkpoint containing `numRecords`") {
+    // table created using Delta 1.2.1 which has additional field `numRecords` in
+    // checkpoint schema. It is removed in version after 1.2.1.
+    // Make sure we are able to read the Delta table in the latest version.
+    val tablePath = "src/test/resources/delta/delta-1.2.1"
+    assert(
+      spark.read.format("delta")
+        .load(tablePath).where("col1 = 8").count() === 9L)
+  }
 }
