@@ -192,6 +192,13 @@ class DeltaLog private(
     }
   }
 
+  /**
+   * [[IsolationLevel]] as set in table delta config and to be passed into the transaction.
+   */
+  private[delta] def isolationLevel: IsolationLevel = {
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
+  }
+
   /* ------------------ *
    |  Delta Management  |
    * ------------------ */

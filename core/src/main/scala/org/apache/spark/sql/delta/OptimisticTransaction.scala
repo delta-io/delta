@@ -1021,7 +1021,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   protected def getDefaultIsolationLevel(): IsolationLevel = {
-    Serializable
+    deltaLog.isolationLevel
   }
 
   /**
