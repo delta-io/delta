@@ -618,7 +618,9 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable for the data at the given `path`.
+   * Instantiate a DeltaTable representing the data at the given `path`, If the given path is
+   * invalid (i.e. either no table exists or an existing table is not a delta table), it throws
+   * a `notADeltaTableException` Exception.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -634,7 +636,9 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable for the data at the given `path` using the given SparkSession.
+   * Instantiate a DeltaTable representing the data at the given `path` using the given
+   * SparkSession. If the given path is invalid (i.e. either no table exists or an existing table
+   * is not a delta table), it throws a `notADeltaTableException` Exception.
    *
    * @since 0.3.0
    */
