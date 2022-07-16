@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.

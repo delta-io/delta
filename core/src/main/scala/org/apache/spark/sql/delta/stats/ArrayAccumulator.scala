@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.stats
 
-import java.io.{ObjectInput, ObjectOutput}
 
 import org.apache.spark.util.AccumulatorV2
 

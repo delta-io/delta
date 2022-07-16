@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.sources
 
-import java.util.Locale
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
