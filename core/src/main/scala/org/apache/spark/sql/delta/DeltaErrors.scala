@@ -386,6 +386,12 @@ trait DeltaErrorsBase
         s"Start version cannot be greater than the latest version of the table($latest).")
   }
 
+  def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNEXPECTED_CHANGE_FILES_FOUND",
+      messageParameters = Array(changeFiles))
+  }
+
   def addColumnAtIndexLessThanZeroException(pos: String, col: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO",
@@ -928,6 +934,11 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED", messageParameters = Array.empty
     )
+  }
+
+  def blockStreamingReadsOnColumnMappingEnabledTable: Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
   }
 
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
@@ -2127,6 +2138,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def replaceWhereUsedWithDynamicPartitionOverwrite(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE"
+    )
+  }
+
   def replaceWhereUsedInOverwrite(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
@@ -2200,6 +2217,40 @@ trait DeltaErrorsBase
       errorClass = "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET",
       messageParameters = Array(dataFilters)
     )
+  }
+
+  def blockColumnMappingAndCdcOperation(op: DeltaOperations.Operation): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION",
+      messageParameters = Array(op.name)
+    )
+  }
+
+  def missingDeltaStorageJar(e: NoClassDefFoundError): Throwable = {
+    // scalastyle:off line.size.limit
+    new NoClassDefFoundError(
+      s"""${e.getMessage}
+         |Please ensure that the delta-storage dependency is included.
+         |
+         |If using Python, please ensure you call `configure_spark_with_delta_pip` or use
+         |`--packages io.delta:delta-core_<scala-version>:<delta-lake-version>`.
+         |See https://docs.delta.io/latest/quick-start.html#python.
+         |
+         |More information about this dependency and how to include it can be found here:
+         |https://docs.delta.io/latest/porting.html#delta-lake-1-1-or-below-to-delta-lake-1-2-or-above.
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def blockCdfAndColumnMappingReads(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
+    )
+  }
+
+  def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"SHOW COLUMNS with conflicting databases: '$db' != '${tableID.database.get}'")
   }
 }
 

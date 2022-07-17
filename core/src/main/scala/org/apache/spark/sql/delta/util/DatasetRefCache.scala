@@ -40,11 +40,11 @@ class DatasetRefCache[T](creator: () => Dataset[T]) {
 
   private val holder = new AtomicReference[Dataset[T]]
 
-  def get: Dataset[T] = holder.updateAndGet { ref =>
-    if (ref == null || (ref.sparkSession ne SparkSession.active)) {
-      creator()
-    } else {
-      ref
+  def get: Dataset[T] = Option(holder.get())
+    .filter(_.sparkSession eq SparkSession.active)
+    .getOrElse {
+      val df = creator()
+      holder.set(df)
+      df
     }
-  }
 }

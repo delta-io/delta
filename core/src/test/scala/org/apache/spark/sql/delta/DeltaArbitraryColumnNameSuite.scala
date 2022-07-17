@@ -24,7 +24,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
 
-trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteBase {
+trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteUtils {
 
   override protected val supportedModes =
     Seq("name")

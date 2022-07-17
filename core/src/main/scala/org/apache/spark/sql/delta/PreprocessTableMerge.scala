@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import java.time.{Instant, LocalDateTime}
 import java.util.Locale
 
 import scala.collection.mutable
@@ -25,13 +26,17 @@ import org.apache.spark.sql.delta.commands.MergeIntoCommand
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, CurrentDate, CurrentTimestamp, CurrentTimeZone, Expression, Literal, LocalTimestamp, Now, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE
+import org.apache.spark.sql.catalyst.trees.TreePatternBits
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.catalyst.util.DateTimeUtils.{instantToMicros, localDateTimeToMicros}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{DateType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
@@ -231,12 +236,40 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         case DeltaFullTable(index) => index
         case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
       }
-      MergeIntoCommand(
-        source, target, tahoeFileIndex, condition,
-        processedMatched, processedNotMatched, finalSchemaOpt)
+
+      /**
+       * Because source and target are not children of MergeIntoCommand they are not processed when
+       * invoking the [[ComputeCurrentTime]] rule. This is why they need special handling.
+       */
+      val now = Instant.now()
+      transformTimestamps(
+        MergeIntoCommand(transformTimestamps(source, now), transformTimestamps(target, now),
+          tahoeFileIndex, condition, processedMatched, processedNotMatched, finalSchemaOpt),
+        now)
     } else {
       DeltaMergeInto(source, target, condition,
         processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
+    }
+  }
+
+  private def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val currentTimestampMicros = instantToMicros(instant)
+    val currentTime = Literal.create(currentTimestampMicros, TimestampType)
+    val timezone = Literal.create(conf.sessionLocalTimeZone, StringType)
+
+    plan.transformUpWithSubqueries {
+      case subQuery =>
+        subQuery.transformAllExpressionsUpWithPruning(_.containsPattern(CURRENT_LIKE)) {
+          case cd: CurrentDate =>
+            Literal.create(DateTimeUtils.microsToDays(currentTimestampMicros, cd.zoneId), DateType)
+          case CurrentTimestamp() | Now() => currentTime
+          case CurrentTimeZone() => timezone
+          case localTimestamp: LocalTimestamp =>
+            val asDateTime = LocalDateTime.ofInstant(instant, localTimestamp.zoneId)
+            Literal.create(localDateTimeToMicros(asDateTime), TimestampNTZType)
+        }
     }
   }
 

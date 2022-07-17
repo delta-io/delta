@@ -254,6 +254,15 @@ object DeltaOperations {
       "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
   }
 
+  /** Recorded when column is renamed */
+  case class RenameColumn(oldColumnPath: Seq[String], newColumnPath: Seq[String])
+    extends Operation("RENAME COLUMN") {
+    override val parameters: Map[String, Any] = Map(
+      "oldColumnPath" -> UnresolvedAttribute(oldColumnPath).name,
+      "newColumnPath" -> UnresolvedAttribute(newColumnPath).name
+    )
+  }
+
   /** Recorded when columns are changed. */
   case class ChangeColumn(
       columnPath: Seq[String],
@@ -434,6 +443,7 @@ private[delta] object DeltaOperationMetrics {
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
     "numTargetFilesRemoved", // number of files removed from the sink(target)
+    "numTargetChangeFilesAdded", // number of CDC files
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
@@ -443,6 +453,7 @@ private[delta] object DeltaOperationMetrics {
   val UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
+    "numAddedChangeFiles", // number of CDC files
     "numUpdatedRows", // number of rows updated
     "numCopiedRows", // number of rows just copied over in the process of updating files.
     "executionTimeMs",  // time taken to execute the entire operation

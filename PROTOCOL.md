@@ -333,7 +333,7 @@ Transaction identifiers allow this information to be recorded atomically in the 
 Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
 The atomic recording of this information along with modifications to the table enables these external system to make their writes into a Delta table _idempotent_.
 
-For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly-once semantics when writing a stream into a table using the following process:
+For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/core/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly-once semantics when writing a stream into a table using the following process:
  1. Record in a write-ahead-log the data that will be written, along with a monotonically increasing identifier for this batch.
  2. Check the current version of the transaction with `appId = streamId` in the target table. If this value is greater than or equal to the batch being written, then this data has already been added to the table and processing can skip to the next batch.
  3. Write the data optimistically into the table.
@@ -527,8 +527,28 @@ When the table property `delta.appendOnly` is set to `true`:
 
 ## Column Invariants
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
- - The value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
+ - The value of `delta.invariants` SHOULD be parsed as a JSON string containing a boolean SQL expression at the key `expression.expression` (that is, `{"expression": {"expression": "<SQL STRING>"}}`).
  - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
+
+For example, given the schema string (pretty printed for readability. The entire schema string in the log should be a single JSON line):
+
+```json
+{
+    "type": "struct",
+    "fields": [
+        {
+            "name": "x",
+            "type": "integer",
+            "nullable": true,
+            "metadata": {
+                "delta.invariants": "{\"expression\": { \"expression\": \"x > 3\"} }"
+            }
+        }
+    ]
+}
+```
+
+Writers should reject any transaction that contains data where the expression `x > 3` returns `false` or `null`.
 
 ## Generated Columns
 

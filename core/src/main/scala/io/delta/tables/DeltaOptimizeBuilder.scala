@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
  * @param sparkSession SparkSession to use for execution
  * @param tableIdentifier Id of the table on which to
  *        execute the optimize
- * @since 1.3.0
+ * @since 2.0.0
  */
 class DeltaOptimizeBuilder private(
     sparkSession: SparkSession,
@@ -43,6 +43,7 @@ class DeltaOptimizeBuilder private(
    * the operation on selected partitions.
    * @param partitionFilter The partition filter to apply
    * @return [[DeltaOptimizeBuilder]] with partition filter applied
+   * @since 2.0.0
    */
   def where(partitionFilter: String): DeltaOptimizeBuilder = {
     this.partitionFilter = Some(partitionFilter)
@@ -52,16 +53,18 @@ class DeltaOptimizeBuilder private(
   /**
    * Compact the small files in selected partitions.
    * @return DataFrame containing the OPTIMIZE execution metrics
+   * @since 2.0.0
    */
   def executeCompaction(): DataFrame = {
     execute(Seq.empty)
   }
 
    /**
-   * Z-Order the data in the table using the given columns.
+   * Z-Order the data in selected partitions using the given columns.
    * @param columns Zero or more columns to order the data
    *                using Z-Order curves
    * @return DataFrame containing the OPTIMIZE execution metrics
+   * @since 2.0.0
    */
   def executeZOrderBy(columns: String *): DataFrame = {
     val attrs = columns.map(c => UnresolvedAttribute(c))

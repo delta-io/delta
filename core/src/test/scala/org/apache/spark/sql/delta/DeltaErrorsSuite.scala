@@ -43,7 +43,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, SparkVersion}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -201,15 +201,17 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "NOT NULL constraint violated for column: col1.\n")
     }
     {
+      val expr = CatalystSqlParser.parseExpression("concat(\"hello \", \"world\")")
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(
           Constraints.Check(CharVarcharConstraint.INVARIANT_NAME,
-            CatalystSqlParser.parseExpression("id < 0")),
+            LessThanOrEqual(Length(expr), Literal(5))),
           Map.empty[String, Any])
       }
       assert(e.getErrorClass == "DELTA_EXCEED_CHAR_VARCHAR_LIMIT")
       assert(e.getSqlState == "22026")
-      assert(e.getMessage == "Exceeds char/varchar type length limitation")
+      assert(e.getMessage == "Exceeds char/varchar type length limitation. " +
+        "Failed check: (length('concat(hello , world)) <= 5).")
     }
     {
       val e = intercept[DeltaInvariantViolationException] {
@@ -778,8 +780,10 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
+      var msg = "Unknown configuration was specified: confKey\nTo disable this check, set " +
+        "allowArbitraryProperties.enabled=true in the Spark session configuration."
       assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
-      assert(e.getMessage == "Unknown configuration was specified: confKey")
+      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1601,6 +1605,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "No file found in the directory: dir.")
     }
     {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.replaceWhereUsedWithDynamicPartitionOverwrite()
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE")
+      assert(e.getMessage == "A 'replaceWhere' expression and 'partitionOverwriteMode'='dynamic' " +
+        "cannot both be set in the DataFrameWriter options.")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereUsedInOverwrite()
       }
@@ -1755,10 +1767,10 @@ trait DeltaErrorsSuiteBase
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-           |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+           |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
-           |    .build()
+           |    .getOrCreate()
            |""".stripMargin
       assert(e.getMessage == msg)
     }
@@ -2008,6 +2020,15 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unexpectedChangeFilesFound("a.parquet")
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_CHANGE_FILES_FOUND")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == """Change files found in a dataChange = false transaction. Files:
+                               |a.parquet""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.logFailedIntegrityCheck(2, "option1")
       }
       assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
@@ -2147,6 +2168,15 @@ trait DeltaErrorsSuiteBase
         "Can only drop nested columns from StructType. Found StructField(invalid1,StringType,true)")
     }
     {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "Streaming reads from a Delta table with column mapping enabled are not supported.")
+    }
+    {
       val columnsThatNeedRename = Set("c0", "c1")
       val schema = StructType(Seq(StructField("schema1", StringType)))
       val e = intercept[DeltaAnalysisException] {
@@ -2166,6 +2196,25 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockCdfAndColumnMappingReads()
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Change data feed (CDF) reads are currently not supported on tables " +
+        "with column mapping enabled.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
+      }
+      assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Operation \"Manual Update\" is not allowed when the table has " +
+        "enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or " +
+        "RENAME COLUMN.")
     }
   }
 }

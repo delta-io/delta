@@ -257,6 +257,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var checkUnsupportedDataType: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
+
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
@@ -303,10 +304,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     latestMetadata = DeltaColumnMapping.verifyAndUpdateMetadataChange(
+      deltaLog,
       protocolBeforeUpdate,
       snapshot.metadata,
       latestMetadata,
       isCreatingNewTable)
+
     if (latestMetadata.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
       var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
@@ -577,6 +580,45 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * We want to future-proof and explicitly block any occurrences of
+   * - table has CDC enabled and there are FileActions to write, AND
+   * - table has column mapping enabled and there is a column mapping related metadata action
+   *
+   * This is because the semantics for this combination of features and file changes is undefined.
+   */
+  private def performCdcColumnMappingCheck(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation): Unit = {
+    if (newMetadata.nonEmpty) {
+      val _newMetadata = newMetadata.get
+      val _currentMetadata = snapshot.metadata
+
+      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata)
+
+      val columnMappingEnabled = _newMetadata.columnMappingMode != NoMapping
+
+      val isColumnMappingUpgrade = DeltaColumnMapping.isColumnMappingUpgrade(
+        oldMode = _currentMetadata.columnMappingMode,
+        newMode = _newMetadata.columnMappingMode
+      )
+
+      def dropColumnOp: Boolean = DeltaColumnMapping.isDropColumnOperation(
+        _newMetadata, _currentMetadata)
+
+      def renameColumnOp: Boolean = DeltaColumnMapping.isRenameColumnOperation(
+        _newMetadata, _currentMetadata)
+
+      def columnMappingChange: Boolean = isColumnMappingUpgrade || dropColumnOp || renameColumnOp
+
+      def existsFileActions: Boolean = actions.exists { _.isInstanceOf[FileAction] }
+
+      if (cdcEnabled && columnMappingEnabled && columnMappingChange && existsFileActions) {
+        throw DeltaErrors.blockColumnMappingAndCdcOperation(op)
+      }
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -664,6 +706,165 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Create a large commit on the Delta log by directly writing an iterator of FileActions to the
+   * LogStore. This function only commits the next possible version and will not check whether the
+   * commit is retry-able. If the next version has already been committed, then this function
+   * will fail.
+   * This bypasses all optimistic concurrency checks. We assume that transaction conflicts should be
+   * rare because this method is typically used to create new tables (e.g. CONVERT TO DELTA) or
+   * apply some commands which rarely receive other transactions (e.g. CLONE/RESTORE).
+   * In addition, the expectation is that the list of actions performed by the transaction
+   * remains an iterator and is never materialized, given the nature of a large commit potentially
+   * touching many files.
+   */
+  def commitLarge(
+    spark: SparkSession,
+    actions: Iterator[Action],
+    op: DeltaOperations.Operation,
+    context: Map[String, String],
+    metrics: Map[String, String]): Long = {
+    commitStartNano = System.nanoTime()
+    val attemptVersion = readVersion + 1
+    try {
+      val commitInfo = CommitInfo(
+        time = clock.getTimeMillis(),
+        operation = op.name,
+        operationParameters = op.jsonEncodedValues,
+        context,
+        readVersion = Some(readVersion),
+        isolationLevel = Some(Serializable.toString),
+        isBlindAppend = Some(false),
+        Some(metrics),
+        userMetadata = getUserMetadata(op),
+        tags = None,
+        txnId = Some(txnId))
+
+      val extraActions = Seq(commitInfo, metadata)
+      // We don't expect commits to have more than 2 billion actions
+      var commitSize: Int = 0
+      var numAbsolutePaths: Int = 0
+      var numAddFiles: Int = 0
+      var numRemoveFiles: Int = 0
+      var bytesNew: Long = 0L
+      var addFilesHistogram: Option[FileSizeHistogram] = None
+      var removeFilesHistogram: Option[FileSizeHistogram] = None
+      var allActions = (extraActions.toIterator ++ actions).map { action =>
+        commitSize += 1
+        action match {
+          case a: AddFile =>
+            numAddFiles += 1
+            if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
+            if (a.dataChange) bytesNew += a.size
+            addFilesHistogram.foreach(_.insert(a.size))
+          case r: RemoveFile =>
+            numRemoveFiles += 1
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
+          case _ =>
+        }
+        action
+      }
+      if (readVersion < 0) {
+        deltaLog.createLogDirectory()
+      }
+      val fsWriteStartNano = System.nanoTime()
+      val jsonActions = allActions.map(_.json)
+      deltaLog.store.write(
+        deltaFile(deltaLog.logPath, attemptVersion),
+        jsonActions,
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
+
+      spark.sessionState.conf.setConf(
+        DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
+        Some(attemptVersion))
+      commitEndNano = System.nanoTime()
+      committed = true
+      val postCommitSnapshot =
+        updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion, txnId)
+      val postCommitReconstructionTime = System.nanoTime()
+      var stats = CommitStats(
+        startVersion = readVersion,
+        commitVersion = attemptVersion,
+        readVersion = postCommitSnapshot.version,
+        txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartTimeNs),
+        commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
+        fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
+        stateReconstructionDurationMs =
+          NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
+        numAdd = numAddFiles,
+        numRemove = numRemoveFiles,
+        bytesNew = bytesNew,
+        numFilesTotal = postCommitSnapshot.numOfFiles,
+        sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+        numCdcFiles = 0,
+        cdcBytesNew = 0,
+        protocol = postCommitSnapshot.protocol,
+        commitSizeBytes = jsonActions.map(_.size).sum,
+        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+        totalCommitsSizeSinceLastCheckpoint = 0L,
+        checkpointAttempt = true,
+        info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+        newMetadata = Some(metadata),
+        numAbsolutePathsInAdd = numAbsolutePaths,
+        numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+        isolationLevel = Serializable.toString,
+        txnId = Some(txnId))
+
+      recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
+      // NOTE: We don't pass in the sequence of actions to runPostCommitHooks because commitLarge
+      //       takes in an iterator of actions as a conscious choice, as the large commit may
+      //       result in many FileActions we'd have to materialize in memory. All post commit hooks
+      //       registered for these commits should be agnostic to the list of actions.
+      runPostCommitHooks(attemptVersion, Seq.empty[Action])
+      attemptVersion
+    } catch {
+      case e: java.nio.file.FileAlreadyExistsException =>
+        recordDeltaEvent(
+          deltaLog,
+          "delta.commitLarge.failure",
+          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
+        // Actions of a commit which went in before ours
+        val logs = deltaLog.store.readAsIterator(
+          deltaFile(deltaLog.logPath, attemptVersion),
+          deltaLog.newDeltaHadoopConf())
+        try {
+          val winningCommitActions = logs.map(Action.fromJson)
+          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+            .map(ci => ci.copy(version = Some(attemptVersion)))
+          throw DeltaErrors.concurrentWriteException(commitInfo)
+        } finally {
+          logs.close()
+        }
+
+      case NonFatal(e) =>
+        recordDeltaEvent(
+          deltaLog,
+          "delta.commitLarge.failure",
+          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
+        throw e
+    }
+  }
+
+  /** Update the table now that the commit has been made, and write a checkpoint. */
+  protected def updateAndCheckpoint(
+    spark: SparkSession,
+    deltaLog: DeltaLog,
+    commitSize: Int,
+    attemptVersion: Long,
+    txnId: String): Snapshot = {
+    val currentSnapshot = deltaLog.update()
+    if (currentSnapshot.version != attemptVersion) {
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
+    }
+
+    logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
+
+    deltaLog.checkpoint(currentSnapshot)
+    currentSnapshot
+  }
+
+  /**
    * Prepare for a commit by doing all necessary pre-commit checks and modifications to the actions.
    * @return The finalized set of actions.
    */
@@ -685,6 +886,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     metadataChanges.foreach(m => verifyNewMetadata(m))
     finalActions = newProtocol.toSeq ++ finalActions
+
+
+    // Block future cases of CDF + Column Mapping changes + file changes
+    // This check requires having called
+    // DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments which is done in the
+    // `verifyNewMetadata` call above.
+    performCdcColumnMappingCheck(finalActions, op)
 
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
@@ -893,6 +1101,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       (commitVersion, updatedCurrentTransactionInfo, needsCheckpoint)
     }
   }
+
 
   /**
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException

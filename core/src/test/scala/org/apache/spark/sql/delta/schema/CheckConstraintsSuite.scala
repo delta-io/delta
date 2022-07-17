@@ -226,18 +226,17 @@ class CheckConstraintsSuite extends QueryTest
           "DROP CONSTRAINT",
           Map("name" -> "lessThan10", "expr" -> "num < 10", "existed" -> "true")
         )).toDF())
-
       sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS lessThan10")
-      checkAnswer(
-        sql(s"DESCRIBE HISTORY $table")
-          .where("operation = 'DROP CONSTRAINT'")
-          .selectExpr("operation", "operationParameters"),
-        Seq(
-          ("DROP CONSTRAINT",
-            Map("name" -> "lessThan10", "expr" -> "num < 10", "existed" -> "true")),
-          ("DROP CONSTRAINT",
-            Map("name" -> "lessThan10", "existed" -> "false"))
-        ).toDF())
+        checkAnswer(
+          sql(s"DESCRIBE HISTORY $table")
+            .where("operation = 'DROP CONSTRAINT'")
+            .selectExpr("operation", "operationParameters"),
+          Seq(
+            ("DROP CONSTRAINT",
+              Map("name" -> "lessThan10", "expr" -> "num < 10", "existed" -> "true")),
+            ("DROP CONSTRAINT",
+              Map("name" -> "lessThan10", "existed" -> "false"))
+          ).toDF())
     }
   }
 

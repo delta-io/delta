@@ -37,7 +37,8 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+  with MergeIntoMetricsBase {
 
   import testImplicits._
 
@@ -944,6 +945,148 @@ trait DescribeDeltaHistorySuiteBase
         assert(rows.map(_.getAs[Long]("version")).toList == 0L :: Nil)
       }
     }
+  }
+
+  test("operation metrics - create table") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val tblName = "tblName"
+      val numRows = 10
+      withTable(tblName) {
+        sql(s"CREATE TABLE $tblName USING DELTA SELECT * from range($numRows)")
+        val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val numFiles = deltaLog.snapshot.numOfFiles
+        val expectedMetrics = Map(
+          "numFiles" -> numFiles.toString,
+          "numOutputRows" -> numRows.toString
+        )
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        assert(operationMetrics("numOutputBytes").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+      }
+    }
+  }
+
+  test("operation metrics - create table - without data") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        sql(s"CREATE TABLE $tblName(id bigint) USING DELTA")
+        val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        assert(operationMetrics === Map.empty)
+      }
+    }
+  }
+
+  test("operation metrics - create table - v2") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val tblName = "tblName"
+      withTable(tblName) {
+        // Create
+        spark.range(100).writeTo(tblName).using("delta").create()
+        val deltaTable = io.delta.tables.DeltaTable.forName(spark, tblName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        var operationMetrics = getOperationMetrics(deltaTable.history(1))
+        var expectedMetrics = Map(
+          "numFiles" -> deltaLog.snapshot.numOfFiles.toString,
+          "numOutputRows" -> "100"
+        )
+        assert(operationMetrics("numOutputBytes").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+
+        // replace
+        spark.range(50).writeTo(tblName).using("delta").replace()
+        deltaLog.update()
+        expectedMetrics = Map(
+          "numFiles" -> deltaLog.snapshot.numOfFiles.toString,
+          "numOutputRows" -> "50"
+        )
+        operationMetrics = getOperationMetrics(deltaTable.history(1))
+        assert(operationMetrics("numOutputBytes").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+
+        // create or replace
+        spark.range(70).writeTo(tblName).using("delta").createOrReplace()
+        deltaLog.update()
+        expectedMetrics = Map(
+          "numFiles" -> deltaLog.snapshot.numOfFiles.toString,
+          "numOutputRows" -> "70"
+        )
+        operationMetrics = getOperationMetrics(deltaTable.history(1))
+        assert(operationMetrics("numOutputBytes").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+      }
+    }
+  }
+
+  test("operation metrics for RESTORE") {
+      withTempDir { dir =>
+        // version 0
+        spark.range(5).write.format("delta").save(dir.getCanonicalPath)
+
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
+        val numFilesV0 = deltaLog.snapshot.numOfFiles
+        val sizeBytesV0 = deltaLog.snapshot.sizeInBytes
+
+        // version 1
+        spark.range(10, 12).write.format("delta").mode("append").save(dir.getCanonicalPath)
+
+        val numFilesV1 = deltaLog.snapshot.numOfFiles
+        val sizeBytesV1 = deltaLog.snapshot.sizeInBytes
+
+        // version 2 - RESTORE table to version 0
+        sql(s"RESTORE TABLE delta.`${dir.getAbsolutePath}` VERSION AS OF 0")
+
+        val expectedMetrics = Map(
+          "tableSizeAfterRestore" -> sizeBytesV0,
+          "numOfFilesAfterRestore" -> numFilesV0,
+          "numRemovedFiles" -> (numFilesV1 - numFilesV0),
+          "numRestoredFiles" -> 0,
+          "removedFilesSize" -> (sizeBytesV1 - sizeBytesV0),
+          "restoredFilesSize" -> 0).mapValues(_.toString).toMap
+
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+
+        checkOperationMetrics(
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.RESTORE)
+
+        // check operation parameters
+        checkLastOperation(
+          dir.getAbsolutePath,
+          Seq("RESTORE", "0"),
+          Seq($"operation", $"operationParameters.version"))
+
+        // we can check metrics for a case where we restore files as well.
+        // version 3
+        spark.range(10, 12).write.format("delta").mode("append").save(dir.getCanonicalPath)
+
+        // version 4  - delete all rows
+        sql(s"DELETE FROM delta.`${dir.getAbsolutePath}`")
+
+        val numFilesV4 = deltaLog.update().numOfFiles
+        val sizeBytesV4 = deltaLog.update().sizeInBytes
+
+        // version 5 - RESTORE table to version 3
+        sql(s"RESTORE TABLE delta.`${dir.getAbsolutePath}` VERSION AS OF 3")
+
+        val numFilesV5 = deltaLog.update().numOfFiles
+        val sizeBytesV5 = deltaLog.update().sizeInBytes
+
+        val expectedMetrics2 = Map(
+          "tableSizeAfterRestore" -> sizeBytesV5,
+          "numOfFilesAfterRestore" -> numFilesV5,
+          "numRemovedFiles" -> 0,
+          "numRestoredFiles" -> (numFilesV5 - numFilesV4),
+          "removedFilesSize" -> 0,
+          "restoredFilesSize" -> (sizeBytesV5 - sizeBytesV4)).mapValues(_.toString).toMap
+
+        val operationMetrics2 = getOperationMetrics(deltaTable.history(1))
+
+        checkOperationMetrics(
+          expectedMetrics2, operationMetrics2, DeltaOperationMetrics.RESTORE)
+      }
   }
 
 

@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMappin
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}

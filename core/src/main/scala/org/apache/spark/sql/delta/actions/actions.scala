@@ -277,11 +277,12 @@ case class AddFile(
       dataChange: Boolean = true): RemoveFile = {
     var newTags = tags
     // scalastyle:off
-    RemoveFile(
+    val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
     )
     // scalastyle:on
+    removedFile
   }
 
   @JsonIgnore
@@ -361,7 +362,6 @@ object AddFile {
  * nullable by setting their type Option.
  */
 // scalastyle:off
-@JsonIgnoreProperties(Array("numRecords"))
 case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -371,13 +371,16 @@ case class RemoveFile(
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
-    tags: Map[String, String] = null,
-    numRecords: Option[Long] = None
+    tags: Map[String, String] = null
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
+
+  /** The number of records contained inside the removed file. */
+  @JsonIgnore
+  var numRecords: Option[Long] = None
 
 
   @JsonIgnore

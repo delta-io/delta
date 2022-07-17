@@ -320,7 +320,7 @@ class Snapshot(
   // Given the list of files from `LogSegment`, create respective file indices to help create
   // a DataFrame and short-circuit the many file existence and partition schema inference checks
   // that exist in DataSource.resolveRelation().
-  protected lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
+  protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
     assertLogFilesBelongToTable(path, logSegment.deltas)
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
   }

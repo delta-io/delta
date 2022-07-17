@@ -89,6 +89,8 @@ statement
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate = predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
+    | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
+        ((IN | FROM) schemaName=identifier)?                            #showColumns
     | .*?                                                               #passThrough
     ;
 
@@ -164,6 +166,7 @@ nonReserved
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
+    | SHOW | COLUMNS | IN | FROM
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -172,6 +175,7 @@ ALTER: 'ALTER';
 AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
+COLUMNS: 'COLUMNS';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -181,33 +185,36 @@ DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
 DETAIL: 'DETAIL';
 DROP: 'DROP';
-EXISTS: 'EXISTS';
-GENERATE: 'GENERATE';
-LEFT_PAREN: '(';
 DRY: 'DRY';
+EXISTS: 'EXISTS';
+FOR: 'FOR';
+FROM: 'FROM';
+GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 IF: 'IF';
+IN: 'IN';
+LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 MINUS: '-';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
 OF: 'OF';
 OPTIMIZE: 'OPTIMIZE';
-FOR: 'FOR';
-TABLE: 'TABLE';
 PARTITIONED: 'PARTITIONED';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
+SHOW: 'SHOW';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
-TO: 'TO';
+TABLE: 'TABLE';
 TIMESTAMP: 'TIMESTAMP';
+TO: 'TO';
 VACUUM: 'VACUUM';
-WHERE: 'WHERE';
 VERSION: 'VERSION';
+WHERE: 'WHERE';
 ZORDER: 'ZORDER';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference

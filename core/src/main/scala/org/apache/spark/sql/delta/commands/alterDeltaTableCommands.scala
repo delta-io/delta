@@ -397,8 +397,16 @@ case class AlterTableChangeColumnDeltaCommand(
       }
 
       txn.updateMetadata(newMetadata)
-      txn.commit(Nil, DeltaOperations.ChangeColumn(
-        columnPath, columnName, newColumn, colPosition.map(_.toString)))
+
+      if (newColumn.name != columnName) {
+        // record column rename separately
+        txn.commit(Nil, DeltaOperations.RenameColumn(
+          columnPath :+ columnName,
+          columnPath :+ newColumn.name))
+      } else {
+        txn.commit(Nil, DeltaOperations.ChangeColumn(
+          columnPath, columnName, newColumn, colPosition.map(_.toString)))
+      }
 
       Seq.empty[Row]
     }
@@ -563,6 +571,22 @@ case class AlterTableSetLocationDeltaCommand(
   }
 }
 
+trait AlterTableConstraintDeltaCommand
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData  {
+
+  def getConstraintWithName(
+      table: DeltaTableV2,
+      name: String,
+      metadata: actions.Metadata,
+      sparkSession: SparkSession): Option[String] = {
+    val expr = Constraints.getExprTextByName(name, metadata, sparkSession)
+    if (expr.nonEmpty) {
+      return expr
+    }
+    None
+  }
+}
+
 /**
  * Command to add a constraint to a Delta table. Currently only CHECK constraints are supported.
  *
@@ -576,7 +600,7 @@ case class AlterTableAddConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String,
     exprText: String)
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends AlterTableConstraintDeltaCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -586,7 +610,7 @@ case class AlterTableAddConstraintDeltaCommand(
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
       val txn = startTransaction(sparkSession)
 
-      Constraints.getExprTextByName(name, txn.metadata, sparkSession).foreach { oldExpr =>
+      getConstraintWithName(table, name, txn.metadata, sparkSession).foreach { oldExpr =>
         throw DeltaErrors.constraintAlreadyExists(name, oldExpr)
       }
 
@@ -631,7 +655,7 @@ case class AlterTableDropConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String,
     ifExists: Boolean)
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends AlterTableConstraintDeltaCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -656,3 +680,4 @@ case class AlterTableDropConstraintDeltaCommand(
     Seq()
   }
 }
+

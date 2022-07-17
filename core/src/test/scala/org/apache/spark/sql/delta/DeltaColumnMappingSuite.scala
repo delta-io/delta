@@ -23,6 +23,7 @@ import java.nio.file.Files
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, SetTransaction}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -35,7 +36,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
 
-trait DeltaColumnMappingSuiteBase extends SharedSparkSession with DeltaSQLCommandTest {
+trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
 
 
   protected def supportedModes: Seq[String]
@@ -84,10 +85,11 @@ trait DeltaColumnMappingSuiteBase extends SharedSparkSession with DeltaSQLComman
     }
   }
 
+
 }
 
 class DeltaColumnMappingSuite extends QueryTest
-  with GivenWhenThen  with DeltaColumnMappingSuiteBase {
+  with GivenWhenThen  with DeltaColumnMappingSuiteUtils {
 
   protected def supportedModes: Seq[String] = Seq("name")
 
@@ -230,6 +232,34 @@ class DeltaColumnMappingSuite extends QueryTest
       true,
       withId(2)
     )
+
+  protected val schemaWithPhysicalNamesNested = new StructType()
+    .add("a", StringType, true, withPhysicalName("aaa"))
+    .add("b",
+      // let's call this nested struct 'X'.
+      new StructType()
+        .add("c", StringType, true, withPhysicalName("ccc"))
+        .add("d", IntegerType, true, withPhysicalName("ddd"))
+        .add("foo.bar",
+          new StructType().add("f", LongType, true, withPhysicalName("fff")),
+          true,
+          withPhysicalName("foo.foo.foo.bar.bar.bar")),
+      true,
+      withPhysicalName("bbb")
+    )
+    .add("g",
+      // nested struct 'X' (see above) is repeated here.
+      new StructType()
+        .add("c", StringType, true, withPhysicalName("ccc"))
+        .add("d", IntegerType, true, withPhysicalName("ddd"))
+        .add("foo.bar",
+          new StructType().add("f", LongType, true, withPhysicalName("fff")),
+          true,
+          withPhysicalName("foo.foo.foo.bar.bar.bar")),
+      true,
+      withPhysicalName("ggg")
+    )
+    .add("h", IntegerType, true, withPhysicalName("hhh"))
 
   protected val schemaWithIdNestedRandom = new StructType()
     .add("a", StringType, true, withId(111))
@@ -442,9 +472,10 @@ class DeltaColumnMappingSuite extends QueryTest
       tableName: String,
       expectedSchema: StructType,
       ignorePhysicalName: Boolean,
-      mode: String)(createFunc: => Unit): Unit = {
+      mode: String,
+      createNewTable: Boolean = true)(fn: => Unit): Unit = {
     withTable(tableName) {
-      createFunc
+        fn
       checkProperties(tableName,
         readerVersion = 2,
         writerVersion = 5,
@@ -558,7 +589,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
   }
 
-  testColumnMapping("create table through dataframe with id mode should " +
+  testColumnMapping("create table through dataframe should " +
     "auto bumps the version and rebuild schema metadata/drop dataframe metadata") { mode =>
     // existing ids should be dropped/ignored and ids should be regenerated
     // so for tests below even if we are ingesting dfs with random ids
@@ -1120,8 +1151,9 @@ class DeltaColumnMappingSuite extends QueryTest
         props = Map(
           DeltaConfigs.MIN_READER_VERSION.key -> "2",
           DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1133,8 +1165,8 @@ class DeltaColumnMappingSuite extends QueryTest
         DeltaConfigs.MIN_READER_VERSION.key -> "2",
         DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
 
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1142,10 +1174,11 @@ class DeltaColumnMappingSuite extends QueryTest
   test("upgrade and change mode in one ALTER TABLE cmd") {
     withTable("t1") {
       createTableWithSQLAPI("t1", isPartitioned = true, nested = true)
-      alterTableWithProps("t1", Map(
-        DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
-        DeltaConfigs.MIN_READER_VERSION.key -> "2",
-        DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+
+        alterTableWithProps("t1", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
       verifyUpgradeAndTestSchemaEvolution("t1")
     }
   }
@@ -1190,8 +1223,249 @@ class DeltaColumnMappingSuite extends QueryTest
       " support changing column mapping modes"))
   }
 
+  test("getPhysicalNameFieldMap") {
+    // To keep things simple, we use schema `schemaWithPhysicalNamesNested` such that the
+    // physical name is just the logical name repeated three times.
+
+    val actual = DeltaColumnMapping
+      .getPhysicalNameFieldMap(schemaWithPhysicalNamesNested)
+      .map { case (physicalPath, field) => (physicalPath, field.name) }
+
+    val expected = Map[Seq[String], String](
+      Seq("aaa") -> "a",
+      Seq("bbb") -> "b",
+      Seq("bbb", "ccc") -> "c",
+      Seq("bbb", "ddd") -> "d",
+      Seq("bbb", "foo.foo.foo.bar.bar.bar") -> "foo.bar",
+      Seq("bbb", "foo.foo.foo.bar.bar.bar", "fff") -> "f",
+      Seq("ggg") -> "g",
+      Seq("ggg", "ccc") -> "c",
+      Seq("ggg", "ddd") -> "d",
+      Seq("ggg", "foo.foo.foo.bar.bar.bar") -> "foo.bar",
+      Seq("ggg", "foo.foo.foo.bar.bar.bar", "fff") -> "f",
+      Seq("hhh") -> "h"
+    )
+
+    assert(expected === actual,
+      s"""
+         |The actual physicalName -> logicalName map
+         |${actual.mkString("\n")}
+         |did not equal the expected map
+         |${expected.mkString("\n")}
+         |""".stripMargin)
+  }
+
+  testColumnMapping("is drop/rename column operation") { mode =>
+    import DeltaColumnMapping.{isDropColumnOperation, isRenameColumnOperation}
+
+    withTable("t1") {
+      def getMetadata(): MetadataAction = {
+        DeltaLog.forTable(spark, TableIdentifier("t1")).update().metadata
+      }
+
+      createStrictSchemaTableWithDeltaTableApi(
+        "t1",
+        schemaWithPhysicalNamesNested,
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode)
+      )
+
+      // case 1: currentSchema compared with itself
+      var currentMetadata = getMetadata()
+      var newMetadata = getMetadata()
+      assert(
+        !isDropColumnOperation(newMetadata, currentMetadata) &&
+          !isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 2: add a top-level column
+      sql("ALTER TABLE t1 ADD COLUMNS (ping INT)")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        !isDropColumnOperation(newMetadata, currentMetadata) &&
+          !isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 3: add a nested column
+      sql("ALTER TABLE t1 ADD COLUMNS (b.`foo.bar`.`my.new;col()` LONG)")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        !isDropColumnOperation(newMetadata, currentMetadata) &&
+          !isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 4: drop a top-level column
+      sql("ALTER TABLE t1 DROP COLUMN (ping)")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        isDropColumnOperation(newMetadata, currentMetadata) &&
+          !isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 5: drop a nested column
+      sql("ALTER TABLE t1 DROP COLUMN (g.`foo.bar`)")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        isDropColumnOperation(newMetadata, currentMetadata) &&
+          !isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 6: rename a top-level column
+      sql("ALTER TABLE t1 RENAME COLUMN a TO pong")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        !isDropColumnOperation(newMetadata, currentMetadata) &&
+          isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+
+      // case 7: rename a nested column
+      sql("ALTER TABLE t1 RENAME COLUMN b.c TO c2")
+      currentMetadata = newMetadata
+      newMetadata = getMetadata()
+      assert(
+        !isDropColumnOperation(newMetadata, currentMetadata) &&
+          isRenameColumnOperation(newMetadata, currentMetadata)
+      )
+    }
+  }
+
+  Seq(true, false).foreach { cdfEnabled =>
+    var shouldBlock = cdfEnabled
+
+    val shouldBlockStr = if (shouldBlock) "should block" else "should not block"
+
+    def checkHelper(
+        log: DeltaLog,
+        newSchema: StructType,
+        action: Action,
+        shouldFail: Boolean = shouldBlock): Unit = {
+      val txn = log.startTransaction()
+      txn.updateMetadata(txn.metadata.copy(schemaString = newSchema.json))
+
+      if (shouldFail) {
+        val e = intercept[DeltaUnsupportedOperationException] {
+          txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+        }.getMessage
+        assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
+          "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
+          "COLUMN.")
+      } else {
+        txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+      }
+    }
+
+    val fileActions = Seq(
+      AddFile("foo", Map.empty, 1L, 1L, dataChange = true),
+      AddFile("foo", Map.empty, 1L, 1L, dataChange = true).remove) ++
+      (if (cdfEnabled) AddCDCFile("foo", Map.empty, 1L) :: Nil else Nil)
+
+    testColumnMapping(
+      s"CDF and Column Mapping: $shouldBlockStr when CDF=$cdfEnabled",
+      enableSQLConf = true) { mode =>
+
+      def createTable(): Unit = {
+        createStrictSchemaTableWithDeltaTableApi(
+          "t1",
+          schemaWithPhysicalNamesNested,
+          Map(
+            DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode,
+            DeltaConfigs.CHANGE_DATA_FEED.key -> cdfEnabled.toString
+          )
+        )
+      }
+
+      Seq("h", "b.`foo.bar`.f").foreach { colName =>
+
+        // case 1: drop column with non-FileAction action should always pass
+        withTable("t1") {
+          createTable()
+          val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+          val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
+          checkHelper(log, droppedColumnSchema, SetTransaction("id", 1, None), shouldFail = false)
+        }
+
+        // case 2: rename column with FileAction should fail if $shouldBlock == true
+        fileActions.foreach { fileAction =>
+          withTable("t1") {
+            createTable()
+            val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+            withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
+              withTable("t2") {
+                sql("DROP TABLE IF EXISTS t2")
+                sql("CREATE TABLE t2 USING DELTA AS SELECT * FROM t1")
+                sql(s"ALTER TABLE t2 RENAME COLUMN $colName TO ii")
+                val renamedColumnSchema = sql("SELECT * FROM t2").schema
+                checkHelper(log, renamedColumnSchema, fileAction)
+              }
+            }
+          }
+        }
+
+        // case 3: drop column with FileAction should fail if $shouldBlock == true
+        fileActions.foreach { fileAction =>
+          withTable("t1") {
+            createTable()
+            val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+            val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
+            checkHelper(log, droppedColumnSchema, fileAction)
+          }
+        }
+      }
+    }
+  }
+
+  test("should block CM upgrade when commit has FileActions and CDF enabled") {
+    Seq(true, false).foreach { cdfEnabled =>
+      var shouldBlock = cdfEnabled
+
+      withTable("t1") {
+        createTableWithSQLAPI(
+          "t1",
+          props = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> cdfEnabled.toString))
+
+        val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+        val currMetadata = log.snapshot.metadata
+        val upgradeMetadata = currMetadata.copy(
+          configuration = currMetadata.configuration ++ Map(
+            DeltaConfigs.MIN_READER_VERSION.key -> "2",
+            DeltaConfigs.MIN_WRITER_VERSION.key -> "5",
+            DeltaConfigs.COLUMN_MAPPING_MODE.key -> NameMapping.name
+          )
+        )
+
+        val txn = log.startTransaction()
+        txn.updateMetadata(upgradeMetadata)
+
+        if (shouldBlock) {
+          val e = intercept[DeltaUnsupportedOperationException] {
+            txn.commit(
+              AddFile("foo", Map.empty, 1L, 1L, dataChange = true) :: Nil,
+              DeltaOperations.ManualUpdate)
+          }.getMessage
+          assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
+            "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
+            "COLUMN.")
+        } else {
+          txn.commit(
+            AddFile("foo", Map.empty, 1L, 1L, dataChange = true) :: Nil,
+            DeltaOperations.ManualUpdate)
+        }
+      }
+    }
+  }
+
   test("upgrade with dot column name should not be blocked") {
-    testCreateTableColumnMappingMode("t1", schemaWithDottedColumnNames, false, "name") {
+    testCreateTableColumnMappingMode(
+      "t1",
+      schemaWithDottedColumnNames,
+      false,
+      "name",
+      createNewTable = false
+    ) {
       sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
       alterTableWithProps("t1", props = Map(
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",

@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.GivenWhenThen
 
@@ -35,7 +34,9 @@ class DeltaColumnRenameSuite extends QueryTest
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
         partCols = Seq("a"))
-      spark.sql(s"Alter table t1 RENAME COLUMN b to b1")
+
+        spark.sql(s"Alter table t1 RENAME COLUMN b to b1")
+
       // insert data after rename
       spark.sql("insert into t1 " +
         "values ('str3', struct('str1.3', 3), map('k3', 'v3'), array(3, 33))")
@@ -60,12 +61,23 @@ class DeltaColumnRenameSuite extends QueryTest
       val e = intercept[AnalysisException] {
         spark.table("t1").select("b").collect()
       }
-      assert(e.getErrorClass == "MISSING_COLUMN")
+      // The error class is renamed in Spark 3.4
+      assert(e.getErrorClass == "UNRESOLVED_COLUMN" || e.getErrorClass == "MISSING_COLUMN" )
 
       // rename partition column
       spark.sql(s"Alter table t1 RENAME COLUMN a to a1")
       // rename nested column
       spark.sql(s"Alter table t1 RENAME COLUMN b1.c to c1")
+
+      // rename and verify rename history
+      val renameHistoryDf = sql("DESCRIBE HISTORY t1")
+          .where("operation = 'RENAME COLUMN'")
+          .select("version", "operationParameters")
+
+      checkAnswer(renameHistoryDf,
+        Row(2, Map("oldColumnPath" -> "b", "newColumnPath" -> "b1")) ::
+          Row(4, Map("oldColumnPath" -> "a", "newColumnPath" -> "a1")) ::
+          Row(5, Map("oldColumnPath" -> "b1.c", "newColumnPath" -> "b1.c1")) :: Nil)
 
       // cannot rename column to the same name
       assert(
@@ -83,7 +95,8 @@ class DeltaColumnRenameSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.table("t1").select("a").collect()
       }
-      assert(e2.getErrorClass == "MISSING_COLUMN")
+      // The error class is renamed in Spark 3.4
+      assert(e2.getErrorClass == "UNRESOLVED_COLUMN" || e2.getErrorClass == "MISSING_COLUMN" )
 
       // b1.c is no longer visible
       val e3 = intercept[AnalysisException] {

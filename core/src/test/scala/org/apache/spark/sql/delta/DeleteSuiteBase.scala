@@ -480,19 +480,23 @@ abstract class DeleteSuiteBase extends QueryTest
       }
     }
   }
-
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
     expectedErrorClassForSQLTempView = "MISSING_COLUMN",
     expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
   )
 
-  testInvalidTempViews("superset cols")(
-    text = "SELECT key, value, 1 FROM tab",
-    // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
-    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
-  )
+  // Need to be able to override this, because it works in some configurations.
+  protected def testSuperSetColsTempView(): Unit = {
+    testInvalidTempViews("superset cols")(
+      text = "SELECT key, value, 1 FROM tab",
+      // The analyzer can't tell whether the table originally had the extra column or not.
+      expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+      expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
+    )
+  }
+
+  testSuperSetColsTempView()
 
   protected def testComplexTempViews(name: String)(
       text: String,
@@ -512,7 +516,7 @@ abstract class DeleteSuiteBase extends QueryTest
 
   testComplexTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectResult = Seq(Row(3, 0))
+    expectResult = Row(3, 0) :: Nil
   )
 
   testComplexTempViews("view with too many internal aliases")(

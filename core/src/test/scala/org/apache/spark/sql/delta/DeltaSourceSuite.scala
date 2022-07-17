@@ -824,7 +824,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           clock.advance(defaultLogRetentionMillis + 100000000L)
 
           // Delete all logs before checkpoint
-          writersLog.cleanUpExpiredLogs()
+          writersLog.cleanUpExpiredLogs(writersLog.snapshot)
 
           // Check that the first few log files have been deleted
           val logPath = new File(inputDir, "_delta_log")
@@ -915,7 +915,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             }
           }
         }
-        deltaLog.cleanUpExpiredLogs()
+        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
         stream.processAllAvailable()
 
         val lastOffset = DeltaSourceOffset(
@@ -961,7 +961,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             }
           }
         }
-        deltaLog.cleanUpExpiredLogs()
+        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
         stream.processAllAvailable()
 
         val lastOffset = DeltaSourceOffset(
@@ -1310,6 +1310,80 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         } finally {
           q.stop()
         }
+      }
+    }
+  }
+
+  test(s"block streaming reads from a column mapping enabled table") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      withTable("t1") {
+        sql(
+          s"""
+             |CREATE TABLE t1 (value STRING) USING DELTA
+             |TBLPROPERTIES(
+             |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
+             |${DeltaConfigs.MIN_READER_VERSION.key} = '2',
+             |${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
+             |) LOCATION '$path'
+             |""".stripMargin)
+
+        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
+            .write.format("delta").mode("append").saveAsTable("t1")
+
+        Seq(true, false).foreach { isStartVersion0 =>
+          withClue(s"isStartVersion0 = $isStartVersion0") {
+            var dfr = spark.readStream.format("delta")
+            if (isStartVersion0) {
+              // By default the stream starts at the latest version in the table
+              dfr = dfr.option("startingVersion", "0")
+            }
+            val df = dfr.load(path).filter($"value" contains "keep")
+
+            val ex = intercept[Exception] {
+              testStream(df)(ProcessAllAvailable())
+            }
+            assert(ex.getMessage contains
+              "Streaming reads from a Delta table with column mapping enabled are not supported.")
+          }
+        }
+      }
+    }
+  }
+
+  test("block streaming reads after a table is upgraded with column mapping") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      withTable("t1") {
+        sql(s"CREATE TABLE t1 (value STRING) USING DELTA LOCATION '$path'")
+
+        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
+            .write.format("delta").mode("append").saveAsTable("t1")
+
+        val df = spark.readStream
+            .format("delta")
+            .load(path)
+            .filter($"value" contains "keep")
+
+        val ex = intercept[Exception] {
+          testStream(df)(
+            ProcessAllAvailable(),
+            Execute { _ =>
+              sql(
+                s"""
+                   |ALTER TABLE t1
+                   |SET TBLPROPERTIES (
+                   |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+                   |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5',
+                   |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
+                   |""".stripMargin)
+            },
+            AddToReservoir(inputDir, Seq("keep7", "drop2").toDF()),
+            ProcessAllAvailable()
+          )
+        }
+        assert(ex.getMessage contains
+          "Streaming reads from a Delta table with column mapping enabled are not supported.")
       }
     }
   }
@@ -1892,18 +1966,6 @@ abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
 
 }
 
-
-class DeltaSourceNameColumnMappingSuite extends DeltaSourceColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def runOnlyTests = Seq(
-    "basic",
-    "maxBytesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: metadata checkpoint",
-    "allow to change schema before starting a streaming query"
-  )
-
-}
 
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.

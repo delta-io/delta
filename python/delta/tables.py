@@ -581,7 +581,7 @@ class DeltaTable(object):
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def optimize(self) -> "DeltaOptimizeBuilder":
         """
         Optimize the data layout of the table. This returns
@@ -1177,13 +1177,13 @@ class DeltaOptimizeBuilder(object):
 
     Use :py:meth:`delta.tables.DeltaTable.optimize` to create an instance of this class.
 
-    .. versionadded:: 1.3.0
+    .. versionadded:: 2.0.0
     """
     def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def where(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
         """
         Apply partition filter on this optimize command builder to limit
@@ -1197,7 +1197,7 @@ class DeltaOptimizeBuilder(object):
         self._jbuilder = self._jbuilder.where(partitionFilter)
         return self
 
-    @since(1.3)  # type: ignore[arg-type]
+    @since(2.0)  # type: ignore[arg-type]
     def executeCompaction(self) -> DataFrame:
         """
         Compact the small files in selected partitions.
@@ -1207,5 +1207,32 @@ class DeltaOptimizeBuilder(object):
         """
         return DataFrame(
             self._jbuilder.executeCompaction(),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
+
+    @since(2.0)  # type: ignore[arg-type]
+    def executeZOrderBy(self, *cols: Union[str, List[str], Tuple[str, ...]]) -> DataFrame:
+        """
+        Z-Order the data in selected partitions using the given columns.
+
+        :param cols: the Z-Order cols
+        :type cols: str or list name of columns
+
+        :return: DataFrame containing the OPTIMIZE execution metrics
+        :rtype: pyspark.sql.DataFrame
+        """
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                errorMsg = "Z-order column must be str. "
+                errorMsg += "Found %s with type %s" % ((str(c)), str(type(c)))
+                raise TypeError(errorMsg)
+
+        return DataFrame(
+            self._jbuilder.executeZOrderBy(_to_seq(
+                self._spark._sc,  # type: ignore[attr-defined]
+                cast(Iterable[Union[Column, str]], cols)
+            )),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
