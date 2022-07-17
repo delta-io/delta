@@ -635,7 +635,7 @@ class DeltaTable(object):
         for col, expr in pydict.items():
             if type(col) is not str:
                 e = f"Keys of dict in {argname} must contain only strings with column names" + \
-                    ", found '%s' of type '%s" % (str(col), str(type(col)))
+                    f", found '{str(col)}' of type '{str(type(col))}'"
 
                 raise TypeError(e)
             if type(expr) is Column:
@@ -645,7 +645,7 @@ class DeltaTable(object):
             else:
                 e = f"Values of dict in {argname} must contain only Spark SQL Columns" + \
                     "or strings (expressions in SQL syntax) as values, " + \
-                    "found '%s' of type '%s'" % (str(expr), str(type(expr)))
+                    f"found '{str(expr)}' of type '{str(type(expr))}'"
 
                 raise TypeError(e)
         return jmap

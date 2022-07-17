@@ -59,7 +59,7 @@ spark.sql("VACUUM '%s' RETAIN 169 HOURS" % "/tmp/delta-table").collect()
 
 # SQL describe history
 print("####### SQL Describe History ########")
-print(spark.sql('DESCRIBE HISTORY delta.`/tmp/delta-table`').collect())
+print(spark.sql("DESCRIBE HISTORY delta.`/tmp/delta-table`").collect())
 
 # cleanup
 shutil.rmtree("/tmp/delta-table")
