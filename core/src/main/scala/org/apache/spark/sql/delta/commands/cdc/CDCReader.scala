@@ -372,7 +372,12 @@ object CDCReader extends DeltaLogging {
     if (addFiles.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new TahoeCDCAddFileIndex(spark, addFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new TahoeCDCAddFileIndex(
+          spark = spark,
+          filesByVersion = addFiles,
+          deltaLog = deltaLog,
+          path = deltaLog.dataPath,
+          snapshot = snapshot),
         snapshot.metadata,
         isStreaming))
     }
