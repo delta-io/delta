@@ -16,34 +16,32 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.types.StructType
 
 /**
- * A [[TahoeFileIndex]] for scanning a sequence of removed files as CDC. Similar to
- * [[TahoeBatchFileIndex]], the equivalent for reading [[AddFile]] actions.
+ * A [[TahoeFileIndex]] for scanning a sequence of added files as CDC. Similar to
+ * [[TahoeBatchFileIndex]], with a bit of special handling to attach the log version
+ * and CDC type on a per-file basis.
  */
-class TahoeRemoveFileIndex(
-    spark: SparkSession,
-    filesByVersion: Seq[CDCDataSpec[RemoveFile]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot)
+class TahoeCDCAddFileIndex(
+                         override val spark: SparkSession,
+                         val actionType: String = "cdcRead",
+                         filesByVersion: Seq[CDCDataSpec[AddFile]],
+                         deltaLog: DeltaLog,
+                         path: Path,
+                         snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
-
 
   override def additionalPartitionValues(): Map[String, String] =
     Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
 
-  override def partitionSchema: StructType =
-    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
-
+  override def partitionSchema: StructType = CDCReader.cdcReadSchema(super.partitionSchema)
 }

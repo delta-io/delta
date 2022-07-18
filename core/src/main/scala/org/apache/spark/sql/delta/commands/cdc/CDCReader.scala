@@ -22,7 +22,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaOperations, DeltaParquetFileFormat, DeltaTableUtils, DeltaTimeTravelSpec, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeCDCAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
@@ -372,7 +372,7 @@ object CDCReader extends DeltaLogging {
     if (addFiles.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new CdcAddFileIndex(spark, addFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new TahoeCDCAddFileIndex(spark, addFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
         snapshot.metadata,
         isStreaming))
     }

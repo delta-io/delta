@@ -16,61 +16,21 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
-import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.CDCDataSpec
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 
 /**
  * A [[TahoeFileIndex]] for scanning a sequence of CDC files. Similar to [[TahoeBatchFileIndex]],
  * the equivalent for reading [[AddFile]] actions.
  */
 class TahoeChangeFileIndex(
-    spark: SparkSession,
-    val filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
-
-  override def tableVersion: Long = snapshot.version
-
-  override def matchingFiles(
-      partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression]): Seq[AddFile] = {
-    // Make some fake AddFiles to satisfy the interface.
-    val addFiles = filesByVersion.flatMap {
-      case CDCDataSpec(version, ts, files) =>
-        files.map { f =>
-          // We add the metadata as faked partition columns in order to attach it on a per-file
-          // basis.
-          val newPartitionVals = f.partitionValues +
-            (CDC_COMMIT_VERSION -> version.toString) +
-            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull)
-          AddFile(f.path, newPartitionVals, f.size, 0, dataChange = false, tags = f.tags)
-        }
-    }
-    DeltaLog.filterFileList(
-        partitionSchema,
-        spark.createDataset(addFiles)(addFileEncoder).toDF(),
-        partitionFilters)
-      .as[AddFile](addFileEncoder)
-      .collect()
-  }
-
-  override def inputFiles: Array[String] = {
-    filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
-  }
-
-  override val partitionSchema: StructType = snapshot.metadata.partitionSchema
-    .add(CDC_COMMIT_VERSION, LongType)
-    .add(CDC_COMMIT_TIMESTAMP, TimestampType)
-
-  override def refresh(): Unit = {}
-
-  override val sizeInBytes: Long = filesByVersion.flatMap(_.actions).map(_.size).sum
+                            spark: SparkSession,
+                            filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
+                            deltaLog: DeltaLog,
+                            path: Path,
+                            snapshot: Snapshot)
+  extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 }
