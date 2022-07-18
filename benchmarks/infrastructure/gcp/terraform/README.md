@@ -3,9 +3,17 @@
 1. Install [Terraform](https://learn.hashicorp.com/tutorials/terraform/install-cli?in=terraform/gcp-get-started).
 
 2. Create and download [service account key](https://cloud.google.com/iam/docs/creating-managing-service-account-keys#iam-service-account-keys-create-console).
+   Please note that the key file should be in JSON format.
    The path to the file is required in the next step (`credentials_file`).
 
-3. Create Terraform variable file `benchmarks/infrastructure/gcp/terraform/terraform.tfvars` and fill in variable values.
+3. Make sure the service account has at least the following permissions:
+    * `Dataproc Editor`,
+    * `Dataproc Metastore Editor`,
+    * `Dataproc Service Agent`,
+    * `Service Account User`,
+    * `Storage Object Admin`.
+
+4. Create Terraform variable file `benchmarks/infrastructure/gcp/terraform/terraform.tfvars` and fill in variable values.
    ```tf
    project          = "<PROJECT_ID>"
    credentials_file = "<CREDENTIALS_FILE>"
@@ -21,7 +29,7 @@
    ```
    Please check `variables.tf` to learn more about each parameter.
 
-4. Run:
+5. Run:
    ```bash
    terraform init
    terraform validate
@@ -35,7 +43,7 @@
    master_node_address = "35.165.163.250"
    ```
 
-5. Once the benchmarks are finished, destroy the resources.
+6. Once the benchmarks are finished, destroy the resources.
    ```bash
    terraform destroy
    ```
