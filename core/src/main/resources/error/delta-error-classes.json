@@ -564,6 +564,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
+    "message" : [
+      "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_INCORRECT_ARRAY_ACCESS" : {
     "message" : [
       "Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to",
@@ -677,7 +683,7 @@
   },
   "DELTA_INVALID_LOGSTORE_CONF" : {
     "message" : [
-      "(`spark.delta.logStore.class`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
+      "(`<classConfig>`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
     ],
     "sqlState" : "42000"
   },
