@@ -374,7 +374,7 @@ object CDCReader extends DeltaLogging {
         spark,
         new TahoeCDCAddFileIndex(
           spark = spark,
-          filesByVersion = addFiles,
+          filesByVersion = addFiles.toSeq,
           deltaLog = deltaLog,
           path = deltaLog.dataPath,
           snapshot = snapshot),

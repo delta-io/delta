@@ -26,10 +26,10 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
 
 abstract class TahoeCDCBaseFileIndex[T <: FileAction](spark: SparkSession,
-                                                      val filesByVersion: Seq[CDCDataSpec[T]],
-                                                      deltaLog: DeltaLog,
-                                                      path: Path,
-                                                      snapshot: Snapshot)
+                                                  val filesByVersion: Seq[CDCDataSpec[T]],
+                                                  deltaLog: DeltaLog,
+                                                  path: Path,
+                                                  snapshot: Snapshot)
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   def extractActionParameters(action: T):
