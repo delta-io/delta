@@ -278,7 +278,7 @@ class DeltaTable(object):
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
-    @since(2.0)  # type: ignore[arg-type]
+    @since(2.1)  # type: ignore[arg-type]
     def details(self) -> DataFrame:
         """
         Get the details of a Delta table such as the format, name, and size.

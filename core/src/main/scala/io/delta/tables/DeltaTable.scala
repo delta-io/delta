@@ -139,7 +139,7 @@ class DeltaTable private[tables](
   /**
    * Get the details of a Delta table such as the format, name, and size.
    *
-   * @since 2.0.0
+   * @since 2.1.0
    */
   def details(): DataFrame = {
     executeDetails(deltaLog.dataPath.toString, table.getTableIdentifierIfExists)
