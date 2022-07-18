@@ -1870,11 +1870,21 @@ trait DeltaErrorsBase
     )
   }
 
-  def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
-    val schemeConfStr = schemeConf.map("spark.delta.logStore." + _._1).mkString(", ")
+  def logStoreConfConflicts(classConf: Seq[(String, String)],
+      schemeConf: Seq[(String, String)]): Throwable = {
+    val classConfStr = classConf.map(_._1).mkString(", ")
+    val schemeConfStr = schemeConf.map(_._1).mkString(", ")
     DeltaAnalysisException(
       errorClass = "DELTA_INVALID_LOGSTORE_CONF",
-      messageParameters = Array(schemeConfStr)
+      messageParameters = Array(classConfStr, schemeConfStr)
+    )
+  }
+
+  def inconsistentLogStoreConfs(setKeys: Seq[(String, String)]): Throwable = {
+    val setKeyStr = setKeys.map(_.productIterator.mkString(" = ")).mkString(", ")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INCONSISTENT_LOGSTORE_CONFS",
+      messageParameters = Array(setKeyStr)
     )
   }
 

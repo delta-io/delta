@@ -62,7 +62,8 @@ class DelegatingLogStore(hadoopConf: Configuration)
             // 1. Scheme conf if set.
             // 2. Defaults for scheme if exists.
             // 3. Default.
-            val logStoreClassNameOpt = sparkConf.getOption(LogStore.logStoreSchemeConfKey(scheme))
+            val logStoreClassNameOpt = LogStore.getLogStoreConfValue( // we look for all viable keys
+              LogStore.logStoreSchemeConfKey(scheme), sparkConf)
               .orElse(DelegatingLogStore.getDefaultLogStoreClassName(scheme))
             val logStore = logStoreClassNameOpt.map(createLogStore(_)).getOrElse(defaultLogStore)
             schemeToLogStoreMap += scheme -> logStore

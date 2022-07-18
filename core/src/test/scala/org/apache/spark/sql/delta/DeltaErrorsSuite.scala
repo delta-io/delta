@@ -729,14 +729,25 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        val schemeConf = Seq(("key", "val"))
-        throw DeltaErrors.logStoreConfConflicts(schemeConf)
+        val classConf = Seq(("classKey", "classVal"))
+        val schemeConf = Seq(("schemeKey", "schemeVal"))
+        throw DeltaErrors.logStoreConfConflicts(classConf, schemeConf)
       }
       assert(e.getErrorClass == "DELTA_INVALID_LOGSTORE_CONF")
       assert(e.getSqlState == "42000")
-      assert(e.getMessage == "(`spark.delta.logStore.class`) and " +
-        "(`spark.delta.logStore.key`) cannot " +
+      assert(e.getMessage == "(`classKey`) and (`schemeKey`) cannot " +
         "be set at the same time. Please set only one group of them.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        val schemeConf = Seq(("key", "val"))
+        throw DeltaErrors.inconsistentLogStoreConfs(
+          Seq(("delta.key", "value1"), ("spark.delta.key", "value2")))
+      }
+      assert(e.getErrorClass == "DELTA_INCONSISTENT_LOGSTORE_CONFS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "(delta.key = value1, spark.delta.key = value2) cannot be set to " +
+        "different values. Please only set one of them, or set them to the same value.")
     }
     {
       val e = intercept[DeltaSparkException] {
