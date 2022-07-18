@@ -702,10 +702,14 @@ trait DeltaSQLConfBase {
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
 
-  val DELTA_OPTIMIZE_USE_REPARTITON =
+  val DELTA_OPTIMIZE_REPARTITION_ENABLED =
     buildConf("optimize.repartition.enabled")
       .internal()
-      .doc("Use repartition(1) instead of coalesce(1) to merge small files.")
+      .doc("Use repartition(1) instead of coalesce(1) to merge small files. " +
+        "coalesce(1) is executed with only one task, if there are many tiny files " +
+        "within a bin (e.g. 1000 files of 50MB), it cannot be optimized with more executors. " +
+        "repartition(1) incurs a shuffle stage, but the job can be distributed."
+      )
       .booleanConf
       .createWithDefault(false)
 

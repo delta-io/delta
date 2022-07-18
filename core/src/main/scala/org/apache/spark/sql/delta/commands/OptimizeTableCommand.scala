@@ -317,7 +317,7 @@ class OptimizeExecutor(
         zOrderByColumns)
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_USE_REPARTITON)
+        DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
       if (useRepartition) {
         input.repartition(numPartitions = 1)
       } else {
