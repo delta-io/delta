@@ -62,7 +62,7 @@ EOF
 }
 
 resource "aws_security_group" "metastore_service" {
-  name   = "metastore_security_group"
+  name   = "benchmarks_metastore_security_group"
   vpc_id = var.vpc_id
   ingress {
     description     = "Allow inbound traffic only from EMR cluster nodes."
@@ -106,7 +106,7 @@ resource "aws_security_group" "emr" {
 #   the managed policies for the default roles. Then, copy and paste the contents to new policy statements, modify
 #   the permissions as appropriate, and attach the modified permissions policies to the roles that you create.
 resource "aws_iam_role" "benchmarks_iam_emr_service_role" {
-  name               = "iam_emr_service_role"
+  name               = "benchmarks_iam_emr_service_role"
   assume_role_policy = <<EOF
 {
   "Version": "2008-10-17",
@@ -125,7 +125,7 @@ EOF
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_service_policy" {
-  name   = "iam_emr_service_policy"
+  name   = "benchmarks_iam_emr_service_policy"
   role   = aws_iam_role.benchmarks_iam_emr_service_role.id
   policy = <<EOF
 {
@@ -211,7 +211,7 @@ EOF
 }
 
 resource "aws_iam_role" "benchmarks_iam_emr_profile_role" {
-  name               = "iam_emr_profile_role"
+  name               = "benchmarks_iam_emr_profile_role"
   assume_role_policy = <<EOF
 {
   "Version": "2008-10-17",
@@ -230,12 +230,12 @@ EOF
 }
 
 resource "aws_iam_instance_profile" "benchmarks_emr_profile" {
-  name = "emr_profile"
+  name = "benchmarks_emr_profile"
   role = aws_iam_role.benchmarks_iam_emr_profile_role.name
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_profile_policy" {
-  name   = "iam_emr_profile_policy"
+  name   = "benchmarks_iam_emr_profile_policy"
   role   = aws_iam_role.benchmarks_iam_emr_profile_role.id
   policy = <<EOF
 {
