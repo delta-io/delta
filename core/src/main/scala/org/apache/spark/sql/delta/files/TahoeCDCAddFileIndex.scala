@@ -41,7 +41,7 @@ class TahoeCDCAddFileIndex(
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
   override def additionalPartitionValues(): Map[String, String] =
-    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
+    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
 
   override def partitionSchema: StructType = CDCReader.cdcReadSchema(super.partitionSchema)
 }
