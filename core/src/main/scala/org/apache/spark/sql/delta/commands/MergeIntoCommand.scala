@@ -243,6 +243,10 @@ case class MergeIntoCommand(
   /** Whether this merge statement has only MATCHED clauses. */
   private def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty
 
+  // We over-count numTargetRowsDeleted when there are multiple matches;
+  // this is the amount of the overcount, so we can subtract it to get a correct final metric.
+  private var multipleMatchDeleteOnlyOvercount: Option[Long] = None
+
   override lazy val metrics = Map[String, SQLMetric](
     "numSourceRows" -> createMetric(sc, "number of source rows"),
     "numSourceRowsInSecondScan" ->
@@ -380,21 +384,20 @@ case class MergeIntoCommand(
       splitConjunctivePredicates(condition).filter(_.references.subsetOf(target.outputSet))
     val dataSkippedFiles = deltaTxn.filterFiles(targetOnlyPredicates)
 
+    // UDF to increment metrics
+    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
+    val sourceDF = Dataset.ofRows(spark, source)
+      .filter(new Column(incrSourceRowCountExpr))
+
     // Apply inner join to between source and target using the merge condition to find matches
     // In addition, we attach two columns
     // - a monotonically increasing row id for target rows to later identify whether the same
     //     target row is modified by multiple user or not
     // - the target file name the row is from to later identify the files touched by matched rows
-    val joinToFindTouchedFiles = {
-      // UDF to increment metrics
-      val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
-      val sourceDF = Dataset.ofRows(spark, source)
-        .filter(new Column(incrSourceRowCountExpr))
-      val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
-        .withColumn(ROW_ID_COL, monotonically_increasing_id())
-        .withColumn(FILE_NAME_COL, input_file_name())
-      sourceDF.join(targetDF, new Column(condition), "inner")
-    }
+    val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
+      .withColumn(ROW_ID_COL, monotonically_increasing_id())
+      .withColumn(FILE_NAME_COL, input_file_name())
+    val joinToFindTouchedFiles = sourceDF.join(targetDF, new Column(condition), "inner")
 
     // Process the matches from the inner join to record touched files and find multiple matches
     val collectTouchedFiles = joinToFindTouchedFiles
@@ -404,7 +407,17 @@ case class MergeIntoCommand(
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
 
     // Get multiple matches and simultaneously collect (using touchedFilesAccum) the file names
-    val multipleMatchCount = matchedRowCounts.filter("count > 1").count()
+    // multipleMatchCount = # of target rows with more than 1 matching source row (duplicate match)
+    // multipleMatchSum = total # of duplicate matched rows
+    import spark.implicits._
+    val (multipleMatchCount, multipleMatchSum) = matchedRowCounts
+      .filter("count > 1")
+      .select(coalesce(count("*"), lit(0)), coalesce(sum("count"), lit(0)))
+      .as[(Long, Long)]
+      .collect()
+      .head
+
+    val hasMultipleMatches = multipleMatchCount > 0
 
     // Throw error if multiple matches are ambiguous or cannot be computed correctly.
     val canBeComputedUnambiguously = {
@@ -417,8 +430,18 @@ case class MergeIntoCommand(
       matchedClauses.size == 1 && isUnconditionalDelete
     }
 
-    if (multipleMatchCount > 0 && !canBeComputedUnambiguously) {
+    if (hasMultipleMatches && !canBeComputedUnambiguously) {
       throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+    }
+
+    if (hasMultipleMatches) {
+      // This is only allowed for delete-only queries.
+      // This query will count the duplicates for numTargetRowsDeleted in Job 2,
+      // because we count matches after the join and not just the target rows.
+      // We have to compensate for this by subtracting the duplicates later,
+      // so we need to record them here.
+      val duplicateCount = multipleMatchSum - multipleMatchCount
+      multipleMatchDeleteOnlyOvercount = Some(duplicateCount)
     }
 
     // Get the AddFiles using the touched file names.
@@ -428,6 +451,15 @@ case class MergeIntoCommand(
     val nameToAddFileMap = generateCandidateFileMap(targetDeltaLog.dataPath, dataSkippedFiles)
     val touchedAddFiles = touchedFileNames.map(f =>
       getTouchedFile(targetDeltaLog.dataPath, f, nameToAddFileMap))
+
+    // When the target table is empty, and the optimizer optimized away the join entirely
+    // numSourceRows will be incorrectly 0. We need to scan the source table once to get the correct
+    // metric here.
+    if (metrics("numSourceRows").value == 0 &&
+      (dataSkippedFiles.isEmpty || targetDF.take(1).isEmpty)) {
+      val numSourceRows = sourceDF.count()
+      metrics("numSourceRows").set(numSourceRows)
+    }
 
     // Update metrics
     metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
@@ -697,6 +729,13 @@ case class MergeIntoCommand(
     metrics("numTargetChangeFileBytes") += newFiles.collect{ case f: AddCDCFile => f.size }.sum
     metrics("numTargetBytesAdded") += addedBytes
     metrics("numTargetPartitionsAddedTo") += addedPartitions
+    if (multipleMatchDeleteOnlyOvercount.isDefined) {
+      // Compensate for counting duplicates during the query.
+      val actualRowsDeleted =
+        metrics("numTargetRowsDeleted").value - multipleMatchDeleteOnlyOvercount.get
+      assert(actualRowsDeleted >= 0)
+      metrics("numTargetRowsDeleted").set(actualRowsDeleted)
+    }
 
     newFiles
   }
