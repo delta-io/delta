@@ -111,9 +111,9 @@ trait SnapshotManagement { self: DeltaLog =>
         .filter { file => isDeltaCommitOrCheckpointFile(file.getPath) }
         // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
         // such files, hence we drop them so that we never pick up such checkpoints.
-        .filterNot { file => isCheckpointFile(file.getPath) && file.getLen == 0 }
+        .filterNot { file => isCheckpointFile(file) && file.getLen == 0 }
         // take files until the version we want to load
-        .takeWhile(f => versionToLoad.forall(v => getFileVersion(f.getPath) <= v))
+        .takeWhile(f => versionToLoad.forall(getFileVersion(f) <= _))
         .toArray
       }
     }
@@ -174,7 +174,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // singleton, so try listing from the first version
         return getLogSegmentForVersion(None, versionToLoad)
       }
-      val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
+      val (checkpoints, deltas) = newFiles.partition(isCheckpointFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
       val lastChkpoint = versionToLoad.map(CheckpointInstance(_, None))
         .getOrElse(CheckpointInstance.MaxValue)
@@ -191,7 +191,7 @@ trait SnapshotManagement { self: DeltaLog =>
           // [SC-95011] FIXME(ryan.johnson): Something has gone very wrong if the checkpoint doesn't
           // exist at all. This code should only handle rejected incomplete checkpoints.
           recordDeltaEvent(this, "delta.checkpoint.error.partial")
-          val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last.getPath))
+          val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last))
           getLogSegmentWithMaxExclusiveCheckpointVersion(snapshotVersion, startCheckpoint)
             .foreach { alternativeLogSegment => return Some(alternativeLogSegment) }
 
@@ -206,10 +206,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
       // it will list all existing delta files.
       val deltasAfterCheckpoint = deltas.filter { file =>
-        deltaVersion(file.getPath) > newCheckpointVersion
+        deltaVersion(file) > newCheckpointVersion
       }
 
-      val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
+      val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
       // We may just be getting a checkpoint file after the filtering
       if (deltaVersions.nonEmpty) {
         if (deltaVersions.head != newCheckpointVersion + 1) {
@@ -346,8 +346,7 @@ trait SnapshotManagement { self: DeltaLog =>
           startVersion = cp.version,
           versionToLoad = Some(snapshotVersion))
           .getOrElse(Array.empty)
-        val (checkpoints, deltas) =
-          filesSinceCheckpointVersion.partition(f => isCheckpointFile(f.getPath))
+        val (checkpoints, deltas) = filesSinceCheckpointVersion.partition(isCheckpointFile)
         if (deltas.isEmpty) {
           // We cannot find any delta files. Returns None as we cannot construct a `LogSegment` only
           // from checkpoint files. This is because in order to create a `LogSegment`, we need to
@@ -368,9 +367,9 @@ trait SnapshotManagement { self: DeltaLog =>
             "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
-          deltaVersion(file.getPath) > cp.version
+          deltaVersion(file) > cp.version
         }
-        val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
+        val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
         // `deltaVersions` should not be empty and `verifyDeltaVersions` will verify it
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(cp.version + 1), Some(snapshotVersion))
@@ -390,8 +389,8 @@ trait SnapshotManagement { self: DeltaLog =>
         val deltas =
           listDeltaAndCheckpointFiles(startVersion = 0, versionToLoad = Some(snapshotVersion))
             .getOrElse(Array.empty)
-            .filter(file => isDeltaFile(file.getPath))
-        val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
+            .filter(isDeltaFile)
+        val deltaVersions = deltas.map(deltaVersion)
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
         } catch {
