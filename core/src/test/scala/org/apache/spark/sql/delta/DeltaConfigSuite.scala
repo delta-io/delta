@@ -154,7 +154,8 @@ class DeltaConfigSuite extends SparkFunSuite
         }
       }
       var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
-        "allowArbitraryProperties.enabled=true in the Spark session configuration."
+        "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
+        "configuration."
       assert(e.getMessage == msg)
     }
   }
