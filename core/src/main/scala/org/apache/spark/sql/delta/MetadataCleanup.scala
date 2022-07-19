@@ -77,7 +77,7 @@ trait MetadataCleanup extends DeltaLogging {
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(checkpointPrefix(logPath, 0), newDeltaHadoopConf())
-      .filter(f => isCheckpointFile(f.getPath) || isDeltaFile(f.getPath))
+      .filter(f => isCheckpointFile(f) || isDeltaFile(f))
     def getVersion(filePath: Path): Long = {
       if (isCheckpointFile(filePath)) {
         checkpointVersion(filePath)

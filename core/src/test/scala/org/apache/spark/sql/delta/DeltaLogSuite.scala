@@ -156,7 +156,7 @@ class DeltaLogSuite extends QueryTest
 
     val deltas = log2.snapshot.logSegment.deltas
     assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
-    val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
+    val versions = deltas.map(FileNames.deltaVersion).sorted
     assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
   }
 
