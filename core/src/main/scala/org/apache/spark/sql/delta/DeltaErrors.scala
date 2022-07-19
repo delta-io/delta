@@ -664,7 +664,7 @@ trait DeltaErrorsBase
   def unknownConfigurationKeyException(confKey: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNKNOWN_CONFIGURATION",
-      messageParameters = Array(confKey))
+      messageParameters = Array(confKey, DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key))
   }
 
   def cdcNotAllowedInThisVersion(): Throwable = {
@@ -2204,7 +2204,9 @@ trait DeltaErrorsBase
 
   def failRelativizePath(pathName: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_FAIL_RELATIVIZE_PATH", messageParameters = Array(pathName, pathName)
+      errorClass = "DELTA_FAIL_RELATIVIZE_PATH", messageParameters = Array(
+        pathName,
+        DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key)
     )
   }
 
