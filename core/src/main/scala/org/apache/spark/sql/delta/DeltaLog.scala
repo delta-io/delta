@@ -258,8 +258,7 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val hadoopConf = newDeltaHadoopConf()
-    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf)
-      .filter(f => isDeltaFile(f.getPath))
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf).filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
@@ -281,11 +280,11 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
     val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
-      .filter(f => isDeltaFile(f.getPath))
+      .filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
-      val version = deltaVersion(status.getPath)
+      val version = deltaVersion(status)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }

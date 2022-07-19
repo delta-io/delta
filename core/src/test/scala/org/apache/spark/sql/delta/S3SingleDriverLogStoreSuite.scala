@@ -28,14 +28,12 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
       path: Path,
       expectedVersions: Seq[Int],
       hadoopConf: Configuration): Unit = {
-    assert(
-      store.listFrom(path, hadoopConf)
-        .map(f => FileNames.deltaVersion(f.getPath)).toSeq === expectedVersions)
+    assert(store.listFrom(path, hadoopConf).map(FileNames.deltaVersion).toSeq === expectedVersions)
   }
 
   private def checkFileSystemList(fs: FileSystem, path: Path, expectedVersions: Seq[Int]): Unit = {
     val fsList = fs.listStatus(path.getParent).filter(_.getPath.getName >= path.getName)
-    assert(fsList.map(f => FileNames.deltaVersion(f.getPath)).sorted === expectedVersions)
+    assert(fsList.map(FileNames.deltaVersion).sorted === expectedVersions)
   }
 
   testHadoopConf(

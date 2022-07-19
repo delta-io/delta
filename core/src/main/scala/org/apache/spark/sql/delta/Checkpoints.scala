@@ -417,7 +417,7 @@ trait Checkpoints extends DeltaLogging {
             hadoopConf)
           // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
           // such files, hence we drop them so that we never pick up such checkpoints.
-          .filter { file => isCheckpointFile(file.getPath) && file.getLen != 0 }
+          .filter { file => isCheckpointFile(file) && file.getLen != 0 }
           .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
