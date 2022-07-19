@@ -316,7 +316,13 @@ class OptimizeExecutor(
         approxNumFiles,
         zOrderByColumns)
     } else {
-      input.coalesce(numPartitions = 1)
+      val useRepartition = sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
+      if (useRepartition) {
+        input.repartition(numPartitions = 1)
+      } else {
+        input.coalesce(numPartitions = 1)
+      }
     }
 
     val partitionDesc = partition.toSeq.map(entry => entry._1 + "=" + entry._2).mkString(",")
