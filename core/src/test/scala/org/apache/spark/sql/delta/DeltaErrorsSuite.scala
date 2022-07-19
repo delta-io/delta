@@ -796,7 +796,8 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
       var msg = "Unknown configuration was specified: confKey\nTo disable this check, set " +
-        "allowArbitraryProperties.enabled=true in the Spark session configuration."
+        "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
+        "configuration."
       assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
       assert(e.getMessage == msg)
     }
@@ -806,6 +807,23 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_PATH_DOES_NOT_EXIST")
       assert(e.getMessage == "path doesn't exist")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.failRelativizePath("path")
+      }
+      assert(e.getErrorClass == "DELTA_FAIL_RELATIVIZE_PATH")
+      assert(e.getSqlState == "42000")
+      var msg =
+        """Failed to relativize the path (path). This can happen when absolute paths make
+          |it into the transaction log, which start with the scheme
+          |s3://, wasbs:// or adls://.
+          |
+          |If this table is NOT USED IN PRODUCTION, you can set the SQL configuration
+          |spark.databricks.delta.vacuum.relativize.ignoreError to true.
+          |Using this SQL configuration could lead to accidental data loss, therefore we do
+          |not recommend the use of this flag unless this is for testing purposes.""".stripMargin
+      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaIllegalStateException] {
