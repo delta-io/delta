@@ -47,7 +47,7 @@ import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Le
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
@@ -1794,13 +1794,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
 
       val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+      val deltaSparkExtConf = StaticSQLConf.SPARK_SESSION_EXTENSIONS.key
       val msg =
         s"""This Delta operation requires the SparkSession to be configured with the
            |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config(s"$deltaSparkExtConf", "${classOf[DeltaSparkSessionExtension].getName}")
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
            |    .getOrCreate()

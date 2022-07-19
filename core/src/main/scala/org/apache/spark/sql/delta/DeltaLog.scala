@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
@@ -80,6 +81,24 @@ class DeltaLog private(
   private lazy implicit val _clock = clock
 
   protected def spark = SparkSession.active
+
+  /**
+   * Issue 1144 - Verify the required Spark conf for delta
+   * Throw `DeltaErrors.configureSparkSessionWithExtensionAndCatalog` exception if both
+   * `spark.sql.extensions` and `spark.sql.catalog.spark_catalog` config are missing.
+   * If `DeltaSparkSessionExtension` is alternatively activated using the `.withExtension()` API,
+   * we expect the DeltaSqlParser to be available and try parse the vacuum command.
+   * If not successful, we throw exception.
+   */
+  if(spark.conf.getOption(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key)
+    .orElse(Try(spark.sessionState.sqlParser.parsePlan("vacuum delta_table")).toOption)
+    .isEmpty ||
+    spark.conf.getOption(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+    throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(
+      new DeltaIllegalArgumentException(
+        errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
+        messageParameters = null))
+  }
 
   /**
    * Keep a reference to `SparkContext` used to create `DeltaLog`. `DeltaLog` cannot be used when

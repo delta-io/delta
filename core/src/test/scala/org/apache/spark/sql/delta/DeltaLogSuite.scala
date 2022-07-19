@@ -30,11 +30,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils with DeltaSQLCommandTest {
 
   protected val testOp = Truncate()
 
@@ -503,6 +504,24 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("should throw exception if required spark configs are not found") {
+    withTempDir { dir =>
+      SparkSession.cleanupAnyExistingSession()
+      val testSpark = SparkSession.builder()
+        .appName("DeltaLogSparkExtensionTest")
+        .master("local[2]")
+        .getOrCreate()
+
+      val path = new Path(dir.getCanonicalPath)
+      val log = DeltaLog.forTable(testSpark, path)
+      val e = intercept[DeltaAnalysisException] {
+        DeltaLog.forTable(testSpark, path)
+      }
+      assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+      assert(e.getSqlState == "42000")
     }
   }
 }
