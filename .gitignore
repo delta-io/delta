@@ -119,7 +119,6 @@ pycodestyle*.py
 **/.terraform/*
 *.tfstate
 *.tfstate.*
-*.terraform.lock*
 crash.log
 crash.*.log
 *.tfvars
