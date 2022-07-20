@@ -484,9 +484,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /** Returns a[[DeltaScan]] based on the given filters and projections. */
-  override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
-    val scan = snapshot.filesForScan(projection, filters)
+  /** Returns a[[DeltaScan]] based on the given filters. */
+  override def filesForScan(filters: Seq[Expression]): DeltaScan = {
+    val scan = snapshot.filesForScan(filters)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -507,7 +507,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(Nil, filters)
+    val scan = snapshot.filesForScan(filters)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
