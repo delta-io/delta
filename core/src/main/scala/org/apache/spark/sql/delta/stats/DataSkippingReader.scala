@@ -825,13 +825,10 @@ trait DataSkippingReaderBase
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
    */
-  override def filesForScan(
-      projection: Seq[Attribute],
-      filters: Seq[Expression]): DeltaScan =
-    filesForScan(projection, filters, keepNumRecords = false)
+  override def filesForScan(filters: Seq[Expression]): DeltaScan =
+    filesForScan(filters, keepNumRecords = false)
 
   def filesForScan(
-      projection: Seq[Attribute],
       filters: Seq[Expression],
       keepNumRecords: Boolean): DeltaScan = {
     val startTime = System.currentTimeMillis()
@@ -849,7 +846,6 @@ trait DataSkippingReaderBase
           partition = dataSize,
           scanned = dataSize)(
           scannedSnapshot = snapshotToScan,
-          projection = AttributeSet(projection),
           partitionFilters = ExpressionSet(Nil),
           dataFilters = ExpressionSet(Nil),
           unusedFilters = ExpressionSet(Nil),
@@ -879,7 +875,6 @@ trait DataSkippingReaderBase
         partition = scanSize,
         scanned = scanSize)(
         scannedSnapshot = snapshotToScan,
-        projection = AttributeSet(projection),
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(Nil),
         unusedFilters = ExpressionSet(subqueryFilters),
@@ -920,7 +915,6 @@ trait DataSkippingReaderBase
         partition = sizes(1),
         scanned = sizes(2))(
         scannedSnapshot = snapshotToScan,
-        projection = AttributeSet(projection),
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),

@@ -81,7 +81,6 @@ case class DeltaScan(
     val partitionFilters: ExpressionSet,
     val dataFilters: ExpressionSet,
     val unusedFilters: ExpressionSet,
-    val projection: AttributeSet,
     val scanDurationMs: Long,
     val dataSkippingType: DeltaDataSkippingType) {
   assert(version == scannedSnapshot.version)

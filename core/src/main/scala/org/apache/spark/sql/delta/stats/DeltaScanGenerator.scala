@@ -32,8 +32,8 @@ trait DeltaScanGeneratorBase {
    */
   def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame
 
-  /** Returns a [[DeltaScan]] based on the given filters and projections. */
-  def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan
+  /** Returns a [[DeltaScan]] based on the given filters. */
+  def filesForScan(filters: Seq[Expression]): DeltaScan
 }
 
 
