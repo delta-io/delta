@@ -825,12 +825,7 @@ trait DataSkippingReaderBase
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
    */
-  override def filesForScan(filters: Seq[Expression]): DeltaScan =
-    filesForScan(filters, keepNumRecords = false)
-
-  def filesForScan(
-      filters: Seq[Expression],
-      keepNumRecords: Boolean): DeltaScan = {
+  override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
     val startTime = System.currentTimeMillis()
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
