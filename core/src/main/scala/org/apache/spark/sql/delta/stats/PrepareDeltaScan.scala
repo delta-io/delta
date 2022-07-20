@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
@@ -112,7 +113,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   protected def filesForScan(
       scanGenerator: DeltaScanGenerator,
       limitOpt: Option[Int],
-      projection: Seq[Attribute],
       filters: Seq[Expression],
       delta: LogicalRelation): DeltaScan = {
     withStatusCode("DELTA", "Filtering files for query") {
@@ -124,7 +124,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
             spark, scanGenerator.snapshotToScan, filters, delta)
           filters ++ generatedPartitionFilters
         }
-      scanGenerator.filesForScan(projection, filtersForScan)
+      scanGenerator.filesForScan(filtersForScan)
     }
   }
 
@@ -154,10 +154,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
     def transform(plan: LogicalPlan): LogicalPlan =
       transformSubqueries(plan) transform {
-        case scan @ DeltaTableScan(projection, filters, fileIndex, limit, delta) =>
+        case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
+          limit, delta) =>
           val scanGenerator = getDeltaScanGenerator(fileIndex)
-          val preparedScan = deltaScans.getOrElseUpdate(scan.canonicalized,
-              filesForScan(scanGenerator, limit, projection, filters, delta))
+          val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
+              filesForScan(scanGenerator, limit, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
           optimizeGeneratedColumns(
             preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
@@ -232,28 +233,39 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
     /**
      * The components of DeltaTableScanType are:
-     * - an `AttributeSet` of the project collected by `PhysicalOperation`
+     * - the canonicalized plan with removed projections. We remove projections as a plan
+     * differentiator because it does not affect file listing results.
      * - filter expressions collected by `PhysicalOperation`
      * - the `TahoeLogFileIndex` of the matched DeltaTable`
      * - integer value of limit expression, if any
      * - matched `DeltaTable`
      */
     private type DeltaTableScanType =
-      (Seq[Attribute], Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalRelation)
+      (LogicalPlan, Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalRelation)
 
     /**
      * This is an extractor method (basically, the opposite of a constructor) which takes in an
      * object `plan` and tries to give back the arguments as a [[DeltaTableScanType]].
      */
     def unapply(plan: LogicalPlan): Option[DeltaTableScanType] = {
+
+      // Remove projections as a plan differentiator because it does not affect file listing
+      // results. Plans with the same filters but different projections therefore will not have
+      // duplicate delta indexes.
+      def canonicalizePlanForDeltaFileListing(plan: LogicalPlan): LogicalPlan = {
+        val planWithRemovedProjections = plan.transformWithPruning(_.containsPattern(PROJECT)) {
+          case p: Project if p.projectList.forall(_.isInstanceOf[AttributeReference]) => p.child
+        }
+        planWithRemovedProjections.canonicalized
+      }
+
       plan match {
         case PhysicalOperation(
-            project,
+            _,
             filters,
             delta @ DeltaTable(fileIndex: TahoeLogFileIndex)) =>
-          val projects = AttributeSet(project).toSeq
           val allFilters = fileIndex.partitionFilters ++ filters
-          Some((projects, allFilters, fileIndex, None, delta))
+          Some((canonicalizePlanForDeltaFileListing(plan), allFilters, fileIndex, None, delta))
 
         case _ => None
       }
@@ -352,8 +364,7 @@ case class PreparedDeltaFileIndex(
         "preparedFiltersUsedForSkipping" -> preparedScan.filtersUsedForSkipping.mkString(","),
         "currentFilters" -> currentFilters.mkString(",")
       )
-      val files = preparedScan.scannedSnapshot.filesForScan(
-        projection = Nil, partitionFilters ++ dataFilters).files
+      val files = preparedScan.scannedSnapshot.filesForScan(partitionFilters ++ dataFilters).files
       (files, eventData)
     }
     recordDeltaEvent(deltaLog,
