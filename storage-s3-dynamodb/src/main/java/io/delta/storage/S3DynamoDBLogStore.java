@@ -16,6 +16,7 @@
 
 package io.delta.storage;
 
+import io.delta.storage.utils.ReflectionUtils;
 import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
@@ -279,19 +280,12 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
     private AmazonDynamoDBClient getClient() throws java.io.IOException {
         try {
-            final AWSCredentialsProvider auth =
-                (AWSCredentialsProvider) Class.forName(credentialsProviderName)
-                    .getConstructor()
-                    .newInstance();
-            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
+            final AWSCredentialsProvider awsCredentialsProvider =
+                    ReflectionUtils.createAwsCredentialsProvider(credentialsProviderName, initHadoopConf());
+            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
             return client;
-        } catch (
-            ClassNotFoundException
-            | InstantiationException
-            | NoSuchMethodException
-            | IllegalAccessException
-            | java.lang.reflect.InvocationTargetException e) {
+        } catch (ReflectiveOperationException e) {
             throw new java.io.IOException(e);
         }
     }

@@ -359,4 +359,63 @@ class OptimisticTransactionSuite
       assert(actionsWithoutTxnId1 === actionsWithoutTxnId2)
     }
   }
+
+  test("pre-command actions committed") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val version = txn.commit(Seq(), ManualUpdate)
+
+      def readActions(version: Long): Seq[Action] = {
+        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+          .map(Action.fromJson)
+      }
+      val actions = readActions(version)
+      assert(actions.collectFirst {
+        case SetTransaction("TestAppId", 1L, _) =>
+      }.isDefined)
+    }
+  }
+
+  test("has SetTransaction version conflicts") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val e = intercept[IllegalArgumentException] {
+        txn.commit(Seq(SetTransaction("TestAppId", 2L, None)), ManualUpdate)
+      }
+      assert(e.getMessage == DeltaErrors.setTransactionVersionConflict("TestAppId", 2L, 1L)
+        .getMessage)
+    }
+  }
+
+  test("removes duplicate SetTransactions") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
+      def readActions(version: Long): Seq[Action] = {
+        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+          .map(Action.fromJson)
+      }
+      assert(readActions(version).collectFirst {
+        case SetTransaction("TestAppId", 1L, _) =>
+      }.isDefined)
+    }
+  }
 }

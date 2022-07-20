@@ -97,6 +97,7 @@ object DeltaOperations {
         strMetrics -= "numCopiedRows"
         strMetrics -= "numAddedFiles"
       }
+
       strMetrics
     }
     override def changesData: Boolean = true
@@ -159,6 +160,22 @@ object DeltaOperations {
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
 
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+
+      var strMetrics = super.transformMetrics(metrics)
+
+      // We have to recalculate "numOutputRows" to avoid counting CDC rows
+      if (metrics.contains("numTargetRowsInserted") &&
+          metrics.contains("numTargetRowsUpdated") &&
+          metrics.contains("numTargetRowsCopied")) {
+        val actualNumOutputRows = metrics("numTargetRowsInserted").value +
+          metrics("numTargetRowsUpdated").value +
+          metrics("numTargetRowsCopied").value
+        strMetrics += "numOutputRows" -> actualNumOutputRows.toString
+      }
+
+      strMetrics
+    }
 
     override def changesData: Boolean = true
   }

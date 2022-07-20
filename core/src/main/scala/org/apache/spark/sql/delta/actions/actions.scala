@@ -39,7 +39,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, NullType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */

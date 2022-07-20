@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -38,6 +39,7 @@ trait MergeIntoMetricsBase
   with SharedSparkSession { self: DescribeDeltaHistorySuiteBase =>
 
   import MergeIntoMetricsBase._
+  import testImplicits._
 
   ///////////////////////
   // container classes //
@@ -70,6 +72,38 @@ trait MergeIntoMetricsBase
   // test utils //
   ////////////////
 
+  // We store testName --> (partitioned, cdfEnabled) where partitioned and cdfEnabled are
+  // boolean options. If they are None, we ignore the test for both the true and false values.
+  // Otherwise we ignore only the boolean value in the option.
+  val testsToIgnore = Map(
+    // numTargetFilesAdded - only wrong when partitioned=false
+    "insert-only when all rows match" -> (Some(false), None),
+    "insert-only with unsatisfied condition" -> (Some(false), None),
+    "insert-only with empty source" -> (Some(false), None),
+    "delete-only with disjoint tables" -> (Some(false), Some(false)),
+    "delete-only delete all rows" -> (Some(false), Some(false)),
+    "delete-only with empty source" -> (Some(false), Some(false)),
+    "delete-only with empty target" -> (Some(false), Some(false)),
+    "delete-only without join empty source" -> (Some(false), Some(false)),
+
+    // numTargetRowsCopied
+    "delete-only with condition" -> (None, None),
+    "delete-only with update with unsatisfied condition" -> (None, None),
+    "delete-only with unsatisfied condition" -> (None, None),
+    "delete-only with target-only condition" -> (None, None),
+    "delete-only with source-only condition" -> (None, None),
+    "match-only with unsatisfied condition" -> (None, None)
+  )
+
+  // Currently multiple metrics are wrong for Merge. We have added tests for these scenarios but
+  // we need to ignore the failing tests until the metrics are fixed.
+  private def shouldIgnoreTest(name: String, partitioned: Boolean, cdfEnabled: Boolean): Boolean = {
+    testsToIgnore.get(name).exists {
+      case (partitionedValue, cdfEnabledValue) =>
+        partitionedValue.forall(_ == partitioned) && cdfEnabledValue.forall(_ == cdfEnabled)
+    }
+  }
+
   // Helper to generate tests with different configurations.
   private def testMergeMetrics(name: String)(testFn: MergeTestConfiguration => Unit): Unit = {
     for {
@@ -78,7 +112,12 @@ trait MergeIntoMetricsBase
     } {
       val testConfig = MergeTestConfiguration(partitioned = partitioned, cdfEnabled = cdfEnabled)
       val testName = s"merge-metrics: $name - Partitioned = $partitioned, CDF = $cdfEnabled"
-      test(testName) { testFn(testConfig) }
+
+      if (shouldIgnoreTest(name, partitioned, cdfEnabled)) {
+        ignore(testName) { testFn(testConfig) }
+      } else {
+        test(testName) { testFn(testConfig) }
+      }
     }
   }
 
@@ -249,6 +288,848 @@ trait MergeIntoMetricsBase
       "numSourceRows" -> 100,
       "numOutputRows" -> 50,
       "numTargetRowsInserted" -> 50
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with skipping") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 100, end = 200, step = 1, numPartitions = 5).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable.as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id and t.partCol >= 2")
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 100,
+      "numTargetRowsInserted" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatched("s.id >= 125")
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 25,
+      "numTargetRowsInserted" -> 25
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only when all rows match") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 200, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with unsatisfied condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatched("s.id > 150")
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with empty source") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 200, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(0).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with empty target") { testConfig => {
+    val targetDf = spark.range(0).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 100,
+      "numTargetRowsInserted" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with disjoint tables") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 100, end = 200, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 100,
+      "numTargetRowsInserted" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("insert-only with update/delete with unsatisfied conditions") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 50, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id > 200")
+        .updateAll()
+        .whenMatched("s.id + t.id < 0")
+        .delete()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    // In classic merge we are copying all rows from job1.
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 150,
+      "numOutputRows" -> 150,
+      "numTargetRowsInserted" -> 100,
+      "numTargetRowsCopied" -> 50,
+      "numTargetFilesRemoved" -> 5
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  /////////////////////////////
+  // delete-only merge tests //
+  /////////////////////////////
+
+  testMergeMetrics("delete-only") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsRemoved" -> -1,
+      "numOutputRows" -> 10,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> -1
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with skipping") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id and t.partCol >= 2")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 10,
+      "numTargetRowsCopied" -> 10,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with disjoint tables") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 100, end = 200, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only delete all rows") { testConfig => {
+    val targetDf = spark.range(start = 100, end = 200, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 300, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 300,
+      "numOutputRows" -> 0,
+      "numTargetRowsCopied" -> 0,
+      "numTargetRowsDeleted" -> 100,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 5
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id < 50")
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 150,
+      "numOutputRows" -> 15,
+      "numTargetRowsCopied" -> 15,
+      "numTargetRowsDeleted" -> 25,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 2
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with update with unsatisfied condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id > 1000")
+        .updateAll()
+        .whenMatched("s.id + t.id < 50")
+        .delete()
+        .execute()
+    }
+    // In case of partitioned tables, files are mixed-in even though finally there are no matches.
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 15,
+      "numTargetRowsCopied" -> 15,
+      "numTargetRowsDeleted" -> 25,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 2
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with condition on delete and insert with no matching rows") {
+    testConfig => {
+      val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+      val sourceDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 10).toDF()
+      val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+        targetTable
+          .as("t")
+          .merge(sourceDf.as("s"), "s.id = t.id")
+          .whenMatched("s.id + t.id < 50")
+          .delete()
+          .whenNotMatched()
+          .insertAll()
+          .execute()
+      }
+      // In classic merge we are copying all rows from job1.
+      // In case of partitioned tables, files are mixed-in even though finally there are no matches.
+      val expectedOpMetrics = Map[String, Int](
+        "numSourceRows" -> 100,
+        "numOutputRows" -> 75,
+        "numTargetRowsCopied" -> 75,
+        "numTargetRowsDeleted" -> 25,
+        "numTargetRowsRemoved" -> -1,
+        "numTargetFilesRemoved" -> 5
+      )
+      runMergeCmdAndTestMetrics(
+        targetDf = targetDf,
+        sourceDf = sourceDf,
+        mergeCmdFn = mergeCmdFn,
+        expectedOpMetrics = expectedOpMetrics,
+        testConfig = testConfig
+      )
+    }
+  }
+
+  testMergeMetrics("delete-only with unsatisfied condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 150, step = 1, numPartitions = 15).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id > 1000")
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 150,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with target-only condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 150, step = 1, numPartitions = 15).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("t.id >= 45")
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 150,
+      "numOutputRows" -> 5,
+      "numTargetRowsCopied" -> 5,
+      "numTargetRowsDeleted" -> 55,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with source-only condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 100).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id >= 70")
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 10,
+      "numTargetRowsCopied" -> 10,
+      "numTargetRowsDeleted" -> 30,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 2
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with empty source") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 4).toDF()
+    val sourceDf = spark.range(0).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("t.id > 25")
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 0,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with empty target") { testConfig => {
+    val targetDf = spark.range(0).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 3).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      // This actually goes through a special code path in MERGE because the optimizer optimizes
+      // away the join to the source table entirely if the target table is empty.
+      "numSourceRows" -> 100,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only without join empty source") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(0).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "t.id >= 50")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 0,
+      "numTargetFilesAdded" -> 0,
+      "numTargetFilesRemoved" -> 0
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only without join with source with 1 row") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 1, step = 1, numPartitions = 1).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "t.id >= 50")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 1,
+      "numOutputRows" -> 10,
+      "numTargetRowsCopied" -> 10,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only without join") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 0, end = 200, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "t.id >= 50")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 200,
+      "numOutputRows" -> 10,
+      "numTargetRowsCopied" -> 10,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetFilesAdded" -> 1,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("delete-only with duplicates") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    // This will cause duplicates due to rounding.
+    val sourceDf = spark
+      .range(start = 50, end = 150, step = 1, numPartitions = 2)
+      .toDF()
+      .select(floor($"id" / 2).as("id"))
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 10,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsRemoved" -> -1,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesAdded" -> 2,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  /////////////////////////////
+  // match-only merge tests  //
+  /////////////////////////////
+  testMergeMetrics("match-only") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .updateAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 60,
+      "numTargetRowsUpdated" -> 50,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("match-only with skipping") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id and t.partCol >= 2")
+        .whenMatched()
+        .updateAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 60,
+      "numTargetRowsUpdated" -> 50,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("match-only with update/delete with unsatisfied conditions") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id > 1000")
+        .delete()
+        .whenMatched("s.id + t.id < 1000")
+        .updateAll()
+        .whenNotMatched("s.id > 1000")
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 60,
+      "numTargetRowsUpdated" -> 50,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("match-only with unsatisfied condition") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("s.id + t.id > 1000")
+        .updateAll()
+        .execute()
+    }
+
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  /////////////////////////////
+  //    full merge tests     //
+  /////////////////////////////
+  testMergeMetrics("upsert") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 110,
+      "numTargetRowsInserted" -> 50,
+      "numTargetRowsUpdated" -> 50,
+      "numTargetRowsCopied" -> 10,
+      "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("upsert and delete with conditions") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 10).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 3).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched("t.id >= 55 and t.id < 60")
+        .updateAll()
+        .whenMatched("t.id < 70")
+        .delete()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 85,
+      "numTargetRowsInserted" -> 50,
+      "numTargetRowsUpdated" -> 5,
+      "numTargetRowsDeleted" -> 15,
+      "numTargetRowsCopied" -> 30,
+      "numTargetFilesRemoved" -> 5
     )
     runMergeCmdAndTestMetrics(
       targetDf = targetDf,

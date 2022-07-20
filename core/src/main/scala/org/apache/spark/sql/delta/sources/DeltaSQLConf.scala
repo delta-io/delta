@@ -651,6 +651,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val FAST_INTERLEAVE_BITS_ENABLED =
+    buildConf("optimize.zorder.fastInterleaveBits.enabled")
+      .internal()
+      .doc("When true, a faster version of the bit interleaving algorithm is used.")
+      .booleanConf
+      .createWithDefault(false)
+
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
       .internal()
@@ -667,6 +674,14 @@ trait DeltaSQLConfBase {
       .doc(
       "Whether to extract partition filters automatically from data filters for a partition" +
         " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
+  val GENERATED_COLUMN_ALLOW_NULLABLE =
+    buildConf("generatedColumn.allowNullableIngest.enabled")
+      .internal()
+      .doc("When enabled this will allow tables with generated columns enabled to be able " +
+        "to write data without providing values for a nullable column via DataFrame.write")
       .booleanConf
       .createWithDefault(true)
 

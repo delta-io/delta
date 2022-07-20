@@ -414,7 +414,6 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.changeColumnMappingModeOnOldProtocol(Protocol())
       }
-      val cmd = "ALTER TABLE SET TBLPROPERTIES"
       assert(e.getMessage ==
         s"""
            |Your current table protocol version does not support changing column mapping modes
@@ -425,8 +424,13 @@ trait DeltaErrorsSuiteBase
            |Your table's current Delta protocol version:
            |Protocol(2,6)
            |
-           |Please upgrade your table's protocol version using $cmd and try again.
+           |Please upgrade your Delta table to reader version 2 and writer version 5
+           |and change the column mapping mode to 'name' mapping. You can use the following command:
            |
+           |ALTER TABLE <table_name> SET TBLPROPERTIES (
+           |   'delta.columnMapping.mode' = 'name',
+           |   'delta.minReaderVersion' = '2',
+           |   'delta.minWriterVersion' = '5')
            |""".stripMargin)
     }
     {
@@ -730,14 +734,25 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        val schemeConf = Seq(("key", "val"))
-        throw DeltaErrors.logStoreConfConflicts(schemeConf)
+        val classConf = Seq(("classKey", "classVal"))
+        val schemeConf = Seq(("schemeKey", "schemeVal"))
+        throw DeltaErrors.logStoreConfConflicts(classConf, schemeConf)
       }
       assert(e.getErrorClass == "DELTA_INVALID_LOGSTORE_CONF")
       assert(e.getSqlState == "42000")
-      assert(e.getMessage == "(`spark.delta.logStore.class`) and " +
-        "(`spark.delta.logStore.key`) cannot " +
+      assert(e.getMessage == "(`classKey`) and (`schemeKey`) cannot " +
         "be set at the same time. Please set only one group of them.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        val schemeConf = Seq(("key", "val"))
+        throw DeltaErrors.inconsistentLogStoreConfs(
+          Seq(("delta.key", "value1"), ("spark.delta.key", "value2")))
+      }
+      assert(e.getErrorClass == "DELTA_INCONSISTENT_LOGSTORE_CONFS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "(delta.key = value1, spark.delta.key = value2) cannot be set to " +
+        "different values. Please only set one of them, or set them to the same value.")
     }
     {
       val e = intercept[DeltaSparkException] {
@@ -781,7 +796,8 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
       var msg = "Unknown configuration was specified: confKey\nTo disable this check, set " +
-        "allowArbitraryProperties.enabled=true in the Spark session configuration."
+        "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
+        "configuration."
       assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
       assert(e.getMessage == msg)
     }
@@ -791,6 +807,23 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_PATH_DOES_NOT_EXIST")
       assert(e.getMessage == "path doesn't exist")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.failRelativizePath("path")
+      }
+      assert(e.getErrorClass == "DELTA_FAIL_RELATIVIZE_PATH")
+      assert(e.getSqlState == "42000")
+      var msg =
+        """Failed to relativize the path (path). This can happen when absolute paths make
+          |it into the transaction log, which start with the scheme
+          |s3://, wasbs:// or adls://.
+          |
+          |If this table is NOT USED IN PRODUCTION, you can set the SQL configuration
+          |spark.databricks.delta.vacuum.relativize.ignoreError to true.
+          |Using this SQL configuration could lead to accidental data loss, therefore we do
+          |not recommend the use of this flag unless this is for testing purposes.""".stripMargin
+      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaIllegalStateException] {
