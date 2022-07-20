@@ -485,8 +485,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */
-  override def filesForScan(filters: Seq[Expression]): DeltaScan = {
-    val scan = snapshot.filesForScan(filters)
+  override def filesForScan(
+    filters: Seq[Expression],
+    keepNumRecords: Boolean = false
+  ): DeltaScan = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }

@@ -33,7 +33,7 @@ trait DeltaScanGeneratorBase {
   def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame
 
   /** Returns a [[DeltaScan]] based on the given filters. */
-  def filesForScan(filters: Seq[Expression]): DeltaScan
+  def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean = false): DeltaScan
 }
 
 
