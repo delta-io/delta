@@ -777,6 +777,31 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
     }
   }
 
+  testQuietly("negative case: unmatched partition schema") {
+    val tableName = "pqtable"
+    withTable(tableName) {
+      // Create a partitioned parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Check the partition schema in the catalog, key1's data type is original Long.
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).partitionSchema
+        .equals(
+          (new StructType)
+            .add(StructField("key1", LongType, true))
+            .add(StructField("key2", StringType, true))
+        ))
+
+      // Convert to delta with partition schema mismatch on key1's data type, which is String.
+      val ae = intercept[AnalysisException] {
+        convertToDelta(tableName, Some("key1 string, key2 string"))
+      }
+
+      assert(ae.getMessage.contains("CONVERT TO DELTA was called with a partition schema " +
+        "different from the partition schema inferred from the catalog"))
+    }
+  }
+
   testQuietly("convert two external tables pointing to same underlying files " +
     "with differing table properties should error if conf enabled otherwise merge properties") {
     val externalTblName = "extpqtbl"
@@ -894,12 +919,12 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
       // Verify that table converted to delta
       checkAnswer(
-        sql(s"select id from delta.`$path` where key1 = 1"),
-        simpleDF.filter("id % 2 == 1").select("id"))
+        sql(s"select key2 from delta.`$path` where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("key2"))
 
       checkAnswer(
-        sql(s"select id from $externalTblName where key1 = 1"),
-        simpleDF.filter("id % 2 == 1").select("id"))
+        sql(s"select key2 from $externalTblName where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("key2"))
     }
   }
 
@@ -1032,6 +1057,34 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       checkAnswer(
         sql(s"select id from default.$tableName where key1 = 1"),
         simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("Convert a partitioned parquet table with partition schema autofill") {
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      // Create a partitioned parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Convert to delta without partition schema, partition schema is autofill from catalog
+      convertToDelta(tableName)
+
+      // Verify that table is converted to delta
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
+
+      // Check the partition schema in the transaction log
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+        .snapshot.metadata.partitionSchema.equals(
+            (new StructType())
+              .add(StructField("key1", LongType, true))
+              .add(StructField("key2", StringType, true))
+          ))
+
+      // Check data in the converted delta table.
+      checkAnswer(
+        sql(s"SELECT id from default.$tableName where key2 = '2'"),
+        simpleDF.filter("id % 3 == 2").select("id"))
     }
   }
 
