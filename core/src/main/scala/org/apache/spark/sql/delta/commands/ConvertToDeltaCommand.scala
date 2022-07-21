@@ -293,9 +293,9 @@ abstract class ConvertToDeltaCommandBase(
     target.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
         case _ if target.catalogTable.exists(isHiveStyleParquetTable) =>
-          new ParquetTable(spark, qualifiedDir, partitionSchema)
+          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
         case checkProvider if checkProvider.equalsIgnoreCase("parquet") =>
-          new ParquetTable(spark, qualifiedDir, partitionSchema)
+          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
         case checkProvider =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, checkProvider)
       }
@@ -330,10 +330,7 @@ abstract class ConvertToDeltaCommandBase(
         throw DeltaErrors.emptyDirectoryException(convertProperties.targetDir)
       }
 
-      val partitionFields = partitionSchema
-        .orElse(targetTable.partitionSchema)
-        .getOrElse(new StructType())
-
+      val partitionFields = targetTable.partitionSchema
       val schema = targetTable.tableSchema
       val metadata = Metadata(
         schemaString = schema.json,
@@ -436,8 +433,8 @@ trait ConvertTargetTable {
   /** The table properties of the target table */
   def properties: Map[String, String] = Map.empty
 
-  /** The partition schema of the target table, if known */
-  def partitionSchema: Option[StructType] = None
+  /** The partition schema of the target table */
+  def partitionSchema: StructType
 
   /** The file manifest of the target table */
   def fileManifest: ConvertTargetFileManifest
@@ -453,16 +450,27 @@ trait ConvertTargetTable {
 class ParquetTable(
     spark: SparkSession,
     basePath: String,
-    override val partitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
+    catalogTable: Option[CatalogTable],
+    userPartitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
+  // Validate user provided partition schema if catalogTable is available.
+  if (catalogTable.isDefined && userPartitionSchema.isDefined
+    && !catalogTable.get.partitionSchema.equals(userPartitionSchema.get)) {
+    throw DeltaErrors.unexpectedPartitionSchemaFromUserException(
+      catalogTable.get.partitionSchema, userPartitionSchema.get)
+  }
 
   private var _numFiles: Option[Long] = None
 
-  private var _tableSchema: Option[StructType] = None
+  private var _tableSchema: Option[StructType] = catalogTable.map(_.schema)
 
   protected lazy val serializableConf = {
     // scalastyle:off deltahadoopconfiguration
     new SerializableConfiguration(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
+  }
+
+  override val partitionSchema: StructType = {
+    userPartitionSchema.orElse(catalogTable.map(_.partitionSchema)).getOrElse(new StructType())
   }
 
   def numFiles: Long = {
@@ -598,7 +606,7 @@ class ParquetTable(
       }
     }
 
-    val partitionFields = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
+    val partitionFields = partitionSchema.fields.toSeq
 
     _numFiles = Some(numFiles)
     _tableSchema = Some(PartitioningUtils.mergeDataAndPartitionSchema(

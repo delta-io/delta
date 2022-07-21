@@ -1992,6 +1992,22 @@ trait DeltaErrorsSuiteBase
         "Using column c0 of type IntegerType as a partition column is not supported.")
     }
     {
+      val catalogPartitionSchema = StructType(Seq(StructField("a", IntegerType)))
+      val userPartitionSchema = StructType(Seq(StructField("b", StringType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedPartitionSchemaFromUserException(catalogPartitionSchema,
+          userPartitionSchema)
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        "CONVERT TO DELTA was called with a partition schema different from the partition " +
+          "schema inferred from the catalog, please avoid providing the schema so that the " +
+          "partition schema can be chosen from the catalog.\n" +
+          s"\ncatalog partition schema:\n${catalogPartitionSchema.treeString}" +
+          s"\nprovided partition schema:\n${userPartitionSchema.treeString}")
+    }
+    {
       val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.invalidInterval("interval1")
       }

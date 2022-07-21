@@ -1320,6 +1320,17 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER" : {
+    "message" : [
+      "CONVERT TO DELTA was called with a partition schema different from the partition schema inferred from the catalog, please avoid providing the schema so that the partition schema can be chosen from the catalog.",
+      "",
+      "catalog partition schema:",
+      "<catalogPartitionSchema>",
+      "provided partition schema:",
+      "<userPartitionSchema>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",

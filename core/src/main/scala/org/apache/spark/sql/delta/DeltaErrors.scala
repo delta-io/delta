@@ -1028,6 +1028,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def unexpectedPartitionSchemaFromUserException(
+    catalogPartitionSchema: StructType, userPartitionSchema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER",
+      messageParameters = Array(
+        formatSchema(catalogPartitionSchema), formatSchema(userPartitionSchema))
+    )
+  }
+
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
