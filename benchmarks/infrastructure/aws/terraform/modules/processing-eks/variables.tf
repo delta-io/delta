@@ -1,8 +1,8 @@
-variable "availability_zone1" {
+variable "vpc_id" {
   type = string
 }
 
-variable "vpc_id" {
+variable "region" {
   type = string
 }
 
@@ -30,14 +30,10 @@ variable "mysql_password" {
   type = string
 }
 
-variable "emr_public_key_path" {
-  type = string
-}
-
-variable "emr_workers" {
+variable "eks_workers" {
   type = number
 }
 
-variable "user_ip_address" {
-  type = string
+variable "tags" {
+  type = map(string)
 }

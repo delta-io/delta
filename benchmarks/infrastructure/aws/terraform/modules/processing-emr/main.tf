@@ -1,22 +1,3 @@
-resource "aws_db_instance" "metastore_service" {
-  engine                 = "mysql"
-  engine_version         = "8.0.28"
-  instance_class         = "db.m5.large"
-  db_name                = "hive"
-  username               = var.mysql_user
-  password               = var.mysql_password
-  availability_zone      = var.availability_zone1
-  skip_final_snapshot    = true
-  allocated_storage      = 50
-  db_subnet_group_name   = aws_db_subnet_group.metastore_service.name
-  vpc_security_group_ids = [aws_security_group.metastore_service.id]
-}
-
-resource "aws_db_subnet_group" "metastore_service" {
-  name       = "benchmarks_subnet_group_for_metastore_service"
-  subnet_ids = [var.subnet1_id, var.subnet2_id]
-}
-
 /* EC2 key used to SSH to EMR cluster nodes. */
 resource "aws_key_pair" "benchmarks" {
   key_name   = "benchmarks_key_pair"
@@ -49,7 +30,7 @@ resource "aws_emr_cluster" "benchmarks" {
     {
       "Classification": "hive-site",
       "Properties": {
-        "javax.jdo.option.ConnectionURL": "jdbc:mysql://${aws_db_instance.metastore_service.endpoint}/hive?createDatabaseIfNotExist=true",
+        "javax.jdo.option.ConnectionURL": "jdbc:mysql://${var.metastore_endpoint}/hive?createDatabaseIfNotExist=true",
         "javax.jdo.option.ConnectionDriverName": "org.mariadb.jdbc.Driver",
         "javax.jdo.option.ConnectionUserName": "${var.mysql_user}",
         "javax.jdo.option.ConnectionPassword": "${var.mysql_password}"
@@ -58,26 +39,6 @@ resource "aws_emr_cluster" "benchmarks" {
   ]
 EOF
   service_role        = aws_iam_role.benchmarks_iam_emr_service_role.arn
-  depends_on          = [aws_db_instance.metastore_service]
-}
-
-resource "aws_security_group" "metastore_service" {
-  name   = "benchmarks_metastore_security_group"
-  vpc_id = var.vpc_id
-  ingress {
-    description     = "Allow inbound traffic only from EMR cluster nodes."
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "TCP"
-    security_groups = [aws_security_group.emr.id]
-  }
-  egress {
-    description = "Allow all outbound traffic."
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 }
 
 resource "aws_security_group" "emr" {

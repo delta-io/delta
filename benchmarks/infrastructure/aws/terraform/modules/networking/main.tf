@@ -3,9 +3,10 @@ resource "aws_vpc" "this" {
 }
 
 resource "aws_subnet" "benchmarks_subnet1" {
-  vpc_id            = aws_vpc.this.id
-  availability_zone = var.availability_zone1
-  cidr_block        = "10.0.0.0/17"
+  vpc_id                  = aws_vpc.this.id
+  availability_zone       = var.availability_zone1
+  cidr_block              = "10.0.0.0/17"
+  map_public_ip_on_launch = true
 }
 
 # There are two subnets needed to create an RDS subnet group. In fact this one is unused.
@@ -13,9 +14,10 @@ resource "aws_subnet" "benchmarks_subnet1" {
 #     The DB subnet group doesn't meet Availability Zone (AZ) coverage requirement.
 #     Current AZ coverage: us-west-2a. Add subnets to cover at least 2 AZs.
 resource "aws_subnet" "benchmarks_subnet2" {
-  vpc_id            = aws_vpc.this.id
-  availability_zone = var.availability_zone2
-  cidr_block        = "10.0.128.0/17"
+  vpc_id                  = aws_vpc.this.id
+  availability_zone       = var.availability_zone2
+  cidr_block              = "10.0.128.0/17"
+  map_public_ip_on_launch = true
 }
 
 resource "aws_internet_gateway" "this" {

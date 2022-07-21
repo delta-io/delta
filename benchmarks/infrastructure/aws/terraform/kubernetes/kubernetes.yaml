@@ -1,0 +1,152 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: benchmarks
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: benchmarks
+  name: benchmarks-sa
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::${ACCOUNT_ID}:role/benchmarks-container-role"
+automountServiceAccountToken: true
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: benchmarks
+  name: benchmarks
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "delete", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: benchmarks
+  name: benchmarks-role-binding
+roleRef:
+  kind: Role
+  name: benchmarks
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: benchmarks-sa
+  namespace: benchmarks
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: benchmarks
+  name: hive-site
+data:
+  hive-site.xml: |
+    <?xml version="1.0"?>
+    <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+    <configuration>
+        <property>
+            <name>javax.jdo.option.ConnectionURL</name>
+            <value>jdbc:mysql://${METASTORE_ENDPOINT}/hive?createDatabaseIfNotExist=true&amp;characterEncoding=latin1&amp;connectionCollation=latin1_bin</value>
+        </property>
+        <property>
+            <name>javax.jdo.option.ConnectionDriverName</name>
+            <value>org.mariadb.jdbc.Driver</value>
+        </property>
+        <property>
+            <name>javax.jdo.option.ConnectionUserName</name>
+            <value>${MYSQL_USER}</value>
+        </property>
+        <property>
+            <name>javax.jdo.option.ConnectionPassword</name>
+            <value>${MYSQL_PASSWORD}</value>
+        </property>
+        <property>
+            <name>datanucleus.schema.autoCreateTables</name>
+            <value>true</value>
+        </property>
+        <property>
+            <name>datanucleus.fixedDatastore</name>
+            <value>false</value>
+        </property>
+        <property>
+            <name>hive.metastore.schema.verification</name>
+            <value>false</value>
+        </property>
+    </configuration>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: benchmarks
+  name: benchmarks-edge-node
+spec:
+  clusterIP: "None"
+  selector:
+    app-selector: benchmarks-edge-node
+  ports:
+  - name: driver-port
+    protocol: TCP
+    port: 38003
+    targetPort: 38003
+  - name: blockmanager-port
+    protocol: TCP
+    port: 38004
+    targetPort: 38004
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: benchmarks
+  name: benchmarks-edge-node
+  annotations:
+    app-selector: benchmarks-edge-node
+spec:
+  containers:
+  - name: benchmarks-edge-node
+    image: ${DOCKER_IMAGE}
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - name: hive-site-volume
+      mountPath: /opt/spark/conf/
+    ports:
+    - name: driver
+      containerPort: 38003
+    - name: blockmanager
+      containerPort: 38004
+    resources:
+      requests:
+        cpu: 3.5
+        memory: "6Gi"
+    env:
+    - name: SPARK_DRIVER_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+  volumes:
+  - name: hive-site-volume
+    configMap:
+      name: hive-site
+      items:
+      - key: hive-site.xml
+        path: hive-site.xml
+  serviceAccountName: benchmarks-sa
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: eks.amazonaws.com/nodegroup
+            operator: In
+            values:
+            - benchmarks-edge-node-node-group
+  securityContext:
+    runAsUser: 0
