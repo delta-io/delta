@@ -3,12 +3,12 @@ We happily welcome contributions to Delta Lake. We use [GitHub Issues](/../../is
 # Governance
 Delta Lake is an independent open-source project and not controlled by any single company. To emphasize this we joined the [Delta Lake Project](https://community.linuxfoundation.org/delta-lake/) in 2019, which is a sub-project of the Linux Foundation Projects. Within the project, we make decisions based on [these rules](https://delta.io/pdfs/delta-charter.pdf).
 
-Delta Lake is supported by a wide set of developers from over 50 organizations across multiple repositories.  Since 2019, more than 190 developers have contributed to Delta Lake!  The Delta Lake community is growing by leaps and bounds with more than 6000 members in the [Delta Users slack](https://dbricks.co/delta-users-slack)).
+Delta Lake is supported by a wide set of developers from over 50 organizations across multiple repositories.  Since 2019, more than 190 developers have contributed to Delta Lake!  The Delta Lake community is growing by leaps and bounds with more than 6000 members in the [Delta Users slack](https://go.delta.io/slack)).
 
 For more information, please refer to the [founding technical charter](https://delta.io/pdfs/delta-charter.pdf).
 
 # Communication
-- Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://go.delta.io/delta-users), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
+- Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://go.delta.io/slack), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
 - A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
 - We will use the GitHub issue to discuss the feature and come to agreement.
 - This is to prevent your time being wasted, as well as ours.
