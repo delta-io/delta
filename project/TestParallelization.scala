@@ -4,7 +4,8 @@ import sbt._
 object TestParallelization {
 
   lazy val settings = {
-    if (sys.env.isDefinedAt("TEST_RUN_IN_PARALLEL")) {
+    val parallelismCount = sys.env.get("TEST_PARALLELISM_COUNT")
+    if (parallelismCount.exists( _.toInt > 1)) {
       customTestGroupingSettings ++ simpleGroupingStrategySettings
     }
     else {
