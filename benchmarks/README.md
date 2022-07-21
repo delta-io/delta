@@ -21,11 +21,9 @@ The next section will provide the detailed steps of how to setup the necessary H
 - A S3 bucket which will be used to generate the TPC-DS data.
 - A machine which has access to the AWS setup and where this repository has been downloaded or cloned.
 
-There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/aws/terraform/README.md) or manually.
+There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/aws/terraform/README.md) or manually (described below).
 
-#### Create infrastructure manually
-
-##### Create external Hive Metastore using Amazon RDS
+#### Create external Hive Metastore using Amazon RDS
 Create an external Hive Metastore in a MySQL database using Amazon RDS with the following specifications:
 - MySQL 8.x on a `db.m5.large`.
 - General purpose SSDs, and no Autoscaling storage.
@@ -35,7 +33,7 @@ Create an external Hive Metastore in a MySQL database using Amazon RDS with the 
 
 After the database is ready, note the JDBC connection details, the username and password. We will need them for the next step. Note that this step needs to be done just once. All EMR clusters can connect and reused this Hive Metastsore. 
   
-##### Create EMR cluster
+#### Create EMR cluster
 Create an EMR cluster that connects to the external Hive Metastore.  Here are the specifications of the EMR cluster required for running benchmarks.
 - EMR version 6.5.0 having Apache Spark 3.1
 - Master - i3.2xlarge
@@ -50,7 +48,7 @@ Once the EMR cluster is ready, note the following:
 - PEM file for SSH into the master node.
 These will be needed to run the workloads in this framework. 
 
-##### Prepare S3 bucket
+#### Prepare S3 bucket
 Create a new S3 bucket (or use an existing one) which is in the same region as your EMR cluster.
 
 _________________
@@ -68,14 +66,12 @@ _________________
   or assigned to the [master node](https://cloud.google.com/compute/docs/connect/add-ssh-keys#after-vm-creation) only.
 - Ideally, all GCP components used in benchmark should be in the same location (Storage bucket, Dataproc Metastore service and Dataproc cluster).
 
-There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/gcp/terraform/README.md) or manually.
+There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/gcp/terraform/README.md) or manually (described below).
 
-#### Create infrastructure manually
-
-##### Prepare GCS bucket
+#### Prepare GCS bucket
 Create a new GCS bucket (or use an existing one) which is in the same region as your Dataproc cluster.
 
-##### Create Dataproc Metastore
+#### Create Dataproc Metastore
 You can create [Dataproc metastore](https://cloud.google.com/dataproc-metastore/docs/create-service)
 either via Web Console or gcloud command.
 
@@ -86,7 +82,7 @@ gcloud metastore services create dataproc-metastore-for-benchmarks \
     --tier=enterprise
 ```
 
-##### Create Dataproc cluster
+#### Create Dataproc cluster
 Here are the specifications of the Dataproc cluster required for running benchmarks.
 - Image version >= 2.0 having Apache Spark 3.1
 - Master - n2-highmem-8 (8 vCPU, 64 GB memory)
