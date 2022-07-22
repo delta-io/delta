@@ -33,7 +33,9 @@ After the database is ready, note the JDBC connection details, the username and 
   
 #### Create EMR cluster
 Create an EMR cluster that connects to the external Hive Metastore.  Here are the specifications of the EMR cluster required for running benchmarks.
-- EMR version 6.5.0 having Apache Spark 3.1
+- EMR with Spark and Hive (needed for writing to Hive Metastore). Choose the EMR version based on the Spark version compatible with the format. For example:
+  - For Delta 2.0 on Spark 3.2 - EMR 6.6.0
+  - For Delta 1.0 on Spark 3.1 - EMR 6.5.0
 - Master - i3.2xlarge
 - Workers - 16 x i3.2xlarge (or just 1 worker if you are just testing by running the 1GB benchmark).
 - Hive-site configuration to connect to the Hive Metastore. See [Using an external MySQL database or Amazon Aurora](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-hive-metastore-external.html) for more details.
