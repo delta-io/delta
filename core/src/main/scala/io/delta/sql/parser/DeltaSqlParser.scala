@@ -164,6 +164,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ctx.interleave.asScala
       .map(_.identifier.asScala.map(_.getText).toSeq)
       .map(UnresolvedAttribute.apply)
+      .toSeq
   }
 
   /**
@@ -245,9 +246,9 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   protected def visitTableIdentifier(ctx: QualifiedNameContext): TableIdentifier = withOrigin(ctx) {
-    ctx.identifier.asScala match {
-      case Seq(tbl) => TableIdentifier(tbl.getText)
-      case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
+    ctx.identifier.asScala.toSeq match {
+      case tbl :: Nil => TableIdentifier(tbl.getText)
+      case db :: tbl :: Nil => TableIdentifier(tbl.getText, Some(db.getText))
       case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
   }
@@ -255,7 +256,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitPassThrough(ctx: PassThroughContext): LogicalPlan = null
 
   override def visitColTypeList(ctx: ColTypeListContext): Seq[StructField] = withOrigin(ctx) {
-    ctx.colType().asScala.map(visitColType)
+    ctx.colType().asScala.map(visitColType).toSeq
   }
 
   override def visitColType(ctx: ColTypeContext): StructField = withOrigin(ctx) {
@@ -297,16 +298,16 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val checkConstraint = ctx.constraint().asInstanceOf[CheckConstraintContext]
 
     AlterTableAddConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
-      buildCheckConstraintText(checkConstraint.exprToken().asScala))
+      buildCheckConstraintText(checkConstraint.exprToken().asScala.toSeq))
   }
 
   override def visitDropTableConstraint(
       ctx: DropTableConstraintContext): LogicalPlan = withOrigin(ctx) {
     AlterTableDropConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText,
       ifExists = ctx.EXISTS != null)

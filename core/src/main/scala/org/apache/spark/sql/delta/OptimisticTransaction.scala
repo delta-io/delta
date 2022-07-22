@@ -706,7 +706,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val currentTransactionInfo = new CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates,
+        readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,

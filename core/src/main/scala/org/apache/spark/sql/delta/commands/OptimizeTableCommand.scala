@@ -91,7 +91,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
       }
     }
     if (checkColStat && colsWithoutStats.nonEmpty) {
-      throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colsWithoutStats, spark)
+      throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colsWithoutStats.toSeq, spark)
     }
   }
 }

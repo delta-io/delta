@@ -194,7 +194,7 @@ object Protocol {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
-    minimumRequired -> featuresUsed
+    minimumRequired -> featuresUsed.toSeq
   }
 
   /** Cast the table property for the protocol version to an integer. */

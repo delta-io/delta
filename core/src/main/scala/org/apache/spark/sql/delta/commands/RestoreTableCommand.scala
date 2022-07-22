@@ -161,7 +161,7 @@ case class RestoreTableCommand(
           addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics.mapValues(_.toString))
+          metrics.mapValues(_.toString).toMap)
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),
