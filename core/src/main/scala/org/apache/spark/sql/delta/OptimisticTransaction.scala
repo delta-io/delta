@@ -1331,6 +1331,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
+
   /** Executes the registered post commit hooks. */
   protected def runPostCommitHooks(
       version: Long,
