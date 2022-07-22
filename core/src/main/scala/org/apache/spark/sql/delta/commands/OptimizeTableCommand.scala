@@ -66,9 +66,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
     if (unresolvedZOrderByCols.isEmpty) return
     val metadata = txn.snapshot.metadata
     val partitionColumns = metadata.partitionColumns.toSet
-    val dataSchema =
-      StructType(metadata.schema.filterNot(c => partitionColumns.contains(c.name)))
-    val df = spark.createDataFrame(new java.util.ArrayList[Row](), dataSchema)
+    val df = spark.createDataFrame(new java.util.ArrayList[Row](), metadata.dataSchema)
     val checkColStat = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK)
     val statCollectionSchema = txn.snapshot.statCollectionSchema
@@ -85,7 +83,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
         }
       }
       val isNameEqual = spark.sessionState.conf.resolver
-      if (partitionColumns.find(isNameEqual(_, colName)).nonEmpty) {
+      if (partitionColumns.exists(isNameEqual(_, colName))) {
         throw DeltaErrors.zOrderingOnPartitionColumnException(colName)
       }
       if (df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).isEmpty) {
@@ -93,8 +91,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
       }
     }
     if (checkColStat && colsWithoutStats.nonEmpty) {
-      throw DeltaErrors.zOrderingOnColumnWithNoStatsException(
-        colsWithoutStats.toSeq, spark)
+      throw DeltaErrors.zOrderingOnColumnWithNoStatsException(colsWithoutStats, spark)
     }
   }
 }
@@ -124,17 +121,17 @@ case class OptimizeTableCommand(
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
-    val partitionPredicates = partitionPredicate.map(predicate => {
+    val partitionPredicates = partitionPredicate.map { predicate =>
       val predicates = parsePredicates(sparkSession, predicate)
       verifyPartitionPredicates(
         sparkSession,
         partitionColumns,
         predicates)
       predicates
-    }).getOrElse(Seq.empty)
+    }.getOrElse(Seq.empty)
 
     validateZorderByColumns(sparkSession, txn, zOrderBy)
-    val zOrderByColumns = zOrderBy.map(_.name).toSeq
+    val zOrderByColumns = zOrderBy.map(_.name)
 
     new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns).optimize()
   }
@@ -197,7 +194,7 @@ class OptimizeExecutor(
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
-      if (addedFiles.size > 0) {
+      if (addedFiles.nonEmpty) {
         val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql), zOrderByColumns)
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles)
         commitAndRetry(txn, operation, updates, metrics) { newTxn =>
@@ -212,7 +209,7 @@ class OptimizeExecutor(
             true
           } else {
             val deleted = candidateSetOld -- candidateSetNew
-            logWarning(s"The following compacted files were delete " +
+            logWarning(s"The following compacted files were deleted " +
               s"during checkpoint ${deleted.mkString(",")}. Aborting the compaction.")
             false
           }
@@ -305,8 +302,6 @@ class OptimizeExecutor(
       partition: Map[String, String],
       bin: Seq[AddFile],
       maxFileSize: Long): Seq[FileAction] = {
-    val baseTablePath = txn.deltaLog.dataPath
-
     val input = txn.deltaLog.createDataFrame(txn.snapshot, bin, actionTypeOpt = Some("Optimize"))
     val repartitionDF = if (isMultiDimClustering) {
       val totalSize = bin.map(_.size).sum
@@ -319,10 +314,16 @@ class OptimizeExecutor(
       input.coalesce(numPartitions = 1)
     }
 
-    val partitionDesc = partition.toSeq.map(entry => entry._1 + "=" + entry._2).mkString(",")
-
-    val partitionName = if (partition.isEmpty) "" else s" in partition ($partitionDesc)"
-    val description = s"$baseTablePath<br/>Optimizing ${bin.size} files" + partitionName
+    val description = {
+      val baseTablePath = txn.deltaLog.dataPath
+      val partitionName = if (partition.isEmpty) {
+        ""
+      } else {
+        val partitionDesc = partition.toSeq.map { case (k, v) => s"$k=$v" }.mkString(",")
+        s" in partition ($partitionDesc)"
+      }
+      s"$baseTablePath<br/>Optimizing ${bin.size} files" + partitionName
+    }
     sparkSession.sparkContext.setJobGroup(
       sparkSession.sparkContext.getLocalProperty(SPARK_JOB_GROUP_ID),
       description)
@@ -333,11 +334,10 @@ class OptimizeExecutor(
       case other =>
         throw new IllegalStateException(
           s"Unexpected action $other with type ${other.getClass}. File compaction job output" +
-              s"should only have AddFiles")
+              s" should only have AddFiles")
     }
     val removeFiles = bin.map(f => f.removeWithTimestamp(operationTimestamp, dataChange = false))
-    val updates = addFiles ++ removeFiles
-    updates
+    addFiles ++ removeFiles
   }
 
   /**

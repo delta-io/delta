@@ -87,7 +87,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
+      val cleanedConfs = configuration.filterKeys(_ != "comment")
       txn.updateMetadata(
         Metadata(
           description = description,

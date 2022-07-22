@@ -195,7 +195,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
   private def truncateSchema(schema: StructType, indexedCols: Int): (StructType, Int) = {
     var accCnt = 0
     var i = 0
-    var fields = ArrayBuffer[StructField]()
+    val fields = ArrayBuffer[StructField]()
     while (i < schema.length && accCnt < indexedCols) {
       val field = schema.fields(i)
       val newField = field match {
@@ -210,7 +210,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       i += 1
       fields += newField
     }
-    (StructType(fields.toSeq), accCnt)
+    (StructType(fields), accCnt)
   }
 
   /**
@@ -290,7 +290,7 @@ object StatisticsCollection extends DeltaCommand {
 
     // Use the stats collector to recompute stats
     val dataPath = deltaLog.dataPath
-    val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
+    val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files)
       .groupBy(input_file_name()).agg(to_json(txn.statsCollector))
 
     // Use the new stats to update the AddFiles and commit back to the DeltaLog

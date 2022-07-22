@@ -112,13 +112,13 @@ object CDCReader extends DeltaLogging {
         Some(resolvedVersion)
       } else {
         // For ending timestamp the version should be before the provided timestamp.
-        val resolvedVersion = DeltaTableUtils.resolveTimeTravelVersion(
+        val (resolvedVersion, _) = DeltaTableUtils.resolveTimeTravelVersion(
           conf,
           deltaLog,
           spec,
           allowOutOfRange
         )
-        Some(resolvedVersion._1)
+        Some(resolvedVersion)
       }
     } else {
       None

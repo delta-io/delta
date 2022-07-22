@@ -646,7 +646,7 @@ trait DeltaSQLConfBase {
   val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
     buildConf("optimize.zorder.checkStatsCollection.enabled")
       .internal()
-      .doc(s"When enabled, we will check if the column we're actually collecting stats " +
+      .doc(s"When enabled, we will check if we're actually collecting stats " +
         "on the columns we are z-ordering on.")
       .booleanConf
       .createWithDefault(true)

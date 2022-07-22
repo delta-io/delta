@@ -178,9 +178,9 @@ trait DeltaSourceBase extends Source
    */
   protected def createDataFrame(indexedFiles: Iterator[IndexedFile]): DataFrame = {
     val addFilesList = indexedFiles
-        .map(_.getFileAction)
-        .filter(_.isInstanceOf[AddFile])
-        .asInstanceOf[Iterator[AddFile]].toArray
+      .map(_.getFileAction)
+      .collect { case a: AddFile => a }
+      .toArray
 
     deltaLog.createDataFrame(
       deltaLog.snapshot,

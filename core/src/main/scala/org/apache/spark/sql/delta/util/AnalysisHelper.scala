@@ -18,9 +18,7 @@ package org.apache.spark.sql.delta.util
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -84,7 +82,7 @@ trait AnalysisHelper {
     }
   }
 
-  protected def toDataset(sparkSession: SparkSession, logicalPlan: LogicalPlan): Dataset[Row] = {
+  protected def toDataset(sparkSession: SparkSession, logicalPlan: LogicalPlan): DataFrame = {
     Dataset.ofRows(sparkSession, logicalPlan)
   }
 

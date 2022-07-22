@@ -66,7 +66,7 @@ case class InterleaveBits(children: Seq[Expression])
         case int: Int => int
         case any => throw new IllegalArgumentException(
           s"${this.getClass.getSimpleName} expects only inputs of type Int, but got: " +
-            s"$any of type${any.getClass.getSimpleName}")
+            s"$any of type ${any.getClass.getSimpleName}")
       }
       ints.update(i, int)
       i += 1

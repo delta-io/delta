@@ -1417,7 +1417,7 @@ class SchemaUtilsSuite extends QueryTest
   ////////////////////////////
 
   test("check non alphanumeric column characters") {
-    val badCharacters = " ,;{}()\n\t="
+    val badCharacters = ILLEGAL_COLUMN_NAME_CHARS
     val goodCharacters = "#.`!@$%^&*~_<>?/:"
 
     badCharacters.foreach { char =>

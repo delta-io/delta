@@ -48,8 +48,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       limit: Option[Int] = None,
       tableId: Option[TableIdentifier] = None): DataFrame = {
     val history = deltaLog.history
-    val spark = self.toDF.sparkSession
-    spark.createDataFrame(history.getHistory(limit))
+    sparkSession.createDataFrame(history.getHistory(limit))
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {

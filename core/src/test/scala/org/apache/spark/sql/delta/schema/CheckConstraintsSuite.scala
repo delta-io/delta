@@ -31,7 +31,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
 
 class CheckConstraintsSuite extends QueryTest
-    with SharedSparkSession    with DeltaSQLCommandTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
     with SQLTestUtils {
 
 

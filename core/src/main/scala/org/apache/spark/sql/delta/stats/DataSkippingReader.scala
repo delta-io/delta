@@ -262,7 +262,7 @@ trait DataSkippingReaderBase
 
   /**
    * Returns a file skipping predicate expression, derived from the user query, which uses column
-   * statistics to prune away files that provably contain no rows the query cares about.
+   * statistics to prune away files that probably contain no rows the query cares about.
    *
    * Specifically, the filter extraction code must obey the following rules:
    *
@@ -863,7 +863,7 @@ trait DataSkippingReaderBase
     val partitionColumns = metadata.partitionColumns
 
     // for data skipping, avoid using the filters that involve subqueries
-    val (subqueryFilters, flatFilters) = filters.partition(containsSubquery(_))
+    val (subqueryFilters, flatFilters) = filters.partition(containsSubquery)
 
     val (partitionFilters, dataFilters) = flatFilters
         .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
@@ -901,7 +901,7 @@ trait DataSkippingReaderBase
         .reduceOption((skip1, skip2) => DataSkippingPredicate(
           // Fold the filters into a conjunction, while unioning their referencedStats.
           skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
-        .getOrElse((DataSkippingPredicate(trueLiteral)))
+        .getOrElse(DataSkippingPredicate(trueLiteral))
 
       val (files, sizes) = {
         getDataSkippedFiles(finalPartitionFilters, finalSkippingFilters, keepNumRecords)

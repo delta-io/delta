@@ -277,8 +277,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         }
 
         val statsColExpr: Expression = {
-          val dummyDF = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
-          dummyDF.select(to_json(statsCollection.statsCollector))
+          Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+            .select(to_json(statsCollection.statsCollector))
             .queryExecution.analyzed.expressions.head
         }
 
@@ -356,7 +356,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       a.copy(stats = optionalStatsTracker.map(
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
     }
-
     resultFiles.toSeq ++ committer.changeFiles
   }
 }

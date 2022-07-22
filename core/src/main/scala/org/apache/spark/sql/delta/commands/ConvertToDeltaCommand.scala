@@ -162,7 +162,9 @@ abstract class ConvertToDeltaCommandBase(
   }
 
   /**
-   * Calls DeltaCommand.isCatalogTable. With Convert, we may get a format check error in cases where
+   * Wraps [[DeltaCommand.isCatalogTable]] to convert exceptions into valid return values
+   *
+   * With Convert, we may get a format check error in cases where
    * the metastore and the underlying table don't align, e.g. external table where the underlying
    * files are converted to delta but the metadata has not been converted yet. In these cases,
    * catch the error and return based on whether the provided Table Identifier could reasonably be

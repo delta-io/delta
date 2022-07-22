@@ -107,8 +107,8 @@ case class RestoreTableCommand(
 
       val latestVersion = deltaLog.update().version
 
-      require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
-        s"should be less then last available version ($latestVersion)")
+      require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore) " +
+        s"should be less than the last available version ($latestVersion)")
 
       deltaLog.withNewTransaction { txn =>
         val latestSnapshot = txn.snapshot
@@ -161,7 +161,7 @@ case class RestoreTableCommand(
           addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics.mapValues(_.toString).toMap)
+          metrics.mapValues(_.toString))
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),
@@ -176,7 +176,7 @@ case class RestoreTableCommand(
 
   private def withDescription[T](action: String)(f: => T): T =
     withStatusCode("DELTA",
-      s"RestoreTableCommand: compute $action  (table path ${sourceTable.deltaLog.dataPath})") {
+      s"RestoreTableCommand: compute $action (table path ${sourceTable.deltaLog.dataPath})") {
     f
   }
 

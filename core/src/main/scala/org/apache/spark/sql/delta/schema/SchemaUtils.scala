@@ -884,7 +884,9 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
-   * Check if the schema contains invalid char in the column names depending on the mode.
+   * Checks if the schema contains invalid char in the column names in [[NoMapping]] mode.
+   *
+   * @throws DeltaAnalysisException one of the column names is illegal
    */
   def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
     if (columnMappingMode != NoMapping) return
@@ -896,6 +898,8 @@ object SchemaUtils extends DeltaLogging {
     }
   }
 
+  val ILLEGAL_COLUMN_NAME_CHARS = " ,;{}()\n\t="
+
   /**
    * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
    * accept the characters ' ,;{}()\n\t='. We ensure that neither the data columns nor the partition
@@ -904,7 +908,7 @@ object SchemaUtils extends DeltaLogging {
   def checkFieldNames(names: Seq[String]): Unit = {
     names.foreach { name =>
       // ,;{}()\n\t= and space are special characters in Delta schema
-      if (name.matches(".*[ ,;{}()\n\t=].*")) {
+      if (name.matches(s".*[$ILLEGAL_COLUMN_NAME_CHARS].*")) {
         throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
       }
     }

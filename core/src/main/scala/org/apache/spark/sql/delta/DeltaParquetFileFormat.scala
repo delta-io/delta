@@ -41,8 +41,8 @@ class DeltaParquetFileFormat(
    */
   override def equals(other: Any): Boolean = {
     other match {
-      case ff: DeltaParquetFileFormat
-        => ff.columnMappingMode == columnMappingMode && ff.referenceSchema == referenceSchema
+      case ff: DeltaParquetFileFormat =>
+        ff.columnMappingMode == columnMappingMode && ff.referenceSchema == referenceSchema
       case _ => false
     }
   }
@@ -68,6 +68,6 @@ class DeltaParquetFileFormat(
   }
 
   override def supportFieldName(name: String): Boolean = {
-    if (columnMappingMode != NoMapping) true else super.supportFieldName(name)
+    (columnMappingMode != NoMapping) || super.supportFieldName(name)
   }
 }

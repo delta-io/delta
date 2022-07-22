@@ -156,7 +156,7 @@ object Protocol {
     var minimumRequired = Protocol(0, 0)
     // Check for invariants in the schema
     if (Invariants.getFromSchema(metadata.schema, spark).nonEmpty) {
-      minimumRequired = Protocol(0, minWriterVersion = 2)
+      minimumRequired = minimumRequired.copy(minWriterVersion = 2)
       featuresUsed.append("Setting column level invariants")
     }
 
@@ -194,8 +194,7 @@ object Protocol {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
-
-    minimumRequired -> featuresUsed.toSeq
+    minimumRequired -> featuresUsed
   }
 
   /** Cast the table property for the protocol version to an integer. */
@@ -217,7 +216,7 @@ object Protocol {
       s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
     assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
       s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
-    val (required, features) = requiredMinimumProtocol(spark, metadata)
+    val (required, _) = requiredMinimumProtocol(spark, metadata)
     if (current.minWriterVersion < required.minWriterVersion ||
         current.minReaderVersion < required.minReaderVersion) {
       Some(required.copy(

@@ -366,7 +366,7 @@ class DeltaLog private(
    * ------------  */
 
   /**
-   * Returns a [[org.apache.spark.sql.DataFrame]] containing the new files within the specified
+   * Returns a [[DataFrame]] containing the new files within the specified
    * version range.
    */
   def createDataFrame(
@@ -374,7 +374,7 @@ class DeltaLog private(
       addFiles: Seq[AddFile],
       isStreaming: Boolean = false,
       actionTypeOpt: Option[String] = None): DataFrame = {
-    val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
+    val actionType = actionTypeOpt.getOrElse { if (isStreaming) "streaming" else "batch" }
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
 
     val relation = HadoopFsRelation(

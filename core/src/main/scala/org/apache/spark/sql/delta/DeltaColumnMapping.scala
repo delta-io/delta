@@ -62,8 +62,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
     metadata.columnMappingMode match {
-      case IdMapping => true
-      case NameMapping => true
+      case IdMapping | NameMapping => true
       case NoMapping => false
     }
 
@@ -78,8 +77,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   private def allowMappingModeChange(
       oldMode: DeltaColumnMappingMode,
       newMode: DeltaColumnMappingMode): Boolean = {
-    if (oldMode == newMode) true
-    else oldMode == NoMapping && newMode == NameMapping
+    (oldMode == newMode) || (oldMode == NoMapping && newMode == NameMapping)
   }
 
   def isColumnMappingUpgrade(
@@ -253,8 +251,6 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         assignColumnIdAndPhysicalName(newMetadata, oldMetadata, isChangingModeOnExistingTable)
       case NoMapping =>
         newMetadata
-      case mode =>
-         throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
     }
   }
 
@@ -446,12 +442,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
     val physicalSchema =
       createPhysicalSchema(schema, schema, NameMapping, checkSupportedMode = false)
-
-    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
-
-    val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
-
-    physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
+    SchemaMergingUtils.explode(physicalSchema).toMap
   }
 
   /**

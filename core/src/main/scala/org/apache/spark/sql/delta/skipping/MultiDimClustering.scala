@@ -59,14 +59,15 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     val numRanges = conf.getConf(DeltaSQLConf.MDC_NUM_RANGE_IDS)
     val addNoise = conf.getConf(DeltaSQLConf.MDC_ADD_NOISE)
 
-    val cols = colNames.map(df(_))
+    val cols = colNames.map(df.apply)
     val mdcCol = getClusteringExpression(cols, numRanges)
     val repartitionKeyColName = s"${UUID.randomUUID().toString}-rpKey1"
 
-    var repartitionedDf = if (addNoise) {
+    val repartitionedDf = if (addNoise) {
       val randByteColName = s"${UUID.randomUUID().toString}-rpKey2"
       val randByteCol = (rand() * 255 - 128).cast(ByteType)
-      df.withColumn(repartitionKeyColName, mdcCol).withColumn(randByteColName, randByteCol)
+      df.withColumn(repartitionKeyColName, mdcCol)
+        .withColumn(randByteColName, randByteCol)
         .repartitionByRange(approxNumPartitions, col(repartitionKeyColName), col(randByteColName))
         .drop(randByteColName)
     } else {
@@ -82,7 +83,7 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
 object ZOrderClustering extends SpaceFillingCurveClustering {
   override protected[skipping] def getClusteringExpression(
       cols: Seq[Column], numRanges: Int): Column = {
-    assert(cols.size >= 1, "Cannot do Z-Order clustering by zero columns!")
+    assert(cols.nonEmpty, "Cannot do Z-Order clustering by zero columns!")
     val rangeIdCols = cols.map(range_partition_id(_, numRanges))
     interleave_bits(rangeIdCols: _*).cast(StringType)
   }

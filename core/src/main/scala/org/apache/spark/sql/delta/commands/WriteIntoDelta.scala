@@ -134,7 +134,7 @@ case class WriteIntoDelta(
     // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
     val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
       replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
-    var finalSchema = schemaInCatalog.getOrElse(dataSchema)
+    val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
@@ -242,9 +242,8 @@ case class WriteIntoDelta(
               options.replaceWhere.get,
               e)
         }
-        (newFiles,
-          newFiles.collect { case a: AddFile => a },
-          removeFiles(sparkSession, txn, condition))
+        val addFiles = newFiles.collect { case a: AddFile => a }
+        (newFiles, addFiles, removeFiles(sparkSession, txn, condition))
       case (SaveMode.Overwrite, None) =>
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }
@@ -260,7 +259,8 @@ case class WriteIntoDelta(
         (newFiles, addFiles, deletedFiles)
       case _ =>
         val newFiles = txn.writeFiles(data, Some(options))
-        (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
+        val addFiles = newFiles.collect { case a: AddFile => a }
+        (newFiles, addFiles, Nil)
     }
 
     val fileActions = if (rearrangeOnly) {

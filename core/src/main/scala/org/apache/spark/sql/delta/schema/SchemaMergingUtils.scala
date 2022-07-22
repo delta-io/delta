@@ -95,7 +95,10 @@ object SchemaMergingUtils {
    *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
    */
   def explodeNestedFieldNames(schema: StructType): Seq[String] = {
-    explode(schema).map { case (path, _) => path }.map(UnresolvedAttribute.apply(_).name)
+    explode(schema)
+      .map { case (nameParts, _) => nameParts }
+      .map(UnresolvedAttribute.apply)
+      .map(_.name)
   }
 
   /**

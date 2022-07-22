@@ -75,17 +75,17 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser { (session, parser) =>
+    extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTableRestore(session)
+      PreprocessTableRestore(session)
     }
     extensions.injectResolutionRule { session =>
       new DeltaAnalysis(session)
     }
     extensions.injectCheckRule { session =>
-      new DeltaUnsupportedOperationsCheck(session)
+      DeltaUnsupportedOperationsCheck(session)
     }
     // Rule for rewriting the place holder for range_partition_id to manually construct the
     // `RangePartitioner` (which requires an RDD to be sampled in order to determine
@@ -94,13 +94,13 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new RangePartitionIdRewrite(session)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableUpdate(session.sessionState.conf)
+      PreprocessTableUpdate(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableMerge(session.sessionState.conf)
+      PreprocessTableMerge(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableDelete(session.sessionState.conf)
+      PreprocessTableDelete(session.sessionState.conf)
     }
     // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
     // `PrepareDeltaScan`.

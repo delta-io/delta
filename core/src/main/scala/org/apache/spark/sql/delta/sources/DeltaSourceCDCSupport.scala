@@ -252,14 +252,15 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       actions: Seq[Action],
       version: Long): Seq[FileAction] = {
     if (actions.exists(_.isInstanceOf[AddCDCFile])) {
-      actions.filter(_.isInstanceOf[AddCDCFile]).asInstanceOf[Seq[FileAction]]
+      actions.collect { case cdc: AddCDCFile => cdc }
     } else {
       actions.filter {
         case a: AddFile =>
           a.dataChange
         case r: RemoveFile =>
           r.dataChange
-        case cdc: AddCDCFile =>
+        case _: AddCDCFile =>
+          // There can't be any AddCDCFile's since it'd have been caught in `true` block above
           false
         case m: Metadata =>
           val cdcSchema = CDCReader.cdcReadSchema(m.schema)

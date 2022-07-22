@@ -52,7 +52,6 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -65,7 +64,7 @@ import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.types._
 
 /**
- * A SQL parser that tries to parse Delta commands. If failng to parse the SQL text, it will
+ * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
 class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
@@ -103,7 +102,7 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
         parser.getInterpreter.setPredictionMode(PredictionMode.SLL)
         toResult(parser)
       } catch {
-        case e: ParseCancellationException =>
+        case _: ParseCancellationException =>
           // if we fail, parse with LL mode
           tokenStream.seek(0) // rewind input stream
           parser.reset()
@@ -131,7 +130,7 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseFunctionIdentifier(sqlText: String): FunctionIdentifier =
     delegate.parseFunctionIdentifier(sqlText)
 
-  override def parseMultipartIdentifier (sqlText: String): Seq[String] =
+  override def parseMultipartIdentifier(sqlText: String): Seq[String] =
     delegate.parseMultipartIdentifier(sqlText)
 
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
@@ -160,11 +159,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ctx.RUN != null)
   }
 
-  /** Provides a list of unresolved attributes for multi dimensional clustering. */
+  /** Provides a list of unresolved attributes for multi-dimensional clustering. */
   override def visitZorderSpec(ctx: ZorderSpecContext): Seq[UnresolvedAttribute] = {
     ctx.interleave.asScala
       .map(_.identifier.asScala.map(_.getText).toSeq)
-      .map(new UnresolvedAttribute(_)).toSeq
+      .map(UnresolvedAttribute.apply)
   }
 
   /**
@@ -192,7 +191,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)))(interleaveBy)
+      Option(ctx.partitionPredicate).map(extractRawText))(interleaveBy)
   }
 
   override def visitDescribeDeltaDetail(
@@ -246,7 +245,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   protected def visitTableIdentifier(ctx: QualifiedNameContext): TableIdentifier = withOrigin(ctx) {
-    ctx.identifier.asScala.toSeq match {
+    ctx.identifier.asScala match {
       case Seq(tbl) => TableIdentifier(tbl.getText)
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
@@ -256,7 +255,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitPassThrough(ctx: PassThroughContext): LogicalPlan = null
 
   override def visitColTypeList(ctx: ColTypeListContext): Seq[StructField] = withOrigin(ctx) {
-    ctx.colType().asScala.map(visitColType).toSeq
+    ctx.colType().asScala.map(visitColType)
   }
 
   override def visitColType(ctx: ColTypeContext): StructField = withOrigin(ctx) {
@@ -298,16 +297,16 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val checkConstraint = ctx.constraint().asInstanceOf[CheckConstraintContext]
 
     AlterTableAddConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
         "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
-      buildCheckConstraintText(checkConstraint.exprToken().asScala.toSeq))
+      buildCheckConstraintText(checkConstraint.exprToken().asScala))
   }
 
   override def visitDropTableConstraint(
       ctx: DropTableConstraintContext): LogicalPlan = withOrigin(ctx) {
     AlterTableDropConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
         "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText,
       ifExists = ctx.EXISTS != null)
@@ -389,7 +388,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
  */
 // scalastyle:on
 class UpperCaseCharStream(wrapped: CodePointCharStream) extends CharStream {
-  override def consume(): Unit = wrapped.consume
+  override def consume(): Unit = wrapped.consume()
   override def getSourceName(): String = wrapped.getSourceName
   override def index(): Int = wrapped.index
   override def mark(): Int = wrapped.mark

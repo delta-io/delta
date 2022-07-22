@@ -418,7 +418,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       "The schema in Delta log should not contain char/varchar type.")
     SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
     if (metadata.columnMappingMode == NoMapping) {
-      SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, metadata.columnMappingMode)
+      SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, NoMapping)
       val partitionColCheckIsFatal =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
       try {
@@ -484,7 +484,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /** Returns a[[DeltaScan]] based on the given filters and projections. */
+  /** Returns a [[DeltaScan]] based on the given filters and projections. */
   override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
     val scan = snapshot.filesForScan(projection, filters)
     val partitionFilters = filters.filter { f =>
@@ -706,7 +706,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val currentTransactionInfo = new CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates.toSeq,
+        readPredicates = readPredicates,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
