@@ -247,8 +247,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   protected def visitTableIdentifier(ctx: QualifiedNameContext): TableIdentifier = withOrigin(ctx) {
     ctx.identifier.asScala.toSeq match {
-      case tbl :: Nil => TableIdentifier(tbl.getText)
-      case db :: tbl :: Nil => TableIdentifier(tbl.getText, Some(db.getText))
+      case Seq(tbl) => TableIdentifier(tbl.getText)
+      case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
   }

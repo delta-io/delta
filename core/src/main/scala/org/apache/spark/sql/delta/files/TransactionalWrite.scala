@@ -250,12 +250,12 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val spark = inputData.sparkSession
     val (data, partitionSchema) = performCDCPartition(inputData)
-    val outputPath = deltaLog.dataPath
 
     val (queryExecution, output, generatedColumnConstraints, _) =
       normalizeData(deltaLog, data)
     val partitioningColumns = getPartitioningColumns(partitionSchema, output)
 
+    val outputPath = deltaLog.dataPath
     val committer = getCommitter(outputPath)
 
     // If Statistics Collection is enabled, then create a stats tracker that will be injected during
@@ -294,7 +294,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
 
-    SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
+    SQLExecution.withNewExecutionId(queryExecution, Some("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
         outputPath.toString,
         Map.empty,
