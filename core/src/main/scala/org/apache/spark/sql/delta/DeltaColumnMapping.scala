@@ -442,7 +442,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
     val physicalSchema =
       createPhysicalSchema(schema, schema, NameMapping, checkSupportedMode = false)
-    SchemaMergingUtils.explode(physicalSchema).toMap
+
+    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
+    val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
+    physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
   }
 
   /**
