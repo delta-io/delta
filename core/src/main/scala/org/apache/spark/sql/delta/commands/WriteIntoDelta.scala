@@ -97,6 +97,10 @@ case class WriteIntoDelta(
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata)
+      // Allow user to override if this is a blind append
+      if (options.ignoreReadChanges) {
+        txn.ignoreReadChanges()
+      }
       txn.commit(actions, operation)
     }
     Seq.empty
