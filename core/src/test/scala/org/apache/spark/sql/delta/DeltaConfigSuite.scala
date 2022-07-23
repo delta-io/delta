@@ -175,13 +175,13 @@ class DeltaConfigSuite extends SparkFunSuite
 
     // (1) we can not set writable serializable isolation level
     withTempDir { dir =>
-      val e = intercept[DeltaIllegalArgumentException] {
+      val e = intercept[IllegalArgumentException] {
         sql(
           s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
-             |TBLPROPERTIES ('delta.isolationLevel' = 'WritableSerializable')
+             |TBLPROPERTIES ('delta.isolationLevel' = 'WriteSerializable')
              |""".stripMargin)
       }
-      var msg = "invalid isolation level 'WritableSerializable'"
+      val msg = "requirement failed: delta.isolationLevel must be Serializable"
       assert(e.getMessage == msg)
     }
   }

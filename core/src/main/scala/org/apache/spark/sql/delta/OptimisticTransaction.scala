@@ -1020,8 +1020,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     allowFallbackToSnapshotIsolation
   }
 
+  /**
+  * Default [[IsolationLevel]] as set in table metadata.
+  */
   protected def getDefaultIsolationLevel(): IsolationLevel = {
-    deltaLog.isolationLevel
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
   /**
