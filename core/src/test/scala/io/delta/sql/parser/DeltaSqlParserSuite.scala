@@ -23,8 +23,9 @@ import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.plans.SQLHelper
 
-class DeltaSqlParserSuite extends SparkFunSuite {
+class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
   test("isValidDecimal should recognize a table identifier and not treat them as a decimal") {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
@@ -50,6 +51,26 @@ class DeltaSqlParserSuite extends SparkFunSuite {
 
     assert(parser.parsePlan("OPTIMIZE db.tbl") ===
       OptimizeTableCommand(None, Some(tblId("tbl", "db")), None)(Seq()))
+
+    assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
+      OptimizeTableCommand(None, Some(tblId("tbl_true")), None)(Seq()))
+
+    withSQLConf("tbl_var" -> "tbl") {
+      assert(parser.parsePlan("OPTIMIZE ${tbl_var}") ===
+        OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+
+      assert(parser.parsePlan("OPTIMIZE ${spark:tbl_var}") ===
+        OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+
+      assert(parser.parsePlan("OPTIMIZE ${sparkconf:tbl_var}") ===
+        OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+
+      assert(parser.parsePlan("OPTIMIZE ${hiveconf:tbl_var}") ===
+        OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+
+      assert(parser.parsePlan("OPTIMIZE ${hivevar:tbl_var}") ===
+        OptimizeTableCommand(None, Some(tblId("tbl")), None)(Seq()))
+    }
 
     assert(parser.parsePlan("OPTIMIZE '/path/to/tbl'") ===
       OptimizeTableCommand(Some("/path/to/tbl"), None, None)(Seq()))
