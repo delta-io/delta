@@ -203,14 +203,12 @@ class DelayedCommitProtocol(
       taskContext: TaskAttemptContext): FileAction = {
     // The partitioning in the Delta log action will be read back as part of the data, so our
     // virtual CDC_PARTITION_COL needs to be stripped out.
-    val partitioning = f._1.filter { case (k, v) => k != CDC_PARTITION_COL }
+    val partitioning = f._1.filter { case (k, _) => k != CDC_PARTITION_COL }
     f._1.get(CDC_PARTITION_COL) match {
       case Some("true") =>
-        val partitioning = f._1.filter { case (k, v) => k != CDC_PARTITION_COL }
         AddCDCFile(f._2, partitioning, stat.getLen)
       case _ =>
-        val addFile = AddFile(f._2, partitioning, stat.getLen, stat.getModificationTime, true)
-        addFile
+        AddFile(f._2, partitioning, stat.getLen, stat.getModificationTime, dataChange = true)
     }
   }
 
