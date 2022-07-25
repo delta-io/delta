@@ -159,8 +159,8 @@ class DeltaConfigSuite extends SparkFunSuite
     }
   }
 
-  test("Allow setting Serializable Isolation Level") {
-    // (1) we can set valid and supported isolation level
+  test("allow setting valid and supported isolation level") {
+    // currently only Serializable isolation level is supported
     withTempDir { dir =>
       sql(
         s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
@@ -172,8 +172,9 @@ class DeltaConfigSuite extends SparkFunSuite
 
       assert(isolationLevel == Serializable)
     }
+  }
 
-    // (2) we can not set valid but unsupported isolation level
+  test("do not allow setting valid but unsupported isolation level") {
     withTempDir { dir =>
       val e = intercept[IllegalArgumentException] {
         sql(
@@ -184,8 +185,9 @@ class DeltaConfigSuite extends SparkFunSuite
       val msg = "requirement failed: delta.isolationLevel must be Serializable"
       assert(e.getMessage == msg)
     }
-
-    // (3) we can not set invalid isolation level
+  }
+  
+  test("do not allow setting invalid isolation level") {
     withTempDir { dir =>
       val e = intercept[IllegalArgumentException] {
         sql(
