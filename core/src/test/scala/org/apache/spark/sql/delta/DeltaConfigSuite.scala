@@ -186,7 +186,7 @@ class DeltaConfigSuite extends SparkFunSuite
       assert(e.getMessage == msg)
     }
   }
-  
+
   test("do not allow setting invalid isolation level") {
     withTempDir { dir =>
       val e = intercept[IllegalArgumentException] {
