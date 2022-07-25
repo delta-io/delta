@@ -788,6 +788,19 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
+    buildConf("deltaTableBuilder.forceTablePropertyLowerCase.enabled")
+      .internal()
+      .doc(
+        """Whether the keys of table properties should be set to lower case.
+          | Turn on this flag if you want keys of table properties not starting with delta
+          | to be backward compatible when the table is created via DeltaTableBuilder
+          | Please note that if you set this to true, the lower case of the
+          | key will be used for non delta prefix table properties.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
