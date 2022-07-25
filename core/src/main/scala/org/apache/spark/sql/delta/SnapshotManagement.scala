@@ -102,7 +102,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
-  private final def listDeltaAndCheckpointFiles(
+  protected final def listDeltaAndCheckpointFiles(
       startVersion: Long,
       versionToLoad: Option[Long]): Option[Array[FileStatus]] =
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
@@ -409,6 +409,19 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
+   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
+   * version to the preCommitLogSegment (which must match the immediately preceding version).
+   */
+  private[delta] def getLogSegmentAfterCommit(
+      preCommitLogSegment: LogSegment,
+      committedVersion: Long): LogSegment = {
+    val committedDeltaPath = deltaFile(logPath, committedVersion)
+    val fileStatus =
+      committedDeltaPath.getFileSystem(newDeltaHadoopConf()).getFileStatus(committedDeltaPath)
+    SnapshotManagement.appendCommitToLogSegment(preCommitLogSegment, fileStatus, committedVersion)
+  }
+
+  /**
    * Create a [[Snapshot]] from the given [[LogSegment]]. If failing to create the snapshot, we will
    * search an equivalent [[LogSegment]] using a different checkpoint and retry up to
    * [[DeltaSQLConf.DELTA_SNAPSHOT_LOADING_MAX_RETRIES]] times.
@@ -658,6 +671,18 @@ object SnapshotManagement {
       require(versions.nonEmpty && versions.last == v, "Did not get the first delta " +
         s"file version: $v to compute Snapshot")
     }
+  }
+
+  def appendCommitToLogSegment(
+      oldLogSegment: LogSegment,
+      commitFileStatus: FileStatus,
+      committedVersion: Long): LogSegment = {
+    require(oldLogSegment.version + 1 == committedVersion)
+    oldLogSegment.copy(
+      version = committedVersion,
+      serializableDeltas =
+        oldLogSegment.serializableDeltas :+ SerializableFileStatus.fromStatus(commitFileStatus),
+      lastCommitTimestamp = commitFileStatus.getModificationTime)
   }
 }
 
