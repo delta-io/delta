@@ -48,15 +48,20 @@ class ShadedJarSuite extends FunSuite {
     val url = connection.getJarFileURL()
     val jarFile = new JarFile(new File(url.toURI))
     var numOfAllowedFiles = 0
+    var foundParquetUtils = false
     try {
       jarFile.entries().asScala.filter(!_.isDirectory).map(_.toString).foreach(e => {
         val allowed = allowedFilePrefixes.exists(e.startsWith)
         if (allowed) numOfAllowedFiles += 1
         assert(allowed, s"$e is not expected to appear in delta-standalone jar")
+        if (e.startsWith("io/delta/standalone/util/ParquetSchemaConverter")) {
+          foundParquetUtils = true
+        }
       })
       assert(
         numOfAllowedFiles > 20,
         "Found no enough files. The test might be broken as we picked up a wrong jar file to check")
+      assert(foundParquetUtils, "cannot find ParquetSchemaConverter in the jar")
     } finally {
       jarFile.close()
     }

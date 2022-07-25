@@ -22,7 +22,7 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
             ~/.m2
-          key: build-cache-2-with-scala_${{ matrix.scala }}
+          key: build-cache-3-with-scala_${{ matrix.scala }}
       - name: Run Scala Style tests on test sources (Scala 2.12 only)
         run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
         if: startsWith(matrix.scala, '2.12.')
@@ -33,7 +33,7 @@ jobs:
         run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
         if: startsWith(matrix.scala, '2.12.')
       - name: Run Delta Standalone tests
-        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test
+        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test testParquetUtilsWithStandaloneCosmetic/test
       - name: Run Hive 3 tests
         run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
       - name: Run Hive 2 tests
