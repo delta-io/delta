@@ -1143,7 +1143,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_CONSTRAINT_ALREADY_EXISTS")
       assert(e.getSqlState == "42000")
-      assert(e.getMessage == "Constraint 'name' already exists as a CHECK constraint. Please " +
+      assert(e.getMessage == "Constraint 'name' already exists. Please " +
         "delete the old constraint first.\nOld constraint:\noldExpr")
     }
     {
