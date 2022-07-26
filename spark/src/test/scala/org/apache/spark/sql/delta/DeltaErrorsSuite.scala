@@ -1402,7 +1402,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType, true)))
         val s2 = StructType(Seq(StructField("c0", StringType, false)))
-        SchemaMergingUtils.mergeSchemas(s1, s2, false, false, Set("c0"))
+        SchemaMergingUtils.mergeSchemas(s1, s2, false, false, Set(Seq("c0")))
       }
       checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH"), Some("42K09"),
         Some("Column c0 is a generated column or a column used by a generated " +

@@ -154,7 +154,7 @@ object ImplicitMetadataOperation {
         if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol)) {
           txn.metadata.fixedTypeColumns
         } else {
-          Set.empty[String]
+          Set.empty[Seq[String]]
         }
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,

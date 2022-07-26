@@ -1593,6 +1593,30 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+
+  test("schema merging of nested fields used by generated columns") {
+    val fixedTypeColumns = Set(Seq("struct", "a"), Seq("gen"))
+    val base = new StructType()
+      .add("top", StringType)
+      .add("gen", IntegerType, nullable = true, new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "struct.a + 1").build())
+      .add("struct", new StructType()
+        .add("a", ShortType))
+
+    // Changing the type of the nested field used for the generated column fails
+    expectFailure("generated column", "smallint", "int") {
+      mergeSchemas(base, new StructType().add("struct", new StructType()
+        .add("a", IntegerType)), fixedTypeColumns = fixedTypeColumns)
+    }
+
+    // Adding a new nested field is fine even though the top level struct is part of
+    // the generated column
+    val newSchema = mergeSchemas(base, new StructType().add("struct", new StructType()
+      .add("b", IntegerType)), fixedTypeColumns = fixedTypeColumns)
+
+    assert(newSchema.findNestedField(Seq("struct", "b")).isDefined)
+  }
+
   test("schema merging should pick current nullable and metadata") {
     val m = new MetadataBuilder().putDouble("a", 0.2).build()
     val base = new StructType()

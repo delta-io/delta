@@ -39,7 +39,7 @@ import org.apache.spark.sql.functions.{current_timestamp, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
@@ -770,7 +770,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
   }
 
   test("getGeneratedColumnsAndColumnsUsedByGeneratedColumns") {
-    def testSchema(schema: Seq[StructField], expected: Set[String]): Unit = {
+    def testSchema(schema: Seq[StructField], expected: Set[Seq[String]]): Unit = {
       assert(getGeneratedColumnsAndColumnsUsedByGeneratedColumns(StructType(schema)) == expected)
     }
 
@@ -783,13 +783,32 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f6x = StructField("c6.x", IntegerType)
     val f7x = withGenerationExpression(StructField("c7.x", IntegerType), "`c6.x` + 10")
     val f8 = withGenerationExpression(StructField("c8", IntegerType), "c6.x + 10")
-    testSchema(Seq(f1, f2), Set("c1", "c2"))
-    testSchema(Seq(f1, f2, f3), Set("c1", "c2"))
-    testSchema(Seq(f1, f2, f3, f4), Set("c1", "c2", "c3", "c4"))
-    testSchema(Seq(f1, f2, f5), Set("c1", "c2", "c5"))
-    testSchema(Seq(f6x, f7x), Set("c6.x", "c7.x"))
-    testSchema(Seq(f6, f6x, f7x), Set("c6.x", "c7.x"))
-    testSchema(Seq(f6, f6x, f8), Set("c6", "c8"))
+    testSchema(Seq(f1, f2), Set(Seq("c1"), Seq("c2")))
+    testSchema(Seq(f1, f2, f3), Set(Seq("c1"), Seq("c2")))
+    testSchema(Seq(f1, f2, f3, f4), Set(Seq("c1"), Seq("c2"), Seq("c3"), Seq("c4")))
+    testSchema(Seq(f1, f2, f5), Set(Seq("c1"), Seq("c2"), Seq("c5")))
+    testSchema(Seq(f6x, f7x), Set(Seq("c6.x"), Seq("c7.x")))
+    testSchema(Seq(f6, f6x, f7x), Set(Seq("c6.x"), Seq("c7.x")))
+    testSchema(Seq(f6, f6x, f8), Set(Seq("c6", "x"), Seq("c8")))
+
+    val map1 = StructField("m1", MapType(StringType, IntegerType))
+    val map2 = withGenerationExpression(StructField("m2", IntegerType), "m1.x + 10")
+    testSchema(Seq(map1, map2), Set(Seq("m1"), Seq("m2")))
+
+    // Map with struct types doesn't track passed the map
+    val map3 = StructField("m3", MapType(StringType, StructType(Seq(
+      StructField("y", IntegerType)))))
+    val map4 = withGenerationExpression(StructField("m4", IntegerType), "m3.x.y + 10")
+    testSchema(Seq(map3, map4), Set(Seq("m3"), Seq("m4")))
+
+    val array1 = StructField("a1", ArrayType(IntegerType))
+    val array2 = withGenerationExpression(StructField("a2", IntegerType), "a1[0] + 10")
+    testSchema(Seq(array1, array2), Set(Seq("a1"), Seq("a2")))
+
+    // Array with struct types doesn't track passed the array
+    val array3 = StructField("a3", ArrayType(StructType(Seq(StructField("y", IntegerType)))))
+    val array4 = withGenerationExpression(StructField("a4", IntegerType), "a3[0].y + 10")
+    testSchema(Seq(array3, array4), Set(Seq("a3"), Seq("a4")))
   }
 
   test("disallow column type evolution") {
