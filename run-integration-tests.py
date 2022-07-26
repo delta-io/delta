@@ -347,7 +347,7 @@ if __name__ == "__main__":
     run_python = not args.scala_only and not args.pip_only and not args.s3_log_store_util_only
     run_scala = not args.python_only and not args.pip_only and not args.s3_log_store_util_only
     run_pip = not args.python_only and not args.scala_only and not args.no_pip and not args.s3_log_store_util_only
-    run_s3_log_store_util = not args.python_only and not args.pip_only
+    run_s3_log_store_util = not args.python_only and not args.pip_only and not args.scala_only
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
