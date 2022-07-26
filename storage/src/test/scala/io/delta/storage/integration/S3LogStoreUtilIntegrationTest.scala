@@ -46,8 +46,8 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
 
   private val integrationTestTag = Tag("IntegrationTest")
 
-  def integrationTest(name: String)(testFun: => Any)(implicit pos: source.Position): Unit =
-    if (runIntegrationTests) test(name, integrationTestTag)(testFun)(pos)
+  def integrationTest(name: String)(testFun: => Any): Unit =
+    if (runIntegrationTests) test(name, integrationTestTag)(testFun)
 
   integrationTest("setup delta logs") {
     val uploads = Seq(
