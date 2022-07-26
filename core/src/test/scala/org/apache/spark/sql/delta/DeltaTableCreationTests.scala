@@ -1630,7 +1630,7 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(filterV2TableProperties(getTableProperties("t2")).filter(_._1 != "Type") ==
+        assert(filterV2TableProperties(getTableProperties("t2")) ==
           Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.
@@ -2014,7 +2014,9 @@ class DeltaTableCreationSuite
 
         checkAnswer(
           sql(s"COMMENT ON TABLE $emptyTableName IS 'My Empty Cool Table'"), Nil)
-        assert(sql(s"DESCRIBE TABLE $emptyTableName").collect().length == 3)
+        var answer = 3
+        assert(sql(s"DESCRIBE TABLE $emptyTableName").collect().length == answer)
+
         // create table, alter tbl property, tbl comment
         assert(sql(s"DESCRIBE HISTORY $emptyTableName").collect().length == 3)
 

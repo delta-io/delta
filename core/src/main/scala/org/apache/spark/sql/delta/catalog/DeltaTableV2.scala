@@ -143,9 +143,6 @@ case class DeltaTableV2(
       }
     }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
-    // this reports whether the table is an external or managed catalog table as
-    // the old DescribeTable command would
-    catalogTable.foreach(table => base.put("Type", table.tableType.name))
     base.asJava
   }
 
