@@ -319,7 +319,6 @@ extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 tags | Map[String, String] | Map containing metadata about this file
-numRecords | Option[Long] | The number of records in this file.
 
 The following is an example `remove` action.
 ```
