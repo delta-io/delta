@@ -75,6 +75,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_USE_CATALOG_SCHEMA =
+    buildConf("convert.useCatalogSchema")
+      .doc(
+        """ When converting to a catalog Parquet table, whether to use the catalog schema as the
+          | source of truth.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE =
     buildConf("convert.partitionValues.ignoreCastFailure")
       .doc(
