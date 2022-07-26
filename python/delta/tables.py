@@ -333,7 +333,9 @@ class DeltaTable(object):
     @since(0.4)  # type: ignore[arg-type]
     def forPath(cls, sparkSession: SparkSession, path: str) -> "DeltaTable":
         """
-        Create a DeltaTable for the data at the given `path` using the given SparkSession.
+        Instantiate a :class:`DeltaTable` object representing the data at the given path,
+        If the given path is invalid (i.e. either no table exists or an existing table is
+        not a Delta table), it throws a `not a Delta table` error.
 
         :param sparkSession: SparkSession to use for loading the table
         :type sparkSession: pyspark.sql.SparkSession
@@ -358,7 +360,13 @@ class DeltaTable(object):
         cls, sparkSession: SparkSession, tableOrViewName: str
     ) -> "DeltaTable":
         """
-        Create a DeltaTable using the given table or view name using the given SparkSession.
+        Instantiate a :class:`DeltaTable` object using the given table or view name. If the given
+        tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
+        Delta table), it throws a `not a Delta table` error.
+
+        The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+        delta.`path`), If so, instantiate a :class:`DeltaTable` object representing the data at
+        the given path (consistent with the `forPath`).
 
         :param sparkSession: SparkSession to use for loading the table
         :param tableOrViewName: name of the table or view
