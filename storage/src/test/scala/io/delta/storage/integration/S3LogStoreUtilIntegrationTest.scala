@@ -52,9 +52,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   integrationTest("setup delta logs") {
     val uploads = Seq(
       touch(s"$testRunUID/empty/some.json"),
-      touch(s"$testRunUID/small/_delta_log/%020d.json".format(1)),
-      touch(s"$testRunUID/small/_before/some.json"),
-      touch(s"$testRunUID/small/_right_after/some.json")) ++
+      touch(s"$testRunUID/small/_delta_log/%020d.json".format(1))) ++
       (1 to 10).map(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v))) ++
       (1 to 1000).map(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v))) ++
       (1 to 10000).map(v => touch(s"$testRunUID/xlarge/_delta_log/%020d.json".format(v)))
