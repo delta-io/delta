@@ -30,7 +30,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     "com.amazonaws.auth.profile.ProfileCredentialsProvider"
   )
 
-  private val file = Paths.get("/tmp/tmp.json").toFile
+  private val file = Paths.get(getClass.getClassLoader.getResource("sample.json").getPath).toFile
 
   private def touch(key: String): UploadInfo =
     fs.putObject(fs.newPutObjectRequest(key, fs.newObjectMetadata(), file))
