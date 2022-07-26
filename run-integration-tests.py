@@ -344,14 +344,17 @@ if __name__ == "__main__":
     if args.use_local and (args.version != default_version):
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
 
-    run_python = not args.scala_only and not args.pip_only and not args.s3_log_store_util_only
-    run_scala = not args.python_only and not args.pip_only and not args.s3_log_store_util_only
-    run_pip = not args.python_only and not args.scala_only and not args.no_pip and not args.s3_log_store_util_only
-    run_s3_log_store_util = not args.python_only and not args.pip_only and not args.scala_only
+    run_python = not args.scala_only and not args.pip_only
+    run_scala = not args.python_only and not args.pip_only
+    run_pip = not args.python_only and not args.scala_only and not args.no_pip
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                                 args.dbb_packages, args.dbb_conf, args.use_local)
+        quit()
+
+    if args.s3_log_store_util_only:
+        run_s3_log_store_util_integration_tests()
         quit()
 
     if run_scala:
@@ -364,6 +367,3 @@ if __name__ == "__main__":
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
-
-    if run_s3_log_store_util:
-        run_s3_log_store_util_integration_tests()
