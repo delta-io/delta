@@ -1,6 +1,6 @@
 package io.delta.storage.integration
 
-import io.delta.storage.internal.S3LogStoreUtil
+import io.delta.storage.internal.{FileNameUtils, S3LogStoreUtil}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.s3a.{S3AFileSystem, UploadInfo}
@@ -41,8 +41,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private def path(table: String, version: Int): Path =
     new Path(s"s3a://$bucket/${key(table, version)}")
 
-  private def version(path: Path): Int
-  = path.getName.takeWhile(_ != '.').toInt
+  private def version(path: Path): Long = FileNameUtils.deltaVersion(path)
 
   private val integrationTestTag = Tag("IntegrationTest")
 
