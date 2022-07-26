@@ -98,8 +98,10 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
       val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
       val endCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
+      // Check that we don't do more S3 list requests than necessary
       assert(endCount - startCount ==
         max(round(ceil((10000 - v) / 1000.0)).toInt, 1))
+      // Check that we get consecutive versions from v to the max version. The smallest version is 1
       assert((max(1, v) to 10000) == response.map(r => version(r.getPath)).toSeq)
     })
   }
