@@ -147,7 +147,7 @@ def run_s3_log_store_util_integration_tests():
 
     env = { "S3_LOG_STORE_UTIL_TEST_ENABLED": "true" }
     assert os.environ.get("S3_LOG_STORE_UTIL_TEST_BUCKET") is not None, "S3_LOG_STORE_UTIL_TEST_BUCKET must be set"
-    assert os.environ.get("S3_LOG_STORE_UTIL_TEST_KEY_PREFIX") is not None, "S3_LOG_STORE_UTIL_TEST_KEY_PREFIX must be set"
+    assert os.environ.get("S3_LOG_STORE_UTIL_TEST_RUN_UID") is not None, "S3_LOG_STORE_UTIL_TEST_RUN_UID must be set"
 
     try:
         cmd = ["build/sbt", "project storage", "testOnly -- -n IntegrationTest"]

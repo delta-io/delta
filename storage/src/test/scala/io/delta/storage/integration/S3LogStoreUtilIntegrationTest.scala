@@ -18,7 +18,8 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private val runIntegrationTests: Boolean =
     Option(System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED")).exists(_.toBoolean)
   private val bucket = System.getenv("S3_LOG_STORE_UTIL_TEST_BUCKET")
-  private val keyPrefix = System.getenv("S3_LOG_STORE_UTIL_TEST_KEY_PREFIX")
+  private val testRunUID =
+    System.getenv("S3_LOG_STORE_UTIL_TEST_RUN_UID") // Prefix for all S3 keys in the current run
   private lazy val fs: S3AFileSystem = {
     val fs = new S3AFileSystem()
     fs.initialize(new URI(s"s3a://$bucket"), configuration)
@@ -36,7 +37,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     fs.putObject(fs.newPutObjectRequest(key, fs.newObjectMetadata(), file))
 
   private def key(table: String, version: Int): String =
-    s"$keyPrefix/$table/_delta_log/%020d.json".format(version)
+    s"$testRunUID/$table/_delta_log/%020d.json".format(version)
 
   private def path(table: String, version: Int): Path =
     new Path(s"s3a://$bucket/${key(table, version)}")
@@ -50,13 +51,13 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
 
   integrationTest("setup delta logs") {
     val uploads = Seq(
-      touch(s"$keyPrefix/empty/some.json"),
-      touch(s"$keyPrefix/small/_delta_log/%020d.json".format(1)),
-      touch(s"$keyPrefix/small/_before/some.json"),
-      touch(s"$keyPrefix/small/_right_after/some.json")) ++
-      (1 to 10).map(v => touch(s"$keyPrefix/medium/_delta_log/%020d.json".format(v))) ++
-      (1 to 1000).map(v => touch(s"$keyPrefix/large/_delta_log/%020d.json".format(v))) ++
-      (1 to 10000).map(v => touch(s"$keyPrefix/xlarge/_delta_log/%020d.json".format(v)))
+      touch(s"$testRunUID/empty/some.json"),
+      touch(s"$testRunUID/small/_delta_log/%020d.json".format(1)),
+      touch(s"$testRunUID/small/_before/some.json"),
+      touch(s"$testRunUID/small/_right_after/some.json")) ++
+      (1 to 10).map(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v))) ++
+      (1 to 1000).map(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v))) ++
+      (1 to 10000).map(v => touch(s"$testRunUID/xlarge/_delta_log/%020d.json".format(v)))
     uploads.foreach(_.getUpload.waitForUploadResult())
   }
 
