@@ -69,6 +69,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     Seq(0, 1, 2, 3).foreach(v => {
       val resolvedPath = path("small", v)
       val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
+      // Check that we get consecutive versions from v to the max version. The smallest version is 1
       assert((max(1, v) to 1) == response.map(r => version(r.getPath)).toSeq)
     })
   }
