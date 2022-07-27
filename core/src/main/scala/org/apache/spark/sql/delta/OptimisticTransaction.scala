@@ -1023,7 +1023,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /**
    * Default [[IsolationLevel]] as set in table metadata.
    */
-  protected def getDefaultIsolationLevel(): IsolationLevel = {
+  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
     DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
