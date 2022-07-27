@@ -238,7 +238,8 @@ trait DeltaErrorsBase
   def nestedNotNullConstraint(
       parent: String, nested: DataType, nestType: String): AnalysisException = {
     new AnalysisException(s"The $nestType type of the field $parent contains a NOT NULL " +
-      s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
+      s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps, " +
+      s"or within fields nested inside nullable structs. " +
       s"To suppress this error and silently ignore the specified constraints, set " +
       s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
       s"Parsed $nestType type:\n${nested.prettyJson}")
