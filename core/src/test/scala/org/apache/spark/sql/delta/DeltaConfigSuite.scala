@@ -168,7 +168,7 @@ class DeltaConfigSuite extends SparkFunSuite
            |""".stripMargin)
 
       val isolationLevel =
-        DeltaLog.forTable(spark, dir.getCanonicalPath).isolationLevel
+        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().getDefaultIsolationLevel()
 
       assert(isolationLevel == Serializable)
     }
