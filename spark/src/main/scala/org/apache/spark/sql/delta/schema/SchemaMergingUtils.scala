@@ -170,9 +170,6 @@ object SchemaMergingUtils {
       fixedTypeColumns: Set[Seq[String]] = Set.empty,
       caseSensitive: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
-    // scalastyle:off println
-    println(fixedTypeColumns)
-    // scalastyle:on println
     def merge(
         current: DataType,
         update: DataType,

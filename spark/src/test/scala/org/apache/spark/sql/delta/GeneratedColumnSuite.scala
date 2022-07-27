@@ -795,7 +795,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val map2 = withGenerationExpression(StructField("m2", IntegerType), "m1.x + 10")
     testSchema(Seq(map1, map2), Set(Seq("m1"), Seq("m2")))
 
-    // Map with struct types doesn't track passed the map
+    // Map with struct type doesn't track passed the map
     val map3 = StructField("m3", MapType(StringType, StructType(Seq(
       StructField("y", IntegerType)))))
     val map4 = withGenerationExpression(StructField("m4", IntegerType), "m3.x.y + 10")
@@ -805,7 +805,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val array2 = withGenerationExpression(StructField("a2", IntegerType), "a1[0] + 10")
     testSchema(Seq(array1, array2), Set(Seq("a1"), Seq("a2")))
 
-    // Array with struct types doesn't track passed the array
+    // Array with struct type doesn't track passed the array
     val array3 = StructField("a3", ArrayType(StructType(Seq(StructField("y", IntegerType)))))
     val array4 = withGenerationExpression(StructField("a4", IntegerType), "a3[0].y + 10")
     testSchema(Seq(array3, array4), Set(Seq("a3"), Seq("a4")))
