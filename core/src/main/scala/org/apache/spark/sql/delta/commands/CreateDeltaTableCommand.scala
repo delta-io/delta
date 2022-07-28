@@ -58,7 +58,7 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    var table = this.table
+    val table = this.table
 
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
@@ -72,7 +72,7 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.tableAlreadyExists(table)
     }
 
-    var tableWithLocation = if (tableExists) {
+    val tableWithLocation = if (tableExists) {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
@@ -295,7 +295,7 @@ case class CreateDeltaTableCommand(
     // Otherwise we'll just go with the metadata already present in the log.
     // The schema compatibility checks will be made in `WriteIntoDelta` for CreateTable
     // with a query
-    if (txn.readVersion > -1) {
+    if (txn.deltaLog.tableExists) {
       if (tableDesc.schema.nonEmpty) {
         // We check exact alignment on create table if everything is provided
         // However, if in column mapping mode, we can safely ignore the related metadata fields in
@@ -429,12 +429,11 @@ case class CreateDeltaTableCommand(
         operation == TableCreationModes.Replace)
     // If a user explicitly specifies not to overwrite the schema, during a replace, we should
     // tell them that it's not supported
-    val dontOverwriteSchema = options.options.contains(DeltaOptions.OVERWRITE_SCHEMA_OPTION) &&
-      !options.canOverwriteSchema
+    val dontOverwriteSchema = !options.canOverwriteSchema
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
-    if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
+    if (txn.deltaLog.tableExists && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
       txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))

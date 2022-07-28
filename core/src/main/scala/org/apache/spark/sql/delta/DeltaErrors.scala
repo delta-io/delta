@@ -2442,7 +2442,7 @@ class MetadataMismatchErrorBuilder {
       s"""To overwrite your schema or change partitioning, please set:
          |'.option("${DeltaOptions.OVERWRITE_SCHEMA_OPTION}", "true")'.
          |
-           |Note that the schema can't be overwritten when using
+         |Note that the schema can't be overwritten when using
          |'${DeltaOptions.REPLACE_WHERE_OPTION}'.
          """.stripMargin :: Nil
   }

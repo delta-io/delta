@@ -75,9 +75,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
-   * Whether to allow overwriting the schema of a Delta table in an overwrite mode operation. If
-   * ACLs are enabled, we can't change the schema of an operation through a write, which requires
-   * MODIFY permissions, when schema changes require OWN permissions.
+   * Whether to allow overwriting the schema of a Delta table in an overwrite mode operation.
    */
   def canOverwriteSchema: Boolean = {
     options.get(OVERWRITE_SCHEMA_OPTION).exists(toBoolean(_, OVERWRITE_SCHEMA_OPTION))
