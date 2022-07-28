@@ -582,11 +582,13 @@ object DeltaLog extends DeltaLogging {
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
+
   private def apply(
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
-      clock: Clock): DeltaLog = {
+      clock: Clock
+  ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
