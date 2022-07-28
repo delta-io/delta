@@ -42,7 +42,7 @@ public class RowDataBoundedDeltaSourceBuilder
      * Specifies a {@link List} of column names that should be read from Delta table. If this method
      * is not used, Source will read all columns from Delta table.
      * <p>
-     * Is provided List is null or contains null, empty or blank elements it will cause to throw a
+     * If provided List is null or contains null, empty or blank elements it will throw a
      * {@code DeltaSourceValidationException} by builder after calling {@code build()} method.
      *
      * @param columnNames column names that should be read.
@@ -56,7 +56,7 @@ public class RowDataBoundedDeltaSourceBuilder
      * Specifies an array of column names that should be read from Delta table. If this method
      * is not used, Source will read all columns from Delta table.
      * <p>
-     * Is provided List is null or contains null, empty or blank elements it will cause to throw a
+     * If provided List is null or contains null, empty or blank elements it will throw a
      * {@code DeltaSourceValidationException} by builder after calling {@code build()} method.
      *
      * @param columnNames column names that should be read.
@@ -66,15 +66,13 @@ public class RowDataBoundedDeltaSourceBuilder
     }
 
     /**
-     * Sets value of "versionAsOf" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED}
-     * mode only. With this option we can time travel to given {@link io.delta.standalone.Snapshot}
-     * version and read from it.
+     * Sets value of "versionAsOf" option. With this option we will load the given table version and
+     * read from it.
      *
      * <p>
      * This option is mutually exclusive with {@link #timestampAsOf(String)} option.
      *
-     * @param snapshotVersion Delta {@link io.delta.standalone.Snapshot} version to time travel to.
+     * @param snapshotVersion Delta table version to time travel to.
      */
     @Override
     public RowDataBoundedDeltaSourceBuilder versionAsOf(long snapshotVersion) {
@@ -82,10 +80,8 @@ public class RowDataBoundedDeltaSourceBuilder
     }
 
     /**
-     * Sets value of "timestampAsOf" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED}
-     * mode only. With this option we can time travel to the latest {@link
-     * io.delta.standalone.Snapshot} that was generated at or before given timestamp.
+     * Sets value of "timestampAsOf" option. With this option we will load the latest table version
+     * that was generated at or before the given timestamp.
      * <p>
      * This option is mutually exclusive with {@link #versionAsOf(long)} option.
      *
@@ -150,8 +146,8 @@ public class RowDataBoundedDeltaSourceBuilder
 
     /**
      * Creates an instance of {@link DeltaSource} for a stream of {@link RowData}. Created source
-     * will work in Bounded mode, meaning it will read content of configured Delta's snapshot
-     * version ignoring all changes done to this table after starting this source.
+     * will work in Bounded mode, meaning it will read the content of the configured Delta snapshot
+     * at the fixed version, ignoring all changes done to this table after starting this source.
      *
      * <p>
      * This method can throw {@code DeltaSourceValidationException} in case of invalid arguments

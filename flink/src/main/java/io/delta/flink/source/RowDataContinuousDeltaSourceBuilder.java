@@ -18,6 +18,13 @@ import static io.delta.flink.source.internal.DeltaSourceOptions.LOADED_SCHEMA_SN
  * A builder class for {@link DeltaSource} for a stream of {@link RowData} where the created source
  * instance will operate in Continuous mode.
  * <p>
+ * In Continuous mode, the {@link DeltaSource} will, by default, load the full state of the latest
+ * table version, and then start monitoring for changes. If you use either the
+ * {@link RowDataContinuousDeltaSourceBuilder#startingVersion} or
+ * {@link RowDataContinuousDeltaSourceBuilder#startingTimestamp} APIs, then the {@link DeltaSource}
+ * will start monitoring for changes from that historical version. It will not load the full table
+ * state at that historical table version.
+ * <p>
  * For most common use cases use {@link DeltaSource#forContinuousRowData} utility method to
  * instantiate the source. After instantiation of this builder you can either call {@link
  * RowDataBoundedDeltaSourceBuilder#build()} method to get the instance of a {@link DeltaSource} or
@@ -42,7 +49,7 @@ public class RowDataContinuousDeltaSourceBuilder
      * Specifies a {@link List} of column names that should be read from Delta table. If this method
      * is not used, Source will read all columns from Delta table.
      * <p>
-     * Is provided List is null or contains null, empty or blank elements it will cause to throw a
+     * If provided List is null or contains null, empty or blank elements it will throw a
      * {@code DeltaSourceValidationException} by builder after calling {@code build()} method.
      *
      * @param columnNames column names that should be read.
@@ -56,7 +63,7 @@ public class RowDataContinuousDeltaSourceBuilder
      * Specifies an array of column names that should be read from Delta table. If this method
      * is not used, Source will read all columns from Delta table.
      * <p>
-     * Is provided List is null or contains null, empty or blank elements it will cause to throw a
+     * If provided List is null or contains null, empty or blank elements it will throw a
      * {@code DeltaSourceValidationException} by builder after calling {@code build()} method.
      *
      * @param columnNames column names that should be read.
@@ -66,18 +73,15 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets value of "startingVersion" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED}
-     * mode only. This option specifies the {@link io.delta.standalone.Snapshot} version from which
-     * we want to start reading the changes.
+     * Sets value of "startingVersion" option. This option specifies the starting table version from
+     * which we want to start reading changes.
      *
      * <p>
      * This option is mutually exclusive with {@link #startingTimestamp(String)} option.
      *
-     * @param startingVersion Delta {@link io.delta.standalone.Snapshot} version to start reading
-     *                        changes from. The values can be string numbers like "1", "10" etc. or
-     *                        keyword "latest", where in that case, changes from the latest Delta
-     *                        table version will be read.
+     * @param startingVersion Delta table version to start reading changes from. The values can be
+     *                        string numbers like "1", "10" etc. or keyword "latest", where in that
+     *                        case, changes from the latest Delta table version will be read.
      */
     @Override
     public RowDataContinuousDeltaSourceBuilder startingVersion(String startingVersion) {
@@ -85,16 +89,13 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets value of "startingVersion" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED}
-     * mode only. This option specifies the {@link io.delta.standalone.Snapshot} version from which
-     * we want to start reading the changes.
+     * Sets value of "startingVersion" option. This option specifies the starting table version from
+     * which we want to start reading changes.
      *
      * <p>
      * This option is mutually exclusive with {@link #startingTimestamp(String)} option.
      *
-     * @param startingVersion Delta {@link io.delta.standalone.Snapshot} version to start reading
-     *                        changes from.
+     * @param startingVersion Delta table version to start reading changes from.
      */
     @Override
     public RowDataContinuousDeltaSourceBuilder startingVersion(long startingVersion) {
@@ -102,17 +103,15 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets value of "startingTimestamp" option. Applicable for {@link
-     * org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode only. This
-     * option is used to read only changes from {@link io.delta.standalone.Snapshot} that was
-     * generated at or before given timestamp.
+     * Sets value of "startingTimestamp" option. This option is used to read only changes starting
+     * from the table version that was generated at or after the given timestamp.
      *
      * <p>
      * This option is mutually exclusive with {@link #startingVersion(String)} and {@link
      * #startingVersion(long)} option.
      *
-     * @param startingTimestamp The timestamp of {@link io.delta.standalone.Snapshot} that we start
-     *                          reading changes from. Supported formats are:
+     * @param startingTimestamp The timestamp of the table from which we start reading changes.
+     *                          Supported formats are:
      *                          <ul>
      *                                <li>2022-02-24</li>
      *                                <li>2022-02-24 04:55:00</li>
@@ -128,10 +127,8 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets the value for "updateCheckIntervalMillis" option. Applicable for {@link
-     * org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED} mode only. This
-     * option is used to specify the check interval (in milliseconds) used for periodic Delta table
-     * changes checks.
+     * Sets the value for "updateCheckIntervalMillis" option. This option is used to specify the
+     * check interval (in milliseconds) used for periodic Delta table changes checks.
      *
      * <p>
      * The default value for this option is 5000 ms.
@@ -145,17 +142,10 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets the "ignoreDeletes" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED}
-     * mode only. This option allows processing Delta table versions containing only {@link
-     * io.delta.standalone.actions.RemoveFile} actions.
-     *
-     * <p> If this option is set to true, Source connector will not throw an exception when
-     * processing version containing only {@link io.delta.standalone.actions.RemoveFile} actions
-     * regardless of {@link io.delta.standalone.actions.RemoveFile#isDataChange()} flag.
-     *
+     * Sets the "ignoreDeletes" option. When set to true, this option allows processing Delta table
+     * versions where data is deleted.
      * <p>
-     * The default value for these options is false.
+     * The default value for this option is false.
      */
     @Override
     public RowDataContinuousDeltaSourceBuilder ignoreDeletes(boolean ignoreDeletes) {
@@ -163,16 +153,17 @@ public class RowDataContinuousDeltaSourceBuilder
     }
 
     /**
-     * Sets the "ignoreChanges" option. Applicable for
-     * {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED}
-     * mode only. This option allows processing Delta table versions containing both {@link
-     * io.delta.standalone.actions.RemoveFile} and {@link io.delta.standalone.actions.AddFile}
-     * actions. This option subsumes {@link #ignoreDeletes} option.
-     *
-     * <p> If this option is set to true, Source connector will not
-     * throw an exception when processing version containing combination of {@link
-     * io.delta.standalone.actions.RemoveFile} and {@link io.delta.standalone.actions.AddFile}
-     * actions regardless of {@link io.delta.standalone.actions.RemoveFile#isDataChange()} flag.
+     * Sets the "ignoreChanges" option. When set to true, this option allows processing Delta table
+     * versions where data is changed (i.e. updated) or deleted.
+     * <p>
+     * Note that setting this option to true can lead to duplicate processing of data, as, in the
+     * case of updates, existing rows may be rewritten in new files, and those new files will be
+     * treated as new data and be fully reprocessed.
+     * <p>
+     * This option subsumes {@link #ignoreDeletes} option. Therefore, if you set "ignoreChanges" to
+     * true, your stream will not be disrupted by either deletions or updates to the source table.
+     * <p>
+     * The default value for this option is false.
      */
     @Override
     public RowDataContinuousDeltaSourceBuilder ignoreChanges(boolean ignoreChanges) {
