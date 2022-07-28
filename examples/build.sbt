@@ -26,8 +26,7 @@ lazy val commonSettings = Seq(
   resolvers += Resolver.mavenLocal,
   libraryDependencies ++= Seq(
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
-    "org.apache.hadoop" % "hadoop-client" % "3.1.0",
-    "org.apache.parquet" % "parquet-hadoop" % "1.10.1"
+    "org.apache.hadoop" % "hadoop-client" % "3.1.0"
   )
 )
 
@@ -74,6 +73,11 @@ lazy val flinkExample = (project in file("flink-example")) settings (
     "org.apache.flink" %% "flink-parquet" % flinkVersion,
     "org.apache.flink" % "flink-table-common" % flinkVersion,
     "org.apache.hadoop" % "hadoop-client" % flinkHadoopVersion,
+
+    // Log4j runtime dependencies
+    "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.12.1" % "runtime",
+    "org.apache.logging.log4j" % "log4j-api" % "2.12.1" % "runtime",
+    "org.apache.logging.log4j" % "log4j-core" % "2.12.1" % "runtime",
 
     // Below dependencies are needed only to run the example project in memory
     "org.apache.flink" %% "flink-clients" % flinkVersion,

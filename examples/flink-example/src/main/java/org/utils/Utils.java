@@ -31,8 +31,10 @@ public final class Utils {
     public static String resolveExampleTableAbsolutePath(String resourcesTableDir) {
         String rootPath = Paths.get(".").toAbsolutePath().normalize().toString();
         return rootPath.endsWith("flink-example") ?
+            // Maven commands are run from the examples/flink-example/ directory
             rootPath + "/src/main/resources/" + resourcesTableDir :
-            rootPath + "/examples/flink-example/src/main/resources/" + resourcesTableDir;
+            // while SBT commands are run from the examples/ directory
+            rootPath + "/flink-example/src/main/resources/" + resourcesTableDir;
     }
 
     public static void prepareDirs(String tablePath) throws IOException {
