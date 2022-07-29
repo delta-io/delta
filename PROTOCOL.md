@@ -107,7 +107,7 @@ _change_type|`String`| `insert`, `update_preimage` , `update_postimage`, `delete
 _commit_version|`Long`| The Delta log or table version containing the change.
 _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created.
 
-__(1)__ `preimage` is the value before the update, postimage is the value after the update.
+__(1)__ `preimage` is the value before the update, `postimage` is the value after the update.
 
 ### Delta Log Entries
 Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
@@ -341,16 +341,16 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When CDC readers encounter a cdc action in a particular Delta version, they must read from that version exclusively using the cdc files, rather than inferring changes from add and remove actions as they do for the other type of operations.
 
 The schema of the `cdc` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+path| String | A relative path to a change data file from the root of the table or an absolute path to a change data file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
-dataChange | Boolean | Should always be `false` for change data because it only mirrors the effective changes of the data files
+tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example of `cdc` action.
 
