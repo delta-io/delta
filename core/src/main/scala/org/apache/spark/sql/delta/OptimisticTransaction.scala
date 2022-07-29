@@ -1069,8 +1069,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     allowFallbackToSnapshotIsolation
   }
 
-  protected def getDefaultIsolationLevel(): IsolationLevel = {
-    Serializable
+  /**
+  * Default [[IsolationLevel]] as set in table metadata.
+  */
+  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
   /**
