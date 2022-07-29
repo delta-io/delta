@@ -341,7 +341,7 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When CDC readers encounter a cdc action in a particular Delta version, they must read from that version exclusively using the cdc files, rather than inferring changes from add and remove actions as they do for the other type of operations.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When CDC readers encounter a `cdc` action in a particular Delta version, they must read from that version exclusively using the `cdc` files, rather than inferring changes from add and remove actions as they do for the other type of operations.
 
 The schema of the `cdc` action is as follows:
 
