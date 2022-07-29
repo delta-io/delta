@@ -1,5 +1,5 @@
 # Hive Connector
-This project is a library to make Hive read Delta tables. The project provides a uber JAR `delta-hive-assembly_<scala_version>-0.4.1.jar` to use in Hive. You can use either Scala 2.11, 2.12 or 2.13. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the uber JAR for the corresponding Scala version you would like to use.
+This project is a library to make Hive read Delta tables. The project provides a uber JAR `delta-hive-assembly_<scala_version>-<delta_connectors_version>.jar` to use in Hive. You can use either Scala 2.11, 2.12 or 2.13. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the uber JAR for the corresponding Scala version you would like to use.
 
 You can also use the following instructions to build it as well.
 
@@ -12,10 +12,10 @@ Please skip this section if you have downloaded the connector JARs.
 - To run Hive 2 tests, run `build/sbt hive2MR/test hive2Tez/test`
 - To generate the uber JAR that contains all libraries needed for Hive, run `build/sbt hiveAssembly/assembly`
 
-The above commands will generate the following JAR:
+The above commands will generate the following JAR, for latest Delta Connectors version x.y.z:
 
 ```
-hive/target/scala-2.12/delta-hive-assembly_2.12-0.4.1.jar
+hive/target/scala-2.12/delta-hive-assembly_2.12-x.y.z.jar
 ```
 
 This uber JAR includes the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
@@ -23,7 +23,7 @@ This uber JAR includes the Hive connector and all its dependencies. They need to
 Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hiveAssembly/assembly"` to generate the following JAR:
 
 ```
-hive/target/scala-2.11/delta-hive-assembly_2.11-0.4.1.jar
+hive/target/scala-2.11/delta-hive-assembly_2.11-x.y.z.jar
 ```
 
 ## Setting up Hive

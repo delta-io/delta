@@ -101,7 +101,7 @@ if __name__ == "__main__":
     
     There are two version 'modes' you should use to run this file.
     1. using published or staged jar: explicitly pass in the --version argument.
-    2. using locally-generated jar (e.g. 0.4.1-SNAPSHOT): explicitly pass in the --version argument
+    2. using locally-generated jar (e.g. x.y.z-SNAPSHOT): explicitly pass in the --version argument
        and --use-local-cache argument.
        
        In this mode, ensure that the local jar exists for all scala versions. You can generate it

@@ -337,12 +337,12 @@ Scala 2.12:
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-flink</artifactId>
-            <version>0.4.1</version>
+            <version>0.5.0</version>
         </dependency>
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-standalone_${scala.main.version}</artifactId>
-            <version>0.4.1</version>
+            <version>0.5.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -381,8 +381,8 @@ Please replace the versions of the dependencies with the ones you are using.
 
 ```scala
 libraryDependencies ++= Seq(
-  "io.delta" %% "delta-flink" % "0.4.1",
-  "io.delta" %% "delta-standalone" % "0.4.1",  
+  "io.delta" %% "delta-flink" % deltaConnectorsVersion,
+  "io.delta" %% "delta-standalone" % deltaConnectorsVersion,
   "org.apache.flink" %% "flink-clients" % flinkVersion,
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
   "org.apache.hadoop" % "hadoop-client" % hadoopVersion,

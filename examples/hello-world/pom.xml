@@ -28,7 +28,7 @@ limitations under the License.-->
         <maven.compiler.target>1.8</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
         <scala.version>2.12</scala.version>
-        <standalone.version>0.4.1</standalone.version>
+        <standalone.version>0.5.0</standalone.version>
     </properties>
 
     <repositories>
