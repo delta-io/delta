@@ -77,7 +77,7 @@ The state of a table at a given version is called a _snapshot_ and is defined by
  - **Set of applications-specific transactions** that have been successfully committed to the table
 
 ## File Types
-A Delta table is stored within a directory and is composed of four different types of files.
+A Delta table is stored within a directory and is composed of five different types of files.
 
 Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
 ```
@@ -86,6 +86,7 @@ Here is an example of a Delta table with three entries in the commit log, stored
 /mytable/_delta_log/00000000000000000003.json
 /mytable/_delta_log/00000000000000000003.checkpoint.parquet
 /mytable/_delta_log/_last_checkpoint
+/mytable/_change_data/cdc-00000-924d9ac7-21a9-4121-b067-a0a6517aa8ed.c000.snappy.parquet
 /mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
 ```
 
@@ -94,6 +95,19 @@ Data files can be stored in the root directory of the table or in any non-hidden
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
+
+### Change Data Files
+Change data files are stored in a directory at the root of the table named `_change_data`, and represent the changes for the table version they are in. For data with partition values, change data files are stored within the `_change_data` directory in their respective partitions (i.e. `_change_data/part1=value1/...`). Writers can _optionally_ produce these change data files as a consequence of operations that change underlying data, like `UPDATE`, `DELETE`, and `MERGE` operations to a Delta Lake table. When available, change data readers should use the change data files instead of computing changes from the underlying data files.
+
+In addition to the data columns, change data files contain metadata columns that identify the type of change event:
+
+Field Name | Data Type | Description
+-|-|-
+_change_type|`String`| `insert`, `update_preimage` , `update_postimage`, `delete` __(1)__
+_commit_version|`Long`| The Delta log or table version containing the change.
+_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created.
+
+__(1)__ `preimage` is the value before the update, postimage is the value after the update.
 
 ### Delta Log Entries
 Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
@@ -322,6 +336,31 @@ The following is an example `remove` action.
     "path":"part-00001-9…..snappy.parquet",
     "deletionTimestamp":1515488792485,
     "dataChange":true
+  }
+}
+```
+
+### Add CDC File
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction.
+
+The schema of the `cdc` action is as follows:
+
+Field Name | Data Type | Description
+-|-|-
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+dataChange | Boolean | Should always be `false` for change data because it only mirrors the effective changes of the data files
+
+The following is an example of `cdc` action.
+
+```
+{
+  "cdc": {
+    "path": "_change_data/cdc-00001-c…..snappy.parquet",
+    "partitionValues": {},
+    "size": 1213,
+    "dataChange": false
   }
 }
 ```
