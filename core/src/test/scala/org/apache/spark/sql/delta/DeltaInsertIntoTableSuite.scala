@@ -221,7 +221,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           case e: AnalysisException =>
             assert(e.getMessage.contains("Inserting into a view is not allowed") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
-              e.getMessage.contains("Table default.v not found"))
+              e.getMessage.contains("Table default.v not found") ||
+              e.getMessage.contains("Table or view 'v' not found in database 'default'"))
         }
       }
     }
@@ -697,7 +698,9 @@ trait InsertIntoSQLOnlyTests
         }
 
         verifyTable(t1, spark.emptyDataFrame)
-        assert(exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+        assert(
+          exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+          exc.getMessage.contains("PARTITION clause cannot contain the non-partition column") ||
           exc.getMessage.contains(
             "[NON_PARTITION_COLUMN] PARTITION clause cannot contain the non-partition column"))
         assert(exc.getMessage.contains("id"))
@@ -714,7 +717,9 @@ trait InsertIntoSQLOnlyTests
         }
 
         verifyTable(t1, spark.emptyDataFrame)
-        assert(exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+        assert(
+          exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+          exc.getMessage.contains("PARTITION clause cannot contain the non-partition column") ||
           exc.getMessage.contains(
             "[NON_PARTITION_COLUMN] PARTITION clause cannot contain the non-partition column"))
         assert(exc.getMessage.contains("data"))

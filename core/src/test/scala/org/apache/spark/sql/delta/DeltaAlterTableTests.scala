@@ -391,9 +391,10 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
   }
 
   private def checkErrMsg(msg: String, field: Seq[String]): Unit = {
-    val fieldParent = field.dropRight(1)
-    assert(msg.contains(s"Field name ${field.mkString(".")} is invalid: " +
-      s"${fieldParent.mkString(".")} is not a struct"))
+    val fieldStr = field.map(f => s"`$f`").mkString(".")
+    val fieldParentStr = field.dropRight(1).map(f => s"`$f`").mkString(".")
+    assert(msg.contains(
+      s"Field name $fieldStr is invalid: $fieldParentStr is not a struct"))
   }
 
   ddlTest("ADD COLUMNS should not be able to add column to basic type key/value of " +
