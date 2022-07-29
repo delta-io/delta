@@ -97,7 +97,7 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Change Data Files
-Change data files are stored in a directory at the root of the table named `_change_data`, and represent the changes for the table version they are in. For data with partition values, change data files are stored within the `_change_data` directory in their respective partitions (i.e. `_change_data/part1=value1/...`). Writers can _optionally_ produce these change data files as a consequence of operations that change underlying data, like `UPDATE`, `DELETE`, and `MERGE` operations to a Delta Lake table. When available, change data readers should use the change data files instead of computing changes from the underlying data files.
+Change data files are stored in a directory at the root of the table named `_change_data`, and represent the changes for the table version they are in. For data with partition values, change data files are stored within the `_change_data` directory in their respective partitions (i.e. `_change_data/part1=value1/...`). Writers can _optionally_ produce these change data files as a consequence of operations that change underlying data, like `UPDATE`, `DELETE`, and `MERGE` operations to a Delta Lake table. Operations that only add new data should not produce separate change files. When available, change data readers should use the change data files instead of computing changes from the underlying data files.
 
 In addition to the data columns, change data files contain metadata columns that identify the type of change event:
 
