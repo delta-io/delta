@@ -429,7 +429,8 @@ case class CreateDeltaTableCommand(
         operation == TableCreationModes.Replace)
     // If a user explicitly specifies not to overwrite the schema, during a replace, we should
     // tell them that it's not supported
-    val dontOverwriteSchema = !options.canOverwriteSchema
+    val dontOverwriteSchema = options.options.contains(DeltaOptions.OVERWRITE_SCHEMA_OPTION) &&
+      !options.canOverwriteSchema
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
