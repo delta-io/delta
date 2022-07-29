@@ -159,16 +159,17 @@ class DeltaConfigSuite extends SparkFunSuite
     }
   }
 
-  test("Allow setting Isolation Level") {
+  test("Allow setting isolation level") {
     // (1) we can set serializable isolation level
     withTempDir { dir =>
       sql(
-        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint)
+           |USING delta
            |TBLPROPERTIES ('delta.isolationLevel' = 'Serializable')
            |""".stripMargin)
 
       val isolationLevel =
-        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().getDefaultIsolationLevel()
+        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().defaultIsolationLevel()
 
       assert(isolationLevel == Serializable)
     }
@@ -176,12 +177,13 @@ class DeltaConfigSuite extends SparkFunSuite
     // (2) we can set write serializable isolation level
     withTempDir { dir =>
       sql(
-        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint)
+           |USING delta
            |TBLPROPERTIES ('delta.isolationLevel' = 'WriteSerializable')
            |""".stripMargin)
 
       val isolationLevel =
-        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().getDefaultIsolationLevel()
+        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().defaultIsolationLevel()
 
       assert(isolationLevel == WriteSerializable)
     }

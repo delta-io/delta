@@ -505,8 +505,8 @@ trait DeltaConfigsBase extends DeltaLogging {
   val ISOLATION_LEVEL = buildConfig[IsolationLevel](
     "isolationLevel",
     Serializable.toString,
-    IsolationLevel.fromString(_),
-    x => x == Serializable || x == WriteSerializable,
+    IsolationLevel.fromString,
+    Set[IsolationLevel](Serializable, WriteSerializable).contains(_),
     "must be Serializable or WriteSerializable"
   )
 }
