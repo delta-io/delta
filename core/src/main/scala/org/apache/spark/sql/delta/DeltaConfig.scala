@@ -506,7 +506,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "isolationLevel",
     Serializable.toString,
     IsolationLevel.fromString,
-    Set[IsolationLevel](Serializable, WriteSerializable).contains(_),
+    Set[IsolationLevel](Serializable, WriteSerializable).contains,
     "must be Serializable or WriteSerializable"
   )
 }
