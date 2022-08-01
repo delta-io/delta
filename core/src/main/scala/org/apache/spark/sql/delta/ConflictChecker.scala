@@ -96,7 +96,7 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val changedDataAddedFiles: Seq[AddFile] = if (isBlindAppendOption.getOrElse(false)) {
     Seq()
   } else {
-    addedFiles
+    addedFiles.filter(_.dataChange)
   }
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
