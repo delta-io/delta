@@ -26,9 +26,9 @@ def run_sbt_tests(root_dir, scala_version=None):
     print("##### Running SBT tests #####")
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     if scala_version is None:
-        run_cmd([sbt_path, "clean", "+test"], stream_output=True)
+        run_cmd([sbt_path, "clean", "+test", "coverageAggregate"], stream_output=True)
     else:
-        run_cmd([sbt_path, "clean", "++ %s test" % scala_version], stream_output=True)
+        run_cmd([sbt_path, "clean", "++ %s test" % scala_version, "coverageAggregate"], stream_output=True)
 
 
 def run_python_tests(root_dir):
