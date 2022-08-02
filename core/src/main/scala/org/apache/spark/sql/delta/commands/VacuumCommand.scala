@@ -318,15 +318,12 @@ trait VacuumCommandImpl extends DeltaCommand {
     import spark.implicits._
 
     if (parallel) {
-      // If there are no entries, do not call reduce as it results in empty collection error
-      if (diff.isEmpty) return 0
-
       diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
         val filesDeletedPerPartition =
           files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
         Iterator(filesDeletedPerPartition)
-      }.reduce(_ + _)
+      }.collect().sum
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
