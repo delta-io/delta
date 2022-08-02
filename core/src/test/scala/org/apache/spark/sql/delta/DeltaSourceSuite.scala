@@ -1388,6 +1388,61 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test("startingVersion earliest") {
+    withTempDir { dir =>
+      withTempView("startingVersionEarliest") {
+        val path = dir.getAbsolutePath
+        spark.range(0, 10).write.format("delta").save(path)
+
+        def startTestStreamingQuery(): StreamingQuery = {
+          spark.readStream
+            .format("delta")
+            .option("startingVersion", "earliest")
+            .load(path)
+            .writeStream
+            .format("memory")
+            .queryName("startingVersionEarliest")
+            .start()
+        }
+
+        var q = startTestStreamingQuery()
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionEarliest"), (0 until 10).map(Row(_)))
+
+          // After we add some batches the stream should continue as normal.
+          spark.range(10, 15).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionEarliest"), (0 until 15).map(Row(_)))
+          spark.range(15, 20).write.format("delta").mode("append").save(path)
+          spark.range(20, 25).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionEarliest"), (0 until 25).map(Row(_)))
+        } finally {
+          q.stop()
+        }
+
+        // deleting the first version and restarting the stream should just skip the first version
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+
+        q = startTestStreamingQuery()
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionEarliest"), (10 until 25).map(Row(_)))
+
+          // After we add some batches the stream should continue as normal.
+          spark.range(25, 30).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionEarliest"), (10 until 30).map(Row(_)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
   test("startingVersion latest") {
     withTempDir { dir =>
       withTempView("startingVersionTest") {

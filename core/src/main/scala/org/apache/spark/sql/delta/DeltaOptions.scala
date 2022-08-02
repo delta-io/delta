@@ -176,6 +176,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
     case "latest" => StartingVersionLatest
+    case "earliest" => StartingVersionEarliest
     case str =>
       Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
         throw DeltaErrors.illegalDeltaOptionException(
@@ -302,4 +303,5 @@ object DeltaOptions extends DeltaLogging {
  */
 sealed trait DeltaStartingVersion
 case object StartingVersionLatest extends DeltaStartingVersion
+case object StartingVersionEarliest extends DeltaStartingVersion
 case class StartingVersion(version: Long) extends DeltaStartingVersion

@@ -163,14 +163,23 @@ class DeltaHistoryManager(
       version: Long,
       mustBeRecreatable: Boolean = true,
       allowOutOfRange: Boolean = false): Unit = {
-    val earliest = if (mustBeRecreatable) {
-      getEarliestReproducibleCommit
-    } else {
-      getEarliestDeltaFile(deltaLog)
-    }
+    val earliest = getEarliestVersion(mustBeRecreatable = mustBeRecreatable)
     val latest = deltaLog.update().version
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw VersionNotFoundException(version, earliest, latest)
+    }
+  }
+
+  /**
+   * Get the earliest delta version.
+   * @param mustBeRecreatable whether the snapshot of this version needs to be recreated.
+   */
+  def getEarliestVersion(
+      mustBeRecreatable: Boolean = true): Long = {
+    if (mustBeRecreatable) {
+      getEarliestReproducibleCommit
+    } else {
+      getEarliestDeltaFile(deltaLog)
     }
   }
 

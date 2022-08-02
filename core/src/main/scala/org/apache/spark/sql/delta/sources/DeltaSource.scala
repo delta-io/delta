@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest, StartingVersionEarliest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
@@ -719,9 +719,11 @@ case class DeltaSource(
       val v = options.startingVersion.get match {
         case StartingVersionLatest =>
           deltaLog.update().version + 1
+        // when starting from a given version, we don't need the snapshot of this version. So
+        // `mustBeRecreatable` is set to `false`.
+        case StartingVersionEarliest =>
+          deltaLog.history.getEarliestVersion(mustBeRecreatable = false)
         case StartingVersion(version) =>
-          // when starting from a given version, we don't need the snapshot of this version. So
-          // `mustBeRecreatable` is set to `false`.
           deltaLog.history.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
           version
       }
