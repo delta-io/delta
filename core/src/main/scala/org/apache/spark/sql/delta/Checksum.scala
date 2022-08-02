@@ -157,14 +157,19 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
  */
 trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
 
-  def validateChecksum(): Unit = checksumOpt.foreach { checksum =>
+  /**
+   * Validate checksum by performing state reconstruction and comparing that result to the checksum.
+   * @param contextInfo caller context that will be added to the logging if validation fails
+   */
+  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Unit =
+      checksumOpt.foreach { checksum =>
     val mismatchStringOpt = checkMismatch(checksum)
     if (mismatchStringOpt.isDefined) {
       // Report the failure to usage logs.
       recordDeltaEvent(
         this.deltaLog,
         "delta.checksum.invalid",
-        data = Map("error" -> mismatchStringOpt.get))
+        data = Map("error" -> mismatchStringOpt.get) ++ contextInfo)
       // We get the active SparkSession, which may be different than the SparkSession of the
       // Snapshot that was created, since we cache `DeltaLog`s.
       val spark = SparkSession.getActiveSession.getOrElse {
