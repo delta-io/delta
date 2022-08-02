@@ -13,31 +13,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import scala.util.Try
+import scala.util.{Success, Try}
 name := "example"
 organization := "com.example"
 organizationName := "example"
 
 val scala212 = "2.12.15"
 val scala213 = "2.13.8"
-val deltaVersion = "1.2.0"
+val deltaVersion = "2.0.0"
 
-val lookupSparkVersion: PartialFunction[String, String] = {
-  case v10x_and_above if Try {
-        v10x_and_above.split('.')(0).toInt
-      }.toOption.exists(_ >= 1) =>
-    "3.2.1"
-  case v07x_v08x
-      if v07x_v08x.startsWith("0.7") || v07x_v08x.startsWith("0.8") =>
-    "3.0.2"
-  case belowv07 if Try {
-        belowv07.split('.')(1).toInt
-      }.toOption.exists(_ < 7) =>
-    "2.4.4"
-  case v =>
-    throw new RuntimeException(
-      s"Unsupported delta version: $v. Please check https://docs.delta.io/latest/releases.html"
-    )
+def getMajorMinor(version: String): (Int, Int) = {
+  val majorMinor = Try {
+    val splitVersion = version.split('.')
+    (splitVersion(0).toInt, splitVersion(1).toInt)
+  }
+  majorMinor match {
+    case Success(_) => (majorMinor.get._1, majorMinor.get._2)
+    case _ =>
+      throw new RuntimeException(s"Unsupported delta version: $version. " +
+        s"Please check https://docs.delta.io/latest/releases.html")
+  }
+}
+val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
+  // versions 2.1.0 and above
+  case (major, minor) if (major == 2  && minor >= 1) || major >= 3 => "3.3.0"
+  // versions 1.0.0 to 2.0.x
+  case (major, minor) if major == 1 || (major == 2 && minor == 0) => "3.2.1"
+  // versions 0.7.x to 0.8.x
+  case (major, minor) if major == 0 && (minor == 7 || minor == 8) => "3.0.2"
+  // versions below 0.7
+  case (major, minor) if major == 0 && minor < 7 => "2.4.4"
 }
 
 val getScalaVersion = settingKey[String](
@@ -88,7 +93,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "io.delta" %% "delta-core" % getDeltaVersion.value,
       "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-        getDeltaVersion.value
+        getMajorMinor(getDeltaVersion.value)
       )
     ),
     extraMavenRepo,

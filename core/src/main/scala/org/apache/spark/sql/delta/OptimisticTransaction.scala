@@ -271,6 +271,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
 
+  /**
+   * The logSegment of the snapshot prior to the commit.
+   * Will be updated only when retrying due to a conflict.
+   */
+  private[delta] var preCommitLogSegment: LogSegment = snapshot.logSegment
+
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
@@ -1063,8 +1069,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     allowFallbackToSnapshotIsolation
   }
 
-  protected def getDefaultIsolationLevel(): IsolationLevel = {
-    Serializable
+  /**
+  * Default [[IsolationLevel]] as set in table metadata.
+  */
+  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
   /**
@@ -1321,7 +1330,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns the next attempt version given the last attempted version */
   protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    deltaLog.update().version + 1
+    val latestSnapshot = deltaLog.update()
+    preCommitLogSegment = latestSnapshot.logSegment
+    latestSnapshot.version + 1
   }
 
   /** Register a hook that will be executed once a commit is successful. */

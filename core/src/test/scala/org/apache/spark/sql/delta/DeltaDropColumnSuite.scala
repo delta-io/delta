@@ -117,12 +117,26 @@ class DeltaDropColumnSuite extends QueryTest
       val err1 = intercept[AnalysisException] {
         spark.table("t1").where("a = 'str1'").collect()
       }.getMessage
+<<<<<<< HEAD
       assert(err1.contains("cannot be resolved") || err1.contains("cannot resolve"))
+=======
+      assert(
+        err1.contains("cannot be resolved") ||
+        err1.contains("Column 'a' does not exist") ||
+        err1.contains("cannot resolve"))
+>>>>>>> upstream/master
 
       val err2 = intercept[AnalysisException] {
         spark.table("t1").select("min(a)").collect()
       }.getMessage
+<<<<<<< HEAD
       assert(err2.contains("cannot be resolved") || err2.contains("cannot resolve"))
+=======
+      assert(
+        err2.contains("cannot be resolved") ||
+        err2.contains("Column '`min(a)`' does not exist") ||
+        err2.contains("cannot resolve"))
+>>>>>>> upstream/master
     }
   }
 

@@ -461,7 +461,17 @@ class ParquetTable(
 
   private var _numFiles: Option[Long] = None
 
+<<<<<<< HEAD
   private var _tableSchema: Option[StructType] = catalogTable.map(_.schema)
+=======
+  private var _tableSchema: Option[StructType] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA)) {
+      catalogTable.map(_.schema)
+    } else {
+      None
+    }
+  }
+>>>>>>> upstream/master
 
   protected lazy val serializableConf = {
     // scalastyle:off deltahadoopconfiguration

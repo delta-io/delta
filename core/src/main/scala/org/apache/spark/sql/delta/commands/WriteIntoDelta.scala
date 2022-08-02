@@ -308,7 +308,8 @@ case class WriteIntoDelta(
     val relation = LogicalRelation(
         txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot)))
     val processedCondition = condition.reduceOption(And)
-    val command = spark.sessionState.analyzer.execute(DeleteFromTable(relation, processedCondition))
+    val command = spark.sessionState.analyzer.execute(
+      DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
   }

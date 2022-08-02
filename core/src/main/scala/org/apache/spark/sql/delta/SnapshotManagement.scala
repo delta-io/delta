@@ -102,7 +102,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
-  private final def listDeltaAndCheckpointFiles(
+  protected final def listDeltaAndCheckpointFiles(
       startVersion: Long,
       versionToLoad: Option[Long]): Option[Array[FileStatus]] =
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
@@ -409,6 +409,19 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
+   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
+   * version to the preCommitLogSegment (which must match the immediately preceding version).
+   */
+  private[delta] def getLogSegmentAfterCommit(
+      preCommitLogSegment: LogSegment,
+      committedVersion: Long): LogSegment = {
+    val committedDeltaPath = deltaFile(logPath, committedVersion)
+    val fileStatus =
+      committedDeltaPath.getFileSystem(newDeltaHadoopConf()).getFileStatus(committedDeltaPath)
+    SnapshotManagement.appendCommitToLogSegment(preCommitLogSegment, fileStatus, committedVersion)
+  }
+
+  /**
    * Create a [[Snapshot]] from the given [[LogSegment]]. If failing to create the snapshot, we will
    * search an equivalent [[LogSegment]] using a different checkpoint and retry up to
    * [[DeltaSQLConf.DELTA_SNAPSHOT_LOADING_MAX_RETRIES]] times.
@@ -659,6 +672,58 @@ object SnapshotManagement {
         s"file version: $v to compute Snapshot")
     }
   }
+
+  def appendCommitToLogSegment(
+      oldLogSegment: LogSegment,
+      commitFileStatus: FileStatus,
+      committedVersion: Long): LogSegment = {
+    require(oldLogSegment.version + 1 == committedVersion)
+    oldLogSegment.copy(
+      version = committedVersion,
+      serializableDeltas =
+        oldLogSegment.serializableDeltas :+ SerializableFileStatus.fromStatus(commitFileStatus),
+      lastCommitTimestamp = commitFileStatus.getModificationTime)
+  }
+}
+
+/** A serializable variant of HDFS's FileStatus. */
+case class SerializableFileStatus(
+    path: String,
+    length: Long,
+    isDir: Boolean,
+    modificationTime: Long) {
+
+  // Important note! This is very expensive to compute, but we don't want to cache it
+  // as a `val` because Paths internally contain URIs and therefore consume lots of memory.
+  @JsonIgnore
+  def getHadoopPath: Path = new Path(path)
+
+  def toFileStatus: FileStatus = {
+    new LocatedFileStatus(
+      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
+      Array.empty[BlockLocation])
+  }
+
+  override def equals(obj: Any): Boolean = obj match {
+    // We only compare the paths to stay consistent with FileStatus.equals.
+    case other: SerializableFileStatus => Objects.equals(path, other.path)
+    case _ => false
+  }
+
+  // We only use the path to stay consistent with FileStatus.hashCode.
+  override def hashCode(): Int = Objects.hashCode(path)
+}
+
+object SerializableFileStatus {
+  def fromStatus(status: FileStatus): SerializableFileStatus = {
+    SerializableFileStatus(
+      Option(status.getPath).map(_.toString).orNull,
+      status.getLen,
+      status.isDirectory,
+      status.getModificationTime)
+  }
+
+  val EMPTY: SerializableFileStatus = fromStatus(new FileStatus())
 }
 
 /** A serializable variant of HDFS's FileStatus. */

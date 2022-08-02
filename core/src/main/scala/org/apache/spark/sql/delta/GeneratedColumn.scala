@@ -199,7 +199,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         val regexCandidates = Seq(
           ("A column or function parameter with name .*?cannot be resolved. " +
             "Did you mean one of the following?.*?").r,
+<<<<<<< HEAD
           "cannot resolve.*?given input columns:.*?".r
+=======
+          "cannot resolve.*?given input columns:.*?".r,
+          "Column.*?does not exist.".r
+>>>>>>> upstream/master
         )
         if (regexCandidates.exists(_.findFirstMatchIn(e.getMessage).isDefined)) {
           throw DeltaErrors.generatedColumnsReferToWrongColumns(e)

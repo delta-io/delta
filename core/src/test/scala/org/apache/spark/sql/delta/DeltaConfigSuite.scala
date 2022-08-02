@@ -156,6 +156,50 @@ class DeltaConfigSuite extends SparkFunSuite
       var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
         "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
         "configuration."
+<<<<<<< HEAD
+=======
+      assert(e.getMessage == msg)
+    }
+  }
+
+  test("allow setting valid and supported isolation level") {
+    // currently only Serializable isolation level is supported
+    withTempDir { dir =>
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('delta.isolationLevel' = 'Serializable')
+           |""".stripMargin)
+
+      val isolationLevel =
+        DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction().getDefaultIsolationLevel()
+
+      assert(isolationLevel == Serializable)
+    }
+  }
+
+  test("do not allow setting valid but unsupported isolation level") {
+    withTempDir { dir =>
+      val e = intercept[IllegalArgumentException] {
+        sql(
+          s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES ('delta.isolationLevel' = 'WriteSerializable')
+             |""".stripMargin)
+      }
+      val msg = "requirement failed: delta.isolationLevel must be Serializable"
+      assert(e.getMessage == msg)
+    }
+  }
+
+  test("do not allow setting invalid isolation level") {
+    withTempDir { dir =>
+      val e = intercept[IllegalArgumentException] {
+        sql(
+          s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES ('delta.isolationLevel' = 'InvalidSerializable')
+             |""".stripMargin)
+      }
+      val msg = "invalid isolation level 'InvalidSerializable'"
+>>>>>>> upstream/master
       assert(e.getMessage == msg)
     }
   }
