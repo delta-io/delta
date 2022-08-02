@@ -375,7 +375,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.DISK_ONLY)
@@ -385,7 +385,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "NONE") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.NONE)
