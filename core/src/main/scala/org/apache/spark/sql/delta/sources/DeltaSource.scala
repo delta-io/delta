@@ -36,7 +36,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.connector.read.streaming
-import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
+import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 
@@ -93,6 +93,7 @@ private[delta] case class IndexedFile(
  */
 trait DeltaSourceBase extends Source
     with SupportsAdmissionControl
+    with SupportsTriggerAvailableNow
     with DeltaLogging { self: DeltaSource =>
 
   override val schema: StructType = {
@@ -106,6 +107,15 @@ trait DeltaSourceBase extends Source
   }
 
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
+
+  override def prepareForTriggerAvailableNow(): Unit = {
+    lastOffsetForTriggerAvailableNow = DeltaSourceOffset(
+      DeltaSourceOffset.VERSION_1,
+      deltaLog.tableId,
+      deltaLog.snapshot.version + 1,
+      index = -1,
+      isStartingVersion = false)
+  }
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
