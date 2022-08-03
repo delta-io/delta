@@ -483,8 +483,6 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(JsonUtils.fromJson[LogSegment](json) === obj)
     }
   }
-<<<<<<< HEAD
-=======
 
   test("getLogSegmentAfterCommit can find specified commit") {
     withTempDir { tempDir =>
@@ -506,5 +504,4 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(log.getLogSegmentAfterCommit(newLogSegment, 1) == log.snapshot.logSegment)
     }
   }
->>>>>>> upstream/master
 }

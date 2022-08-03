@@ -55,11 +55,7 @@ class UpdateMetricsSuite extends QueryTest
   protected def testUpdateMetrics(name: String)(testFn: TestConfiguration => Unit): Unit = {
     for {
       partitioned <- BOOLEAN_DOMAIN
-<<<<<<< HEAD
-      cdfEnabled <- BOOLEAN_DOMAIN
-=======
       cdfEnabled <- Seq(false)
->>>>>>> upstream/master
     } {
       val testConfig =
         TestConfiguration(partitioned = partitioned,
@@ -181,10 +177,6 @@ class UpdateMetricsSuite extends QueryTest
   }
 
 
-<<<<<<< HEAD
-
-=======
->>>>>>> upstream/master
   for (whereClause <- Seq("", "1 = 1")) {
     testUpdateMetrics(s"update all with where = '$whereClause'") { testConfig =>
       val numFiles = 5
@@ -200,11 +192,7 @@ class UpdateMetricsSuite extends QueryTest
         table = spark.range(start = 0, end = numRows, step = 1, numPartitions = numFiles),
         where = whereClause,
         expectedOperationMetrics = Map(
-<<<<<<< HEAD
-          "numCopiedRows" -> -1,
-=======
           "numCopiedRows" -> 0,
->>>>>>> upstream/master
           "numUpdatedRows" -> -1,
           "numOutputRows" -> -1,
           "numFiles" -> -1,
@@ -279,27 +267,17 @@ class UpdateMetricsSuite extends QueryTest
 
   for (whereClause <- Seq("id = 0", "id >= 49 and id < 50")) {
     testUpdateMetrics(s"update one row with where = `$whereClause`") { testConfig =>
-<<<<<<< HEAD
-=======
       var numCopiedRows = 19
       val numAddedFiles = 1
       var numRemovedFiles = 1
->>>>>>> upstream/master
       runUpdateAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
         expectedOperationMetrics = Map(
-<<<<<<< HEAD
-          "numCopiedRows" -> 19,
-          "numUpdatedRows" -> 1,
-          "numAddedFiles" -> 1,
-          "numRemovedFiles" -> 1,
-=======
           "numCopiedRows" -> numCopiedRows,
           "numUpdatedRows" -> 1,
           "numAddedFiles" -> numAddedFiles,
           "numRemovedFiles" -> numRemovedFiles,
->>>>>>> upstream/master
           "numAddedChangeFiles" -> {
             if (testConfig.cdfEnabled) {
               1
@@ -336,46 +314,18 @@ class UpdateMetricsSuite extends QueryTest
 
   testUpdateMetrics("update one row per file") { testConfig =>
     val numPartitions = 5
-<<<<<<< HEAD
-=======
     var numCopiedRows = 95
     val numAddedFiles = if (testConfig.partitioned) 5 else 2
     var numRemovedFiles = 5
->>>>>>> upstream/master
     runUpdateAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = numPartitions),
       where = "id in (5, 25, 45, 65, 85)",
       expectedOperationMetrics = Map(
-<<<<<<< HEAD
-        "numCopiedRows" -> 95,
-        "numUpdatedRows" -> 5,
-        "numAddedFiles" -> {
-          if (testConfig.partitioned) {
-            5
-          } else {
-            2
-          }
-        },
-        "numRemovedFiles" -> 5,
-        "numAddedChangeFiles" -> {
-          if (testConfig.cdfEnabled) {
-            if (testConfig.partitioned) {
-              5
-            } else {
-              2
-            }
-          } else {
-            0
-          }
-        }
-      ),
-=======
         "numCopiedRows" -> numCopiedRows,
         "numUpdatedRows" -> 5,
         "numAddedFiles" -> numAddedFiles,
         "numRemovedFiles" -> numRemovedFiles,
         "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) numAddedFiles else 0 }),
->>>>>>> upstream/master
       testConfig = testConfig
     )
   }

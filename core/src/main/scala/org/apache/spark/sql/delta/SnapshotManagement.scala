@@ -726,46 +726,6 @@ object SerializableFileStatus {
   val EMPTY: SerializableFileStatus = fromStatus(new FileStatus())
 }
 
-/** A serializable variant of HDFS's FileStatus. */
-case class SerializableFileStatus(
-    path: String,
-    length: Long,
-    isDir: Boolean,
-    modificationTime: Long) {
-
-  // Important note! This is very expensive to compute, but we don't want to cache it
-  // as a `val` because Paths internally contain URIs and therefore consume lots of memory.
-  @JsonIgnore
-  def getHadoopPath: Path = new Path(path)
-
-  def toFileStatus: FileStatus = {
-    new LocatedFileStatus(
-      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
-      Array.empty[BlockLocation])
-  }
-
-  override def equals(obj: Any): Boolean = obj match {
-    // We only compare the paths to stay consistent with FileStatus.equals.
-    case other: SerializableFileStatus => Objects.equals(path, other.path)
-    case _ => false
-  }
-
-  // We only use the path to stay consistent with FileStatus.hashCode.
-  override def hashCode(): Int = Objects.hashCode(path)
-}
-
-object SerializableFileStatus {
-  def fromStatus(status: FileStatus): SerializableFileStatus = {
-    SerializableFileStatus(
-      Option(status.getPath).map(_.toString).orNull,
-      status.getLen,
-      status.isDirectory,
-      status.getModificationTime)
-  }
-
-  val EMPTY: SerializableFileStatus = fromStatus(new FileStatus())
-}
-
 /**
  * Provides information around which files in the transaction log need to be read to create
  * the given version of the log.

@@ -937,8 +937,6 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       checkAnswer(
         sql(s"select key2 from $externalTblName where key1 = 1"),
         simpleDF.filter("id % 2 == 1").select("key2"))
-<<<<<<< HEAD
-=======
     }
   }
 
@@ -975,7 +973,6 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
             }
           }
       }
->>>>>>> upstream/master
     }
   }
 

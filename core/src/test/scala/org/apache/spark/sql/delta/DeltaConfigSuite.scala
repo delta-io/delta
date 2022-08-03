@@ -156,8 +156,6 @@ class DeltaConfigSuite extends SparkFunSuite
       var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
         "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
         "configuration."
-<<<<<<< HEAD
-=======
       assert(e.getMessage == msg)
     }
   }
@@ -199,7 +197,6 @@ class DeltaConfigSuite extends SparkFunSuite
              |""".stripMargin)
       }
       val msg = "invalid isolation level 'InvalidSerializable'"
->>>>>>> upstream/master
       assert(e.getMessage == msg)
     }
   }

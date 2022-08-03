@@ -418,8 +418,6 @@ class OptimisticTransactionSuite
       }.isDefined)
     }
   }
-<<<<<<< HEAD
-=======
 
   test("preCommitLogSegment is updated during conflict checking") {
     withTempDir { tempDir =>
@@ -447,5 +445,4 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
     }
   }
->>>>>>> upstream/master
 }
