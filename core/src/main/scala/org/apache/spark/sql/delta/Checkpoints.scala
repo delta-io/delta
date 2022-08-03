@@ -603,7 +603,7 @@ object Checkpoints extends DeltaLogging {
           val src = new Path(writtenPath)
           val dest = new Path(paths(index))
           if (!fs.rename(src, dest)) {
-            throw DeltaErrors.failOnCheckpoint(src, dest)
+            throw DeltaErrors.failOnCheckpointRename(src, dest)
           }
         }
         renameDone = true

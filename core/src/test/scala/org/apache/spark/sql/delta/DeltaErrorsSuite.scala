@@ -179,7 +179,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))
+        throw DeltaErrors.failOnCheckpointRename(new Path("path-1"), new Path("path-2"))
       }
       assert(e.getMessage == "Cannot rename path-1 to path-2")
     }

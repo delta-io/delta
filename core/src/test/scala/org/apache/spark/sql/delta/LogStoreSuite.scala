@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
@@ -189,15 +190,29 @@ abstract class LogStoreSuiteBase extends QueryTest
     "use isPartialWriteVisible to decide whether use rename") {
     withTempDir { tempDir =>
       import testImplicits._
-      Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getCanonicalPath)
+      // Write 5 files to delta table
+      (1 to 100).toDF().repartition(5).write.format("delta").save(tempDir.getCanonicalPath)
       withSQLConf(
           "fs.file.impl" -> classOf[TrackingRenameFileSystem].getName,
           "fs.file.impl.disable.cache" -> "true") {
-        val logStore = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
         TrackingRenameFileSystem.numOfRename = 0
-        logStore.checkpoint()
+        deltaLog.checkpoint()
         val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
         assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+
+        withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "9") {
+          // Write 5 more files to the delta table
+          (1 to 100).toDF().repartition(5).write
+            .format("delta").mode("append").save(tempDir.getCanonicalPath)
+          // At this point table has total 10 files, which won't fit in 1 checkpoint part file (as
+          // DELTA_CHECKPOINT_PART_SIZE is set to 9 in this test). So this will end up generating
+          // 2 PART files.
+          TrackingRenameFileSystem.numOfRename = 0
+          deltaLog.checkpoint()
+          val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 2 else 0
+          assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+        }
       }
     }
   }
