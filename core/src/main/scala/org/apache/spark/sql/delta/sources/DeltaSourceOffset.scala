@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta.sources
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
 

@@ -29,8 +29,6 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkContext
-import org.apache.spark.sql.SparkSession
 
 /**
  * Convenience wrappers for logging that include delta specific options and

@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute

@@ -22,7 +22,6 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentE
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, UnaryExpression}

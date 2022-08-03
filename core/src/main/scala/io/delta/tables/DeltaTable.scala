@@ -16,8 +16,6 @@
 
 package io.delta.tables
 
-import java.sql.Timestamp
-
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._

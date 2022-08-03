@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 import java.util.regex.PatternSyntaxException
 

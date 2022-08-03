@@ -29,8 +29,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
-import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
+import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}

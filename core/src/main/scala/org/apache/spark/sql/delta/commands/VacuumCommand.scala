@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
-import java.sql.Timestamp
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +25,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
-import org.apache.spark.sql.delta.commands.VacuumCommand.logInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
@@ -35,7 +33,6 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**

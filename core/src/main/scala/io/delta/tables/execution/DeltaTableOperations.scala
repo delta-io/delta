@@ -21,7 +21,7 @@ import scala.collection.Map
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, RestoreTableCommand, VacuumCommand}
+import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 

@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
@@ -33,7 +34,7 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, DeltaScanGeneratorBase, FileSizeHistogram}
+import org.apache.spark.sql.delta.stats._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
