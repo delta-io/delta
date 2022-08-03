@@ -214,7 +214,7 @@ object CheckpointMetaData {
         version = version,
         size = -1L,
         parts = numCheckpointParts(segment.checkpoint.head.getPath),
-        sizeInBytes = None,
+        sizeInBytes = Some(segment.checkpoint.map(_.getLen).sum),
         numOfAddFiles = None,
         checkpointSchema = None
       )
@@ -292,7 +292,7 @@ trait Checkpoints extends DeltaLogging {
   def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
-  val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
+  val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)
 
   /**
    * Creates a checkpoint using the default snapshot.
@@ -449,6 +449,9 @@ trait Checkpoints extends DeltaLogging {
 }
 
 object Checkpoints extends DeltaLogging {
+
+  /** The name of the last checkpoint file */
+  val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
 
   /**
    * Returns the checkpoint schema that should be written to the last checkpoint file based on

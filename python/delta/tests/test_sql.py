@@ -105,10 +105,11 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
             self.assertEqual(read_table().count(), 0)
 
+            answer = [("a", "bigint"), ("b", "string"), ("", ""), ("# Partitioning", ""),
+                      ("Not partitioned", "")]
             self.__checkAnswer(
                 self.spark.sql(f"DESCRIBE TABLE {table}").select("col_name", "data_type"),
-                [("a", "bigint"), ("b", "string"), ("", ""), ("# Partitioning", ""),
-                 ("Not partitioned", "")],
+                answer,
                 schema=["col_name", "data_type"])
 
             self.spark.sql(f"ALTER TABLE {table} CHANGE COLUMN a a LONG AFTER b")
@@ -122,15 +123,13 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('Type', 'MANAGED'),
-                                ('k', 'v'),
+                               [('k', 'v'),
                                 ('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('Type', 'MANAGED'),
-                                ('delta.minReaderVersion', '1'),
+                               [('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")
