@@ -75,6 +75,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_USE_CATALOG_PARTITIONS =
+    buildConf("convert.useCatalogPartitions")
+      .internal()
+      .doc(
+        """ When converting a catalog Parquet table, whether to use the partition information from
+          | the Metastore catalog and only commit files under the directories of active partitions.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_USE_CATALOG_SCHEMA =
     buildConf("convert.useCatalogSchema")
       .doc(

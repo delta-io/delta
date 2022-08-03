@@ -625,6 +625,9 @@ class ParquetTable(
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
       FileStreamSink.hasMetadata(Seq(basePath), serializableConf.value, spark.sessionState.conf)) {
       new MetadataLogFileManifest(spark, basePath)
+    } else if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_PARTITIONS) &&
+      catalogTable.isDefined) {
+      new CatalogFileManifest(spark, basePath, catalogTable.get, serializableConf)
     } else {
       new ManualListingFileManifest(spark, basePath, serializableConf)
     }
@@ -661,6 +664,46 @@ class ManualListingFileManifest(
     list.toLocalIterator().asScala.map(ConvertTargetFile(_))
 
   override def close(): Unit = list.unpersist()
+}
+
+/** A file manifest generated through listing partition paths from Metastore catalog. */
+class CatalogFileManifest(
+  spark: SparkSession,
+  override val basePath: String,
+  catalogTable: CatalogTable,
+  serializableConf: SerializableConfiguration)
+  extends ManualListingFileManifest(spark, basePath, serializableConf) {
+
+  private lazy val partitionList = {
+    if (catalogTable.partitionSchema.isEmpty) {
+      // Not a partitioned table.
+      Seq(basePath)
+    } else {
+      val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
+      partitions.map { partition =>
+        partition.storage.locationUri.map(_.toString())
+          .getOrElse {
+            val partitionDir =
+              PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
+            basePath.stripSuffix("/") + "/" + partitionDir
+          }
+      }
+    }
+  }
+
+  override def doList(): Dataset[SerializableFileStatus] = {
+    import spark.implicits._
+    // Avoid the serialization of this CatalogFileManifest during distributed execution.
+    val conf = spark.sparkContext.broadcast(serializableConf)
+    val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+    val allFiles = spark.sparkContext.parallelize(partitionList)
+      .repartition(math.min(parallelism, partitionList.length))
+      .mapPartitions { dirs =>
+        DeltaFileOperations
+          .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
+    }
+    spark.createDataset(allFiles)
+  }
 }
 
 /** A file manifest generated from pre-existing parquet MetadataLog. */
