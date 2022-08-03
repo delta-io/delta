@@ -568,6 +568,9 @@ case class MergeIntoCommand(
     // See https://github.com/delta-io/delta/issues/1274
 
     // We address this specific scenario by adding row ids to the target before performing our join.
+    // There should only be one CDC delete row per target row so we can use these row ids to dedupe
+    // the duplicate CDC delete rows.
+
     // We also need to address the scenario when there are duplicate matches with delete and we
     // insert duplicate rows. Here we need to additionally add row ids to the source before the
     // join to avoid dropping these valid duplicate inserted rows and their corresponding cdc rows.
@@ -607,20 +610,17 @@ case class MergeIntoCommand(
     // We add row IDs to the targetDF if we have a delete-when-matched clause with duplicate
     // matches and CDC is enabled, and additionally add row IDs to the source if we also have an
     // insert clause. See above at isDeleteWithDuplicateMatchesAndCdc definition for more details.
-    val joinedDF = {
-      var sourceDF = Dataset.ofRows(spark, source)
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
-      var targetDF = Dataset.ofRows(spark, newTarget)
-        .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
-      if (isDeleteWithDuplicateMatchesAndCdc) {
-        targetDF = targetDF.withColumn(TARGET_ROW_ID_COL, monotonically_increasing_id())
-        if (notMatchedClauses.nonEmpty) { // insert clause
-          sourceDF = sourceDF.withColumn(SOURCE_ROW_ID_COL, monotonically_increasing_id())
-        }
+    var sourceDF = Dataset.ofRows(spark, source)
+      .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+    var targetDF = Dataset.ofRows(spark, newTarget)
+      .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
+    if (isDeleteWithDuplicateMatchesAndCdc) {
+      targetDF = targetDF.withColumn(TARGET_ROW_ID_COL, monotonically_increasing_id())
+      if (notMatchedClauses.nonEmpty) { // insert clause
+        sourceDF = sourceDF.withColumn(SOURCE_ROW_ID_COL, monotonically_increasing_id())
       }
-      sourceDF.join(targetDF, new Column(condition), joinType)
     }
-
+    val joinedDF = sourceDF.join(targetDF, new Column(condition), joinType)
     val joinedPlan = joinedDF.queryExecution.analyzed
 
     def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {

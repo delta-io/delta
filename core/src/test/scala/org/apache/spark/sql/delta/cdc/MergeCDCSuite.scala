@@ -193,7 +193,6 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
 
-
   testMergeCdcUnlimitedClauses("unconditional delete only with duplicate matches")(
     target = Seq(0, 1).toDF("value"),
     source = Seq(1, 1).toDF("value"),
@@ -204,7 +203,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   )
 
   testMergeCdcUnlimitedClauses(
-    "unconditional delete only with duplicate matches without duplicates in the source")(
+    "unconditional delete only with duplicate matches without duplicates rows in the source")(
     target = Seq(0).toDF("value"),
     source = ((0, 0) :: (0, 1) :: Nil).toDF("col1", "col2"),
     mergeCondition = "t.value = s.col1",
@@ -225,7 +224,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedCdcData = ((1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
   )
 
-  testMergeCdcUnlimitedClauses("unconditional delete only with target-only condition")(
+  testMergeCdcUnlimitedClauses("unconditional delete only with target-only merge condition")(
     target = Seq(0, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "t.value > 0",
@@ -235,7 +234,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   )
 
   testMergeCdcUnlimitedClauses(
-    "unconditional delete only with target-only condition with duplicates in the target")(
+    "unconditional delete only with target-only merge condition with duplicates in the target")(
     target = Seq(0, 1, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "t.value > 0",
@@ -244,7 +243,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedCdcData = ((1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
   )
 
-  testMergeCdcUnlimitedClauses("unconditional delete only with source-only condition")(
+  testMergeCdcUnlimitedClauses("unconditional delete only with source-only merge condition")(
     target = Seq(0, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "s.value < 2",
@@ -256,7 +255,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   )
 
   testMergeCdcUnlimitedClauses(
-    "unconditional delete only with source-only condition with duplicates in the target")(
+    "unconditional delete only with source-only merge condition with duplicates in the target")(
     target = Seq(0, 1, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "s.value < 2",
@@ -267,7 +266,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedCdcData = ((0, "delete", 1) :: (1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
   )
 
-  testMergeCdcUnlimitedClauses("unconditional delete only with duplicate matches + insert")(
+  testMergeCdcUnlimitedClauses("unconditional delete with duplicate matches + insert")(
     target = ((1, 1) :: (2, 2) :: Nil).toDF("key", "value"),
     source = ((1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil).toDF("key", "value"),
     mergeCondition = "s.key = t.key",
@@ -279,7 +278,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   )
 
   testMergeCdcUnlimitedClauses(
-    "unconditional delete only with duplicate matches + insert with duplicate matches")(
+    "unconditional delete with duplicate matches + insert with duplicate rows")(
     target = ((1, 1) :: (2, 2) :: Nil).toDF("key", "value"),
     source = ((1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: (3, 300) :: Nil).toDF("key", "value"),
     mergeCondition = "s.key = t.key",
@@ -291,19 +290,17 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
         (3, 300, "insert", 1) :: Nil).toDF()
   )
 
-  testMergeCdcUnlimitedClauses(
-    "unconditional delete only with duplicate matches + insert a duplicate")(
-    target = ((1, 1) :: (2, 2) :: Nil).toDF("key", "value"),
-    source = ((1, 10) :: (1, 100) :: (3, 2) :: Nil).toDF("key", "value"),
-    mergeCondition = "s.key = t.key",
+  testMergeCdcUnlimitedClauses("unconditional delete with duplicate matches " +
+      "+ insert a duplicate of the unmatched target rows")(
+    target = Seq(1, 2).toDF("value"),
+    source = ((1, 10) :: (1, 100) :: (3, 2) :: Nil).toDF("col1", "col2"),
+    mergeCondition = "s.col1 = t.value",
     clauses = MergeClause(isMatched = true, null, "DELETE") ::
-      insert(values = "(key, value) VALUES (s.value, s.value)") :: Nil,
-    expectedTableData = ((2, 2) :: (2, 2) :: Nil)
-      .toDF("key", "value"),
+      insert(values = "(value) VALUES (col2)") :: Nil,
+    expectedTableData = Seq(2, 2).toDF(),
     expectedCdcData =
-      ((1, 1, "delete", 1) :: (2, 2, "insert", 1) :: Nil).toDF()
+      ((1, "delete", 1) :: (2, "insert", 1) :: Nil).toDF()
   )
-
 
   testMergeCdcUnlimitedClauses("all conditions failed for all rows")(
     target = Seq((1, "a"), (2, "b")).toDF("key", "val"),
