@@ -129,8 +129,8 @@ case class UpdateCommand(
       val pathsToRewrite =
         withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
           data.filter(new Column(updateCondition))
-            .filter(updatedRowUdf())
             .select(input_file_name())
+            .filter(updatedRowUdf())
             .distinct()
             .as[String]
             .collect()

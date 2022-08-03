@@ -34,6 +34,10 @@ import org.apache.spark.sql.{Dataset, SparkSession}
  * Unlike [[StateCache]], this class only caches the [[Dataset]] reference and doesn't cache the
  * underlying `RDD`.
  *
+ * WARNING: If there are many concurrent Spark sessions and each session calls 'get' multiple times,
+ *          then the cost of creator becomes more noticeable as everytime it switch the active
+ *          session, the older session needs to call creator again when it becomes active.
+ *
  * @param creator a function to create [[Dataset]].
  */
 class DatasetRefCache[T](creator: () => Dataset[T]) {

@@ -26,11 +26,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, NullType, StringType, StructType}
+import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
@@ -4917,4 +4919,89 @@ abstract class MergeIntoSuiteBase
     "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
     Seq(Row(0, 3), Row(1, 3), Row(3, 4))
   )
+
+  test("UDT Data Types - simple and nested") {
+    withTable("source") {
+      withTable("target") {
+        // scalastyle:off line.size.limit
+        val targetData = Seq(
+          Row(SimpleTest(0), ComplexTest(10, Array(1, 2, 3))),
+          Row(SimpleTest(1), ComplexTest(20, Array(4, 5))),
+          Row(SimpleTest(2), ComplexTest(30, Array(6, 7, 8))))
+        val sourceData = Seq(
+          Row(SimpleTest(0), ComplexTest(40, Array(9, 10))),
+          Row(SimpleTest(3), ComplexTest(50, Array(11))))
+        val resultData = Seq(
+          Row(SimpleTest(0), ComplexTest(40, Array(9, 10))),
+          Row(SimpleTest(1), ComplexTest(20, Array(4, 5))),
+          Row(SimpleTest(2), ComplexTest(30, Array(6, 7, 8))),
+          Row(SimpleTest(3), ComplexTest(50, Array(11))))
+
+        val schema = StructType(Array(
+          StructField("id", new SimpleTestUDT),
+          StructField("complex", new ComplexTestUDT)))
+
+        val df = spark.createDataFrame(sparkContext.parallelize(targetData), schema)
+        df.collect()
+
+        spark.createDataFrame(sparkContext.parallelize(targetData), schema)
+          .write.format("delta").saveAsTable("target")
+
+        spark.createDataFrame(sparkContext.parallelize(sourceData), schema)
+          .write.format("delta").saveAsTable("source")
+        // scalastyle:on line.size.limit
+        sql(
+          s"""
+             |MERGE INTO target as t
+             |USING source as s
+             |ON t.id = s.id
+             |WHEN MATCHED THEN
+             |  UPDATE SET *
+             |WHEN NOT MATCHED THEN
+             |  INSERT *
+             """.stripMargin)
+
+        checkAnswer(sql("select * from target"), resultData)
+      }
+    }
+  }
+}
+
+
+@SQLUserDefinedType(udt = classOf[SimpleTestUDT])
+case class SimpleTest(value: Int)
+
+class SimpleTestUDT extends UserDefinedType[SimpleTest] {
+  override def sqlType: DataType = IntegerType
+
+  override def serialize(input: SimpleTest): Any = input.value
+
+  override def deserialize(datum: Any): SimpleTest = datum match {
+    case a: Int => SimpleTest(a)
+  }
+
+  override def userClass: Class[SimpleTest] = classOf[SimpleTest]
+}
+
+@SQLUserDefinedType(udt = classOf[ComplexTestUDT])
+case class ComplexTest(key: Int, values: Array[Int])
+
+class ComplexTestUDT extends UserDefinedType[ComplexTest] {
+  override def sqlType: DataType = StructType(Seq(
+    StructField("key", IntegerType),
+    StructField("values", ArrayType(IntegerType, containsNull = false))))
+
+  override def serialize(input: ComplexTest): Any = {
+    val row = new GenericInternalRow(2)
+    row.setInt(0, input.key)
+    row.update(1, UnsafeArrayData.fromPrimitiveArray(input.values))
+    row
+  }
+
+  override def deserialize(datum: Any): ComplexTest = datum match {
+    case row: InternalRow =>
+      ComplexTest(row.getInt(0), row.getArray(1).toIntArray())
+  }
+
+  override def userClass: Class[ComplexTest] = classOf[ComplexTest]
 }

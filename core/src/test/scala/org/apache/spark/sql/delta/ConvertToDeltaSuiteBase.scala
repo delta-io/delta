@@ -692,6 +692,18 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
  */
 trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
 
+  protected def testCatalogSchema(testName: String)(testFn: (Boolean) => Unit): Unit = {
+    Seq(true, false).foreach {
+      useCatalogSchema =>
+        test(s"$testName - $useCatalogSchema") {
+          withSQLConf(
+            DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA.key -> useCatalogSchema.toString) {
+            testFn(useCatalogSchema)
+          }
+        }
+    }
+  }
+
   protected def getPathForTableName(tableName: String): String = {
     spark
       .sessionState
@@ -925,6 +937,42 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       checkAnswer(
         sql(s"select key2 from $externalTblName where key1 = 1"),
         simpleDF.filter("id % 2 == 1").select("key2"))
+    }
+  }
+
+  testCatalogSchema("convert a parquet table with catalog schema") {
+    useCatalogSchema => {
+      withTempDir {
+        dir =>
+          // Create a parquet table with all 3 columns: id, key1 and key2
+          val tempDir = dir.getCanonicalPath
+          writeFiles(tempDir, simpleDF)
+
+          val tableName = "pqtable"
+          withTable(tableName) {
+            // Create a catalog table on top of the parquet table excluding column id
+            sql(s"CREATE TABLE $tableName (key1 long, key2 string) " +
+              s"USING PARQUET LOCATION '$dir'")
+
+            convertToDelta(tableName)
+
+            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+            val catalog_columns = Seq[StructField](
+              StructField("key1", LongType, true),
+              StructField("key2", StringType, true)
+            )
+
+            if (useCatalogSchema) {
+              // Catalog schema is used, column id is excluded.
+              assert(deltaLog.snapshot.metadata.schema
+                .equals(StructType(catalog_columns)))
+            } else {
+              // Schema is inferred from the data, all 3 columns are included.
+              assert(deltaLog.snapshot.metadata.schema
+                .equals(StructType(StructField("id", LongType, true) +: catalog_columns)))
+            }
+          }
+      }
     }
   }
 

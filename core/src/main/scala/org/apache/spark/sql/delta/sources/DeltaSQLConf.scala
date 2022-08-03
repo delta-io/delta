@@ -75,6 +75,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_USE_CATALOG_SCHEMA =
+    buildConf("convert.useCatalogSchema")
+      .doc(
+        """ When converting to a catalog Parquet table, whether to use the catalog schema as the
+          | source of truth.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE =
     buildConf("convert.partitionValues.ignoreCastFailure")
       .doc(
@@ -786,6 +795,19 @@ trait DeltaSQLConfBase {
           |incorrectly (for example, misspelled).""".stripMargin
       )
       .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
+    buildConf("deltaTableBuilder.forceTablePropertyLowerCase.enabled")
+      .internal()
+      .doc(
+        """Whether the keys of table properties should be set to lower case.
+          | Turn on this flag if you want keys of table properties not starting with delta
+          | to be backward compatible when the table is created via DeltaTableBuilder
+          | Please note that if you set this to true, the lower case of the
+          | key will be used for non delta prefix table properties.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 }

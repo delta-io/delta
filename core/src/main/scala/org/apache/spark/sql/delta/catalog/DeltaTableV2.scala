@@ -75,14 +75,13 @@ case class DeltaTableV2(
   // bound the creation time of the table.
   private val creationTimeMs = System.currentTimeMillis()
 
-  // Options for DeltaLog creation.
-  private def deltaLogOptions: Map[String, String] = {
-    options
-  }
+
 
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
-  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, deltaLogOptions)
+  lazy val deltaLog: DeltaLog = {
+      DeltaLog.forTable(spark, rootPath, options)
+  }
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
@@ -143,9 +142,6 @@ case class DeltaTableV2(
       }
     }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
-    // this reports whether the table is an external or managed catalog table as
-    // the old DescribeTable command would
-    catalogTable.foreach(table => base.put("Type", table.tableType.name))
     base.asJava
   }
 
