@@ -529,7 +529,9 @@ case class AlterTableChangeColumnDeltaCommand(
 case class AlterTableSetLocationDeltaCommand(
     table: DeltaTableV2,
     location: String)
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand
+    with AlterDeltaTableCommand
+    with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
@@ -538,11 +540,14 @@ case class AlterTableSetLocationDeltaCommand(
     }
     val catalogTable = table.catalogTable.get
     val locUri = CatalogUtils.stringToURI(location)
+
     val oldTable = table.deltaLog.update()
     if (oldTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.name())
     }
     val oldMetadata = oldTable.metadata
+
+    var updatedTable = catalogTable.withNewStorage(locationUri = Some(locUri))
 
     val newTable = DeltaLog.forTable(sparkSession, location).update()
     if (newTable.version == -1) {
@@ -556,7 +561,7 @@ case class AlterTableSetLocationDeltaCommand(
       throw DeltaErrors.alterTableSetLocationSchemaMismatchException(
         oldMetadata.schema, newMetadata.schema)
     }
-    catalog.alterTable(catalogTable.withNewStorage(locationUri = Some(locUri)))
+    catalog.alterTable(updatedTable)
 
     Seq.empty[Row]
   }
