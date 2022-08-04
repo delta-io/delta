@@ -237,7 +237,7 @@ class StatsCollectionSuite
         val corrupted = f.copy(stats = f.stats.replace(
           s"""maxValues":{"$b":4,"$c":30}""",
           s"""maxValues":{"$b":-100,"$c":100}"""))
-        txn.commit(Seq(corrupted), ManualUpdate)
+        txn.commit(Seq(corrupted), DeltaOperations.ComputeStats(Nil))
         intercept[TestFailedException] {
           checkAnswer(statsDF(deltaLog), correctStats)
         }
