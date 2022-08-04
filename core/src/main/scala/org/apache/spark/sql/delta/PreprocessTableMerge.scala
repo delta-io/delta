@@ -28,6 +28,7 @@ import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, CurrentDate, CurrentTimestamp, CurrentTimeZone, Expression, Literal, LocalTimestamp, Now, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE
@@ -241,9 +242,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
        * invoking the [[ComputeCurrentTime]] rule. This is why they need special handling.
        */
       val now = Instant.now()
+      // Transform timestamps for the MergeIntoCommand, source, and target using the same instant.
+      // Called explicitly because source and target are not children of MergeIntoCommand.
       transformTimestamps(
-        MergeIntoCommand(transformTimestamps(source, now), transformTimestamps(target, now),
-          tahoeFileIndex, condition, processedMatched, processedNotMatched, finalSchemaOpt),
+        MergeIntoCommand(
+          transformTimestamps(source, now),
+          transformTimestamps(target, now),
+          tahoeFileIndex,
+          condition,
+          processedMatched,
+          processedNotMatched,
+          finalSchemaOpt),
         now)
     } else {
       DeltaMergeInto(source, target, condition,
