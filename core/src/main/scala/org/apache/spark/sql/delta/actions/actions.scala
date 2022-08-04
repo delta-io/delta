@@ -308,6 +308,22 @@ case class AddFile(
     }
   }
 
+  @JsonIgnore
+  @transient
+  lazy val numLogicalRecords: Option[Long] = {
+    if (stats == null || stats.isEmpty) {
+      None
+    } else {
+      val node = new ObjectMapper().readTree(stats)
+      if (node.has("numRecords") && !node.get("numRecords").isNull) {
+        var numRecordsInFile = node.get("numRecords").asLong()
+        Some(numRecordsInFile)
+      } else {
+        None
+      }
+    }
+  }
+
 }
 
 object AddFile {

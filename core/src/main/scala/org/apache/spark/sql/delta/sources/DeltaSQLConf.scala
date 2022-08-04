@@ -576,6 +576,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACEWHERE_METRICS_ENABLED =
+    buildConf("replaceWhere.dataColumns.metrics.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, replaceWhere operations metrics on arbitrary expression and
+          |arbitrary columns is enabled. This will not report row level metrics for partitioned
+          |tables and tables with no stats.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
     buildConf("replaceWhere.constraintCheck.enabled")
       .doc(
