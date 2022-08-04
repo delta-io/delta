@@ -380,7 +380,7 @@ case class RemoveFile(
 
   /** The number of records contained inside the removed file. */
   @JsonIgnore
-  var numRecords: Option[Long] = None
+  var numLogicalRecords: Option[Long] = None
 
 
   @JsonIgnore
