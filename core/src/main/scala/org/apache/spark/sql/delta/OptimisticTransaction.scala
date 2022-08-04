@@ -302,22 +302,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * IMPORTANT: It is the responsibility of the caller to ensure that files currently
    * present in the table are still valid under the new metadata.
    */
-  def updateMetadata(_metadata: Metadata): Unit = {
+  def updateMetadata(_metadata: Metadata, ignoreDefaultProperties: Boolean = false): Unit = {
     assert(!hasWritten,
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
-    updateMetadataInternal(_metadata)
+    updateMetadataInternal(_metadata, ignoreDefaultProperties)
   }
 
   /**
    * Do the actual checks and works to update the metadata and save it into the `newMetadata`
    * field, which will be added to the actions to commit in [[prepareCommit]].
    */
-  protected def updateMetadataInternal(_metadata: Metadata): Unit = {
+  protected def updateMetadataInternal(
+      _metadata: Metadata,
+      ignoreDefaultProperties: Boolean = false): Unit = {
     var latestMetadata = _metadata
     if (readVersion == -1 || isCreatingNewTable) {
-      latestMetadata = withGlobalConfigDefaults(latestMetadata)
+      // We need to ignore the default properties when trying to create an exact copy of a table
+      // (as in CLONE and SHALLOW CLONE).
+      if (!ignoreDefaultProperties) {
+        latestMetadata = withGlobalConfigDefaults(latestMetadata)
+      }
       isCreatingNewTable = true
     }
     val protocolBeforeUpdate = protocol
