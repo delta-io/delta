@@ -139,10 +139,10 @@ case class WriteIntoDelta(
       case a: AddFile =>
         numFiles += 1
         numOutputBytes += a.size
-        if (a.numRecords.isEmpty) {
+        if (a.numLogicalRecords.isEmpty) {
           hasRowLevelMetrics = false
         } else {
-          numNewRows += a.numRecords.get
+          numNewRows += a.numLogicalRecords.get
         }
       case cdc: AddCDCFile =>
         numAddedChangedFiles += 1
@@ -153,10 +153,10 @@ case class WriteIntoDelta(
       case a: AddFile =>
         numFiles += 1
         numOutputBytes += a.size
-        if (a.numRecords.isEmpty) {
+        if (a.numLogicalRecords.isEmpty) {
           hasRowLevelMetrics = false
         } else {
-          numCopiedRows += a.numRecords.get
+          numCopiedRows += a.numLogicalRecords.get
         }
       case cdc: AddCDCFile =>
         numAddedChangedFiles += 1
