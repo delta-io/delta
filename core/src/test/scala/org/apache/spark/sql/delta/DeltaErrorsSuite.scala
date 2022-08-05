@@ -615,8 +615,9 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
-            committedActions: Seq[Action]): Unit = {}
+          override def run(
+            spark: SparkSession, txn: OptimisticTransactionImpl, committedVersion: Long,
+            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
         }, 0, "msg", null)
       }
       assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")
@@ -628,8 +629,9 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
-            committedActions: Seq[Action]): Unit = {}
+          override def run(
+            spark: SparkSession, txn: OptimisticTransactionImpl, committedVersion: Long,
+            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
         }, 0, null, null)
       }
       assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")
