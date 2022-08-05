@@ -16,15 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.UUID
-
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -107,9 +104,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     val json1 = """{"remove":{"path":"a","deletionTimestamp":2,"dataChange":true}}"""
     val json2 = """{"remove":{"path":"a","dataChange":false}}"""
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
-    assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
+    assert(Action.fromJson(json1) === RemoveFile("a", Some(2L)))
     assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
+    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L)))
   }
 
   roundTripCompare("SetTransaction",
@@ -155,93 +152,115 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
-  testActionSerDe(
-    "Protocol - json serialization/deserialization",
-    Protocol(minReaderVersion = 1, minWriterVersion = 2),
-    expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""".stripMargin)
+  test("Protocol - json serialization/deserialization") {
+    testActionSerDe(
+      action = Protocol(minReaderVersion = 1, minWriterVersion = 2),
+      expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "SetTransaction (lastUpdated is None) - json serialization/deserialization",
-    SetTransaction(appId = "app-1", version = 2L, lastUpdated = None),
-    expectedJson = """{"txn":{"appId":"app-1","version":2}}""".stripMargin)
+  test("SetTransaction (lastUpdated is None) - json serialization/deserialization") {
+    testActionSerDe(
+      action = SetTransaction(appId = "app-1", version = 2L, lastUpdated = None),
+      expectedJson = """{"txn":{"appId":"app-1","version":2}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "SetTransaction (lastUpdated is not None) - json serialization/deserialization",
-    SetTransaction(appId = "app-2", version = 3L, lastUpdated = Some(4L)),
-    expectedJson = """{"txn":{"appId":"app-2","version":3,"lastUpdated":4}}""".stripMargin)
+  test("SetTransaction (lastUpdated is not None) - json serialization/deserialization") {
+    testActionSerDe(
+      action = SetTransaction(appId = "app-2", version = 3L, lastUpdated = Some(4L)),
+      expectedJson = """{"txn":{"appId":"app-2","version":3,"lastUpdated":4}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "AddFile (without tags) - json serialization/deserialization",
-    AddFile("x=2/f1", partitionValues = Map("x" -> "2"),
-      size = 10, modificationTime = 1, dataChange = true, stats = "{\"rowCount\": 2}"),
-    expectedJson = """{"add":{"path":"x=2/f1","partitionValues":{"x":"2"},"size":10,""" +
-      """"modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}"}}""".stripMargin)
+  test("AddFile (without tags) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddFile("x=2/f1", partitionValues = Map("x" -> "2"),
+        size = 10, modificationTime = 1, dataChange = true, stats = "{\"rowCount\": 2}"),
+      expectedJson =
+        """{"add":{"path":"x=2/f1","partitionValues":{"x":"2"},"size":10,""" +
+          """"modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}"}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "AddFile (with tags) - json serialization/deserialization",
-    AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{\"rowCount\": 2}", tags = Map("TAG1" -> "23")),
-    expectedJson = """{"add":{"path":"part=p1/f1","partitionValues":{"x":"2"},"size":10""" +
-      ""","modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}",""" +
-      """"tags":{"TAG1":"23"}}}"""
-  )
+  test("AddFile (with tags) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10,
+        modificationTime = 1, dataChange = true, stats = "{\"rowCount\": 2}",
+        tags = Map("TAG1" -> "23")),
+      expectedJson =
+        """{"add":{"path":"part=p1/f1","partitionValues":{"x":"2"},"size":10""" +
+          ""","modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}",""" +
+          """"tags":{"TAG1":"23"}}}""")
+  }
 
-  testActionSerDe(
-    "RemoveFile (without tags) - json serialization/deserialization",
-    AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{\"rowCount\": 2}").removeWithTimestamp(timestamp = 11),
-    expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
-      """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
+  test("RemoveFile (without tags) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10,
+        modificationTime = 1, dataChange = true,
+        stats = "{\"rowCount\": 2}").removeWithTimestamp(timestamp = 11),
+      expectedJson =
+        """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
+          """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
+  }
 
+  test("AddCDCFile (without tags) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddCDCFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10),
+      expectedJson =
+        """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":"2"},""" +
+          """"size":10,"dataChange":false}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "AddCDCFile (without tags) - json serialization/deserialization",
-    AddCDCFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10),
-    expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":"2"},""" +
-      """"size":10,"dataChange":false}}""".stripMargin)
+  test("AddCDCFile (with tags) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddCDCFile("part=p2/f1", partitionValues = Map("x" -> "2"),
+        size = 11, tags = Map("key1" -> "value1")),
+      expectedJson =
+        """{"cdc":{"path":"part=p2/f1","partitionValues":{"x":"2"},""" +
+          """"size":11,"tags":{"key1":"value1"},"dataChange":false}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "AddCDCFile (with tags) - json serialization/deserialization",
-    AddCDCFile("part=p2/f1", partitionValues = Map("x" -> "2"),
-      size = 11, tags = Map("key1" -> "value1")),
-    expectedJson = """{"cdc":{"path":"part=p2/f1","partitionValues":{"x":"2"},""" +
-      """"size":11,"tags":{"key1":"value1"},"dataChange":false}}""".stripMargin)
+  test("AddCDCFile (without null value in partitionValues) - json serialization/deserialization") {
+    testActionSerDe(
+      action = AddCDCFile("part=p1/f1", partitionValues = Map("x" -> null), size = 10),
+      expectedJson =
+        """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
+          """"size":10,"dataChange":false}}""".stripMargin)
+  }
 
-  testActionSerDe(
-    "AddCDCFile (without null value in partitionValues) - json serialization/deserialization",
-    AddCDCFile("part=p1/f1", partitionValues = Map("x" -> null), size = 10),
-    expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
-      """"size":10,"dataChange":false}}""".stripMargin)
-
-  testActionSerDe(
-    "Metadata (with all defaults) - json serialization/deserialization",
-    Metadata(createdTime = Some(2222)),
-    expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
-    """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+  test("Metadata (with all defaults) - json serialization/deserialization") {
+    testActionSerDe(
+      action = Metadata(createdTime = Some(2222)),
+      expectedJson =
+        """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
+          """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+  }
 
   {
     val schemaStr = new StructType().add("a", "long").json
-    val metadata = Metadata(
+    lazy val metadata = Metadata(
       name = "t1",
       description = "desc",
-      format = Format(provider = "parquet", options = Map("o1" -> "v1")),
+      format = Format(options = Map("o1" -> "v1")),
       partitionColumns = Seq("a"),
       createdTime = Some(2222),
       configuration = Map("delta.enableXyz" -> "true"),
       schemaString = schemaStr)
-    testActionSerDe(
-      "Metadata - json serialization/deserialization", metadata,
-      expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
-        """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
-        s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
-        """"configuration":{"delta.enableXyz":"true"},"createdTime":2222}}""".stripMargin)
-    testActionSerDe(
-      "Metadata with empty createdTime- json serialization/deserialization",
-      metadata.copy(createdTime = None),
-      expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
-        """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
-        s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
-        """"configuration":{"delta.enableXyz":"true"}}}""".stripMargin)
+    test("Metadata - json serialization/deserialization") {
+      testActionSerDe(
+        action = metadata,
+        expectedJson =
+          """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
+            """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
+            s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
+            """"configuration":{"delta.enableXyz":"true"},"createdTime":2222}}""".stripMargin)
+    }
+    test("Metadata with empty createdTime- json serialization/deserialization") {
+      testActionSerDe(
+        action = metadata.copy(createdTime = None),
+        expectedJson =
+          """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
+            """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
+            s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
+            """"configuration":{"delta.enableXyz":"true"}}}""".stripMargin)
+    }
   }
 
   {
@@ -260,14 +279,16 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       txnId = Some("123")
     ).copy(engineInfo = None)
 
-    testActionSerDe(
-      "CommitInfo (without operationParameters) - json serialization/deserialization",
-      commitInfo,
-      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
-        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
+    test("CommitInfo (without operationParameters) - json serialization/deserialization") {
+      testActionSerDe(
+        action = commitInfo,
+        expectedJson =
+          """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+            """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+            """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
+    }
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -292,18 +313,20 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
         commitInfo.copy(operationParameters = Map.empty))
     }
 
-    testActionSerDe(
-      "CommitInfo (with engineInfo) - json serialization/deserialization",
-      commitInfo.copy(engineInfo = Some("Apache-Spark/3.1.1 Delta-Lake/10.1.0")),
-      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
-        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
-        """"txnId":"123"}}""".stripMargin)
+    test("CommitInfo (with engineInfo) - json serialization/deserialization") {
+      testActionSerDe(
+        action = commitInfo.copy(engineInfo = Some("Apache-Spark/3.1.1 Delta-Lake/10.1.0")),
+        expectedJson =
+          """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+            """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+            """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
+            """"txnId":"123"}}""".stripMargin)
+    }
   }
 
-  private def roundTripCompare(name: String, actions: Action*) = {
+  private def roundTripCompare(name: String, actions: Action*): Unit = {
     test(name) {
       val asJson = actions.map(_.json)
       val asObjects = asJson.map(Action.fromJson)
@@ -313,38 +336,34 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   }
 
   /** Test serialization/deserialization of [[Action]] by doing an actual commit */
-  private def testActionSerDe(
-      name: String,
-      action: Action,
-      expectedJson: String,
-    extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
-    test(name) {
-      withTempDir { tempDir =>
-        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
-        // Disable different delta validations so that the passed action can be committed in
-        // all cases.
-        val settings = Seq(
-          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
-        withSQLConf(settings: _*) {
+  private def testActionSerDe(action: Action,
+                              expectedJson: String,
+                              extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
+      // Disable different delta validations so that the passed action can be committed in
+      // all cases.
+      val settings = Seq(
+        DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
+      withSQLConf(settings: _*) {
 
-          // Do one empty commit so that protocol gets committed.
-          deltaLog.startTransaction().commit(Seq(), ManualUpdate)
+        // Do one empty commit so that protocol gets committed.
+        deltaLog.startTransaction().commit(Seq(), ManualUpdate)
 
-          // Commit the actual action.
-          val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
-          // Read the commit file and get the serialized committed actions
-          val committedActions = deltaLog.store.read(
-            FileNames.deltaFile(deltaLog.logPath, version),
-            deltaLog.newDeltaHadoopConf())
+        // Commit the actual action.
+        val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
+        // Read the commit file and get the serialized committed actions
+        val committedActions = deltaLog.store.read(
+          FileNames.deltaFile(deltaLog.logPath, version),
+          deltaLog.newDeltaHadoopConf())
 
-          assert(committedActions.size == 1)
-          val serializedJson = committedActions.head
-          assert(serializedJson === expectedJson)
-          val asObject = Action.fromJson(serializedJson)
-          assert(action === asObject)
-        }
+        assert(committedActions.size == 1)
+        val serializedJson = committedActions.head
+        assert(serializedJson === expectedJson)
+        val asObject = Action.fromJson(serializedJson)
+        assert(action === asObject)
       }
     }
   }
