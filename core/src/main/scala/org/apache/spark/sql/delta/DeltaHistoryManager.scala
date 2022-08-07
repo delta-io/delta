@@ -177,7 +177,7 @@ class DeltaHistoryManager(
   def getEarliestVersion(
       mustBeRecreatable: Boolean = true): Long = {
     if (mustBeRecreatable) {
-      getEarliestReproducibleCommit
+      getEarliestReproducibleCommit()
     } else {
       getEarliestDeltaFile(deltaLog)
     }

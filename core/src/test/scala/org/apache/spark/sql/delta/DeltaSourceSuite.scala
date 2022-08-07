@@ -1392,7 +1392,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     withTempDir { dir =>
       withTempView("startingVersionEarliest") {
         val path = dir.getAbsolutePath
-        spark.range(0, 10).write.format("delta").save(path)
+        spark.range(10).write.format("delta").save(path)
 
         def startTestStreamingQuery(): StreamingQuery = {
           spark.readStream
