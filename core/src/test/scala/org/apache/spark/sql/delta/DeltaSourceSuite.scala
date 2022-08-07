@@ -337,6 +337,37 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test("maxFilesPerTrigger: Trigger.AvailableNow") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val q = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .trigger(Trigger.AvailableNow)
+        .queryName("maxFilesPerTriggerTest")
+        .start()
+      try {
+        assert(q.awaitTermination(10000))
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 5)
+        progress.foreach { p =>
+          assert(p.numInputRows === 1)
+        }
+        checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("maxBytesPerTrigger: process at least one file") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -477,6 +508,37 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         for (msg <- Seq("Invalid", DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "size")) {
           assert(e.getCause.getMessage.contains(msg))
         }
+      }
+    }
+  }
+
+  test("maxBytesPerTrigger: Trigger.AvailableNow") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val q = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .trigger(Trigger.AvailableNow)
+        .queryName("maxBytesPerTriggerTest")
+        .start()
+      try {
+        assert(q.awaitTermination(10000))
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 5)
+        progress.foreach { p =>
+          assert(p.numInputRows === 1)
+        }
+        checkAnswer(sql("SELECT * from maxBytesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+      } finally {
+        q.stop()
       }
     }
   }
