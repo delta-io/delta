@@ -215,7 +215,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   {
     // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
-    // This will ensure that `Utils.isTesting` returns true and that its id is to 'testId'.
+    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
     lazy val metadata = Metadata(createdTime = Some(2222))
     testActionSerDe(
       "Metadata (with all defaults) - json serialization/deserialization",
@@ -226,6 +226,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   {
     val schemaStr = new StructType().add("a", "long").json
+    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
+    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
     lazy val metadata = Metadata(
       name = "t1",
       description = "desc",
