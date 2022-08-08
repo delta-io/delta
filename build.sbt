@@ -37,6 +37,7 @@ lazy val commonSettings = Seq(
   javacOptions ++= Seq("-source", "1.8"),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
   Compile / compile / javacOptions ++= Seq("-target", "1.8"),
+  // Enable scoverage plugin to collect metrics about tests
   coverageEnabled := true
 )
 
