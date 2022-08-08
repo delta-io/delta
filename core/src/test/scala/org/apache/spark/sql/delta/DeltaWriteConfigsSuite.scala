@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 
@@ -96,7 +97,6 @@ class DeltaWriteConfigsSuite extends QueryTest
     // scalastyle:on println
     super.afterAll()
   }
-
 
   private val dfw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
   private val dsw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
@@ -421,154 +421,225 @@ class DeltaWriteConfigsSuite extends QueryTest
   // scalastyle:off line.size.limit
   /*
   SQL Test Output
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-  |Output Location|Config Input             |SQL Operation |AS SELECT|Contains OPTION no-prefix|Contains OPTION prefix|Contains TBLPROPERTIES no-prefix|Contains TBLPROPERTIES prefix|Config                                                                                                                                                                                                                                                               |
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-  |path           |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
-  |path           |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |path           |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |path           |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
-  |path           |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |path           |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
-  |table          |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
-  |table          |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
-  |table          |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
-  |table          |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  |table          |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  |Output Location|Config Input             |SQL Operation |AS SELECT|Contains OPTION no-prefix|Contains OPTION prefix|Contains TBLPROPERTIES no-prefix|Contains TBLPROPERTIES prefix|Legacy store option|Config                                                                                                                                                                                                                                                               |
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  |path           |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |create        |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
+  |path           |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |replace       |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |replace       |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_create |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_create |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_replace|true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_replace|false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |path           |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|create        |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
+  |path           |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|replace       |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|replace       |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_create |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_create |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_replace|true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |path           |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_replace|false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |create        |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
+  |table          |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |replace       |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |replace       |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_create |true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_create |false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_replace|true     |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |false              |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_replace|false    |true                     |true                  |N/A                             |N/A                          |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33                                                                                                                                                                              |
+  |table          |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |false              |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |true               |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|create        |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
+  |table          |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|replace       |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|replace       |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_create |true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_create |false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_replace|true     |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  |table          |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |false              |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_replace|false    |true                     |true                  |true                            |true                         |true               |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                      |
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+-------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
   */
   // scalastyle:on line.size.limit
-  Seq("path", "table").foreach { outputLoc =>
-    Seq("options", "tblproperties", "options_and_tblproperties").foreach { configInput =>
-      Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { sqlOp =>
-        Seq(true, false).foreach { useAsSelectStmt =>
-          val testName = s"SQL - outputLoc=$outputLoc & configInput=$configInput & sqlOp=$sqlOp" +
-            s" & useAsSelectStmt=$useAsSelectStmt"
 
-          test(testName) {
-            withTempDir { dir =>
-              withTable("tbl", "other") {
-                if (sqlOp.contains("replace")) {
-                  var stmt = "CREATE TABLE tbl (ID INT) USING DELTA"
-                  if (outputLoc == "path") {
-                    stmt = stmt + s" LOCATION '${dir.getCanonicalPath}'"
-                  }
-                  sql(stmt)
-                }
+  for {
+    outputLoc <- Seq("path", "table")
+    configInput <- Seq("options", "tblproperties", "options_and_tblproperties")
+    sqlOp <- Seq("create", "replace", "c_or_r_create", "c_or_r_replace")
+    useAsSelectStmt <- Seq(true, false)
+    legazy <- Seq(false, true)
+  } yield {
 
-                val sqlOpStr = sqlOp match {
-                  case "c_or_r_create" | "c_or_r_replace" => "CREATE OR REPLACE"
-                  case _ => sqlOp.toUpperCase(Locale.ROOT)
-                }
+    val testName = s"SQL - outputLoc=$outputLoc & configInput=$configInput & sqlOp=$sqlOp" +
+      s" & useAsSelectStmt=$useAsSelectStmt & legazy=$legazy"
 
-                val schemaStr = if (useAsSelectStmt) "" else "(id INT) "
-                var stmt = sqlOpStr + " TABLE tbl " + schemaStr + "USING DELTA\n"
+    test(testName) {
+      withTempDir { dir =>
+        withTable("tbl", "other") {
+          spark.sessionState.conf
+            .setConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS, legazy)
 
-                if (configInput.contains("options")) {
-                  stmt = stmt + s"OPTIONS(" +
-                    s"'$config_no_prefix'=$config_no_prefix_value," +
-                    s"'$config_prefix'='$config_prefix_value')\n"
-                }
-                if (outputLoc == "path") {
-                  stmt = stmt + s"LOCATION '${dir.getCanonicalPath}'\n"
-                }
-                if (configInput.contains("tblproperties")) {
-                  stmt = stmt + s"TBLPROPERTIES(" +
-                    s"'$config_no_prefix_2'='$config_no_prefix_2_value'," +
-                    s"'$config_prefix_2'=$config_prefix_2_value)\n"
-                }
-                if (useAsSelectStmt) {
-                  sql("CREATE TABLE other (id INT) USING DELTA")
-                  stmt = stmt + "AS SELECT * FROM other\n"
-                }
+          if (sqlOp.contains("replace")) {
+            var stmt = "CREATE TABLE tbl (ID INT) USING DELTA"
+            if (outputLoc == "path") {
+              stmt = stmt + s" LOCATION '${dir.getCanonicalPath}'"
+            }
+            sql(stmt)
+          }
 
-                // scalastyle:off println
-                println(stmt)
-                // scalastyle:on println
+          val sqlOpStr = sqlOp match {
+            case "c_or_r_create" | "c_or_r_replace" => "CREATE OR REPLACE"
+            case _ => sqlOp.toUpperCase(Locale.ROOT)
+          }
 
-                sql(stmt)
+          val schemaStr = if (useAsSelectStmt) "" else "(id INT) "
+          var stmt = sqlOpStr + " TABLE tbl " + schemaStr + "USING DELTA\n"
 
-                val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-                val config = log.snapshot.metadata.configuration
+          val option_was_set = configInput.contains("options")
+          val tblproperties_was_set = configInput.contains("tblproperties")
 
-                val option_was_set = configInput.contains("options")
-                val tblproperties_was_set = configInput.contains("tblproperties")
+          if (option_was_set) {
+            stmt = stmt + s"OPTIONS(" +
+              s"'$config_no_prefix'=$config_no_prefix_value," +
+              s"'$config_prefix'='$config_prefix_value')\n"
+          }
+          if (outputLoc == "path") {
+            stmt = stmt + s"LOCATION '${dir.getCanonicalPath}'\n"
+          }
+          if (tblproperties_was_set) {
+            stmt = stmt + s"TBLPROPERTIES(" +
+              s"'$config_no_prefix_2'='$config_no_prefix_2_value'," +
+              s"'$config_prefix_2'=$config_prefix_2_value)\n"
+          }
+          if (useAsSelectStmt) {
+            sql("CREATE TABLE other (id INT) USING DELTA")
+            stmt = stmt + "AS SELECT * FROM other\n"
+          }
 
-                val option_no_prefix = config.contains(config_no_prefix)
-                val option_prefix = config.contains(config_prefix)
-                val tblproperties_no_prefix = config.contains(config_no_prefix_2)
-                val tblproperties_prefix = config.contains(config_prefix_2)
+          // scalastyle:off println
+          println(stmt)
+          // scalastyle:on println
 
-                var expectedSize = 0
-                if (option_was_set) {
-                  assert(option_prefix)
-                  expectedSize += 1
-                  if (sqlOp == "create" && !useAsSelectStmt) {
-                    assert(option_no_prefix)
-                    assert(config.contains(s"option.$config_prefix"))
-                    assert(config.contains(s"option.$config_no_prefix"))
-                    expectedSize += 3
-                  }
-                }
-                if (tblproperties_was_set) {
-                  assert(tblproperties_prefix)
-                  assert(tblproperties_no_prefix)
-                  expectedSize += 2
-                }
+          sql(stmt)
 
-                assert(config.size == expectedSize)
+          val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+          val config = log.snapshot.metadata.configuration
 
-                sql_output += SQLAPIOutput(
-                  outputLoc,
-                  configInput,
-                  sqlOp,
-                  useAsSelectStmt,
-                  if (option_was_set) option_no_prefix.toString else "N/A",
-                  if (option_was_set) option_prefix.toString else "N/A",
-                  if (tblproperties_was_set) tblproperties_no_prefix.toString else "N/A",
-                  if (tblproperties_was_set) tblproperties_prefix.toString else "N/A",
-                  config.mkString(",")
-                )
+          val option_no_prefix = config.contains(config_no_prefix)
+          val option_prefix = config.contains(config_prefix)
+          val tblproperties_no_prefix = config.contains(config_no_prefix_2)
+          val tblproperties_prefix = config.contains(config_prefix_2)
+
+          var expectedSize = 0
+          if (option_was_set) {
+            if (legazy) {
+              assert(option_prefix)
+              assert(config.contains(config_no_prefix))
+              expectedSize += 2
+            } else {
+              assert(option_prefix)
+              expectedSize += 1
+            }
+            if (sqlOp == "create" && !useAsSelectStmt) {
+              assert(option_no_prefix)
+              if (legazy) {
+                assert(config.contains(s"option.$config_prefix"))
+                assert(config.contains(s"option.$config_no_prefix"))
+                expectedSize += 2
+              } else {
+                assert(config.contains(config_prefix))
+                assert(config.contains(config_no_prefix))
+                expectedSize += 1
               }
             }
           }
+          if (tblproperties_was_set) {
+            assert(tblproperties_prefix)
+            assert(tblproperties_no_prefix)
+            expectedSize += 2
+          }
+
+          assert(config.size == expectedSize)
+
+          sql_output += SQLAPIOutput(
+            outputLoc,
+            configInput,
+            sqlOp,
+            useAsSelectStmt,
+            if (option_was_set) option_no_prefix.toString else "N/A",
+            if (option_was_set) option_prefix.toString else "N/A",
+            if (tblproperties_was_set) tblproperties_no_prefix.toString else "N/A",
+            if (tblproperties_was_set) tblproperties_prefix.toString else "N/A",
+            legazy,
+            config.mkString(",")
+          )
+
+          spark.sessionState.conf
+            .setConf(
+              DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS,
+              DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS.defaultValue.getOrElse(false))
         }
       }
     }
@@ -577,28 +648,29 @@ class DeltaWriteConfigsSuite extends QueryTest
 
 // Need to be outside to be stable references for Spark to generate the case classes
 case class DeltaFrameStreamAPITestOutput(
-    outputLocation: String,
-    outputMode: String,
-    containsNoPrefixOption: Boolean,
-    containsPrefixOption: Boolean,
-    config: String)
+                                          outputLocation: String,
+                                          outputMode: String,
+                                          containsNoPrefixOption: Boolean,
+                                          containsPrefixOption: Boolean,
+                                          config: String)
 
 case class DeltaTableBuilderAPITestOutput(
-    outputLocation: String,
-    outputMode: String,
-    containsNoPrefixOptionLowerCase: Boolean,
-    containsNoPrefixOption: Boolean,
-    containsPrefixOption: Boolean,
-    error: Boolean,
-    config: String)
+                                           outputLocation: String,
+                                           outputMode: String,
+                                           containsNoPrefixOptionLowerCase: Boolean,
+                                           containsNoPrefixOption: Boolean,
+                                           containsPrefixOption: Boolean,
+                                           error: Boolean,
+                                           config: String)
 
 case class SQLAPIOutput(
-    outputLocation: String,
-    confiInput: String,
-    sqlOperation: String,
-    asSelect: Boolean,
-    containsOptionNoPrefix: String,
-    containsOptionPrefix: String,
-    containsTblPropertiesNoPrefix: String,
-    containsTblPropertiesPrefix: String,
-    config: String)
+                         outputLocation: String,
+                         confiInput: String,
+                         sqlOperation: String,
+                         asSelect: Boolean,
+                         containsOptionNoPrefix: String,
+                         containsOptionPrefix: String,
+                         containsTblPropertiesNoPrefix: String,
+                         containsTblPropertiesPrefix: String,
+                         asLegazy: Boolean,
+                         config: String)
