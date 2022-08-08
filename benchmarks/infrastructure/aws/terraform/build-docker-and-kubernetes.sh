@@ -31,8 +31,16 @@ build_docker_image() {
     TAG=0.1
     ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
+    local build_args=""
+    if [ -n "$SPARK_VERSION" ]; then
+        build_args="--build-arg SPARK_VERSION=$SPARK_VERSION"
+        echo "Docker build args: $build_args."
+    else
+        echo "No additional docker build args."
+    fi
+
     aws ecr get-login-password --region "${REGION}" | docker login --username AWS --password-stdin "${ECR_URL}" &&
-        docker build "$DOCKER_DIR" -t "${ECR_REPOSITORY_NAME}":${TAG} &&
+        docker build "$DOCKER_DIR" -t "${ECR_REPOSITORY_NAME}":${TAG} $build_args &&
         docker tag "${ECR_REPOSITORY_NAME}":${TAG} "${ECR_URL}"/"${ECR_REPOSITORY_NAME}":${TAG} &&
         docker tag "${ECR_REPOSITORY_NAME}":${TAG} "${ECR_URL}"/"${ECR_REPOSITORY_NAME}":latest &&
         docker push "${ECR_URL}/${ECR_REPOSITORY_NAME}:${TAG}" &&
@@ -53,6 +61,23 @@ print_outputs() {
 }
 
 main() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+        --spark-version)
+            SPARK_VERSION="$2"
+            shift # past argument
+            shift # past value
+            ;;
+        -* | --*)
+            echo "Unknown option $1"
+            exit 1
+            ;;
+        *)
+            shift # past argument
+            ;;
+        esac
+    done
+
     if ! export_terraform_outputs; then
         echo "[ERROR] Failed to extract variables."
         exit 1

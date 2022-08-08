@@ -180,7 +180,7 @@ There are a few steps that are common for both deployment options.
 
 8. Create Spark docker image and create kubernetes infrastructure:
    ```bash
-   ./infrastructure/aws/terraform/build-docker-and-kubernetes.sh
+   ./build-docker-and-kubernetes.sh
    ```
    Script output contains newly created docker image URI:
    ```
@@ -192,6 +192,10 @@ There are a few steps that are common for both deployment options.
    configmap/hive-site created
    pod/benchmarks-edge-node created
    Spark docker image URI: 781336771001.dkr.ecr.us-west-2.amazonaws.com/delta-benchmarks-spark:0.1
+   ```
+   By default `apache/spark:v3.2.1` image is used. You can specify a different version by adding `--spark-version` parameter.
+   ```bash
+   ./build-docker-and-kubernetes.sh --spark-version v3.2.1
    ```
 
 9. Run benchmarks in a similar way as described in the main instruction. However, keep in mind that some
