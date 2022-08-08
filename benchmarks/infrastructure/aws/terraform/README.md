@@ -232,9 +232,11 @@ There are a few steps that are common for both deployment options.
     status code: 409, request id: Q11TYZ5E0B23QGQ2, host id: WdeFY88km5IBhy+bi2hqXzgjBxjrn1+OPtCstsWDjkwGNCyEhXYjq330DZq1jbfNXojBEejH6Wg=
     ```
 
-### Known issues
+### Internals
 
-#### Spark --packages parameter does not work for Kubernetes in cluster deployment
+#### Known issues
+
+##### Spark --packages parameter does not work for Kubernetes in cluster deployment
 
 Related JIRA issue: [SPARK-32545](https://issues.apache.org/jira/browse/SPARK-32545). To avoid the issue, one need to run spark jobs in client deployment mode.
 Alternatively, as a workaround, maven dependencies should be included into the fat-jar.
