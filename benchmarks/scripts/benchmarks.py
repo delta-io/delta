@@ -32,8 +32,12 @@ class BenchmarkSpec:
     :param main_class_args: command line args for the main class
     """
     def __init__(
-            self, format_name, maven_artifacts, spark_confs,
-            benchmark_main_class, main_class_args, extra_spark_shell_args=None, **kwargs):
+            self, format_name=None, maven_artifacts=None, spark_confs=None,
+            benchmark_main_class=None, main_class_args=None, extra_spark_shell_args=None, **kwargs):
+        if maven_artifacts is None:
+            maven_artifacts = []
+        if spark_confs is None:
+            spark_confs = []
         if main_class_args is None:
             main_class_args = []
         if extra_spark_shell_args is None:
@@ -93,6 +97,22 @@ class BenchmarkSpec:
         )
         print(spark_shell_cmd)
         return spark_shell_cmd
+
+    def merge(self, spec):
+        self.format_name = self.__resolve_values("format_name", self.format_name, spec.format_name)
+        self.benchmark_main_class = self.__resolve_values("main_class", self.benchmark_main_class, spec.benchmark_main_class)
+        self.append_maven_artifacts(spec.maven_artifacts)
+        self.append_spark_confs(spec.spark_confs)
+        self.append_main_class_args(spec.benchmark_main_class_args)
+
+    @staticmethod
+    def __resolve_values(field_name, current_value, other_value):
+        if current_value is None:
+            return other_value
+        if other_value is None:
+            return current_value
+        if current_value is not None and other_value != current_value:
+            raise ValueError(f"Conflicting values for field {field_name}; current={current_value}; other={other_value}.")
 
 
 class TPCDSDataLoadSpec(BenchmarkSpec):
@@ -200,6 +220,59 @@ class ParquetTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, ParquetBenchmarkSpec):
 
 
 # ============== General benchmark execution ==============
+
+class S3BenchmarkSpec(BenchmarkSpec):
+    def __init__(self):
+        super().__init__(
+            spark_confs=["spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore"]
+        )
+
+
+class GoogleStorageBenchmarkSpec(BenchmarkSpec):
+    def __init__(self):
+        super().__init__(
+            spark_confs=["spark.delta.logStore.gs.impl=io.delta.storage.GCSLogStore"]
+        )
+
+
+class EksBenchmarkSpec(BenchmarkSpec):
+    def __init__(self, cluster_endpoint, docker_image):
+        super().__init__(
+            maven_artifacts=[
+                "org.apache.hadoop:hadoop-aws:3.3.1",
+                # In order to provide fine-grained permissions, IAM roles for service accounts feature is used:
+                # https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+                # S3A connector has to be configured to use WebIdentityTokenCredentialsProvider, which is
+                # supported by aws-java-sdk as of version 1.11.704. We use 1.11.901 since it is compatible
+                # com.amazonaws:aws-java-sdk-bundle:1.11.901 which is a hadoop-aws:3.3.1 dependency.
+                "com.amazonaws:aws-java-sdk-core:1.11.901",
+                "com.amazonaws:aws-java-sdk-sts:1.11.901",
+                "com.amazonaws:aws-java-sdk-s3:1.11.901"
+            ],
+            spark_confs=[
+                "spark.sql.catalogImplementation=hive",
+                f"spark.master=k8s://{cluster_endpoint}",
+                "spark.submit.deployMode=client",
+                "spark.driver.bindAddress=0.0.0.0",
+                "spark.driver.port=38003",
+                "spark.driver.blockManager.port=38004",
+                "spark.driver.host=$SPARK_DRIVER_IP",
+                "spark.driver.extraJavaOptions=\"-Divy.cache.dir=/tmp/.ivy/cache/ -Divy.home=/tmp/.ivy/\"",
+                "spark.kubernetes.driver.pod.name=benchmarks-edge-node",
+                "spark.kubernetes.node.selector.role=spark",
+                "spark.executor.memory=6g",
+                # A fraction of CPU available is always reserved for kubernetes services in each pod, so we do not request full CPU.
+                "spark.kubernetes.executor.request.cores=0.95",
+                f"spark.kubernetes.container.image={docker_image}",
+                "spark.kubernetes.namespace=benchmarks",
+                "spark.kubernetes.authenticate.driver.serviceAccountName=benchmarks-sa",
+                "spark.kubernetes.authenticate.executor.serviceAccountName=benchmarks-sa",
+                "spark.kubernetes.authenticate.submission.caCertFile=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+                "spark.kubernetes.authenticate.submission.oauthTokenFile=/var/run/secrets/kubernetes.io/serviceaccount/token",
+                "spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.WebIdentityTokenCredentialsProvider"
+            ]
+        )
+
 
 class RemoteCommandRunner(ABC):
     def __init__(self):

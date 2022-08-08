@@ -46,57 +46,6 @@ benchmarks = {
 
 }
 
-delta_log_store_classes = {
-    "aws": "spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore",
-    "gcp": "spark.delta.logStore.gs.impl=io.delta.storage.GCSLogStore",
-}
-
-
-# TODO: move to benchmarks.py and refactor how BenchmarkSpec is organized.
-class KubernetesSpec:
-    def __init__(self, benchmark_id, cluster_endpoint, docker_image):
-        self.benchmark_id = benchmark_id
-        self.cluster_endpoint = cluster_endpoint
-        self.docker_image = docker_image
-
-    @staticmethod
-    def extra_maven_packages():
-        return [
-            "org.apache.hadoop:hadoop-aws:3.3.1",
-            # In order to provide fine-grained permissions, IAM roles for service accounts feature is used:
-            # https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
-            # S3A connector has to be configured to use WebIdentityTokenCredentialsProvider, which is
-            # supported by aws-java-sdk as of version 1.11.704. We use 1.11.901 since it is compatible
-            # com.amazonaws:aws-java-sdk-bundle:1.11.901 which is a hadoop-aws:3.3.1 dependency.
-            "com.amazonaws:aws-java-sdk-core:1.11.901",
-            "com.amazonaws:aws-java-sdk-sts:1.11.901",
-            "com.amazonaws:aws-java-sdk-s3:1.11.901"
-        ]
-
-    def extra_spark_config(self):
-        return [
-            "spark.sql.catalogImplementation=hive",
-            f"spark.master=k8s://{self.cluster_endpoint}",
-            "spark.submit.deployMode=client",
-            "spark.driver.bindAddress=0.0.0.0",
-            "spark.driver.port=38003",
-            "spark.driver.blockManager.port=38004",
-            "spark.driver.host=$SPARK_DRIVER_IP",
-            "spark.driver.extraJavaOptions=\"-Divy.cache.dir=/tmp/.ivy/cache/ -Divy.home=/tmp/.ivy/\"",
-            "spark.kubernetes.driver.pod.name=benchmarks-edge-node",
-            "spark.kubernetes.node.selector.role=spark",
-            "spark.executor.memory=6g",
-            # A fraction of CPU available is always reserved for kubernetes services in each pod, so we do not request full CPU.
-            "spark.kubernetes.executor.request.cores=0.95",
-            f"spark.kubernetes.container.image={self.docker_image}",
-            "spark.kubernetes.namespace=benchmarks",
-            "spark.kubernetes.authenticate.driver.serviceAccountName=benchmarks-sa",
-            "spark.kubernetes.authenticate.executor.serviceAccountName=benchmarks-sa",
-            "spark.kubernetes.authenticate.submission.caCertFile=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-            "spark.kubernetes.authenticate.submission.oauthTokenFile=/var/run/secrets/kubernetes.io/serviceaccount/token",
-            "spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.WebIdentityTokenCredentialsProvider"
-        ]
-
 
 def is_kubernetes_benchmark(args):
     return args.k8s_cluster_endpoint is not None
@@ -131,7 +80,7 @@ def parse_args():
              " version is compatible with version in the spec.")
     parser.add_argument(
         "--cloud-provider",
-        choices=delta_log_store_classes.keys(),
+        choices=["aws", "gcp"],
         help="Cloud where the benchmark will be executed.")
 
     yarn_cluster_group = parser.add_argument_group('yarn-cluster')
@@ -159,15 +108,18 @@ def parse_args():
 
 
 def run_single_benchmark(benchmark_name, benchmark_spec, other_args):
+    if other_args.cloud_provider == "aws":
+        benchmark_spec.merge(S3BenchmarkSpec())
+        if is_kubernetes_benchmark(args):
+            benchmark_spec.merge(EksBenchmarkSpec(args.k8s_cluster_endpoint, args.docker_image))
+    elif other_args.cloud_provider == "gcp":
+        benchmark_spec.merge(GoogleStorageBenchmarkSpec())
+        if is_kubernetes_benchmark(args):
+            raise ValueError("Benchmarks on Kubernetes in GCP are not supported yet.")
+
     benchmark_id = BenchmarkIdGenerator.get(benchmark_name)
     benchmark_spec.append_spark_confs(other_args.spark_conf)
-    benchmark_spec.append_spark_conf(delta_log_store_classes.get(other_args.cloud_provider))
     benchmark_spec.append_main_class_args(passthru_args)
-
-    if is_kubernetes_benchmark(args):
-        k8s_spec = KubernetesSpec(benchmark_id, args.k8s_cluster_endpoint, args.docker_image)
-        benchmark_spec.append_spark_confs(k8s_spec.extra_spark_config())
-        benchmark_spec.append_maven_artifacts(k8s_spec.extra_maven_packages())
 
     print("------")
     print("Benchmark spec to run:\n" + str(vars(benchmark_spec)))
