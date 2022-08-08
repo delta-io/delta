@@ -120,7 +120,9 @@ There are a few steps that are common for both deployment options.
     * `AmazonVPCFullAccess`
     * `AmazonRDSFullAccess`
     * `AmazonS3FullAccess`
-    * TODO: EKS permissions
+    * `AmazonEC2FullAccess`
+    * `AmazonEC2ContainerRegistryFullAccess`
+    * Allow all `eks:*` actions.
 
 4. Create Terraform variable file `benchmarks/infrastructure/aws/terraform/terraform.tfvars` and fill in variable values.
    ```tf
