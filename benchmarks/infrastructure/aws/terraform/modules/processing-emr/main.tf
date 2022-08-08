@@ -6,7 +6,7 @@ resource "aws_key_pair" "benchmarks" {
 
 resource "aws_emr_cluster" "benchmarks" {
   name                              = "delta_performance_benchmarks_cluster"
-  release_label                     = "emr-6.5.0"
+  release_label                     = var.emr_version
   applications                      = ["Spark", "Hive"]
   termination_protection            = false
   keep_job_flow_alive_when_no_steps = true

@@ -61,12 +61,14 @@ There are a few steps that are common for both deployment options.
    emr_public_key_path    = "<EMR_PUBLIC_KEY_PATH>"
    user_ip_address        = "<MY_IP>"
    emr_workers            = WORKERS_COUNT
+   emr_version            = "<EMR_VERSION>"
    tags                   = {
      key1 = "value1"
      key2 = "value2"
    }
    ```
-   Please check `variables.tf` to learn more about each parameter.
+   Please check `variables.tf` to learn more about each parameter. In particular, in order to control Spark version used in
+   benchmarks, change `emr_version` to a proper value.
 
 3. Run:
    ```bash

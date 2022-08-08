@@ -41,6 +41,7 @@ module "processing-emr" {
   mysql_password         = var.mysql_password
   emr_public_key_path    = var.emr_public_key_path
   emr_workers            = var.emr_workers
+  emr_version            = var.emr_version
   user_ip_address        = var.user_ip_address
 
   depends_on = [module.networking, module.storage, module.metastore-rds]
