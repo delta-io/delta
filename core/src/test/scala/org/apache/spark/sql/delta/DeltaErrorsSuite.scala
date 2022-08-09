@@ -1801,7 +1801,7 @@ trait DeltaErrorsSuiteBase
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .config(s"$deltaSparkExtConf", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config("$deltaSparkExtConf", "${classOf[DeltaSparkSessionExtension].getName}")
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
            |    .getOrCreate()

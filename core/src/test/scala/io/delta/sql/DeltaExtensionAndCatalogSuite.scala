@@ -51,6 +51,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       .appName("DeltaSparkSessionExtensionSuiteUsingSQLConf")
       .master("local[2]")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
     try {
       verifyDeltaSQLParserIsActivated(spark)
@@ -64,6 +65,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       .appName("DeltaSparkSessionExtensionSuiteUsingWithExtensions")
       .master("local[2]")
       .withExtensions(new io.delta.sql.DeltaSparkSessionExtension)
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
     try {
       verifyDeltaSQLParserIsActivated(spark)
@@ -107,98 +109,5 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       s"${classOf[DeltaCatalog].getName}"
     )
     expectedStrs.foreach { m => assert(e.getMessage().contains(m), "full exception: " + e) }
-  }
-
-  test("behavior without Delta extension - scala API on path-based tables") {
-    withSparkSession(
-      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
-    ) { spark =>
-      import spark.implicits._
-
-      val tablePath = createTempDir()
-      spark.range(1, 10).toDF("key")
-        .withColumn("value", col("key")).write.format("delta").save(tablePath)
-
-      val deltaTable = DeltaTable.forPath(spark, tablePath)
-
-      checkErrorMessage {
-        deltaTable.delete("key = 0")
-      }
-
-      checkErrorMessage {
-        deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-      }
-
-      // No error expected
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
-  }
-
-  test("behavior without Delta extension - scala API on name-based tables") {
-    withSparkSession(
-      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
-    ) { spark =>
-      import spark.implicits._
-
-      spark.range(1, 10).toDF("key")
-        .withColumn("value", col("key")).write.format("delta").saveAsTable("tbl")
-
-      val deltaTable = DeltaTable.forName(spark, "tbl")
-
-      checkErrorMessage {
-        deltaTable.delete("key = 0")
-      }
-
-      checkErrorMessage {
-        deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-      }
-
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
-  }
-
-  test("behavior without DeltaCatalog configuration - scala API on path-based tables") {
-    withSparkSession(
-      "spark.sql.extensions" -> classOf[DeltaSparkSessionExtension].getName
-    ) { spark =>
-      import spark.implicits._
-      val tablePath = createTempDir()
-
-      spark.range(1, 10).toDF("key").withColumn("value", col("key"))
-        .write.format("delta").save(tablePath)
-
-      val deltaTable = DeltaTable.forPath(spark, tablePath).as("t")
-
-      // No errors expected
-      deltaTable.delete("key = 0")
-
-      deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
   }
 }

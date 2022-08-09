@@ -34,13 +34,13 @@ import org.junit.Test;
 
 import org.apache.spark.sql.test.TestSparkSession;
 
-public class MergeIntoJavaSuite implements Serializable {
-    private transient TestSparkSession spark;
+public class MergeIntoJavaSuite implements Serializable, DeltaSQLCommandJavaTest {
+    private transient SparkSession spark;
     private transient String tempPath;
 
     @Before
     public void setUp() {
-        spark = new TestSparkSession();
+        spark = buildSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
     }
 

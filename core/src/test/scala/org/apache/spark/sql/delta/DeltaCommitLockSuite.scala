@@ -25,6 +25,9 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.{LocalSparkSession, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import io.delta.sql.DeltaSparkSessionExtension
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
 class DeltaCommitLockSuite extends SparkFunSuite with LocalSparkSession with SQLHelper {
 
@@ -38,6 +41,9 @@ class DeltaCommitLockSuite extends SparkFunSuite with LocalSparkSession with SQL
     spark = SparkSession.builder()
       .config("spark.delta.logStore.class", classOf[AzureLogStore].getName)
       .master("local[2]")
+      .config(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
+        classOf[DeltaSparkSessionExtension].getName)
+      .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
       .getOrCreate()
     val path = Utils.createTempDir()
     try {
@@ -58,6 +64,9 @@ class DeltaCommitLockSuite extends SparkFunSuite with LocalSparkSession with SQL
     spark = SparkSession.builder()
       .config("spark.delta.logStore.class", classOf[S3SingleDriverLogStore].getName)
       .master("local[2]")
+      .config(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
+        classOf[DeltaSparkSessionExtension].getName)
+      .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
       .getOrCreate()
     val path = Utils.createTempDir()
     try {

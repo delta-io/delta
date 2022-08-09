@@ -53,6 +53,8 @@ import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.spark.util.{Clock, SystemClock, Utils}
 
 /**
@@ -94,10 +96,10 @@ class DeltaLog private(
     .orElse(Try(spark.sessionState.sqlParser.parsePlan("vacuum delta_table")).toOption)
     .isEmpty ||
     spark.conf.getOption(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
-    throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(
-      new DeltaIllegalArgumentException(
-        errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-        messageParameters = null))
+    throw new DeltaRuntimeException(
+      errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
+      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
+        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName))
   }
 
   /**
