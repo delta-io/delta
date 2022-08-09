@@ -178,22 +178,11 @@ class OptimizeExecutor(
 
       val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
 
-      val parallelJobCollection = new ParVector(jobs.toVector)
-
-      // Create a task pool to parallelize the submission of optimization jobs to Spark.
-      val threadPool = ThreadUtils.newForkJoinPool(
-        "OptimizeJob",
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS))
-
-      val updates = try {
-        val forkJoinPoolTaskSupport = new ForkJoinTaskSupport(threadPool)
-        parallelJobCollection.tasksupport = forkJoinPoolTaskSupport
-
-        parallelJobCollection.flatMap(partitionBinGroup =>
-          runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)).seq
-      } finally {
-        threadPool.shutdownNow()
-      }
+      val maxThreads =
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
+      val updates = ThreadUtils.parmap(jobs, "OptimizeJob", maxThreads) { partitionBinGroup =>
+        runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)
+      }.flatten
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
