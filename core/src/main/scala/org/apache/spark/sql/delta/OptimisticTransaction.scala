@@ -781,7 +781,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     actions: Iterator[Action],
     op: DeltaOperations.Operation,
     context: Map[String, String],
-    metrics: Map[String, String]): Long = {
+    metrics: Map[String, String]): (Long, Snapshot) = {
     commitStartNano = System.nanoTime()
     val attemptVersion = readVersion + 1
     try {
@@ -817,7 +817,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
-            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
+            removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _ =>
         }
         action
@@ -871,12 +871,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         txnId = Some(txnId))
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
-      // NOTE: We don't pass in the sequence of actions to runPostCommitHooks because commitLarge
-      //       takes in an iterator of actions as a conscious choice, as the large commit may
-      //       result in many FileActions we'd have to materialize in memory. All post commit hooks
-      //       registered for these commits should be agnostic to the list of actions.
-      runPostCommitHooks(attemptVersion, postCommitSnapshot, Nil)
-      attemptVersion
+      (attemptVersion, postCommitSnapshot)
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
         recordDeltaEvent(
@@ -1160,7 +1155,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       updatedCurrentTransactionInfo.finalActionsToCommit.length,
       totalCommitAttemptTime)
   }
-
 
   /**
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException

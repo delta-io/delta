@@ -247,7 +247,24 @@ sealed trait FileAction extends Action {
   val path: String
   val dataChange: Boolean
   @JsonIgnore
+  val tags: Map[String, String]
+  @JsonIgnore
   lazy val pathAsUri: URI = new URI(path)
+  @JsonIgnore
+  def numLogicalRecords: Option[Long]
+  @JsonIgnore
+  def getNumLogicalRecords: Long = numLogicalRecords.getOrElse(0L)
+  @JsonIgnore
+  val partitionValues: Map[String, String]
+  @JsonIgnore
+  def getFileSize: Long
+
+  /**
+   * Return tag value if tags is not null and the tag present.
+   */
+  @JsonIgnore
+  def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
+
 }
 
 /**
@@ -256,15 +273,15 @@ sealed trait FileAction extends Action {
  * kept.
  */
 case class AddFile(
-    path: String,
+    override val path: String,
     @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
     modificationTime: Long,
-    dataChange: Boolean,
+    override val dataChange: Boolean,
     @JsonRawValue
     stats: String = null,
-    tags: Map[String, String] = null
+    override val tags: Map[String, String] = null
 ) extends FileAction {
   require(path.nonEmpty)
 
@@ -291,11 +308,7 @@ case class AddFile(
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
 
-  def optimizedTargetSize: Option[Long] =
-    tag(AddFile.Tags.OPTIMIZE_TARGET_SIZE).map(_.toLong)
-
-  def tag(tag: AddFile.Tags.KeyType): Option[String] =
-    Option(tags).flatMap(_.get(tag.name))
+  def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
@@ -309,8 +322,11 @@ case class AddFile(
   }
 
   @JsonIgnore
+  override def getFileSize: Long = size
+
+  @JsonIgnore
   @transient
-  lazy val numLogicalRecords: Option[Long] = {
+  override lazy val numLogicalRecords: Option[Long] = {
     if (stats == null || stats.isEmpty) {
       None
     } else {
@@ -379,15 +395,15 @@ object AddFile {
  */
 // scalastyle:off
 case class RemoveFile(
-    path: String,
+    override val path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
-    dataChange: Boolean = true,
+    override val dataChange: Boolean = true,
     extendedFileMetadata: Option[Boolean] = None,
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
-    tags: Map[String, String] = null
+    override val tags: Map[String, String] = null
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -398,15 +414,6 @@ case class RemoveFile(
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
 
-
-  @JsonIgnore
-  def optimizedTargetSize: Option[Long] =
-    getTag(AddFile.Tags.OPTIMIZE_TARGET_SIZE.name).map(_.toLong)
-
-  /**
-   * Return tag value if tags is not null and the tag present.
-   */
-  def getTag(tagName: String): Option[String] = Option(tags).getOrElse(Map.empty).get(tagName)
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
@@ -420,6 +427,9 @@ case class RemoveFile(
   def copyWithoutTag(tag: String): RemoveFile =
     copy(tags = Option(tags).getOrElse(Map.empty) - tag)
 
+  @JsonIgnore
+  override def getFileSize: Long = size.getOrElse(0L)
+
 }
 // scalastyle:on
 
@@ -429,14 +439,20 @@ case class RemoveFile(
  * changes from AddFile and RemoveFile actions.
  */
 case class AddCDCFile(
-    path: String,
+    override val path: String,
     @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
-    tags: Map[String, String] = null) extends FileAction {
+    override val tags: Map[String, String] = null) extends FileAction {
   override val dataChange = false
 
   override def wrap: SingleAction = SingleAction(cdc = this)
+
+  @JsonIgnore
+  override def getFileSize: Long = size
+
+  @JsonIgnore
+  override def numLogicalRecords: Option[Long] = None
 }
 
 
