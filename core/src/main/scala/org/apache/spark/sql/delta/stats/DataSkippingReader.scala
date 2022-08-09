@@ -207,7 +207,9 @@ trait DataSkippingReaderBase
   /**
    * Builds the data filters for data skipping.
    */
-  class DataFiltersBuilder(protected val spark: SparkSession)
+  class DataFiltersBuilder(
+      protected val spark: SparkSession,
+      protected val dataSkippingType: DeltaDataSkippingType)
   {
     protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
 
@@ -893,8 +895,14 @@ trait DataSkippingReaderBase
     } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
+      val dataSkippingType = if (partitionFilters.isEmpty) {
+        DeltaDataSkippingType.dataSkippingOnlyV1
+      } else {
+        DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
+      }
+
       val (skippingFilters, unusedFilters) = if (useStats) {
-        val constructDataFilters = new DataFiltersBuilder(spark)
+        val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
         dataFilters.map(f => (f, constructDataFilters(f))).partition(f => f._2.isDefined)
       } else {
         (Nil, dataFilters.map(f => (f, None)))
@@ -905,16 +913,10 @@ trait DataSkippingReaderBase
         .reduceOption((skip1, skip2) => DataSkippingPredicate(
           // Fold the filters into a conjunction, while unioning their referencedStats.
           skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
-        .getOrElse((DataSkippingPredicate(trueLiteral)))
+        .getOrElse(DataSkippingPredicate(trueLiteral))
 
       val (files, sizes) = {
         getDataSkippedFiles(finalPartitionFilters, finalSkippingFilters, keepNumRecords)
-      }
-
-      val dataSkippingType = if (partitionFilters.isEmpty) {
-        DeltaDataSkippingType.dataSkippingOnlyV1
-      } else {
-        DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
       }
 
       DeltaScan(
