@@ -337,7 +337,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("maxFilesPerTrigger: Trigger.AvailableNow") {
+  test("maxFilesPerTrigger: Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
@@ -512,7 +512,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("maxBytesPerTrigger: Trigger.AvailableNow") {
+  test("maxBytesPerTrigger: Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
