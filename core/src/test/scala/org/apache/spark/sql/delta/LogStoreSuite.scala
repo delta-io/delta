@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, IOException}
 import java.net.URI
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -196,10 +197,10 @@ abstract class LogStoreSuiteBase extends QueryTest
           "fs.file.impl" -> classOf[TrackingRenameFileSystem].getName,
           "fs.file.impl.disable.cache" -> "true") {
         val deltaLog = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
-        TrackingRenameFileSystem.numOfRename = 0
+        TrackingRenameFileSystem.renameCounter.set(0)
         deltaLog.checkpoint()
         val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
-        assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+        assert(TrackingRenameFileSystem.renameCounter.get() === expectedNumOfRename)
 
         withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "9") {
           // Write 5 more files to the delta table
@@ -208,10 +209,10 @@ abstract class LogStoreSuiteBase extends QueryTest
           // At this point table has total 10 files, which won't fit in 1 checkpoint part file (as
           // DELTA_CHECKPOINT_PART_SIZE is set to 9 in this test). So this will end up generating
           // 2 PART files.
-          TrackingRenameFileSystem.numOfRename = 0
+          TrackingRenameFileSystem.renameCounter.set(0)
           deltaLog.checkpoint()
           val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 2 else 0
-          assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+          assert(TrackingRenameFileSystem.renameCounter.get() === expectedNumOfRename)
         }
       }
     }
@@ -494,13 +495,14 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
  */
 class TrackingRenameFileSystem extends RawLocalFileSystem {
   override def rename(src: Path, dst: Path): Boolean = {
-    TrackingRenameFileSystem.numOfRename += 1
+    TrackingRenameFileSystem.renameCounter.incrementAndGet()
     super.rename(src, dst)
   }
 }
 
 object TrackingRenameFileSystem {
-  @volatile var numOfRename = 0
+  val renameCounter = new AtomicInteger(0)
+  def resetCounter(): Unit = renameCounter.set(0)
 }
 
 /**

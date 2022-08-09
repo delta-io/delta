@@ -32,13 +32,14 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.JsonPropertyOrder
+import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonPropertyOrder}
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.commons.codec.digest.DigestUtils
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
@@ -94,6 +95,10 @@ case class CheckpointMetaData(
 object CheckpointMetaData {
 
   val STORED_CHECKSUM_KEY = "checksum"
+
+  /** Whether to store checksum OR do checksum validations around [[CheckpointMetaData]]  */
+  def checksumEnabled(spark: SparkSession): Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
 
   /**
    * Returns the json representation of this [[CheckpointMetaData]] object.
@@ -338,16 +343,21 @@ trait Checkpoints extends DeltaLogging {
 
   protected def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot): Unit = {
-    val lastCheckpointChecksumEnabled = spark.sessionState.conf.getConf(
-      DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
-
     val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
-    val json = CheckpointMetaData.serializeToJson(checkpointMetaData, lastCheckpointChecksumEnabled)
-    store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
+    writeLastCheckpointFile(checkpointMetaData, CheckpointMetaData.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint)
   }
 
-  protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
+  protected def writeLastCheckpointFile(
+      checkpointMetaData: CheckpointMetaData,
+      addChecksum: Boolean): Unit = {
+    val json = CheckpointMetaData.serializeToJson(checkpointMetaData, addChecksum)
+    store.write(
+      LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
+  }
+
+  protected def writeCheckpointFiles(
+      snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 
@@ -361,8 +371,7 @@ trait Checkpoints extends DeltaLogging {
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = spark.sessionState.conf.getConf(
-          DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
+        val validate = CheckpointMetaData.checksumEnabled(spark)
         Some(CheckpointMetaData.deserializeFromJson(checkpointMetadataJson.head, validate))
       } catch {
         case _: FileNotFoundException =>
@@ -529,30 +538,29 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
-
-    val writtenPaths = chk
+    val finalCheckpointFiles = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
       .execute()
       .mapPartitionsWithIndex { case (index, iter) =>
-        val path = paths(index)
+        val finalPath = new Path(paths(index))
         val writtenPath =
           if (useRename) {
-            val p = new Path(path)
             // Two instances of the same task may run at the same time in some cases (e.g.,
             // speculation, stage retry), so generate the temp path here to avoid two tasks
             // using the same path.
-            val tempPath = new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp")
+            val tempPath =
+              new Path(finalPath.getParent, s".${finalPath.getName}.${UUID.randomUUID}.tmp")
             DeltaFileOperations.registerTempFileDeletionTaskFailureListener(serConf.value, tempPath)
-            tempPath.toString
+            tempPath
           } else {
-            path
+            finalPath
           }
+        val fs = writtenPath.getFileSystem(serConf.value)
         val writeAction = () => {
           try {
             val writer = factory.newInstance(
-              writtenPath,
+              writtenPath.toString,
               schema,
               new TaskAttemptContextImpl(
                 new JobConf(serConf.value),
@@ -567,14 +575,9 @@ object Checkpoints extends DeltaLogging {
             // storage and create an incomplete file. A concurrent reader might see it and fail.
             // This would leak resources but we don't have a way to abort the storage request here.
             writer.close()
-
-            val filePath = new Path(writtenPath)
-            val stat = filePath.getFileSystem(serConf.value).getFileStatus(filePath)
-            checkpointSizeInBytes.add(stat.getLen)
           } catch {
             case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-              val p = new Path(writtenPath)
-              if (p.getFileSystem(serConf.value).exists(p)) {
+              if (fs.exists(writtenPath)) {
                 // The file has been written by a zombie task. We can just use this checkpoint file
                 // rather than failing a Delta commit.
               } else {
@@ -582,7 +585,7 @@ object Checkpoints extends DeltaLogging {
               }
           }
         }
-        if (isGCSPath(serConf.value, new Path(writtenPath))) {
+        if (isGCSPath(serConf.value, writtenPath)) {
           // GCS may upload an incomplete file when the current thread is interrupted, hence we move
           // the write to a new thread so that the write cannot be interrupted.
           // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
@@ -592,33 +595,20 @@ object Checkpoints extends DeltaLogging {
         } else {
           writeAction()
         }
-        Iterator(writtenPath)
+        if (useRename) {
+          renameAndCleanupTempPartFile(writtenPath, finalPath, fs)
+        }
+        val finalPathFileStatus = try {
+          fs.getFileStatus(finalPath)
+        } catch {
+          case _: FileNotFoundException if useRename =>
+            throw DeltaErrors.failOnCheckpointRename(writtenPath, finalPath)
+        }
+
+        Iterator(SerializableFileStatus.fromStatus(finalPathFileStatus))
       }.collect()
 
-    if (useRename) {
-      var renameDone = false
-      val fs = snapshot.path.getFileSystem(hadoopConf)
-      try {
-        writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
-          val src = new Path(writtenPath)
-          val dest = new Path(paths(index))
-          if (!fs.rename(src, dest)) {
-            throw DeltaErrors.failOnCheckpointRename(src, dest)
-          }
-        }
-        renameDone = true
-      } finally {
-        if (!renameDone) {
-          writtenPaths.foreach { writtenPath =>
-            scala.util.Try {
-              val src = new Path(writtenPath)
-              fs.delete(src, false)
-            }
-          }
-        }
-      }
-    }
-
+    val checkpointSizeInBytes = finalCheckpointFiles.map(_.length).sum
     if (numOfFiles.value != snapshot.numOfFiles) {
       throw DeltaErrors.checkpointMismatchWithSnapshot
     }
@@ -631,9 +621,37 @@ object Checkpoints extends DeltaLogging {
       version = snapshot.version,
       size = checkpointRowCount.value,
       parts = numPartsOption,
-      sizeInBytes = Some(checkpointSizeInBytes.value),
+      sizeInBytes = Some(checkpointSizeInBytes),
       numOfAddFiles = Some(snapshot.numOfFiles),
       checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema))
+  }
+
+  /**
+   * Helper method to rename a `tempPath` checkpoint part file to `finalPath` checkpoint part file.
+   * This also tries to handle any race conditions with Zombie tasks.
+   */
+  private[delta] def renameAndCleanupTempPartFile(
+      tempPath: Path, finalPath: Path, fs: FileSystem): Unit = {
+    // If rename fails because the final path already exists, it's ok -- some zombie
+    // task probably got there first.
+    // We rely on the fact that all checkpoint writers write the same content to any given
+    // checkpoint part file. So it shouldn't matter which writer wins the race.
+    val renameSuccessful = try {
+      // Note that the fs.exists check here is redundant as fs.rename should fail if destination
+      // file already exists as per File System spec. But the LocalFS doesn't follow this and it
+      // overrides the final path even if it already exists. So we use exists here to handle that
+      // case.
+      !fs.exists(finalPath) && fs.rename(tempPath, finalPath)
+    } catch {
+      case _: org.apache.hadoop.fs.FileAlreadyExistsException => false
+    }
+    if (!renameSuccessful) {
+      try {
+        fs.delete(tempPath, false)
+      } catch { case NonFatal(e) =>
+        logWarning(s"Error while deleting the temporary checkpoint part file $tempPath", e)
+      }
+    }
   }
 
   // scalastyle:off line.size.limit
