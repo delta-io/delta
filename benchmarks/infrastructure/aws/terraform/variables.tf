@@ -63,10 +63,10 @@ variable "emr_version" {
   Release label for the Amazon EMR release. Each EMR version supports different application versions (e.g. Spark version).
   Please check in documentation which EMR version contains desired versions:
   https://docs.amazonaws.cn/en_us/emr/latest/ReleaseGuide/emr-release-app-versions-6.x.html
-  By default EMR-6.5.0 is used which contains Spark 3.1.2.
+  By default EMR-6.6.0 is used which contains Spark 3.2.0.
   EOT
   type = string
-  default = "emr-6.5.0"
+  default = "emr-6.6.0"
 }
 
 variable "tags" {
