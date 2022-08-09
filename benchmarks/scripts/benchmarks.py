@@ -334,7 +334,7 @@ class KubectlCommandRunner(RemoteCommandRunner):
         self.pod_name = pod_name
 
     def run_command(self, command, **kwargs):
-        full_cmd = f"""kubectl -n {self.namespace} exec {self.pod_name} --request-timeout=2m -- {command}"""
+        full_cmd = f"""kubectl -n {self.namespace} exec {self.pod_name} --request-timeout=2m -- bash -c "{command}" """
         return run_cmd(full_cmd, **kwargs)
 
     def run_script(self, script_file_name, **kwargs):
@@ -485,7 +485,7 @@ fi
         self.command_runner.run_command(f"screen -d -m bash {script_file_name}", stream_output=False)
 
         # Print the screen where it is running
-        self.command_runner.run_command(f""" "screen -ls ; sleep 2; echo Files for this benchmark: ; ls {self.benchmark_id}*" """,
+        self.command_runner.run_command(f"""screen -ls ; sleep 2; echo Files for this benchmark: ; ls {self.benchmark_id}*""",
                                         stream_output=True, throw_on_error=False)
         print(f">>> Benchmark id {self.benchmark_id} started in a screen. Stdout piped into {self.output_file}. "
               f"Final report will be generated on completion in {self.json_report_file}.\n")
