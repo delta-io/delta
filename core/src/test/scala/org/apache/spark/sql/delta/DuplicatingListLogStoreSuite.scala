@@ -28,6 +28,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HDFSLogStore(sparkConf, defaultHadoopConf) {
@@ -43,7 +44,7 @@ class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configura
   }
 }
 
-class DuplicatingListLogStoreSuite extends SharedSparkSession {
+class DuplicatingListLogStoreSuite extends SharedSparkSession with DeltaSQLCommandTest {
 
   override def sparkConf: SparkConf = {
     super.sparkConf.set("spark.databricks.tahoe.logStore.class",

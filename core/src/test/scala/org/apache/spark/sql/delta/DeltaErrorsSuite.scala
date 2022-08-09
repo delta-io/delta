@@ -47,7 +47,7 @@ import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Le
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
@@ -1143,7 +1143,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_CONSTRAINT_ALREADY_EXISTS")
       assert(e.getSqlState == "42000")
-      assert(e.getMessage == "Constraint 'name' already exists. Please " +
+      assert(e.getMessage == "Constraint 'name' already exists as a CHECK constraint. Please " +
         "delete the old constraint first.\nOld constraint:\noldExpr")
     }
     {
@@ -1794,13 +1794,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
 
       val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+      val deltaSparkExtConf = StaticSQLConf.SPARK_SESSION_EXTENSIONS.key
       val msg =
         s"""This Delta operation requires the SparkSession to be configured with the
            |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config("$deltaSparkExtConf", "${classOf[DeltaSparkSessionExtension].getName}")
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
            |    .getOrCreate()
@@ -1990,22 +1991,6 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "22000")
       assert(e.getMessage ==
         "Using column c0 of type IntegerType as a partition column is not supported.")
-    }
-    {
-      val catalogPartitionSchema = StructType(Seq(StructField("a", IntegerType)))
-      val userPartitionSchema = StructType(Seq(StructField("b", StringType)))
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.unexpectedPartitionSchemaFromUserException(catalogPartitionSchema,
-          userPartitionSchema)
-      }
-      assert(e.getErrorClass == "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER")
-      assert(e.getSqlState == "42000")
-      assert(e.getMessage ==
-        "CONVERT TO DELTA was called with a partition schema different from the partition " +
-          "schema inferred from the catalog, please avoid providing the schema so that the " +
-          "partition schema can be chosen from the catalog.\n" +
-          s"\ncatalog partition schema:\n${catalogPartitionSchema.treeString}" +
-          s"\nprovided partition schema:\n${userPartitionSchema.treeString}")
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {

@@ -27,8 +27,10 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSparkSession {
+class SnapshotManagementSuite extends QueryTest with SQLTestUtils
+  with SharedSparkSession with DeltaSQLCommandTest {
 
 
   /**

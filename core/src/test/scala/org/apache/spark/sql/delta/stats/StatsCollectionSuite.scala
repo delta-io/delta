@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.stats
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.TestsStatistics
+import org.apache.spark.sql.delta.test.{TestsStatistics, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
@@ -33,7 +33,7 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 class StatsCollectionSuite
   extends QueryTest
   with SharedSparkSession  with DeltaColumnMappingTestUtils
-  with TestsStatistics {
+  with TestsStatistics with DeltaSQLCommandTest {
 
   import testImplicits._
 

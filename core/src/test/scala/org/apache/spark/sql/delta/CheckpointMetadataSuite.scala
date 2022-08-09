@@ -27,8 +27,9 @@ import org.apache.commons.io.IOUtils
 
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class CheckpointMetadataSuite extends SharedSparkSession {
+class CheckpointMetadataSuite extends SharedSparkSession with DeltaSQLCommandTest {
 
   // same checkpoint schema for tests
   private val checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false))

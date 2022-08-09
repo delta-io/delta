@@ -37,10 +37,11 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
-    with SharedSparkSession    with GivenWhenThen {
+    with SharedSparkSession    with DeltaSQLCommandTest with GivenWhenThen {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }

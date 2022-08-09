@@ -30,11 +30,14 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.util.Utils
-
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
+import io.delta.sql.DeltaSparkSessionExtension
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils with DeltaSQLCommandTest {
 
   protected val testOp = Truncate()
 
@@ -156,7 +159,7 @@ class DeltaLogSuite extends QueryTest
 
     val deltas = log2.snapshot.logSegment.deltas
     assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
-    val versions = deltas.map(FileNames.deltaVersion).sorted
+    val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
     assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
   }
 
@@ -503,6 +506,56 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("DeltaLog should throw exception if spark.sql.extensions and " +
+    "spark.sql.catalog.spark_catalog configs are not found") {
+    withTempDir { dir =>
+      SparkSession.cleanupAnyExistingSession()
+      val testSpark = SparkSession.builder()
+        .appName("DeltaLogSparkExtensionTest")
+        .master("local[2]")
+        .getOrCreate()
+
+      val path = new Path(dir.getCanonicalPath)
+      val e = intercept[DeltaRuntimeException] {
+        DeltaLog.forTable(testSpark, path)
+      }
+      assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+    }
+  }
+
+  test("DeltaLog should not throw exception if SparkSession in initialized with " +
+    "spark.sql.extensions and spark.sql.catalog.spark_catalog conf") {
+    withTempDir { dir =>
+      SparkSession.cleanupAnyExistingSession()
+      val testSpark = SparkSession.builder()
+        .appName("DeltaLogSparkExtensionTest")
+        .master("local[2]")
+        .config(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
+          classOf[DeltaSparkSessionExtension].getName)
+        .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
+        .getOrCreate()
+
+      val path = new Path(dir.getCanonicalPath)
+      assert(DeltaLog.forTable(testSpark, path).tableExists == false)
+    }
+  }
+
+  test("DeltaLog should not throw exception if SparkSession in initialized with " +
+    ".withExtension api and spark.sql.catalog.spark_catalog conf is set") {
+    withTempDir { dir =>
+      SparkSession.cleanupAnyExistingSession()
+      val testSpark = SparkSession.builder()
+        .appName("DeltaLogSparkExtensionTest")
+        .master("local[2]")
+        .withExtensions(new io.delta.sql.DeltaSparkSessionExtension)
+        .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
+        .getOrCreate()
+
+      val path = new Path(dir.getCanonicalPath)
+      assert(DeltaLog.forTable(testSpark, path).tableExists == false)
     }
   }
 }
