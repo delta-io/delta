@@ -135,6 +135,15 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Get the details of a Delta table such as the format, name, and size.
+   *
+   * @since 2.1.0
+   */
+  def details(): DataFrame = {
+    executeDetails(deltaLog.dataPath.toString, table.getTableIdentifierIfExists)
+  }
+
+  /**
    * Generate a manifest for the given Delta Table
    *
    * @param mode Specifies the mode for the generation of the manifest.
