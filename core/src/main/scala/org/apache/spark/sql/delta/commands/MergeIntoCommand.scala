@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta.commands
 
 import java.util.concurrent.TimeUnit
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.files._
