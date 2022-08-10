@@ -33,10 +33,12 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
