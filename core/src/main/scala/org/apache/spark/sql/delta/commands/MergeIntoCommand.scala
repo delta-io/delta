@@ -91,6 +91,11 @@ case class MergeStats(
     matchedStats: Seq[MergeClauseStats],
     notMatchedStats: Seq[MergeClauseStats],
 
+    // Timings
+    executionTimeMs: Long,
+    scanTimeMs: Long,
+    rewriteTimeMs: Long,
+
     // Data sizes of source and target at different stages of processing
     source: MergeDataSizes,
     targetBeforeSkipping: MergeDataSizes,
@@ -139,6 +144,11 @@ object MergeStats {
       // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
       matchedStats = matchedClauses.map(MergeClauseStats(_)),
       notMatchedStats = notMatchedClauses.map(MergeClauseStats(_)),
+
+      // Timings
+      executionTimeMs = metrics("executionTimeMs").value,
+      scanTimeMs = metrics("scanTimeMs").value,
+      rewriteTimeMs = metrics("rewriteTimeMs").value,
 
       // Data sizes of source and target at different stages of processing
       source = MergeDataSizes(rows = Some(metrics("numSourceRows").value)),
@@ -273,13 +283,17 @@ case class MergeIntoCommand(
     "numTargetPartitionsAddedTo" ->
       createMetric(sc, "number of target partitions to which files were added"),
     "executionTimeMs" ->
-      createMetric(sc, "time taken to execute the entire operation"),
+      createTimingMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" ->
-      createMetric(sc, "time taken to scan the files for matches"),
+      createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createMetric(sc, "time taken to rewrite the matched files"))
+      createTimingMetric(sc, "time taken to rewrite the matched files"))
 
   override def run(spark: SparkSession): Seq[Row] = {
+    metrics("executionTimeMs").set(0)
+    metrics("scanTimeMs").set(0)
+    metrics("rewriteTimeMs").set(0)
+
     if (migratedSchema.isDefined) {
       // Block writes of void columns in the Delta log. Currently void columns are not properly
       // supported and are dropped on read, but this is not enough for merge command that is also

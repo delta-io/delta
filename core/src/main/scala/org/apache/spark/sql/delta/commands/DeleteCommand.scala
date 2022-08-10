@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.{lit, typedLit, udf}
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -52,9 +52,12 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "numCopiedRows" -> createMetric(sc, "number of rows copied"),
     "numBytesAdded" -> createMetric(sc, "number of bytes added"),
     "numBytesRemoved" -> createMetric(sc, "number of bytes removed"),
-    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
-    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "executionTimeMs" ->
+      createTimingMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" ->
+      createTimingMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" ->
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numTouchedRows" -> createMetric(sc, "number of rows touched")
