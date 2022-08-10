@@ -26,7 +26,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, If, InputFileName, Literal, Not}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
@@ -34,6 +34,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{lit, typedLit, udf}
+import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
@@ -79,6 +80,8 @@ case class DeleteCommand(
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
+  override val output: Seq[Attribute] = Seq(AttributeReference("num_affected_rows", LongType)())
+
   override lazy val metrics = createMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -95,7 +98,15 @@ case class DeleteCommand(
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
     }
 
-    Seq.empty[Row]
+    // Adjust for deletes at partition boundaries. Deletes at partition boundaries is a metadata
+    // operation, therefore we don't actually have any information around how many rows were deleted
+    // While this info may exist in the file statistics, it's not guaranteed that we have these
+    // statistics. To avoid any performance regressions, we currently just return a -1 in such cases
+    if (metrics("numRemovedFiles").value > 0 && metrics("numDeletedRows").value == 0) {
+      Seq(Row(-1L))
+    } else {
+      Seq(Row(metrics("numDeletedRows").value))
+    }
   }
 
   def performDelete(
