@@ -26,8 +26,7 @@ import org.apache.spark.sql.delta.commands.RestoreTableCommand
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.files.TahoeFileIndex
-import org.apache.spark.sql.delta.files.TahoeLogFileIndex
+import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.AnalysisHelper
