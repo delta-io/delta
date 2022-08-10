@@ -18,8 +18,16 @@ output "master_node_address" {
   value = module.processing-emr.master_node_address
 }
 
+output "eks_cluster_name" {
+  value = module.processing-eks.cluster_name
+}
+
 output "eks_cluster_endpoint" {
   value = module.processing-eks.cluster_endpoint
+}
+
+output "service_account_role_name" {
+  value = module.processing-eks.container_role
 }
 
 output "metastore_endpoint" {

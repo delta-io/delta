@@ -1,8 +1,22 @@
+resource "random_string" "benchmark_run_id" {
+  length  = 6
+  special = false
+  numeric = false
+  lower   = true
+  upper   = false
+}
+
 module "networking" {
   source = "./modules/networking"
 
   availability_zone1 = var.availability_zone1
   availability_zone2 = var.availability_zone2
+}
+
+module "ecr" {
+  source = "./modules/ecr"
+
+  benchmark_run_id = random_string.benchmark_run_id.result
 }
 
 module "storage" {
@@ -13,6 +27,8 @@ module "storage" {
 
 module "metastore-rds" {
   source = "./modules/metastore-rds"
+
+  benchmark_run_id = random_string.benchmark_run_id.result
 
   vpc_id     = module.networking.vpc_id
   subnet1_id = module.networking.subnet1_id
@@ -27,6 +43,8 @@ module "metastore-rds" {
 
 module "processing-emr" {
   source = "./modules/processing-emr"
+
+  benchmark_run_id = random_string.benchmark_run_id.result
 
   vpc_id     = module.networking.vpc_id
   subnet1_id = module.networking.subnet1_id
@@ -50,6 +68,8 @@ module "processing-emr" {
 module "processing-eks" {
   source = "./modules/processing-eks"
 
+  benchmark_run_id = random_string.benchmark_run_id.result
+
   vpc_id     = module.networking.vpc_id
   subnet1_id = module.networking.subnet1_id
   subnet2_id = module.networking.subnet2_id
@@ -63,8 +83,4 @@ module "processing-eks" {
   eks_workers            = var.eks_workers
 
   depends_on = [module.networking, module.storage]
-}
-
-module "ecr" {
-  source = "./modules/ecr"
 }

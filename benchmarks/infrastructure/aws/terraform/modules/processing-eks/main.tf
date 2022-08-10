@@ -1,7 +1,7 @@
 /* ========== EKS ========== */
 
 resource "aws_eks_cluster" "benchmarks" {
-  name     = "benchmarks-eks-cluster"
+  name     = "benchmarks-eks-cluster-${var.benchmark_run_id}"
   role_arn = aws_iam_role.benchmarks.arn
 
   vpc_config {
@@ -19,7 +19,7 @@ resource "aws_eks_cluster" "benchmarks" {
 
 resource "aws_eks_node_group" "benchmarks" {
   cluster_name    = aws_eks_cluster.benchmarks.name
-  node_group_name = "benchmarks-node-group"
+  node_group_name = "benchmarks-node-group-${var.benchmark_run_id}"
   subnet_ids      = [var.subnet1_id]
   instance_types  = []
   node_role_arn   = aws_iam_role.benchmarks_node_group.arn
@@ -50,7 +50,7 @@ resource "aws_eks_node_group" "benchmarks" {
 
 resource "aws_launch_template" "benchmarks" {
   instance_type = "i3.2xlarge"
-  name          = "benchmarks-lt"
+  name          = "benchmarks-lt-${var.benchmark_run_id}"
   lifecycle {
     create_before_destroy = true
   }
@@ -62,7 +62,7 @@ resource "aws_launch_template" "benchmarks" {
 
 resource "aws_eks_node_group" "egde_node" {
   cluster_name    = aws_eks_cluster.benchmarks.name
-  node_group_name = "benchmarks-edge-node-node-group"
+  node_group_name = "benchmarks-edge-node-node-group-${var.benchmark_run_id}"
   subnet_ids      = [var.subnet1_id]
   instance_types  = []
   node_role_arn   = aws_iam_role.benchmarks_node_group.arn
@@ -92,7 +92,7 @@ resource "aws_eks_node_group" "egde_node" {
 
 resource "aws_launch_template" "egde_node" {
   instance_type = "m5.xlarge"
-  name          = "benchmarks-edge-node-lt"
+  name          = "benchmarks-edge-node-lt-${var.benchmark_run_id}"
   lifecycle {
     create_before_destroy = true
   }
@@ -105,7 +105,7 @@ resource "aws_launch_template" "egde_node" {
 /* ========== IAM ========== */
 
 resource "aws_iam_role" "benchmarks" {
-  name = "benchmarks-eks-cluster-role"
+  name = "benchmarks-eks-cluster-role-${var.benchmark_run_id}"
 
   assume_role_policy = <<POLICY
 {
@@ -134,7 +134,7 @@ resource "aws_iam_role_policy_attachment" "benchmarks-AmazonEKSVPCResourceContro
 }
 
 resource "aws_iam_role" "benchmarks_node_group" {
-  name = "benchmarks-eks-node-group-role"
+  name = "benchmarks-eks-node-group-role-${var.benchmark_run_id}"
 
   assume_role_policy = jsonencode({
     Statement = [
@@ -200,11 +200,11 @@ data "aws_iam_policy_document" "benchmarks_assume_role_policy" {
 
 resource "aws_iam_role" "container_role" {
   assume_role_policy = data.aws_iam_policy_document.benchmarks_assume_role_policy.json
-  name               = "benchmarks-container-role"
+  name               = "benchmarks-container-role-${var.benchmark_run_id}"
 }
 
 resource "aws_iam_role_policy" "benchmarks_container_role_policy" {
-  name   = "benchmarks_container_role_policy"
+  name   = "benchmarks_container_role_policy_${var.benchmark_run_id}"
   role   = aws_iam_role.container_role.id
   policy = <<EOF
 {

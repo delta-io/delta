@@ -14,12 +14,12 @@ resource "aws_db_instance" "metastore_service" {
 }
 
 resource "aws_db_subnet_group" "metastore_service" {
-  name       = "benchmarks_subnet_group_for_metastore_service"
+  name       = "benchmarks_subnet_group_for_metastore_${var.benchmark_run_id}"
   subnet_ids = [var.subnet1_id, var.subnet2_id]
 }
 
 resource "aws_db_parameter_group" "metastore_service" {
-  name   = "benchmarks-metastore-service-pg"
+  name   = "benchmarks-metastore-service-pg-${var.benchmark_run_id}"
   family = "mysql8.0"
   # character set and collation has to be set to latin1 in order to avoid error when auto-creating schema.
   #   java.sql.SQLSyntaxErrorException: (conn=39) Column length too big for column 'PARAM_VALUE' (max = 16383); use BLOB or TEXT instead
@@ -35,7 +35,7 @@ resource "aws_db_parameter_group" "metastore_service" {
 }
 
 resource "aws_security_group" "metastore_service" {
-  name   = "benchmarks_metastore_security_group"
+  name   = "benchmarks_metastore_security_group_${var.benchmark_run_id}"
   vpc_id = var.vpc_id
   ingress {
     from_port   = 3306

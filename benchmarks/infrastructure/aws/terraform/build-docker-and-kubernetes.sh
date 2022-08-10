@@ -13,18 +13,21 @@ export_terraform_outputs() {
     local metastore_endpoint
     local mysql_user
     local mysql_password
+    local role_name
     account_id=$(terraform -chdir="$TERRAFORM_DIR" output account_id | tr -d '"')
     region=$(terraform -chdir="$TERRAFORM_DIR" output region | tr -d '"')
     ecr_repository_name=$(terraform -chdir="$TERRAFORM_DIR" output ecr_repository_name | tr -d '"')
     metastore_endpoint=$(terraform -chdir="$TERRAFORM_DIR" output metastore_endpoint | tr -d '"')
     mysql_user=$(terraform -chdir="$TERRAFORM_DIR" output mysql_user | tr -d '"')
     mysql_password=$(terraform -chdir="$TERRAFORM_DIR" output mysql_password | tr -d '"')
+    role_name=$(terraform -chdir="$TERRAFORM_DIR" output service_account_role_name | tr -d '"')
     export ACCOUNT_ID=$account_id
     export REGION=$region
     export ECR_REPOSITORY_NAME=$ecr_repository_name
     export METASTORE_ENDPOINT=$metastore_endpoint
     export MYSQL_USER=$mysql_user
     export MYSQL_PASSWORD=$mysql_password
+    export SERVICE_ACCOUNT_ROLE_NAME=$role_name
 }
 
 build_docker_image() {

@@ -11,7 +11,7 @@ metadata:
   namespace: benchmarks
   name: benchmarks-sa
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::${ACCOUNT_ID}:role/benchmarks-container-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::${ACCOUNT_ID}:role/${SERVICE_ACCOUNT_ROLE_NAME}"
 automountServiceAccountToken: true
 
 ---
@@ -144,9 +144,9 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
-          - key: eks.amazonaws.com/nodegroup
+          - key: role
             operator: In
             values:
-            - benchmarks-edge-node-node-group
+            - edge-node
   securityContext:
     runAsUser: 0

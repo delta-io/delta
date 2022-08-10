@@ -161,14 +161,22 @@ There are a few steps that are common for both deployment options.
    Apply complete! Resources: 23 added, 0 changed, 0 destroyed.
    Outputs:
    account_id = "<account_id>"
-   eks_cluster_endpoint = "https://19C4690AF99E49798A81086E6168F765.gr7.us-west-2.eks.amazonaws.com"
-   metastore_endpoint = "terraform-20220803140719966600000001.cjutoqgei0vo.us-west-2.rds.amazonaws.com:3306"
+   ecr_repository_name = "delta-benchmarks-spark-yzebqm"
+   ecr_uri = "<account_id>.dkr.ecr.us-west-2.amazonaws.com/delta-benchmarks-spark-yzebqm"
+   eks_cluster_endpoint = "https://ABF1330589E1382463803E5802F136A1.gr7.us-west-2.eks.amazonaws.com"
+   eks_cluster_name = "benchmarks-eks-cluster-yzebqm"
+   metastore_endpoint = "terraform-20220810082955275000000008.cjutoqgei0vo.us-west-2.rds.amazonaws.com:3306"
+   mysql_password = <sensitive>
+   mysql_user = "benchmark"
+   region = "us-west-2"
+   service_account_role_name = "benchmarks-container-role-yzebqm"
    ```
 
 6. Update kubeconfig:
    ```bash
-   aws eks --region us-west-2 update-kubeconfig --name benchmarks-eks-cluster
+   aws eks --region us-west-2 update-kubeconfig --name <CLUSTER_NAME>
    ```
+   As `CLUSTER_NAME` use the terraform output `eks_cluster_name` from the step above.
 
 7. Check if you can connect to the cluster by running some `kubectl` commands, for instance:
    ```bash
@@ -193,7 +201,7 @@ There are a few steps that are common for both deployment options.
    rolebinding.rbac.authorization.k8s.io/benchmarks-role-binding created
    configmap/hive-site created
    pod/benchmarks-edge-node created
-   Spark docker image URI: 781336771001.dkr.ecr.us-west-2.amazonaws.com/delta-benchmarks-spark:0.1
+   Spark docker image URI: <account_id>.dkr.ecr.us-west-2.amazonaws.com/delta-benchmarks-spark-yzebqm:0.1
    ```
    By default `apache/spark:v3.2.1` image is used. You can specify a different version by adding `--spark-version` parameter.
    ```bash

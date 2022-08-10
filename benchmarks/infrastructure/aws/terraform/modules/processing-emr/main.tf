@@ -1,11 +1,11 @@
 /* EC2 key used to SSH to EMR cluster nodes. */
 resource "aws_key_pair" "benchmarks" {
-  key_name   = "benchmarks_key_pair"
+  key_name   = "benchmarks_key_pair_${var.benchmark_run_id}"
   public_key = file(var.emr_public_key_path)
 }
 
 resource "aws_emr_cluster" "benchmarks" {
-  name                              = "delta_performance_benchmarks_cluster"
+  name                              = "delta_performance_benchmarks_cluster_${var.benchmark_run_id}"
   release_label                     = var.emr_version
   applications                      = ["Spark", "Hive"]
   termination_protection            = false
@@ -42,7 +42,7 @@ EOF
 }
 
 resource "aws_security_group" "emr" {
-  name   = "benchmarks_master_security_group"
+  name   = "benchmarks_master_security_group_${var.benchmark_run_id}"
   vpc_id = var.vpc_id
   ingress {
     description = "Allow inbound traffic from given IP."
@@ -67,7 +67,7 @@ resource "aws_security_group" "emr" {
 #   the managed policies for the default roles. Then, copy and paste the contents to new policy statements, modify
 #   the permissions as appropriate, and attach the modified permissions policies to the roles that you create.
 resource "aws_iam_role" "benchmarks_iam_emr_service_role" {
-  name               = "benchmarks_iam_emr_service_role"
+  name               = "benchmarks_iam_emr_service_role_${var.benchmark_run_id}"
   assume_role_policy = <<EOF
 {
   "Version": "2008-10-17",
@@ -86,7 +86,7 @@ EOF
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_service_policy" {
-  name   = "benchmarks_iam_emr_service_policy"
+  name   = "benchmarks_iam_emr_service_policy_${var.benchmark_run_id}"
   role   = aws_iam_role.benchmarks_iam_emr_service_role.id
   policy = <<EOF
 {
@@ -172,7 +172,7 @@ EOF
 }
 
 resource "aws_iam_role" "benchmarks_iam_emr_profile_role" {
-  name               = "benchmarks_iam_emr_profile_role"
+  name               = "benchmarks_iam_emr_profile_role_${var.benchmark_run_id}"
   assume_role_policy = <<EOF
 {
   "Version": "2008-10-17",
@@ -191,12 +191,12 @@ EOF
 }
 
 resource "aws_iam_instance_profile" "benchmarks_emr_profile" {
-  name = "benchmarks_emr_profile"
+  name = "benchmarks_emr_profile_${var.benchmark_run_id}"
   role = aws_iam_role.benchmarks_iam_emr_profile_role.name
 }
 
 resource "aws_iam_role_policy" "benchmarks_iam_emr_profile_policy" {
-  name   = "benchmarks_iam_emr_profile_policy"
+  name   = "benchmarks_iam_emr_profile_policy_${var.benchmark_run_id}"
   role   = aws_iam_role.benchmarks_iam_emr_profile_role.id
   policy = <<EOF
 {
