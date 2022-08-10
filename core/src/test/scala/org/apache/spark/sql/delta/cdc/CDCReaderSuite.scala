@@ -145,10 +145,12 @@ class CDCReaderSuite
       writeCdcData(
         log,
         spark.range(30, 35).toDF().withColumn(CDC_TYPE_COLUMN_NAME, lit("update_post")))
-
+      val changes = CDCReader.changesToBatchDF(log, 0, 2, spark)
+      // Just to kickoff `sizeInBytes` function to verify match pattern does not throw an exception
+      changes.queryExecution.analyzed.stats
       checkCDCAnswer(
         log,
-        CDCReader.changesToBatchDF(log, 0, 2, spark),
+        changes,
         data.withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
           .withColumn(CDC_COMMIT_VERSION, lit(0))
           .unionAll(spark.range(20, 25).withColumn(CDC_TYPE_COLUMN_NAME, lit("update_pre"))

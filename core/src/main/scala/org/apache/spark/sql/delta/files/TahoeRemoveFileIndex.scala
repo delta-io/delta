@@ -16,15 +16,13 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
+
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -39,11 +37,12 @@ class TahoeRemoveFileIndex(
     snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
+    // We add the metadata as faked partition columns in order to attach it on a per-file
+    // basis.
+    override def cdcPartitionValues(): Map[String, String] =
+        Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
 
-  override def additionalPartitionValues(): Map[String, String] =
-    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
-
-  override def partitionSchema: StructType =
-    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
+    override def partitionSchema: StructType =
+        CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
 }

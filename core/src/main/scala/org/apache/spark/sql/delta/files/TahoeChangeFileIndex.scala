@@ -19,18 +19,26 @@ package org.apache.spark.sql.delta.files
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
-import org.apache.spark.sql.delta.commands.cdc.CDCReader.CDCDataSpec
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDCDataSpec, CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION}
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
 
 /**
  * A [[TahoeFileIndex]] for scanning a sequence of CDC files. Similar to [[TahoeBatchFileIndex]],
  * the equivalent for reading [[AddFile]] actions.
  */
 class TahoeChangeFileIndex(
-                            spark: SparkSession,
-                            filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
-                            deltaLog: DeltaLog,
-                            path: Path,
-                            snapshot: Snapshot)
+    spark: SparkSession,
+    filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
+    deltaLog: DeltaLog,
+    path: Path,
+    snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
+
+    override val partitionSchema: StructType = snapshot.metadata.partitionSchema
+      .add(CDC_COMMIT_VERSION, LongType)
+      .add(CDC_COMMIT_TIMESTAMP, TimestampType)
+
+    // Data already has cdc partition values
+    override def cdcPartitionValues(): Map[String, String] = Map.empty
 }
