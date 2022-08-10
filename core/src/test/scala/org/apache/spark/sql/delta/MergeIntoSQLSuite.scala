@@ -82,7 +82,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
         update = "key2 = 20 + src.key3, value = 20 + src.value",
         insert = "(key2, value) VALUES (src.key3 - 10, src.value + 10)")
 
-      sql(cte + merge)
+//      print(sql(cte + merge).explain(true))
+      checkAnswer(sql(cte + merge), Row(2, 1, 0, 1))
       checkAnswer(readDeltaTable(tempPath),
         Row(1, 4) :: // No change
         Row(22, 23) :: // Update
