@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDCDataSpec, CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
-import org.apache.spark.sql.types.StructType
 
 /**
  * A base [[TahoeFileIndex]] for all CDC file indexes
@@ -47,14 +46,23 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](spark: SparkSession,
         action match {
             case AddCDCFile(_, partitionValues, size, tags) =>
                 ActionParameters(partitionValues, size, 0, false, tags)
-            case r@RemoveFile(_, _, dataChange, extendedFileMetadata, partitionValues, size, tags) =>
-                if (!extendedFileMetadata.getOrElse(false)) {
-                    // This shouldn't happen in user queries - the CDC flag was added at the same time as
-                    // extended metadata, so all removes in a table with CDC enabled should have it. (The
-                    // only exception is FSCK removes, which we screen out separately because they have
-                    // dataChange set to false.)
-                    throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
-                }
+            case r@RemoveFile(
+            _,
+            _,
+            dataChange,
+            extendedFileMetadata,
+            partitionValues,
+            size,
+            tags) => if (!extendedFileMetadata.getOrElse(false)) {
+                // This shouldn't happen in user queries -
+                // the CDC flag was added at the same time as
+                // extended metadata, so all removes in a table
+                // with CDC enabled should have it. (The
+                // only exception is FSCK removes, which we
+                // screen out separately because they have
+                // dataChange set to false.)
+                throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
+            }
                 ActionParameters(partitionValues, size.getOrElse(0L), 0, dataChange, tags)
             case AddFile(_, partitionValues, size, modificationTime, dataChange, _, tags) =>
                 ActionParameters(partitionValues, size, modificationTime, dataChange, tags)
