@@ -34,8 +34,10 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
+class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
