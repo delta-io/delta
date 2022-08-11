@@ -30,18 +30,19 @@ import org.apache.spark.sql.types.StructType
  * and CDC type on a per-file basis.
  */
 class TahoeCDCAddFileIndex(
-    override val spark: SparkSession,
-    val actionType: String = "cdcRead",
-    filesByVersion: Seq[CDCDataSpec[AddFile]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot)
+  override val spark: SparkSession,
+  val actionType: String = "cdcRead",
+  filesByVersion: Seq[CDCDataSpec[AddFile]],
+  deltaLog: DeltaLog,
+  path: Path,
+  snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
-    // We add the metadata as faked partition columns in order to attach it on a per-file
-    // basis.
-    override def cdcPartitionValues(): Map[String, String] =
-        Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
+  // We add the metadata as faked partition columns in order to attach it on a per-file
+  // basis.
+  override def cdcPartitionValues(): Map[String, String] =
+    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
 
-    override def partitionSchema: StructType = CDCReader.cdcReadSchema(super.partitionSchema)
+  override def partitionSchema: StructType =
+    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 }

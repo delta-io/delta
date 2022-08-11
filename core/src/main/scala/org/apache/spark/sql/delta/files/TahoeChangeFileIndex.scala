@@ -28,17 +28,17 @@ import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
  * the equivalent for reading [[AddFile]] actions.
  */
 class TahoeChangeFileIndex(
-    spark: SparkSession,
-    filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot)
+  spark: SparkSession,
+  filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
+  deltaLog: DeltaLog,
+  path: Path,
+  snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
-    override val partitionSchema: StructType = snapshot.metadata.partitionSchema
-      .add(CDC_COMMIT_VERSION, LongType)
-      .add(CDC_COMMIT_TIMESTAMP, TimestampType)
+  override val partitionSchema: StructType = snapshot.metadata.partitionSchema
+    .add(CDC_COMMIT_VERSION, LongType)
+    .add(CDC_COMMIT_TIMESTAMP, TimestampType)
 
-    // Data already has cdc partition values
-    override def cdcPartitionValues(): Map[String, String] = Map.empty
+  // Data already has cdc partition values
+  override def cdcPartitionValues(): Map[String, String] = Map.empty
 }

@@ -24,8 +24,8 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.SQLExecution
@@ -133,6 +133,24 @@ class CDCReaderSuite
     }
   }
 
+  test("execute sizeInBytes for TahoeCDCBaseFileIndex") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      import io.delta.implicits._
+      spark.range(10).write.delta(tempDir.toString)
+      writeCdcData(
+        log,
+        spark.range(1, 2).toDF.withColumn(CDC_TYPE_COLUMN_NAME, lit("update_pre")))
+      sql(s"DELETE FROM delta.`${tempDir.toString}`")
+      // The main purpose of the test is to execute `sizeInBytes`,
+      // which is called by the following expression.
+      val changesStats = CDCReader.changesToBatchDF(log, 0, 2, spark)
+        .queryExecution.analyzed.stats
+      val expectedStats = Statistics(3169)
+      assert(expectedStats == changesStats)
+    }
+  }
+
   test("cdc update ops") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
@@ -145,12 +163,9 @@ class CDCReaderSuite
       writeCdcData(
         log,
         spark.range(30, 35).toDF().withColumn(CDC_TYPE_COLUMN_NAME, lit("update_post")))
-      val changes = CDCReader.changesToBatchDF(log, 0, 2, spark)
-      // Just to kickoff `sizeInBytes` function to verify match pattern does not throw an exception
-      changes.queryExecution.analyzed.stats
       checkCDCAnswer(
         log,
-        changes,
+        CDCReader.changesToBatchDF(log, 0, 2, spark),
         data.withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
           .withColumn(CDC_COMMIT_VERSION, lit(0))
           .unionAll(spark.range(20, 25).withColumn(CDC_TYPE_COLUMN_NAME, lit("update_pre"))

@@ -27,103 +27,96 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 /**
  * A base [[TahoeFileIndex]] for all CDC file indexes
  */
-abstract class TahoeCDCBaseFileIndex[T <: FileAction](spark: SparkSession,
-    val filesByVersion: Seq[CDCDataSpec[T]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot)
-  extends TahoeFileIndex(spark, deltaLog, path) {
+abstract class TahoeCDCBaseFileIndex[T <: FileAction](
+  spark: SparkSession,
+  val filesByVersion: Seq[CDCDataSpec[T]],
+  deltaLog: DeltaLog,
+  path: Path,
+  snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
 
-    case class ActionParameters(
-        partitionValues: Map[String, String],
-        size: Long,
-        modificationTime: Long,
-        dataChange: Boolean,
-        tags: Map[String, String])
+  case class ActionParameters(
+    partitionValues: Map[String, String],
+    size: Long,
+    modificationTime: Long,
+    dataChange: Boolean,
+    tags: Map[String, String])
 
-    private def extractActionParameters(action: T):
-    ActionParameters = {
-        action match {
-            case AddCDCFile(_, partitionValues, size, tags) =>
-                ActionParameters(partitionValues, size, 0, false, tags)
-            case r@RemoveFile(
-            _,
-            _,
-            dataChange,
-            extendedFileMetadata,
+  private def extractActionParameters(action: T): ActionParameters = {
+    action match {
+      case AddCDCFile(_, partitionValues, size, tags) =>
+        ActionParameters(partitionValues, size, 0, false, tags)
+      case r@RemoveFile(_, _, dataChange, extendedFileMetadata, partitionValues, size, tags) =>
+        if (!extendedFileMetadata.getOrElse(false)) {
+          // This shouldn't happen in user queries -
+          // the CDC flag was added at the same time as
+          // extended metadata, so all removes in a table
+          // with CDC enabled should have it. (The
+          // only exception is FSCK removes, which we
+          // screen out separately because they have
+          // dataChange set to false.)
+          throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
+        }
+        ActionParameters(partitionValues, size.getOrElse(0L), 0, dataChange, tags)
+      case AddFile(_, partitionValues, size, modificationTime, dataChange, _, tags) =>
+        ActionParameters(partitionValues, size, modificationTime, dataChange, tags)
+    }
+  }
+
+  override def tableVersion: Long = snapshot.version
+
+  override def matchingFiles(
+    partitionFilters: Seq[Expression],
+    dataFilters: Seq[Expression]): Seq[AddFile] = {
+    val addFiles = filesByVersion
+      .flatMap {
+        case CDCDataSpec(version, timestamp, actions) =>
+          actions.map { action =>
+            val ActionParameters(
             partitionValues,
             size,
-            tags) => if (!extendedFileMetadata.getOrElse(false)) {
-                // This shouldn't happen in user queries -
-                // the CDC flag was added at the same time as
-                // extended metadata, so all removes in a table
-                // with CDC enabled should have it. (The
-                // only exception is FSCK removes, which we
-                // screen out separately because they have
-                // dataChange set to false.)
-                throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
-            }
-                ActionParameters(partitionValues, size.getOrElse(0L), 0, dataChange, tags)
-            case AddFile(_, partitionValues, size, modificationTime, dataChange, _, tags) =>
-                ActionParameters(partitionValues, size, modificationTime, dataChange, tags)
-        }
-    }
+            modificationTime,
+            dataChange,
+            tags) = extractActionParameters(action)
 
-    override def tableVersion: Long = snapshot.version
+            val newPartitionValues =
+              partitionValues ++
+                (Map(
+                  CDC_COMMIT_VERSION -> version.toString,
+                  CDC_COMMIT_TIMESTAMP -> Option(timestamp).map(_.toString).orNull)
+                  ++ cdcPartitionValues())
 
-    override def matchingFiles(
-        partitionFilters: Seq[Expression],
-        dataFilters: Seq[Expression]): Seq[AddFile] = {
-        val addFiles = filesByVersion
-          .flatMap {
-              case CDCDataSpec(version, timestamp, actions) =>
-                  actions.map { action =>
-                      val ActionParameters(
-                      partitionValues,
-                      size,
-                      modificationTime,
-                      dataChange,
-                      tags) = extractActionParameters(action)
-
-                      val newPartitionValues =
-                          partitionValues ++
-                            (Map(
-                                CDC_COMMIT_VERSION -> version.toString,
-                                CDC_COMMIT_TIMESTAMP -> Option(timestamp).map(_.toString).orNull)
-                              ++ cdcPartitionValues())
-
-                      AddFile(
-                          action.path,
-                          newPartitionValues,
-                          size,
-                          modificationTime,
-                          dataChange,
-                          tags = tags)
-                  }
+            AddFile(
+              action.path,
+              newPartitionValues,
+              size,
+              modificationTime,
+              dataChange,
+              tags = tags)
           }
-        DeltaLog.filterFileList(
-            partitionSchema,
-            spark.createDataset(addFiles)(addFileEncoder).toDF(),
-            partitionFilters)
-          .as[AddFile](addFileEncoder)
-          .collect()
-    }
+      }
+    DeltaLog.filterFileList(
+      partitionSchema,
+      spark.createDataset(addFiles)(addFileEncoder).toDF(),
+      partitionFilters)
+      .as[AddFile](addFileEncoder)
+      .collect()
+  }
 
-    def cdcPartitionValues(): Map[String, String]
+  def cdcPartitionValues(): Map[String, String]
 
-    override def inputFiles: Array[String] = {
-        filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
-    }
+  override def inputFiles: Array[String] = {
+    filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
+  }
 
-    override def refresh(): Unit = {}
+  override def refresh(): Unit = {}
 
-    override def sizeInBytes: Long =
-        filesByVersion
-          .map(_.actions.map {
-              case change: AddCDCFile => change.size
-              case add: AddFile => add.size
-              case remove: RemoveFile => remove.size.getOrElse(0L)
-          }.sum)
-          .sum
+  override def sizeInBytes: Long =
+    filesByVersion
+      .map(_.actions.map {
+        case change: AddCDCFile => change.size
+        case add: AddFile => add.size
+        case remove: RemoveFile => remove.size.getOrElse(0L)
+      }.sum)
+      .sum
 
 }

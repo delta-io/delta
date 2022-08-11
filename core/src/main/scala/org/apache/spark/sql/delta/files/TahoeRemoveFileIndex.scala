@@ -30,19 +30,19 @@ import org.apache.spark.sql.types.StructType
  * [[TahoeBatchFileIndex]], the equivalent for reading [[AddFile]] actions.
  */
 class TahoeRemoveFileIndex(
-    spark: SparkSession,
-    filesByVersion: Seq[CDCDataSpec[RemoveFile]],
-    deltaLog: DeltaLog,
-    path: Path,
-    snapshot: Snapshot)
+  spark: SparkSession,
+  filesByVersion: Seq[CDCDataSpec[RemoveFile]],
+  deltaLog: DeltaLog,
+  path: Path,
+  snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
-    // We add the metadata as faked partition columns in order to attach it on a per-file
-    // basis.
-    override def cdcPartitionValues(): Map[String, String] =
-        Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
+  // We add the metadata as faked partition columns in order to attach it on a per-file
+  // basis.
+  override def cdcPartitionValues(): Map[String, String] =
+    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
 
-    override def partitionSchema: StructType =
-        CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
+  override def partitionSchema: StructType =
+    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
 }
