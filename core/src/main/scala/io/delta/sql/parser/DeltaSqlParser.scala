@@ -39,11 +39,8 @@
 package io.delta.sql.parser
 
 import java.util.Locale
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.catalyst.TimeTravel
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
@@ -52,8 +49,6 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -208,6 +203,14 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     DescribeDeltaDetailCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier))
+  }
+
+  override def visitShowCreateTable(ctx: DeltaSqlBaseParser.ShowCreateTableContext): LogicalPlan = withOrigin(ctx) {
+    val tableIdentifier = visitTableIdentifier(ctx.table)
+    val spark = SparkSession.active
+    DeltaTableIdentifier(spark, tableIdentifier).map { id =>
+      ShowCreateTableCommand(Option(if (ctx.path !=null) ctx.path.getText else null), Option(tableIdentifier))
+    }.orNull
   }
 
   override def visitDescribeDeltaHistory(

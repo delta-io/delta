@@ -75,6 +75,7 @@ statement
     : VACUUM (path=STRING | table=qualifiedName)
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | SHOW CREATE TABLE (path=STRING | table=qualifiedName)             #showCreateTable
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
@@ -180,6 +181,7 @@ COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
 CONVERT: 'CONVERT';
+CREATE: 'CREATE';
 DELTA: 'DELTA';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
