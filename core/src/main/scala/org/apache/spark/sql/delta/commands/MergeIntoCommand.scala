@@ -219,10 +219,10 @@ case class MergeIntoCommand(
   override val canOverwriteSchema: Boolean = false
 
   override val output: Seq[Attribute] = Seq(
-    AttributeReference("number of affected rows", LongType)(),
-    AttributeReference("number of updated rows", LongType)(),
-    AttributeReference("number of deleted rows", LongType)(),
-    AttributeReference("number of inserted rows", LongType)())
+    AttributeReference("num_affected_rows", LongType)(),
+    AttributeReference("num_updated_rows", LongType)(),
+    AttributeReference("num_deleted_rows", LongType)(),
+    AttributeReference("num_inserted_rows", LongType)())
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
