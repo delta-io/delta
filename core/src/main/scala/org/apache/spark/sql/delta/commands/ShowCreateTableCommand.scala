@@ -20,13 +20,15 @@ import org.apache.hadoop.fs.Path
 
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Table, TableCatalog}
 import org.apache.spark.sql.catalyst.util.escapeSingleQuotedString
 import org.apache.spark.sql.delta.DeltaErrors.cannotShowCreateGeneratedColumnsProperty
-import org.apache.spark.sql.delta.DeltaTableIdentifier
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -42,7 +44,8 @@ import scala.collection.mutable.ArrayBuffer
  * from [https://github.com/apache/spark/blob/branch-3.3/
  * sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/v2/ShowCreateTableExec.scala]
  */
-case class ShowCreateTableCommand(tableID: DeltaTableIdentifier)
+case class ShowCreateTableCommand(path: Option[String],
+                                  tableIdentifier: Option[TableIdentifier])
   extends LeafRunnableCommand with DeltaCommand {
 
   case class ShowCreateTableOutput(createtab_stmt: String)
@@ -51,11 +54,16 @@ case class ShowCreateTableCommand(tableID: DeltaTableIdentifier)
     schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val builder = new mutable.StringBuilder
-    val md = sparkSession.sessionState.catalog.getTableMetadata(tableID.table.get)
-    val dt = DeltaTableV2(sparkSession, new Path(md.location), Option(md))
-    showCreateTable(dt, builder)
-    Seq(Row(UTF8String.fromString(builder.toString)))
+    val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
+
+    val deltaLog = org.apache.spark.sql.delta.DeltaLog.forTable(sparkSession, basePath)
+    recordDeltaOperation(deltaLog, "delta.ddl.showCreateTable") {
+      val snapshot = deltaLog.update()
+      val builder = new mutable.StringBuilder
+      val dt = DeltaTableV2(sparkSession, basePath, tableMetadata)
+      showCreateTable(dt, builder)
+      Seq(Row(UTF8String.fromString(builder.toString)))
+    }
   }
 
   private def showCreateTable(table: Table, builder: mutable.StringBuilder): Unit = {
@@ -152,5 +160,35 @@ case class ShowCreateTableCommand(tableID: DeltaTableIdentifier)
 
   private def concatByMultiLines(iter: Iterable[String]): String = {
     iter.mkString("(\n  ", ",\n  ", ")\n")
+  }
+
+  protected def getPathAndTableMetadata(
+                                         spark: SparkSession,
+                                         path: Option[String],
+                                         tableIdentifier: Option[TableIdentifier]):
+  (Path, Option[CatalogTable]) = {
+    path.map(new Path(_) -> None).orElse {
+      tableIdentifier.map { i =>
+        DeltaTableIdentifier(spark, tableIdentifier.get) match {
+          case Some(id) if id.path.isDefined => new Path(id.path.get) -> None
+          case _ =>
+            // This should be a catalog table.
+            try {
+              val metadata = spark.sessionState.catalog.getTableMetadata(i)
+              if (metadata.tableType == CatalogTableType.VIEW) {
+                throw DeltaErrors.viewInDescribeDetailException(i)
+              }
+              new Path(metadata.location) -> Some(metadata)
+            } catch {
+              // Better error message if the user tried to DESCRIBE DETAIL a temp view.
+              case _: NoSuchTableException | _: NoSuchDatabaseException
+                if spark.sessionState.catalog.getTempView(i.table).isDefined =>
+                throw DeltaErrors.viewInDescribeDetailException(i)
+            }
+        }
+      }
+    }.getOrElse {
+      throw DeltaErrors.missingTableIdentifierException("DESCRIBE DETAIL")
+    }
   }
 }

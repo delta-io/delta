@@ -208,7 +208,19 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-
+  test(testName = "Test DDL Output for Table with File Path SHOW CREATE TABLE") {
+    withTempDir { foo =>
+      withTable("external_table") {
+        val fooPath = foo.getCanonicalPath
+        sql(s"CREATE TABLE delta.`file:$fooPath` (id bigint) USING delta")
+        val ddl = getShowCreateTable(s"delta.`$fooPath`")
+        assert(ddl.contains("CREATE TABLE"))
+        assert(ddl.contains("USING delta"))
+        assert(ddl.contains(s"TABLE delta.`file:$fooPath`"))
+        assert(ddl.contains(s"LOCATION '$fooPath'"))
+      }
+    }
+  }
   /**
    * Helper method to get the show create table output as a string
    *

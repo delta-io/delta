@@ -201,7 +201,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val tableIdentifier = visitTableIdentifier(ctx.table)
     val spark = SparkSession.active
     DeltaTableIdentifier(spark, tableIdentifier).map { id =>
-      ShowCreateTableCommand(id)
+      ShowCreateTableCommand(Option(if (ctx.path !=null) ctx.path.getText else null), Option(tableIdentifier))
     }.orNull
   }
 
