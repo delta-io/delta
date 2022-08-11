@@ -110,7 +110,7 @@ object DeltaSourceOffset {
       throw DeltaErrors.cannotFindSourceVersionException(json)
     }
 
-    var maxVersion = VERSION_1
+    val maxVersion = VERSION_1
 
     if (versionOpt.get > maxVersion) {
       throw DeltaErrors.invalidFormatFromSourceVersion(versionOpt.get, maxVersion)
