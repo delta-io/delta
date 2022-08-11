@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+# type: ignore[union-attr]
+
 import unittest
 import os
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple

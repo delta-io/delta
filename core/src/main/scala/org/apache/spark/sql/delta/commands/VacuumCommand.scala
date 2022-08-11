@@ -162,7 +162,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           fileListingParallelism = Option(parallelism)
         )
-        .groupByKey(x => x.path)
+        .groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
           // of all the duplicates we can return the newest file.
@@ -189,14 +189,15 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
             fileStatusIterator.flatMap { fileStatus =>
               if (fileStatus.isDir) {
-                Iterator.single(relativize(fileStatus.getPath, fs, reservoirBase, isDir = true))
+                Iterator.single(
+                  relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = true))
               } else {
                 val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
                 val dirsWithSlash = dirs.map { p =>
                   relativize(new Path(p), fs, reservoirBase, isDir = true)
                 }
                 dirsWithSlash ++ Iterator(
-                  relativize(new Path(fileStatus.path), fs, reservoirBase, isDir = false))
+                  relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = false))
               }
             }
           }.groupBy($"value" as 'path)
@@ -317,6 +318,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     import spark.implicits._
 
     if (parallel) {
+      // If there are no entries, do not call reduce as it results in empty collection error
+      if (diff.isEmpty) return 0
+
       diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
         val filesDeletedPerPartition =

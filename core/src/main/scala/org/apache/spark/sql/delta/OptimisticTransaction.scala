@@ -232,6 +232,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected var commitAttemptStartTime: Long = _
 
+  /**
+   * Tracks actions within the transaction, will commit along with the passed-in actions in the
+   * commit function.
+   */
+  protected val actions = new ArrayBuffer[Action]
+
+  /**
+   * Record a SetTransaction action that will be committed as part of this transaction.
+   */
+  def updateSetTransaction(appId: String, version: Long, lastUpdate: Option[Long]): Unit = {
+    actions += SetTransaction(appId, version, lastUpdate)
+  }
+
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
 
@@ -257,6 +270,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var checkUnsupportedDataType: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
+
+  /**
+   * The logSegment of the snapshot prior to the commit.
+   * Will be updated only when retrying due to a conflict.
+   */
+  private[delta] var preCommitLogSegment: LogSegment = snapshot.logSegment
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -471,9 +490,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /** Returns a[[DeltaScan]] based on the given filters and projections. */
-  override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
-    val scan = snapshot.filesForScan(projection, filters)
+  /** Returns a[[DeltaScan]] based on the given filters. */
+  override def filesForScan(
+    filters: Seq[Expression],
+    keepNumRecords: Boolean = false
+  ): DeltaScan = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -494,7 +516,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(Nil, filters)
+    val scan = snapshot.filesForScan(filters)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -580,6 +602,30 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
+   * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
+   */
+  protected def checkForSetTransactionConflictAndDedup(actions: Seq[Action]): Seq[Action] = {
+    val finalActions = new ArrayBuffer[Action]
+    val txnIdToVersionMap = new mutable.HashMap[String, Long].empty
+    for (action <- actions) {
+      action match {
+        case st: SetTransaction =>
+          txnIdToVersionMap.get(st.appId).map { version =>
+            if (version != st.version) {
+              throw DeltaErrors.setTransactionVersionConflict(st.appId, version, st.version)
+            }
+          } getOrElse {
+            txnIdToVersionMap += (st.appId -> st.version)
+            finalActions += action
+          }
+        case _ => finalActions += action
+      }
+    }
+    finalActions.toSeq
+  }
+
+  /**
    * We want to future-proof and explicitly block any occurrences of
    * - table has CDC enabled and there are FileActions to write, AND
    * - table has column mapping enabled and there is a column mapping related metadata action
@@ -636,8 +682,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Check for CDC metadata columns
       performCdcMetadataCheck()
 
+      // Check for internal SetTransaction conflicts and dedup.
+      val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
+
       // Try to commit at the next version.
-      val preparedActions = prepareCommit(actions, op)
+      val preparedActions = prepareCommit(finalActions, op)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1020,8 +1069,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     allowFallbackToSnapshotIsolation
   }
 
-  protected def getDefaultIsolationLevel(): IsolationLevel = {
-    Serializable
+  /**
+  * Default [[IsolationLevel]] as set in table metadata.
+  */
+  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
   /**
@@ -1278,7 +1330,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns the next attempt version given the last attempted version */
   protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    deltaLog.update().version + 1
+    val latestSnapshot = deltaLog.update()
+    preCommitLogSegment = latestSnapshot.logSegment
+    latestSnapshot.version + 1
   }
 
   /** Register a hook that will be executed once a commit is successful. */
@@ -1287,6 +1341,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       postCommitHooks.append(hook)
     }
   }
+
+  def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
 
   /** Executes the registered post commit hooks. */
   protected def runPostCommitHooks(

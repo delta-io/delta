@@ -19,9 +19,12 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.PrintWriter
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableBuilder
 
@@ -35,7 +38,7 @@ import org.apache.spark.sql.functions.{current_timestamp, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
@@ -1670,6 +1673,67 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
         cdcRead,
         spark.table(tableName2).drop("dateCol")
       )
+    }
+  }
+
+  test("not null should be enforced with generated columns") {
+    withTableName("tbl") { tbl =>
+      createTable(tbl,
+        None, "c1 INT, c2 STRING, c3 INT", Map("c3" -> "c1 + 1"), Seq.empty, Set("c1", "c2", "c3"))
+
+      // try to write data without c2 in the DF
+      val schemaWithoutColumnC2 = StructType(
+        Seq(StructField("c1", IntegerType, true)))
+      val data1 = List(Row(3))
+      val df1 = spark.createDataFrame(data1.asJava, schemaWithoutColumnC2)
+
+      val e1 = intercept[DeltaInvariantViolationException] {
+        df1.write.format("delta").mode("append").saveAsTable("tbl")
+      }
+      assert(e1.getMessage.contains("Column c2, which has a NOT NULL constraint," +
+        " is missing from the data being written into the table."))
+    }
+  }
+
+  Seq(true, false).foreach { allowNullInsert =>
+    test("nullable column should work with generated columns - " +
+      "allowNullInsert enabled=" + allowNullInsert) {
+      withTableName("tbl") { tbl =>
+        withSQLConf(DeltaSQLConf.GENERATED_COLUMN_ALLOW_NULLABLE.key -> allowNullInsert.toString) {
+          createTable(
+            tbl, None, "c1 INT, c2 STRING, c3 INT", Map("c3" -> "c1 + 1"), Seq.empty)
+
+          // create data frame that matches the table's schema
+          val data1 = List(Row(1, "a1"), Row(2, "a2"))
+          val schema = StructType(
+            Seq(StructField("c1", IntegerType, true), StructField("c2", StringType, true)))
+          val df1 = spark.createDataFrame(data1.asJava, schema)
+          df1.write.format("delta").mode("append").saveAsTable("tbl")
+
+          // create a data frame that does not have c2
+          val schemaWithoutOptionalColumnC2 = StructType(
+            Seq(StructField("c1", IntegerType, true)))
+
+          val data2 = List(Row(3))
+          val df2 = spark.createDataFrame(data2.asJava, schemaWithoutOptionalColumnC2)
+
+          if (allowNullInsert) {
+            df2.write.format("delta").mode("append").saveAsTable("tbl")
+            // check correctness
+            val expectedDF = df1
+              .union(df2.withColumn("c2", lit(null).cast(StringType)))
+              .withColumn("c3", 'c1 + 1)
+            checkAnswer(spark.read.table(tbl), expectedDF)
+          } else {
+            // when allow null insert is not enabled.
+            val e = intercept[AnalysisException] {
+              df2.write.format("delta").mode("append").saveAsTable("tbl")
+            }
+            e.getMessage.contains(
+              "A column or function parameter with name `c2` cannot be resolved")
+          }
+        }
+      }
     }
   }
 }

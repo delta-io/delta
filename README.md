@@ -176,7 +176,7 @@ Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/
 There are two mediums of communication within the Delta Lake community.
 
 * Public Slack Channel
-  - [Register here](https://join.slack.com/t/delta-users/shared_invite/zt-165gcm2g7-0Sc57w7dX0FbfilR9EPwVQ)
+  - [Register here](https://go.delta.io/slack)
   - [Login here](https://delta-users.slack.com/)
 * [Linkedin page](https://www.linkedin.com/company/deltalake)
 * [Youtube channel](https://www.youtube.com/c/deltalake)

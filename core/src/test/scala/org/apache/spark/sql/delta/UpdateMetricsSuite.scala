@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -36,7 +37,10 @@ class UpdateMetricsSuite extends QueryTest
   /**
    * Case class to parameterize tests.
    */
-  case class TestConfiguration(partitioned: Boolean, cdfEnabled: Boolean)
+  case class TestConfiguration(
+      partitioned: Boolean,
+      cdfEnabled: Boolean
+  )
 
   /**
    * Case class to parameterize metric results.
@@ -50,12 +54,15 @@ class UpdateMetricsSuite extends QueryTest
    */
   protected def testUpdateMetrics(name: String)(testFn: TestConfiguration => Unit): Unit = {
     for {
-      partitioned <- Seq(true, false)
-      cdfEnabled <- Seq(true, false)
+      partitioned <- BOOLEAN_DOMAIN
+      cdfEnabled <- Seq(false)
     } {
-      val testConfig = TestConfiguration(partitioned = partitioned, cdfEnabled = cdfEnabled)
-      val testName = s"update-metrics: $name - Partitioned = $partitioned, cdfEnabled = " +
-        s"$cdfEnabled"
+      val testConfig =
+        TestConfiguration(partitioned = partitioned,
+          cdfEnabled = cdfEnabled
+        )
+      var testName =
+        s"update-metrics: $name - Partitioned = $partitioned, cdfEnabled = $cdfEnabled"
       test(testName) {
         testFn(testConfig)
       }
@@ -137,7 +144,6 @@ class UpdateMetricsSuite extends QueryTest
     // Run the update capture and get all metrics.
     val results = runUpdateAndCaptureMetrics(table, where, testConfig)
 
-
     // Check operation metrics schema.
     val unknownKeys = results.operationMetrics.keySet -- DeltaOperationMetrics.UPDATE --
       DeltaOperationMetrics.WRITE
@@ -171,7 +177,6 @@ class UpdateMetricsSuite extends QueryTest
   }
 
 
-
   for (whereClause <- Seq("", "1 = 1")) {
     testUpdateMetrics(s"update all with where = '$whereClause'") { testConfig =>
       val numFiles = 5
@@ -187,7 +192,7 @@ class UpdateMetricsSuite extends QueryTest
         table = spark.range(start = 0, end = numRows, step = 1, numPartitions = numFiles),
         where = whereClause,
         expectedOperationMetrics = Map(
-          "numCopiedRows" -> -1,
+          "numCopiedRows" -> 0,
           "numUpdatedRows" -> -1,
           "numOutputRows" -> -1,
           "numFiles" -> -1,
@@ -262,14 +267,17 @@ class UpdateMetricsSuite extends QueryTest
 
   for (whereClause <- Seq("id = 0", "id >= 49 and id < 50")) {
     testUpdateMetrics(s"update one row with where = `$whereClause`") { testConfig =>
+      var numCopiedRows = 19
+      val numAddedFiles = 1
+      var numRemovedFiles = 1
       runUpdateAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
         expectedOperationMetrics = Map(
-          "numCopiedRows" -> 19,
+          "numCopiedRows" -> numCopiedRows,
           "numUpdatedRows" -> 1,
-          "numAddedFiles" -> 1,
-          "numRemovedFiles" -> 1,
+          "numAddedFiles" -> numAddedFiles,
+          "numRemovedFiles" -> numRemovedFiles,
           "numAddedChangeFiles" -> {
             if (testConfig.cdfEnabled) {
               1
@@ -306,32 +314,18 @@ class UpdateMetricsSuite extends QueryTest
 
   testUpdateMetrics("update one row per file") { testConfig =>
     val numPartitions = 5
+    var numCopiedRows = 95
+    val numAddedFiles = if (testConfig.partitioned) 5 else 2
+    var numRemovedFiles = 5
     runUpdateAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = numPartitions),
       where = "id in (5, 25, 45, 65, 85)",
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> 95,
+        "numCopiedRows" -> numCopiedRows,
         "numUpdatedRows" -> 5,
-        "numAddedFiles" -> {
-          if (testConfig.partitioned) {
-            5
-          } else {
-            2
-          }
-        },
-        "numRemovedFiles" -> 5,
-        "numAddedChangeFiles" -> {
-          if (testConfig.cdfEnabled) {
-            if (testConfig.partitioned) {
-              5
-            } else {
-              2
-            }
-          } else {
-            0
-          }
-        }
-      ),
+        "numAddedFiles" -> numAddedFiles,
+        "numRemovedFiles" -> numRemovedFiles,
+        "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) numAddedFiles else 0 }),
       testConfig = testConfig
     )
   }

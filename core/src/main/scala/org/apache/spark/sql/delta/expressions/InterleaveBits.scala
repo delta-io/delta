@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.expressions
 
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
 import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType}
@@ -36,7 +38,7 @@ import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType}
  * @note Only supports input expressions of type Int for now.
  */
 case class InterleaveBits(children: Seq[Expression])
-  extends Expression with ExpectsInputTypes
+  extends Expression with ExpectsInputTypes with SQLConfHelper
     with CodegenFallback /* TODO: implement doGenCode() */ {
 
   private val n: Int = children.size
@@ -51,6 +53,8 @@ case class InterleaveBits(children: Seq[Expression])
   val nullValue: Int = 0
 
   private val childrenArray: Array[Expression] = children.toArray
+
+  private val fastInterleaveBitsEnabled = conf.getConf(DeltaSQLConf.FAST_INTERLEAVE_BITS_ENABLED)
 
   private val ints = new Array[Int](n)
 
@@ -67,8 +71,44 @@ case class InterleaveBits(children: Seq[Expression])
       ints.update(i, int)
       i += 1
     }
+    InterleaveBits.interleaveBits(ints, fastInterleaveBitsEnabled)
+  }
 
-    val ret = new Array[Byte](n * 4)
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): InterleaveBits = copy(children = newChildren)
+}
+
+object InterleaveBits {
+
+  private[expressions] def interleaveBits(
+      inputs: Array[Int],
+      fastInterleaveBitsEnabled: Boolean): Array[Byte] = {
+    if (fastInterleaveBitsEnabled) {
+      inputs.length match {
+        // The default algorithm has the complexity O(32 * n) (n is the number of input columns)
+        // The new algorithm has O(4 * 8) complexity when the number of Z-Order by columns is
+        // less than 9. It uses the algorithm described here
+        // http://graphics.stanford.edu/~seander/bithacks.html#InterleaveTableObvious
+        case 0 => Array.empty
+        case 1 => intToByte(inputs(0))
+        case 2 => interleave2Ints(inputs(1), inputs(0))
+        case 3 => interleave3Ints(inputs(2), inputs(1), inputs(0))
+        case 4 => interleave4Ints(inputs(3), inputs(2), inputs(1), inputs(0))
+        case 5 => interleave5Ints(inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
+        case 6 => interleave6Ints(inputs(5), inputs(4), inputs(3), inputs(2), inputs(1), inputs(0))
+        case 7 => interleave7Ints(inputs(6), inputs(5), inputs(4), inputs(3), inputs(2), inputs(1),
+          inputs(0))
+        case 8 => interleave8Ints(inputs(7), inputs(6), inputs(5), inputs(4), inputs(3), inputs(2),
+          inputs(1), inputs(0))
+        case _ => defaultInterleaveBits(inputs, inputs.length)
+      }
+    } else {
+      defaultInterleaveBits(inputs, inputs.length)
+    }
+  }
+
+  private def defaultInterleaveBits(inputs: Array[Int], numCols: Int): Array[Byte] = {
+    val ret = new Array[Byte](numCols * 4)
     var ret_idx: Int = 0
     var ret_bit: Int = 7
     var ret_byte: Byte = 0
@@ -76,8 +116,8 @@ case class InterleaveBits(children: Seq[Expression])
     var bit = 31 /* going from most to least significant bit */
     while (bit >= 0) {
       var idx = 0
-      while (idx < n) {
-        ret_byte = (ret_byte | (((ints(idx) >> bit) & 1) << ret_bit)).toByte
+      while (idx < numCols) {
+        ret_byte = (ret_byte | (((inputs(idx) >> bit) & 1) << ret_bit)).toByte
         ret_bit -= 1
         if (ret_bit == -1) {
           // finished processing a byte
@@ -90,11 +130,270 @@ case class InterleaveBits(children: Seq[Expression])
       }
       bit -= 1
     }
-    assert(ret_idx == n * 4)
+    assert(ret_idx == numCols * 4)
     assert(ret_bit == 7)
     ret
   }
 
-  override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[Expression]): InterleaveBits = copy(children = newChildren)
+  private def interleave2Ints(i1: Int, i2: Int): Array[Byte] = {
+    val result = new Array[Byte](8)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0
+      var j = 0
+      while (j < 8) {
+        val x_masked = tmp1 & (1 << j)
+        val y_masked = tmp2 & (1 << j)
+        z |= (x_masked << j)
+        z |= (y_masked << (j + 1))
+        j = j + 1
+      }
+      result((3 - i) * 2 + 1) = (z & 0xFF).toByte
+      result((3 - i) * 2) = ((z >> 8) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def intToByte(input: Int): Array[Byte] = {
+    val result = new Array[Byte](4)
+    var i = 0
+    while (i <= 3) {
+      val offset = i * 8
+      result(3 - i) = ((input >> offset) & 0xFF).toByte
+      i += 1
+    }
+    result
+  }
+
+  private def interleave3Ints(i1: Int, i2: Int, i3: Int): Array[Byte] = {
+    val result = new Array[Byte](12)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j)
+        val r2_mask = tmp2 & (1 << j)
+        val r3_mask = tmp3 & (1 << j)
+        z |= (r1_mask << (2 * j)) | (r2_mask << (2 * j + 1)) | (r3_mask << (2 * j + 2))
+        j = j + 1
+      }
+      result((3 - i) * 3 + 2) = (z & 0xFF).toByte
+      result((3 - i) * 3 + 1) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 3) = ((z >> 16) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def interleave4Ints(i1: Int, i2: Int, i3: Int, i4: Int): Array[Byte] = {
+    val result = new Array[Byte](16)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+      val tmp4 = ((i4 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j)
+        val r2_mask = tmp2 & (1 << j)
+        val r3_mask = tmp3 & (1 << j)
+        val r4_mask = tmp4 & (1 << j)
+        z |= (r1_mask << (3 * j)) | (r2_mask << (3 * j + 1)) | (r3_mask << (3 * j + 2)) |
+          (r4_mask << (3 * j + 3))
+        j = j + 1
+      }
+      result((3 - i) * 4 + 3) = (z & 0xFF).toByte
+      result((3 - i) * 4 + 2) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 4 + 1) = ((z >> 16) & 0xFF).toByte
+      result((3 - i) * 4) = ((z >> 24) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def interleave5Ints(
+      i1: Int,
+      i2: Int,
+      i3: Int,
+      i4: Int,
+      i5: Int): Array[Byte] = {
+    val result = new Array[Byte](20)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+      val tmp4 = ((i4 >> (i * 8)) & 0xFF).toByte
+      val tmp5 = ((i5 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0L
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        z |= (r1_mask << (4 * j)) | (r2_mask << (4 * j + 1)) | (r3_mask << (4 * j + 2)) |
+          (r4_mask << (4 * j + 3)) | (r5_mask << (4 * j + 4))
+        j = j + 1
+      }
+      result((3 - i) * 5 + 4) = (z & 0xFF).toByte
+      result((3 - i) * 5 + 3) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 5 + 2) = ((z >> 16) & 0xFF).toByte
+      result((3 - i) * 5 + 1) = ((z >> 24) & 0xFF).toByte
+      result((3 - i) * 5) = ((z >> 32) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def interleave6Ints(
+      i1: Int,
+      i2: Int,
+      i3: Int,
+      i4: Int,
+      i5: Int,
+      i6: Int): Array[Byte] = {
+    val result = new Array[Byte](24)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+      val tmp4 = ((i4 >> (i * 8)) & 0xFF).toByte
+      val tmp5 = ((i5 >> (i * 8)) & 0xFF).toByte
+      val tmp6 = ((i6 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0L
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
+        z |= (r1_mask << (5 * j)) | (r2_mask << (5 * j + 1)) | (r3_mask << (5 * j + 2)) |
+          (r4_mask << (5 * j + 3)) | (r5_mask << (5 * j + 4)) | (r6_mask << (5 * j + 5))
+        j = j + 1
+      }
+      result((3 - i) * 6 + 5) = (z & 0xFF).toByte
+      result((3 - i) * 6 + 4) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 6 + 3) = ((z >> 16) & 0xFF).toByte
+      result((3 - i) * 6 + 2) = ((z >> 24) & 0xFF).toByte
+      result((3 - i) * 6 + 1) = ((z >> 32) & 0xFF).toByte
+      result((3 - i) * 6) = ((z >> 40) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def interleave7Ints(
+      i1: Int,
+      i2: Int,
+      i3: Int,
+      i4: Int,
+      i5: Int,
+      i6: Int,
+      i7: Int): Array[Byte] = {
+    val result = new Array[Byte](28)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+      val tmp4 = ((i4 >> (i * 8)) & 0xFF).toByte
+      val tmp5 = ((i5 >> (i * 8)) & 0xFF).toByte
+      val tmp6 = ((i6 >> (i * 8)) & 0xFF).toByte
+      val tmp7 = ((i7 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0L
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
+        val r7_mask = tmp7 & (1 << j).toLong
+        z |= (r1_mask << (6 * j)) | (r2_mask << (6 * j + 1)) | (r3_mask << (6 * j + 2)) |
+          (r4_mask << (6 * j + 3)) | (r5_mask << (6 * j + 4)) | (r6_mask << (6 * j + 5)) |
+          (r7_mask << (6 * j + 6))
+        j = j + 1
+      }
+      result((3 - i) * 7 + 6) = (z & 0xFF).toByte
+      result((3 - i) * 7 + 5) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 7 + 4) = ((z >> 16) & 0xFF).toByte
+      result((3 - i) * 7 + 3) = ((z >> 24) & 0xFF).toByte
+      result((3 - i) * 7 + 2) = ((z >> 32) & 0xFF).toByte
+      result((3 - i) * 7 + 1) = ((z >> 40) & 0xFF).toByte
+      result((3 - i) * 7) = ((z >> 48) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
+
+  private def interleave8Ints(
+      i1: Int,
+      i2: Int,
+      i3: Int,
+      i4: Int,
+      i5: Int,
+      i6: Int,
+      i7: Int,
+      i8: Int): Array[Byte] = {
+    val result = new Array[Byte](32)
+    var i = 0
+    while (i < 4) {
+      val tmp1 = ((i1 >> (i * 8)) & 0xFF).toByte
+      val tmp2 = ((i2 >> (i * 8)) & 0xFF).toByte
+      val tmp3 = ((i3 >> (i * 8)) & 0xFF).toByte
+      val tmp4 = ((i4 >> (i * 8)) & 0xFF).toByte
+      val tmp5 = ((i5 >> (i * 8)) & 0xFF).toByte
+      val tmp6 = ((i6 >> (i * 8)) & 0xFF).toByte
+      val tmp7 = ((i7 >> (i * 8)) & 0xFF).toByte
+      val tmp8 = ((i8 >> (i * 8)) & 0xFF).toByte
+
+      var z = 0L
+      var j = 0
+      while (j < 8) {
+        val r1_mask = tmp1 & (1 << j).toLong
+        val r2_mask = tmp2 & (1 << j).toLong
+        val r3_mask = tmp3 & (1 << j).toLong
+        val r4_mask = tmp4 & (1 << j).toLong
+        val r5_mask = tmp5 & (1 << j).toLong
+        val r6_mask = tmp6 & (1 << j).toLong
+        val r7_mask = tmp7 & (1 << j).toLong
+        val r8_mask = tmp8 & (1 << j).toLong
+        z |= (r1_mask << (7 * j)) | (r2_mask << (7 * j + 1)) | (r3_mask << (7 * j + 2)) |
+          (r4_mask << (7 * j + 3)) | (r5_mask << (7 * j + 4)) | (r6_mask << (7 * j + 5)) |
+          (r7_mask << (7 * j + 6)) | (r8_mask << (7 * j + 7))
+        j = j + 1
+      }
+      result((3 - i) * 8 + 7) = (z & 0xFF).toByte
+      result((3 - i) * 8 + 6) = ((z >> 8) & 0xFF).toByte
+      result((3 - i) * 8 + 5) = ((z >> 16) & 0xFF).toByte
+      result((3 - i) * 8 + 4) = ((z >> 24) & 0xFF).toByte
+      result((3 - i) * 8 + 3) = ((z >> 32) & 0xFF).toByte
+      result((3 - i) * 8 + 2) = ((z >> 40) & 0xFF).toByte
+      result((3 - i) * 8 + 1) = ((z >> 48) & 0xFF).toByte
+      result((3 - i) * 8) = ((z >> 56) & 0xFF).toByte
+      i = i + 1
+    }
+    result
+  }
 }

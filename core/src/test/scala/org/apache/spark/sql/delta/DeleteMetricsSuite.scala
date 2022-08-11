@@ -191,7 +191,6 @@ class DeleteMetricsSuite extends QueryTest
     rewriteTimeMs = 0
   )
 
-
   testDeleteMetrics("delete from empty table") { testConfig =>
     for (where <- Seq("", "1 = 1", "1 != 1", "id > 50")) {
       def executeTest: Unit = runDeleteAndCheckMetrics(

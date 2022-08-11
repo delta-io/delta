@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
@@ -98,7 +98,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
     val track = mutable.Set[String]()
-    var selectExprs = schema.map { f =>
+    var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
         case Some(expr) =>
           if (topLevelOutputNames.contains(f.name)) {
@@ -106,12 +106,20 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             // Add a constraint to make sure the value provided by the user is the same as the value
             // calculated by the generation expression.
             constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
-            column.alias(f.name)
+            Some(column.alias(f.name))
           } else {
-            new Column(expr).alias(f.name)
+            Some(new Column(expr).alias(f.name))
           }
         case None =>
-            SchemaUtils.fieldToColumn(f).alias(f.name)
+            if (topLevelOutputNames.contains(f.name) ||
+                !data.sparkSession.conf.get(DeltaSQLConf.GENERATED_COLUMN_ALLOW_NULLABLE)) {
+              Some(SchemaUtils.fieldToColumn(f).alias(f.name))
+            } else {
+              // we only want to consider columns that are in the data's schema or are generated
+              // to allow DataFrame with null columns to be written.
+              // The actual check for nullability on data is done in the DeltaInvariantCheckerExec
+              None
+            }
       }
     }
     val cdcSelectExprs = CDCReader.CDC_COLUMNS_IN_DATA.flatMap { cdcColumnName =>

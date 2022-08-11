@@ -20,6 +20,8 @@ import java.nio.ByteBuffer
 
 import scala.util.Random
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult.TypeCheckSuccess
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionEvalHelper, Literal}
@@ -33,7 +35,11 @@ class InterleaveBitsSuite extends SparkFunSuite with ExpressionEvalHelper {
   }
 
   def checkInterleaving(input: Seq[Expression], expectedOutput: Any): Unit = {
-    checkEvaluation(InterleaveBits(input), expectedOutput)
+    Seq("true", "false").foreach { flag =>
+      withSQLConf(DeltaSQLConf.FAST_INTERLEAVE_BITS_ENABLED.key -> flag) {
+        checkEvaluation(InterleaveBits(input), expectedOutput)
+      }
+    }
   }
 
   test("0 inputs") {
@@ -70,6 +76,61 @@ class InterleaveBitsSuite extends SparkFunSuite with ExpressionEvalHelper {
           .map(_.toByte))
   }
 
+  test("9 inputs") {
+    val result = Array(
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0x00000000,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92,
+      0x00000049,
+      0x00000024,
+      0xffffff92
+    )
+    checkInterleaving(
+      input = Seq(
+        0xff00,
+        0x00ff,
+        0x0000,
+        0xff00,
+        0x00ff,
+        0x0000,
+        0xff00,
+        0x00ff,
+        0x0000
+      ).map(Literal(_)),
+      expectedOutput = result.map(_.toByte)
+    )
+  }
+
   test("nulls") {
     val ones = 0xffffffff
     checkInterleaving(
@@ -97,5 +158,27 @@ class InterleaveBitsSuite extends SparkFunSuite with ExpressionEvalHelper {
     InterleaveBits(Seq(Literal(0.toLong))).checkInputDataTypes() != TypeCheckSuccess
     InterleaveBits(Seq(Literal(0.toDouble))).checkInputDataTypes() != TypeCheckSuccess
     InterleaveBits(Seq(Literal(0.toString))).checkInputDataTypes() != TypeCheckSuccess
+  }
+
+  test("randomization interleave bits") {
+    val numIters = sys.env
+      .get("NUMBER_OF_ITERATIONS_TO_INTERLEAVE_BITS")
+      .map(_.toInt)
+      .getOrElse(1000000)
+    var i = 0
+    while (i < numIters) {
+      // generate n columns where 1 <= n <= 8
+      val numCols = Random.nextInt(8) + 1
+      val input = new Array[Int](numCols)
+      var j = 0
+      while (j < numCols) {
+        input(j) = Random.nextInt()
+        j += 1
+      }
+      val r1 = InterleaveBits.interleaveBits(input, true)
+      val r2 = InterleaveBits.interleaveBits(input, false)
+      assert(java.util.Arrays.equals(r1, r2), s"input: ${input.mkString(",")}")
+      i += 1
+    }
   }
 }

@@ -28,7 +28,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
 
@@ -59,6 +59,16 @@ trait DeltaTestUtilsBase {
       funcName: String, qe: QueryExecution, error: Exception): Unit = {}
   }
 
+  class PhysicalPlanCapturingListener() extends QueryExecutionListener {
+    val plans = new ArrayBuffer[SparkPlan]
+    override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
+      plans.append(qe.sparkPlan)
+    }
+
+    override def onFailure(
+      funcName: String, qe: QueryExecution, error: Exception): Unit = {}
+  }
+
   /**
    * Run a thunk with physical plans for all queries captured and passed into a provided buffer.
    */
@@ -67,6 +77,25 @@ trait DeltaTestUtilsBase {
       optimizedPlan: Boolean)(
       thunk: => Unit): ArrayBuffer[LogicalPlan] = {
     val planCapturingListener = new LogicalPlanCapturingListener(optimizedPlan)
+
+    spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+    spark.listenerManager.register(planCapturingListener)
+    try {
+      thunk
+      spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+      planCapturingListener.plans
+    } finally {
+      spark.listenerManager.unregister(planCapturingListener)
+    }
+  }
+
+  /**
+   * Run a thunk with physical plans for all queries captured and passed into a provided buffer.
+   */
+  def withPhysicalPlansCaptured[T](
+      spark: SparkSession)(
+      thunk: => Unit): ArrayBuffer[SparkPlan] = {
+    val planCapturingListener = new PhysicalPlanCapturingListener()
 
     spark.sparkContext.listenerBus.waitUntilEmpty(15000)
     spark.listenerManager.register(planCapturingListener)

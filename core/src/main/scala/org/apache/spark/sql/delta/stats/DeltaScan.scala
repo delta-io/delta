@@ -20,8 +20,10 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.execution.datasources.PartitioningUtils
 
 /**
  * DataSize describes following attributes for data that consists of a list of input files
@@ -81,7 +83,6 @@ case class DeltaScan(
     val partitionFilters: ExpressionSet,
     val dataFilters: ExpressionSet,
     val unusedFilters: ExpressionSet,
-    val projection: AttributeSet,
     val scanDurationMs: Long,
     val dataSkippingType: DeltaDataSkippingType) {
   assert(version == scannedSnapshot.version)
