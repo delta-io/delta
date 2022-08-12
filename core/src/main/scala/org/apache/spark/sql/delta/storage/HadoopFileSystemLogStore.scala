@@ -24,7 +24,6 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}

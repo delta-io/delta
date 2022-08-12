@@ -213,15 +213,22 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
       """"size":10,"dataChange":false}}""".stripMargin)
 
-  testActionSerDe(
-    "Metadata (with all defaults) - json serialization/deserialization",
-    Metadata(createdTime = Some(2222)),
-    expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
-    """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+  {
+    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
+    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
+    lazy val metadata = Metadata(createdTime = Some(2222))
+    testActionSerDe(
+      "Metadata (with all defaults) - json serialization/deserialization",
+      metadata,
+      expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
+        """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+  }
 
   {
     val schemaStr = new StructType().add("a", "long").json
-    val metadata = Metadata(
+    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
+    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
+    lazy val metadata = Metadata(
       name = "t1",
       description = "desc",
       format = Format(provider = "parquet", options = Map("o1" -> "v1")),
@@ -315,7 +322,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   /** Test serialization/deserialization of [[Action]] by doing an actual commit */
   private def testActionSerDe(
       name: String,
-      action: Action,
+      action: => Action,
       expectedJson: String,
     extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
     test(name) {

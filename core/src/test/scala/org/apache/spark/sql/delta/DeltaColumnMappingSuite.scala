@@ -1348,13 +1348,13 @@ class DeltaColumnMappingSuite extends QueryTest
 
       if (shouldFail) {
         val e = intercept[DeltaUnsupportedOperationException] {
-          txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+          txn.commit(Seq(action), DeltaOperations.ManualUpdate)
         }.getMessage
         assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
           "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
           "COLUMN.")
       } else {
-        txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+        txn.commit(Seq(action), DeltaOperations.ManualUpdate)
       }
     }
 
@@ -1393,7 +1393,8 @@ class DeltaColumnMappingSuite extends QueryTest
           withTable("t1") {
             createTable()
             val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-            withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
+            withSQLConf(
+                DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
               withTable("t2") {
                 sql("DROP TABLE IF EXISTS t2")
                 sql("CREATE TABLE t2 USING DELTA AS SELECT * FROM t1")
@@ -1407,11 +1408,13 @@ class DeltaColumnMappingSuite extends QueryTest
 
         // case 3: drop column with FileAction should fail if $shouldBlock == true
         fileActions.foreach { fileAction =>
-          withTable("t1") {
-            createTable()
-            val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-            val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
-            checkHelper(log, droppedColumnSchema, fileAction)
+          {
+            withTable("t1") {
+              createTable()
+              val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+              val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
+              checkHelper(log, droppedColumnSchema, fileAction)
+            }
           }
         }
       }

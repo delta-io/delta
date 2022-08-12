@@ -179,7 +179,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))
+        throw DeltaErrors.failOnCheckpointRename(new Path("path-1"), new Path("path-2"))
       }
       assert(e.getMessage == "Cannot rename path-1 to path-2")
     }
@@ -615,8 +615,9 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
-            committedActions: Seq[Action]): Unit = {}
+          override def run(
+            spark: SparkSession, txn: OptimisticTransactionImpl, committedVersion: Long,
+            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
         }, 0, "msg", null)
       }
       assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")
@@ -628,8 +629,9 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
-            committedActions: Seq[Action]): Unit = {}
+          override def run(
+            spark: SparkSession, txn: OptimisticTransactionImpl, committedVersion: Long,
+            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
         }, 0, null, null)
       }
       assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")

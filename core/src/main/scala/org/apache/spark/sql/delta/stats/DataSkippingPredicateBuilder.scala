@@ -22,7 +22,7 @@ import org.apache.spark.sql.Column
  * A trait that defines interfaces for a data skipping predicate builder.
  *
  * Note that 'IsNull', 'IsNotNull' and 'StartsWith' are handled at a column (not expression) level
- * within [[DataSkippingReaderBase.constructDataFilters]].
+ * within [[DataSkippingReaderBase.DataFiltersBuilder.constructDataFilters]].
  *
  * Note that the 'value' passed in for each of the interface should be [[SkippingEligibleLiteral]].
  */

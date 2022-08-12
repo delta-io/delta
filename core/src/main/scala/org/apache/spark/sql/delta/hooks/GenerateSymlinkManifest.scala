@@ -68,8 +68,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   override def run(
       spark: SparkSession,
       txn: OptimisticTransactionImpl,
+      committedVersion: Long,
+      postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
-    generateIncrementalManifest(spark, txn.deltaLog, txn.snapshot, committedActions)
+    generateIncrementalManifest(
+      spark, txn.deltaLog, txn.snapshot, postCommitSnapshot, committedActions)
   }
 
   override def handleError(error: Throwable, version: Long): Unit = {
@@ -88,10 +91,10 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       spark: SparkSession,
       deltaLog: DeltaLog,
       txnReadSnapshot: Snapshot,
+      currentSnapshot: Snapshot,
       actions: Seq[Action]): Unit = recordManifestGeneration(deltaLog, full = false) {
 
     import spark.implicits._
-    val currentSnapshot = deltaLog.snapshot
 
     checkColumnMappingMode(currentSnapshot.metadata)
 

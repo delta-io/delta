@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 

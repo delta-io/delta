@@ -18,11 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraint
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
@@ -68,7 +68,46 @@ object DeltaOperations {
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
 
-    override val operationMetrics: Set[String] = DeltaOperationMetrics.WRITE
+    val replaceWhereMetricsEnabled = SparkSession.active.conf.get(
+      DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
+
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      // Need special handling for replaceWhere as it is implemented as a Write + Delete.
+      if (predicate.nonEmpty && replaceWhereMetricsEnabled) {
+        var strMetrics = super.transformMetrics(metrics)
+        // find the case where deletedRows are not captured
+        if (strMetrics.get("numDeletedRows").exists(_ == "0") &&
+          strMetrics.get("numRemovedFiles").exists(_ != "0")) {
+          // identify when row level metrics are unavailable. This will happen when the entire
+          // table or partition are deleted.
+          strMetrics -= "numDeletedRows"
+          strMetrics -= "numCopiedRows"
+          strMetrics -= "numAddedFiles"
+        }
+
+        // in the case when stats are not collected we need to remove all row based metrics
+        // If the DF provided to replaceWhere is an empty DataFrame and we don't have stats
+        // we won't return row level metrics.
+        if (strMetrics.get("numOutputRows").exists(_ == "0") &&
+            strMetrics.get("numFiles").exists(_ != 0)) {
+          strMetrics -= "numDeletedRows"
+          strMetrics -= "numOutputRows"
+          strMetrics -= "numCopiedRows"
+        }
+
+        strMetrics
+      } else {
+        super.transformMetrics(metrics)
+      }
+    }
+
+    override val operationMetrics: Set[String] = if (predicate.isEmpty ||
+        !replaceWhereMetricsEnabled) {
+      DeltaOperationMetrics.WRITE
+    } else {
+      // Need special handling for replaceWhere as rows/files are deleted as well.
+      DeltaOperationMetrics.WRITE_REPLACE_WHERE
+    }
     override def changesData: Boolean = true
   }
   /** Recorded during streaming inserts. */
@@ -428,6 +467,24 @@ private[delta] object DeltaOperationMetrics {
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
+  )
+
+  val WRITE_REPLACE_WHERE = Set(
+    "numFiles", // number of files written
+    "numOutputBytes", // size in bytes of the written
+    "numOutputRows", // number of rows written
+    "numRemovedFiles", // number of files removed
+    "numAddedChangeFiles", // number of CDC files
+    "numDeletedRows", // number of rows removed
+    "numCopiedRows" // number of rows copied in the process of deleting files
+  )
+
+  val WRITE_REPLACE_WHERE_PARTITIONS = Set(
+    "numFiles", // number of files written
+    "numOutputBytes", // size in bytes of the written contents
+    "numOutputRows", // number of rows written
+    "numAddedChangeFiles", // number of CDC files
+    "numRemovedFiles" // number of files removed
   )
 
   /**

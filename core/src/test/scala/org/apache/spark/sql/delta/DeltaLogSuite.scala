@@ -319,10 +319,10 @@ class DeltaLogSuite extends QueryTest
       val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(metadata :: add1 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add2 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add2 = AddFile("bar", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add2 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add3 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add3 = AddFile("baz", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add3 :: Nil, DeltaOperations.ManualUpdate)
 
       new File(new Path(log.logPath, "00000000000000000001.json").toUri).delete()

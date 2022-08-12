@@ -150,6 +150,10 @@ def run_tests_in_docker(image_tag):
     if scala_version is not None:
         envs = envs + "-e SCALA_VERSION=%s " % scala_version
 
+    test_parallelism = os.getenv("TEST_PARALLELISM_COUNT")
+    if test_parallelism is not None:
+        envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
