@@ -353,7 +353,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         .format("memory")
         .trigger(Trigger.AvailableNow)
         .queryName("maxFilesPerTriggerTest")
-      
+
       var q = stream.start()
       try {
         assert(q.awaitTermination(10000))
@@ -534,7 +534,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         .format("memory")
         .trigger(Trigger.AvailableNow)
         .queryName("maxBytesPerTriggerTest")
-      
+
       var q = stream.start()
       try {
         assert(q.awaitTermination(10000))
