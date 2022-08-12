@@ -783,6 +783,9 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f6x = StructField("c6.x", IntegerType)
     val f7x = withGenerationExpression(StructField("c7.x", IntegerType), "`c6.x` + 10")
     val f8 = withGenerationExpression(StructField("c8", IntegerType), "c6.x + 10")
+    val f9 = StructField("c9", StructType(StructField("x", StructType(StructField("y", IntegerType)
+      :: Nil)) :: Nil))
+    val f10 = withGenerationExpression(StructField("c10", IntegerType), "c9.x.y + 10")
     testSchema(Seq(f1, f2), Set(Seq("c1"), Seq("c2")))
     testSchema(Seq(f1, f2, f3), Set(Seq("c1"), Seq("c2")))
     testSchema(Seq(f1, f2, f3, f4), Set(Seq("c1"), Seq("c2"), Seq("c3"), Seq("c4")))
@@ -790,6 +793,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     testSchema(Seq(f6x, f7x), Set(Seq("c6.x"), Seq("c7.x")))
     testSchema(Seq(f6, f6x, f7x), Set(Seq("c6.x"), Seq("c7.x")))
     testSchema(Seq(f6, f6x, f8), Set(Seq("c6", "x"), Seq("c8")))
+    testSchema(Seq(f9, f10), Set(Seq("c9", "x", "y"), Seq("c10")))
 
     val map1 = StructField("m1", MapType(StringType, IntegerType))
     val map2 = withGenerationExpression(StructField("m2", IntegerType), "m1.x + 10")
