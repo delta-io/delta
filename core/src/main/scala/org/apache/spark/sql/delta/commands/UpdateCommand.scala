@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -52,7 +53,7 @@ case class UpdateCommand(
   extends LeafRunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = {
-    Seq(AttributeReference("num_updated_rows", LongType)())
+    Seq(AttributeReference("num_affected_rows", LongType)())
   }
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
