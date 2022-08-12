@@ -22,11 +22,10 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
@@ -34,6 +33,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct, typedLit, udf}
+import org.apache.spark.sql.types.LongType
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`
@@ -50,6 +50,10 @@ case class UpdateCommand(
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
   extends LeafRunnableCommand with DeltaCommand {
+
+  override val output: Seq[Attribute] = {
+    Seq(AttributeReference("num_updated_rows", LongType)())
+  }
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -82,7 +86,7 @@ case class UpdateCommand(
       // this data source relation.
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
     }
-    Seq.empty[Row]
+    Seq(Row(metrics("numUpdatedRows").value))
   }
 
   private def performUpdate(

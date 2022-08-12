@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{QueryTest, Row}
 
 class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -68,7 +67,8 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
       withTempView("v") {
         Seq((0, 3)).toDF("key", "value").write.format("delta").saveAsTable("tab")
         sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
-        sql("UPDATE v SET key = 1 WHERE key = 0 AND value = 3")
+        QueryTest
+          .checkAnswer(sql("UPDATE v SET key = 1 WHERE key = 0 AND value = 3"), Seq(Row(1)))
         checkAnswer(spark.table("tab"), Row(1, 3))
       }
     }
