@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
 
+import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
 
 /**
@@ -87,10 +88,10 @@ object DeltaSourceOffset {
     )
   }
 
-  def apply(reservoirId: String, offset: Offset): DeltaSourceOffset = {
+  def apply(reservoirId: String, offset: streaming.Offset): DeltaSourceOffset = {
     offset match {
       case o: DeltaSourceOffset => o
-      case s: SerializedOffset =>
+      case s =>
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {

@@ -345,7 +345,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
+      val stream = spark.readStream
         .format("delta")
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
         .load(inputDir.getCanonicalPath)
@@ -353,7 +353,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         .format("memory")
         .trigger(Trigger.AvailableNow)
         .queryName("maxFilesPerTriggerTest")
-        .start()
+      
+      var q = stream.start()
       try {
         assert(q.awaitTermination(10000))
         val progress = q.recentProgress.filter(_.numInputRows != 0)
@@ -362,6 +363,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           assert(p.numInputRows === 1)
         }
         checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+
+        // Restarting the stream should immediately terminate with no progress because no more data
+        q = stream.start()
+        assert(q.awaitTermination(5000))
+        assert(q.recentProgress.length === 5)
       } finally {
         q.stop()
       }
@@ -520,7 +526,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
+      val stream = spark.readStream
         .format("delta")
         .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
         .load(inputDir.getCanonicalPath)
@@ -528,7 +534,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         .format("memory")
         .trigger(Trigger.AvailableNow)
         .queryName("maxBytesPerTriggerTest")
-        .start()
+      
+      var q = stream.start()
       try {
         assert(q.awaitTermination(10000))
         val progress = q.recentProgress.filter(_.numInputRows != 0)
@@ -537,6 +544,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           assert(p.numInputRows === 1)
         }
         checkAnswer(sql("SELECT * from maxBytesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+
+        // Restarting the stream should immediately terminate with no progress because no more data
+        q = stream.start()
+        assert(q.awaitTermination(2000))
+        assert(q.recentProgress.length === 5)
       } finally {
         q.stop()
       }
