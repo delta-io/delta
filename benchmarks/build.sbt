@@ -23,10 +23,12 @@ lazy val root = (project in file("."))
     libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.1.2" % "provided",
     libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
     libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
+    libraryDependencies += "com.amazonaws" % "aws-java-sdk-core" % "1.11.901" % "provided",
+    libraryDependencies += "com.amazonaws" % "aws-java-sdk-sts" % "1.11.901" % "provided",
+    libraryDependencies += "com.amazonaws" % "aws-java-sdk-s3" % "1.11.901" % "provided",
 
     assemblyMergeStrategy in assembly := {
       case PathList("META-INF", xs @ _*) => MergeStrategy.discard
       case x => MergeStrategy.first
     }
   )
-  

@@ -1,19 +1,16 @@
 variable "region" {
   description = "The default region to manage resources in."
   type        = string
-  default     = "us-west-2"
 }
 
 variable "availability_zone1" {
   description = "The default availability zone to manage resources in."
   type        = string
-  default     = "us-west-2a"
 }
 
 variable "availability_zone2" {
   description = "The secondary availability zone."
   type        = string
-  default     = "us-west-2b"
 }
 
 variable "benchmarks_bucket_name" {
@@ -54,6 +51,22 @@ variable "emr_workers" {
 variable "user_ip_address" {
   description = "The IP of the machine which is used to access master node."
   type        = string
+}
+
+variable "eks_workers" {
+  description = "The number of worker nodes in EKS cluster."
+  type        = number
+}
+
+variable "emr_version" {
+  description = <<EOT
+  Release label for the Amazon EMR release. Each EMR version supports different application versions (e.g. Spark version).
+  Please check in documentation which EMR version contains desired versions:
+  https://docs.amazonaws.cn/en_us/emr/latest/ReleaseGuide/emr-release-app-versions-6.x.html
+  By default EMR-6.6.0 is used which contains Spark 3.2.0.
+  EOT
+  type = string
+  default = "emr-6.6.0"
 }
 
 variable "tags" {

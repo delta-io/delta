@@ -237,6 +237,7 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
     try {
       if (scheme.equals("s3")) s"aws s3 cp $localPath $sanitizedTargetPath/" !
       else if (scheme.equals("gs")) s"gsutil cp $localPath $sanitizedTargetPath/" !
+      else if (scheme.equals("s3a")) uploadToS3(localPath, sanitizedTargetPath)
       else throw new IllegalArgumentException(String.format("Unsupported scheme %s.", scheme))
 
       println(s"FILE UPLOAD: Uploaded $localPath to $sanitizedTargetPath")
@@ -244,6 +245,22 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
       case NonFatal(e) =>
         log(s"FILE UPLOAD: Failed to upload $localPath to $sanitizedTargetPath: $e")
     }
+  }
+
+  private def uploadToS3(localPath: String, targetPath: String): Unit = {
+    import java.io.File
+    import java.net.URI
+    import java.net.URISyntaxException
+    import com.amazonaws.services.s3.AmazonS3
+    import com.amazonaws.services.s3.AmazonS3ClientBuilder
+
+    val s3 = AmazonS3ClientBuilder.standard.build
+
+    val parts = targetPath.split("/", 4)
+    val bucket = parts(2)
+    val objectKey = s"${parts(3)}/${new File(localPath).getName}"
+
+    s3.putObject(bucket, objectKey, new File(localPath))
   }
 
   protected def benchmarkId: String =

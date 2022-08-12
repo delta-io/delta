@@ -1,3 +1,7 @@
+variable "benchmark_run_id" {
+  type = string
+}
+
 variable "availability_zone1" {
   type = string
 }
@@ -22,6 +26,10 @@ variable "source_bucket_name" {
   type = string
 }
 
+variable "metastore_endpoint" {
+  type = string
+}
+
 variable "mysql_user" {
   type = string
 }
@@ -36,6 +44,10 @@ variable "emr_public_key_path" {
 
 variable "emr_workers" {
   type = number
+}
+
+variable "emr_version" {
+  type = string
 }
 
 variable "user_ip_address" {

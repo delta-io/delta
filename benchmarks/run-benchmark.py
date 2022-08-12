@@ -17,6 +17,7 @@
 #
 
 import argparse
+
 from scripts.benchmarks import *
 
 delta_version = "2.0.0"
@@ -45,20 +46,16 @@ benchmarks = {
 
 }
 
-delta_log_store_classes = {
-    "aws": "spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore",
-    "gcp": "spark.delta.logStore.gs.impl=io.delta.storage.GCSLogStore",
-}
 
-if __name__ == "__main__":
-    """
-    Run benchmark on a cluster using ssh.
+def is_kubernetes_benchmark(args):
+    return args.k8s_cluster_endpoint is not None
 
-    Example usage:
 
-    ./run-benchmark.py --cluster-hostname <hostname> -i <pem file> --ssh-user <ssh user> --cloud-provider <cloud provider> --benchmark test
-
-    """
+def get_command_runner(args):
+    if is_kubernetes_benchmark(args):
+        return KubectlCommandRunner(args.k8s_cluster_endpoint, "benchmarks", "benchmarks-edge-node")
+    else:
+        return SshCommandRunner(args.cluster_hostname, args.ssh_id_file, args.ssh_user)
 
 
 def parse_args():
@@ -70,20 +67,12 @@ def parse_args():
         help="Run the given benchmark. See this " +
              "python file for the list of predefined benchmark names and definitions.")
     parser.add_argument(
-        "--cluster-hostname",
-        required=True,
-        help="Hostname or public IP of the cluster driver")
-    parser.add_argument(
-        "--ssh-id-file", "-i",
-        required=True,
-        help="SSH identity file")
+        "--resume-benchmark",
+        help="Resume waiting for the given running benchmark.")
     parser.add_argument(
         "--spark-conf",
         action="append",
         help="Run benchmark with given spark conf. Use separate --spark-conf for multiple confs.")
-    parser.add_argument(
-        "--resume-benchmark",
-        help="Resume waiting for the given running benchmark.")
     parser.add_argument(
         "--use-local-delta-dir",
         help="Local path to delta repository which will be used for running the benchmark " +
@@ -91,30 +80,59 @@ def parse_args():
              " version is compatible with version in the spec.")
     parser.add_argument(
         "--cloud-provider",
-        choices=delta_log_store_classes.keys(),
+        choices=["aws", "gcp"],
         help="Cloud where the benchmark will be executed.")
-    parser.add_argument(
+
+    yarn_cluster_group = parser.add_argument_group('yarn-cluster')
+    yarn_cluster_group.add_argument(
+        "--cluster-hostname",
+        help="Hostname or public IP of the cluster driver")
+    yarn_cluster_group.add_argument(
+        "--ssh-id-file", "-i",
+        help="SSH identity file")
+    yarn_cluster_group.add_argument(
         "--ssh-user",
         default="hadoop",
         help="The user which is used to communicate with the master via SSH.")
+
+    kubernetes_cluster_group = parser.add_argument_group('kubernetes-cluster')
+    kubernetes_cluster_group.add_argument(
+        "--k8s-cluster-endpoint",
+        help="Kubernetes cluster endpoint URL.")
+    kubernetes_cluster_group.add_argument(
+        "--docker-image",
+        help="Spark docker image URI.")
 
     parsed_args, parsed_passthru_args = parser.parse_known_args()
     return parsed_args, parsed_passthru_args
 
 
 def run_single_benchmark(benchmark_name, benchmark_spec, other_args):
+    if other_args.cloud_provider == "aws":
+        benchmark_spec.merge(S3BenchmarkSpec())
+        if is_kubernetes_benchmark(args):
+            benchmark_spec.merge(EksBenchmarkSpec(args.k8s_cluster_endpoint, args.docker_image))
+    elif other_args.cloud_provider == "gcp":
+        benchmark_spec.merge(GoogleStorageBenchmarkSpec())
+        if is_kubernetes_benchmark(args):
+            raise ValueError("Benchmarks on Kubernetes in GCP are not supported yet.")
+
+    benchmark_id = BenchmarkIdGenerator.get(benchmark_name)
     benchmark_spec.append_spark_confs(other_args.spark_conf)
-    benchmark_spec.append_spark_conf(delta_log_store_classes.get(other_args.cloud_provider))
     benchmark_spec.append_main_class_args(passthru_args)
+
     print("------")
     print("Benchmark spec to run:\n" + str(vars(benchmark_spec)))
     print("------")
 
-    benchmark = Benchmark(benchmark_name, benchmark_spec,
-                          use_spark_shell=True, local_delta_dir=other_args.use_local_delta_dir)
+    benchmark = Benchmark(benchmark_id,
+                          benchmark_spec,
+                          use_spark_shell=True,
+                          local_delta_dir=other_args.use_local_delta_dir,
+                          command_runner=get_command_runner(args))
     benchmark_dir = os.path.dirname(os.path.abspath(__file__))
     with WorkingDirectory(benchmark_dir):
-        benchmark.run(other_args.cluster_hostname, other_args.ssh_id_file, other_args.ssh_user)
+        benchmark.run()
 
 
 if __name__ == "__main__":
@@ -123,14 +141,15 @@ if __name__ == "__main__":
 
     Example usage:
 
-    ./run-benchmark.py --cluster-hostname <hostname> -i <pem file> --ssh-user <ssh user> --cloud-provider <cloud provider> --benchmark test
-
+      ./run-benchmark.py --benchmark test --cluster-hostname <hostname> -i <pem file> --ssh-user <ssh user> --cloud-provider <cloud provider> 
+    or
+      ./run-benchmark.py --benchmark test --k8s-cluster-endpoint <url> --docker-image <image-name> --cloud-provider <cloud provider>
     """
     args, passthru_args = parse_args()
-
     if args.resume_benchmark is not None:
-        Benchmark.wait_for_completion(
-            args.cluster_hostname, args.ssh_id_file, args.resume_benchmark, args.ssh_user)
+        cmd_executor = get_command_runner(args)
+        benchmark = Benchmark(args.resume_benchmark, None, None, cmd_executor, None)
+        benchmark.wait_for_completion()
         exit(0)
 
     benchmark_names = args.benchmark.split(",")
