@@ -1178,8 +1178,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         s"is now changed to ${metadata.id}."
       logError(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
-        "readSnapshotTableId" -> snapshot.metadata.id,
-        "txnTableId" -> metadata.id,
+        "readSnapshotVersion" -> snapshot.version,
+        "readSnapshotMetadata" -> snapshot.metadata,
         "txnMetadata" -> metadata,
         "commitAttemptVersion" -> attemptVersion,
         "commitAttemptNumber" -> attemptNumber))
@@ -1187,27 +1187,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val fsWriteStartNano = System.nanoTime()
     val jsonActions = actions.map(_.json)
-    deltaLog.store.write(
-      deltaFile(deltaLog.logPath, attemptVersion),
+
+    val newChecksumOpt = writeCommitFile(
+      attemptVersion,
       jsonActions.toIterator,
-      overwrite = false,
-      deltaLog.newDeltaHadoopConf())
+      currentTransactionInfo)
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
       Some(attemptVersion))
 
     commitEndNano = System.nanoTime()
-    val postCommitSnapshot = deltaLog.update()
-    val postCommitReconstructionTime = System.nanoTime()
 
-    if (postCommitSnapshot.version < attemptVersion) {
-      recordDeltaEvent(deltaLog, "delta.commit.inconsistentList", data = Map(
-        "committedVersion" -> attemptVersion,
-        "currentVersion" -> postCommitSnapshot.version
-      ))
-      throw DeltaErrors.invalidCommittedVersion(attemptVersion, postCommitSnapshot.version)
-    }
+    val postCommitSnapshot = deltaLog.updateAfterCommit(
+      attemptVersion,
+      newChecksumOpt,
+      preCommitLogSegment
+    )
+    val postCommitReconstructionTime = System.nanoTime()
 
     // Post stats
     // Here, we efficiently calculate various stats (number of each different action, number of
@@ -1215,6 +1212,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // variables. This is more efficient than a functional approach.
     var numAbsolutePaths = 0
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
+
     var bytesNew: Long = 0L
     var numAdd: Int = 0
     var numRemove: Int = 0
@@ -1233,7 +1231,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         cdcBytesNew += c.size
       case _ =>
     }
-
+    val info = currentTransactionInfo.commitInfo
+      .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     needsCheckpoint = shouldCheckpoint(attemptVersion, postCommitSnapshot)
     val stats = CommitStats(
       startVersion = snapshot.version,
@@ -1256,7 +1255,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
       totalCommitsSizeSinceLastCheckpoint = postCommitSnapshot.deltaFileSizeInBytes(),
       checkpointAttempt = needsCheckpoint,
-      info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+      info = info,
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
@@ -1266,6 +1265,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
     postCommitSnapshot
+  }
+
+  /** Writes the json actions provided to the commit file corresponding to attemptVersion */
+  protected def writeCommitFile(
+      attemptVersion: Long,
+      jsonActions: Iterator[String],
+      currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+    deltaLog.store.write(
+      deltaFile(deltaLog.logPath, attemptVersion),
+      jsonActions,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
+    None // No VersionChecksum available yet
   }
 
   /**
