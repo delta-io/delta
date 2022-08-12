@@ -262,13 +262,11 @@ trait SnapshotManagement { self: DeltaLog =>
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
       val currentTimestamp = clock.getTimeMillis()
       getLogSegmentFrom(lastCheckpointOpt).map { segment =>
-        val startCheckpoint = segment.checkpointVersionOpt
-          .map(v => s" starting from checkpoint $v.").getOrElse(".")
-        logInfo(s"Loading version ${segment.version}$startCheckpoint")
         val snapshot = createSnapshot(
           initSegment = segment,
           minFileRetentionTimestamp = minFileRetentionTimestamp,
-          checkpointMetadataOptHint = lastCheckpointOpt)
+          checkpointMetadataOptHint = lastCheckpointOpt,
+          checksumOpt = readChecksum(segment.version))
 
         logInfo(s"Returning initial snapshot $snapshot")
         CapturedSnapshot(snapshot, currentTimestamp)
@@ -285,8 +283,11 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def createSnapshot(
       initSegment: LogSegment,
       minFileRetentionTimestamp: Long,
-      checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
-    val checksumOpt = readChecksum(initSegment.version)
+      checkpointMetadataOptHint: Option[CheckpointMetaData],
+      checksumOpt: Option[VersionChecksum]): Snapshot = {
+    val startingFrom = initSegment.checkpointVersionOpt
+      .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+    logInfo(s"Loading version ${initSegment.version}$startingFrom")
     createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
       new Snapshot(
         path = logPath,
@@ -574,26 +575,12 @@ trait SnapshotManagement { self: DeltaLog =>
         val timestampToUse = math.max(updateTimestamp, currentSnapshot.updateTimestamp)
         currentSnapshot = currentSnapshot.copy(updateTimestamp = timestampToUse)
       } else {
-        val startingFrom = segment.checkpointVersionOpt
-          .map(v => s" starting from checkpoint version $v.").getOrElse(".")
-        logInfo(s"Loading version ${segment.version}$startingFrom")
-
         val newSnapshot = createSnapshot(
           initSegment = segment,
           minFileRetentionTimestamp = minFileRetentionTimestamp,
-          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt)
-
-        if (previousSnapshot.version > -1 &&
-          previousSnapshot.metadata.id != newSnapshot.metadata.id) {
-          val msg = s"Change in the table id detected while updating snapshot. " +
-            s"\nPrevious snapshot = $previousSnapshot\nNew snapshot = $newSnapshot."
-          logError(msg)
-          recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
-            "prevSnapshotVersion" -> previousSnapshot.version,
-            "prevSnapshotMetadata" -> previousSnapshot.metadata,
-            "nextSnapshotVersion" -> newSnapshot.version,
-            "nextSnapshotMetadata" -> newSnapshot.metadata))
-        }
+          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt,
+          checksumOpt = readChecksum(segment.version))
+        logMetadataTableIdChange(previousSnapshot, newSnapshot)
         logInfo(s"Updated snapshot to $newSnapshot")
         replaceSnapshot(newSnapshot, updateTimestamp)
       }
@@ -614,6 +601,85 @@ trait SnapshotManagement { self: DeltaLog =>
     oldSnapshot.uncache()
   }
 
+  /** Log a change in the metadata's table id whenever we install a newer version of a snapshot */
+  private def logMetadataTableIdChange(previousSnapshot: Snapshot, newSnapshot: Snapshot): Unit = {
+    if (previousSnapshot.version > -1 &&
+      previousSnapshot.metadata.id != newSnapshot.metadata.id) {
+      val msg = s"Change in the table id detected while updating snapshot. " +
+        s"\nPrevious snapshot = $previousSnapshot\nNew snapshot = $newSnapshot."
+      logError(msg)
+      recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
+        "prevSnapshotVersion" -> previousSnapshot.version,
+        "prevSnapshotMetadata" -> previousSnapshot.metadata,
+        "nextSnapshotVersion" -> newSnapshot.version,
+        "nextSnapshotMetadata" -> newSnapshot.metadata))
+    }
+  }
+
+  /**
+   * Creates a snapshot for a new delta commit.
+   */
+  protected def createSnapshotAfterCommit(
+      initSegment: LogSegment,
+      minFileRetentionTimestamp: Long,
+      newChecksumOpt: Option[VersionChecksum],
+      committedVersion: Long,
+      checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
+    logInfo(s"Creating a new snapshot v${initSegment.version} for commit version $committedVersion")
+    createSnapshot(
+      initSegment,
+      minFileRetentionTimestamp,
+      checkpointMetadataOptHint,
+      checksumOpt = newChecksumOpt
+    )
+  }
+
+  /**
+   * Called after committing a transaction and updating the state of the table.
+   *
+   * @param committedVersion the version that was committed
+   * @param newChecksumOpt the checksum for the new commit, if available.
+   *                       Usually None, since the commit would have just finished.
+   * @param preCommitLogSegment the log segment of the table prior to commit
+   */
+  def updateAfterCommit(
+      committedVersion: Long,
+      newChecksumOpt: Option[VersionChecksum],
+      preCommitLogSegment: LogSegment): Snapshot = lockInterruptibly {
+    recordDeltaOperation(this, "delta.log.updateAfterCommit") {
+      val updateTimestamp = clock.getTimeMillis()
+      val previousSnapshot = currentSnapshot.snapshot
+      // Somebody else could have already updated the snapshot while we waited for the lock
+      if (committedVersion <= previousSnapshot.version) return previousSnapshot
+      val segment = getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
+        .getOrElse {
+          // This shouldn't be possible right after a commit
+          logError(s"No delta log found for the Delta table at $logPath")
+          throw DeltaErrors.emptyDirectoryException(logPath.toString)
+        }
+
+      // This likely implies a list-after-write inconsistency
+      if (segment.version < committedVersion) {
+        recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
+          "committedVersion" -> committedVersion,
+          "currentVersion" -> segment.version
+        ))
+        throw DeltaErrors.invalidCommittedVersion(committedVersion, segment.version)
+      }
+
+      val newSnapshot = createSnapshotAfterCommit(
+        segment,
+        minFileRetentionTimestamp,
+        newChecksumOpt,
+        committedVersion,
+        previousSnapshot.getCheckpointMetadataOpt)
+      logMetadataTableIdChange(previousSnapshot, newSnapshot)
+      logInfo(s"Updated snapshot to $newSnapshot")
+      replaceSnapshot(newSnapshot, updateTimestamp)
+      currentSnapshot.snapshot
+    }
+  }
+
   /** Get the snapshot at `version`. */
   def getSnapshotAt(
       version: Long,
@@ -631,7 +697,8 @@ trait SnapshotManagement { self: DeltaLog =>
       createSnapshot(
         initSegment = segment,
         minFileRetentionTimestamp = minFileRetentionTimestamp,
-        checkpointMetadataOptHint = None)
+        checkpointMetadataOptHint = None,
+        checksumOpt = readChecksum(segment.version))
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
