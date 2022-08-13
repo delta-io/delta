@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands.cdc
 
 import java.sql.Timestamp
+
 import scala.collection.mutable.ListBuffer
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaOperations, DeltaOptions, DeltaParquetFileFormat, DeltaTableUtils, DeltaTimeTravelSpec, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
