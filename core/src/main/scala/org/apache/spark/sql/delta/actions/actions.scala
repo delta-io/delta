@@ -303,10 +303,10 @@ case class AddFile(
   }
 
   @JsonIgnore
-  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
+  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
     // From modification time in milliseconds to microseconds.
-    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
-    .toLong
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS))
+
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
@@ -364,9 +364,12 @@ object AddFile {
     /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
     object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
 
-    /** [[INSERTION_TIME]]: the latest timestamp in micro seconds when the data in the file
-     * was inserted */
+    /**
+     * [[INSERTION_TIME]]: the latest timestamp in micro seconds when the data in the file
+     * was inserted
+     */
     object INSERTION_TIME extends AddFile.Tags.KeyType("INSERTION_TIME")
+
 
     /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
      physical log, only used for communication  */
