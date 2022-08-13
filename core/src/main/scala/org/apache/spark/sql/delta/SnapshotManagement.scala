@@ -53,7 +53,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
-  @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit(lastCheckpoint)
+  @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
 
   /**
    * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
@@ -254,27 +254,35 @@ trait SnapshotManagement { self: DeltaLog =>
    * Load the Snapshot for this Delta table at initialization. This method uses the `lastCheckpoint`
    * file as a hint on where to start listing the transaction log directory. If the _delta_log
    * directory doesn't exist, this method will return an `InitialSnapshot`.
-   *
-   * @param lastCheckpointOpt: checkpoint hint used to load checkpoint
    */
-  protected def getSnapshotAtInit(
-    lastCheckpointOpt: Option[CheckpointMetaData]): CapturedSnapshot = {
+  protected def getSnapshotAtInit: CapturedSnapshot = {
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
       val currentTimestamp = clock.getTimeMillis()
-      getLogSegmentFrom(lastCheckpointOpt).map { segment =>
-        val snapshot = createSnapshot(
-          initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp,
-          checkpointMetadataOptHint = lastCheckpointOpt,
-          checksumOpt = readChecksum(segment.version))
-
-        logInfo(s"Returning initial snapshot $snapshot")
-        CapturedSnapshot(snapshot, currentTimestamp)
-      }.getOrElse {
-        logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
-        CapturedSnapshot(new InitialSnapshot(logPath, this), currentTimestamp)
-      }
+      val lastCheckpointOpt = lastCheckpoint
+      createSnapshotAtInitInternal(
+        initSegment = getLogSegmentFrom(lastCheckpointOpt),
+        lastCheckpointOpt = lastCheckpointOpt,
+        timestamp = currentTimestamp
+      )
     }
+  }
+
+  protected def createSnapshotAtInitInternal(
+      initSegment: Option[LogSegment],
+      lastCheckpointOpt: Option[CheckpointMetaData],
+      timestamp: Long): CapturedSnapshot = {
+    val snapshot = initSegment.map { segment =>
+      val snapshot = createSnapshot(
+        initSegment = segment,
+        minFileRetentionTimestamp = minFileRetentionTimestamp,
+        checkpointMetadataOptHint = lastCheckpointOpt,
+        checksumOpt = readChecksum(segment.version))
+      snapshot
+    }.getOrElse {
+      logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
+      new InitialSnapshot(logPath, this)
+    }
+    CapturedSnapshot(snapshot, timestamp)
   }
 
   /** Returns the current snapshot. Note this does not automatically `update()`. */
@@ -486,7 +494,7 @@ trait SnapshotManagement { self: DeltaLog =>
   private def isSnapshotFresh(
       capturedSnapshot: CapturedSnapshot,
       checkIfUpdatedSinceTs: Option[Long]): Boolean = {
-    checkIfUpdatedSinceTs.exists(_ < capturedSnapshot.updateTimestamp)
+    checkIfUpdatedSinceTs.exists(_ <= capturedSnapshot.updateTimestamp)
   }
 
   /**
@@ -560,11 +568,11 @@ trait SnapshotManagement { self: DeltaLog =>
       val previousSnapshot = currentSnapshot.snapshot
       val segmentOpt =
         getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
-      installSnapshotInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
+      installLogSegmentInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
     }
 
   /** Install the provided segmentOpt as the currentSnapshot on the cluster */
-  def installSnapshotInternal(
+  protected def installLogSegmentInternal(
       previousSnapshot: Snapshot,
       segmentOpt: Option[LogSegment],
       updateTimestamp: Long,
