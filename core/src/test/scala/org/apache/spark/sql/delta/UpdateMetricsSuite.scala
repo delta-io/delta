@@ -317,15 +317,33 @@ class UpdateMetricsSuite extends QueryTest
     var numCopiedRows = 95
     val numAddedFiles = if (testConfig.partitioned) 5 else 2
     var numRemovedFiles = 5
+    var unpartitionedNumAddFiles = 2
     runUpdateAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = numPartitions),
       where = "id in (5, 25, 45, 65, 85)",
       expectedOperationMetrics = Map(
         "numCopiedRows" -> numCopiedRows,
         "numUpdatedRows" -> 5,
-        "numAddedFiles" -> numAddedFiles,
+        "numAddedFiles" -> {
+          if (testConfig.partitioned) {
+            5
+          } else {
+            unpartitionedNumAddFiles
+          }
+        },
         "numRemovedFiles" -> numRemovedFiles,
-        "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) numAddedFiles else 0 }),
+        "numAddedChangeFiles" -> {
+          if (testConfig.cdfEnabled) {
+            if (testConfig.partitioned) {
+              5
+            } else {
+              unpartitionedNumAddFiles
+            }
+          } else {
+            0
+          }
+        }
+      ),
       testConfig = testConfig
     )
   }
