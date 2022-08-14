@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot

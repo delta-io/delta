@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
-import scala.collection.Set._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal

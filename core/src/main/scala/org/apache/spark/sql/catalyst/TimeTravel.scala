@@ -17,11 +17,10 @@
 package org.apache.spark.sql.catalyst
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.sql.Timestamp
 
 import com.databricks.spark.util.DatabricksLogging
 
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Expression, RuntimeReplaceable, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan}
 
 /**

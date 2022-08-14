@@ -33,7 +33,6 @@ import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.util.ThreadUtils
 
 /**

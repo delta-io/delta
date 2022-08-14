@@ -163,14 +163,10 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
-  def failOnCheckpoint(src: Path, dest: Path): DeltaIllegalStateException = {
-    failOnCheckpoint(src.toString, dest.toString)
-  }
-
-  def failOnCheckpoint(src: String, dest: String): DeltaIllegalStateException = {
+  def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
-      messageParameters = Array(s"$src", s"$dest"))
+      messageParameters = Array(s"${src.toString}", s"${dest.toString}"))
   }
 
   def checkpointMismatchWithSnapshot : Throwable = {

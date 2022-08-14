@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.TableIdentifier
 
 class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
   import testImplicits._

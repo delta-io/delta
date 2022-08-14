@@ -16,12 +16,10 @@
 
 package org.apache.spark.sql.delta.files
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.util.Objects
 
-import scala.collection.mutable.ArrayBuffer
-
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder

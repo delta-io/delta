@@ -16,8 +16,6 @@
 
 package io.delta.tables
 
-import java.sql.Timestamp
-
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
@@ -134,6 +132,15 @@ class DeltaTable private[tables](
    */
   def history(): DataFrame = {
     executeHistory(deltaLog, tableId = table.getTableIdentifierIfExists)
+  }
+
+  /**
+   * Get the details of a Delta table such as the format, name, and size.
+   *
+   * @since 2.1.0
+   */
+  def details(): DataFrame = {
+    executeDetails(deltaLog.dataPath.toString, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -653,7 +660,13 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   * Instantiate a [[DeltaTable]] object using the given table or view name. If the given
+   * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
+   * Delta table), it throws a `not a Delta table` error.
+   *
+   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -667,7 +680,13 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   * Instantiate a [[DeltaTable]] object using the given table or view name using the given
+   * SparkSession. If the given tableOrViewName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error.
+   *
+   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
    */
   def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
     val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
