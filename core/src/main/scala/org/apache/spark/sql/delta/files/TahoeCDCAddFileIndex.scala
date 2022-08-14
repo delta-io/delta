@@ -30,12 +30,12 @@ import org.apache.spark.sql.types.StructType
  * and CDC type on a per-file basis.
  */
 class TahoeCDCAddFileIndex(
-  override val spark: SparkSession,
-  val actionType: String = "cdcRead",
-  filesByVersion: Seq[CDCDataSpec[AddFile]],
-  deltaLog: DeltaLog,
-  path: Path,
-  snapshot: Snapshot)
+    override val spark: SparkSession,
+    val actionType: String = "cdcRead",
+    filesByVersion: Seq[CDCDataSpec[AddFile]],
+    deltaLog: DeltaLog,
+    path: Path,
+    snapshot: Snapshot)
   extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
   // We add the metadata as faked partition columns in order to attach it on a per-file

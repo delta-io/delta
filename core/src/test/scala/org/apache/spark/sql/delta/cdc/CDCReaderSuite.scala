@@ -146,7 +146,7 @@ class CDCReaderSuite
       // which is called by the following expression.
       val changesStats = CDCReader.changesToBatchDF(log, 0, 2, spark)
         .queryExecution.analyzed.stats
-      val expectedStats = Statistics(3169)
+      val expectedStats = Statistics(sizeInBytes = 3169)
       assert(expectedStats == changesStats)
     }
   }
@@ -163,6 +163,7 @@ class CDCReaderSuite
       writeCdcData(
         log,
         spark.range(30, 35).toDF().withColumn(CDC_TYPE_COLUMN_NAME, lit("update_post")))
+
       checkCDCAnswer(
         log,
         CDCReader.changesToBatchDF(log, 0, 2, spark),

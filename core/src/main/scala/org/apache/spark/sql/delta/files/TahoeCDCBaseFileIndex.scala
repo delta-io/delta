@@ -28,18 +28,18 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
  * A base [[TahoeFileIndex]] for all CDC file indexes
  */
 abstract class TahoeCDCBaseFileIndex[T <: FileAction](
-  spark: SparkSession,
-  val filesByVersion: Seq[CDCDataSpec[T]],
-  deltaLog: DeltaLog,
-  path: Path,
-  snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
+    spark: SparkSession,
+    val filesByVersion: Seq[CDCDataSpec[T]],
+    deltaLog: DeltaLog,
+    path: Path,
+    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
 
   case class ActionParameters(
-    partitionValues: Map[String, String],
-    size: Long,
-    modificationTime: Long,
-    dataChange: Boolean,
-    tags: Map[String, String])
+      partitionValues: Map[String, String],
+      size: Long,
+      modificationTime: Long,
+      dataChange: Boolean,
+      tags: Map[String, String])
 
   private def extractActionParameters(action: T): ActionParameters = {
     action match {
@@ -47,12 +47,9 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
         ActionParameters(partitionValues, size, 0, false, tags)
       case r@RemoveFile(_, _, dataChange, extendedFileMetadata, partitionValues, size, tags) =>
         if (!extendedFileMetadata.getOrElse(false)) {
-          // This shouldn't happen in user queries -
-          // the CDC flag was added at the same time as
-          // extended metadata, so all removes in a table
-          // with CDC enabled should have it. (The
-          // only exception is FSCK removes, which we
-          // screen out separately because they have
+          // This shouldn't happen in user queries - the CDC flag was added at the same time as
+          // extended metadata, so all removes in a table with CDC enabled should have it.
+          // (The only exception is FSCK removes, which we screen out separately because they have
           // dataChange set to false.)
           throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
         }
@@ -65,21 +62,16 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
   override def tableVersion: Long = snapshot.version
 
   override def matchingFiles(
-    partitionFilters: Seq[Expression],
-    dataFilters: Seq[Expression]): Seq[AddFile] = {
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
     val addFiles = filesByVersion
       .flatMap {
         case CDCDataSpec(version, timestamp, actions) =>
           actions.map { action =>
-            val ActionParameters(
-            partitionValues,
-            size,
-            modificationTime,
-            dataChange,
-            tags) = extractActionParameters(action)
+            val params = extractActionParameters(action)
 
             val newPartitionValues =
-              partitionValues ++
+              params.partitionValues ++
                 (Map(
                   CDC_COMMIT_VERSION -> version.toString,
                   CDC_COMMIT_TIMESTAMP -> Option(timestamp).map(_.toString).orNull)
@@ -88,10 +80,10 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
             AddFile(
               action.path,
               newPartitionValues,
-              size,
-              modificationTime,
-              dataChange,
-              tags = tags)
+              params.size,
+              params.modificationTime,
+              params.dataChange,
+              tags = params.tags)
           }
       }
     DeltaLog.filterFileList(
