@@ -186,7 +186,7 @@ case class WriteIntoDelta(
   }
 
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
-    import sparkSession.implicits._
+    import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
       if (mode == SaveMode.ErrorIfExists) {
@@ -262,7 +262,8 @@ case class WriteIntoDelta(
         val addFiles = newFiles.collect { case a: AddFile => a }
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionSchema, addFiles.toDF(), predicates).as[AddFile].collect()
+          txn.metadata.partitionSchema, addFiles.toDF(sparkSession), predicates).as[AddFile]
+          .collect()
         val invalidFiles = addFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles
@@ -289,7 +290,7 @@ case class WriteIntoDelta(
             val insertCols = outputCols :+
               lit(CDCReader.CDC_TYPE_INSERT).as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val insertDataCols = outputCols :+
-              new Column(Literal.create(CDCReader.CDC_TYPE_NOT_CDC, StringType))
+              new Column(CDCReader.CDC_TYPE_NOT_CDC)
                 .as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val packedInserts = array(
               struct(insertCols: _*),

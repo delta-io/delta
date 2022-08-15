@@ -127,7 +127,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
         // Truncate and pad string max values as necessary
         case (c, SkippingEligibleDataType(StringType)) =>
           val udfTruncateMax =
-            DeltaUDF.stringStringUdf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
+            DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
         // Collect all numeric max values

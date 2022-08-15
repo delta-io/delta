@@ -55,7 +55,8 @@ object CDCReader extends DeltaLogging {
   val CDC_TYPE_COLUMN_NAME = "_change_type" // emitted from data
   val CDC_COMMIT_VERSION = "_commit_version" // inferred by reader
   val CDC_COMMIT_TIMESTAMP = "_commit_timestamp" // inferred by reader
-  val CDC_TYPE_DELETE = "delete"
+  val CDC_TYPE_DELETE_STRING = "delete"
+  val CDC_TYPE_DELETE = Literal(CDC_TYPE_DELETE_STRING)
   val CDC_TYPE_INSERT = "insert"
   val CDC_TYPE_UPDATE_PREIMAGE = "update_preimage"
   val CDC_TYPE_UPDATE_POSTIMAGE = "update_postimage"
@@ -65,7 +66,7 @@ object CDCReader extends DeltaLogging {
   // write them as normal to the main table.
   // Note that we specifically avoid using `null` here, because partition values of `null` are in
   // some scenarios mapped to a special string for Hive compatibility.
-  val CDC_TYPE_NOT_CDC: String = null
+  val CDC_TYPE_NOT_CDC: Literal = Literal(null, StringType)
 
   // The virtual column name used for dividing CDC data from main table data. Delta writers should
   // permit this column through even though it's not part of the main table, and the

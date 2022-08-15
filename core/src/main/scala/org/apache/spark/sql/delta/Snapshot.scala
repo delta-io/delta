@@ -34,7 +34,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -72,7 +71,7 @@ class Snapshot(
 
   import Snapshot._
   // For implicits which re-use Encoder:
-  import SingleAction._
+  import org.apache.spark.sql.delta.implicits._
 
   protected def spark = SparkSession.active
 
@@ -97,9 +96,6 @@ class Snapshot(
   private def stateReconstruction: Dataset[SingleAction] = {
     withDmqTag {
       recordFrameProfile("Delta", "snapshot.stateReconstruction") {
-        val implicits = spark.implicits
-        import implicits._
-
         // for serializability
         val localMinFileRetentionTimestamp = minFileRetentionTimestamp
         val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
@@ -109,9 +105,9 @@ class Snapshot(
           new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
         var wrapPath = false
 
-        val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
+        val canonicalizePath = DeltaUDF.stringFromString { filePath =>
             Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
-        )
+        }
 
         // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
         // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
@@ -189,19 +185,17 @@ class Snapshot(
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
-    val implicits = spark.implicits
-    import implicits._
     Map(
-      "protocol" -> last($"protocol", ignoreNulls = true),
-      "metadata" -> last($"metaData", ignoreNulls = true),
-      "setTransactions" -> collect_set($"txn"),
+      "protocol" -> last(col("protocol"), ignoreNulls = true),
+      "metadata" -> last(col("metaData"), ignoreNulls = true),
+      "setTransactions" -> collect_set(col("txn")),
       // sum may return null for empty data set.
-      "sizeInBytes" -> coalesce(sum($"add.size"), lit(0L)),
-      "numOfFiles" -> count($"add"),
-      "numOfMetadata" -> count($"metaData"),
-      "numOfProtocol" -> count($"protocol"),
-      "numOfRemoves" -> count($"remove"),
-      "numOfSetTransactions" -> count($"txn"),
+      "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
+      "numOfFiles" -> count(col("add")),
+      "numOfMetadata" -> count(col("metaData")),
+      "numOfProtocol" -> count(col("protocol")),
+      "numOfRemoves" -> count(col("remove")),
+      "numOfSetTransactions" -> count(col("txn")),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
     )
   }
@@ -217,7 +211,9 @@ class Snapshot(
           val startTime = System.nanoTime()
           val aggregations =
             aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
-          val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
+          val _computedState = recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
+            stateDF.select(aggregations: _*).as[State].first()
+          }
           val stateReconstructionCheck = spark.sessionState.conf.getConf(
             DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
           if (_computedState.protocol == null) {
@@ -282,16 +278,12 @@ class Snapshot(
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
   def allFiles: Dataset[AddFile] = {
-    val implicits = spark.implicits
-    import implicits._
-    stateDS.where("add IS NOT NULL").select($"add".as[AddFile])
+    stateDS.where("add IS NOT NULL").select(col("add").as[AddFile])
   }
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
-    val implicits = spark.implicits
-    import implicits._
-    stateDS.where("remove IS NOT NULL").select($"remove".as[RemoveFile])
+    stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
   }
 
   /** Returns the schema of the table. */
@@ -458,19 +450,6 @@ object Snapshot extends DeltaLogging {
       numOfRemoves: Long,
       numOfSetTransactions: Long,
       fileSizeHistogram: Option[FileSizeHistogram])
-
-  private[this] lazy val _stateEncoder: ExpressionEncoder[State] = try {
-    ExpressionEncoder[State]()
-  } catch {
-    case e: Throwable =>
-      logError(e.getMessage, e)
-      throw e
-  }
-
-
-  implicit private def stateEncoder: Encoder[State] = {
-    _stateEncoder.copy()
-  }
 }
 
 /**

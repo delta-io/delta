@@ -22,31 +22,58 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.expressions.{SparkUserDefinedFunction, UserDefinedFunction}
 import org.apache.spark.sql.functions.udf
 
+/**
+ * Define a few templates for udfs used by Delta. Use these templates to create
+ * `SparkUserDefinedFunction` to avoid creating new Encoders. This would save us from touching
+ * `ScalaReflection` to reduce the lock contention in concurrent queries.
+ */
 object DeltaUDF {
 
+  def stringFromString(f: String => String): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(stringFromStringTemplate, f, udf(f))
+
+  def intFromString(f: String => Int): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(intFromStringTemplate, f, udf(f))
+
+  def intFromStringBoolean(f: (String, Boolean) => Int): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(intFromStringBooleanTemplate, f, udf(f))
+
+  def boolean(f: () => Boolean): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(booleanTemplate, f, udf(f))
+
+  def stringFromMap(f: Map[String, String] => String): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(stringFromMapTemplate, f, udf(f))
+
+  private lazy val stringFromStringTemplate =
+    udf[String, String](identity).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val booleanTemplate = udf(() => true).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val intFromStringTemplate =
+    udf((_: String) => 1).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val intFromStringBooleanTemplate =
+    udf((_: String, _: Boolean) => 1).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val stringFromMapTemplate =
+    udf((_: Map[String, String]) => "").asInstanceOf[SparkUserDefinedFunction]
+
   /**
-   * A template for String => String udfs. It's used to create `SparkUserDefinedFunction` for
-   * String => String udfs without touching Scala Reflection to reduce the log contention.
+   * Return a `UserDefinedFunction` for the given `f` from `template` if
+   * `INTERNAL_UDF_OPTIMIZATION_ENABLED` is enabled. Otherwise, `orElse` will be called to create a
+   * new `UserDefinedFunction`.
    */
-  private lazy val stringStringUdfTemplate =
-    udf[String, String]((x: String) => x).asInstanceOf[SparkUserDefinedFunction]
-
-  private def createUdfFromTemplate[R, T](
+  private def createUdfFromTemplateUnsafe(
       template: SparkUserDefinedFunction,
-      f: T => R): UserDefinedFunction = {
-    template.copy(
-      f = f,
-      inputEncoders = template.inputEncoders.map(_.map(_.copy())),
-      outputEncoder = template.outputEncoder.map(_.copy())
-    )
-  }
-
-  def stringStringUdf(f: String => String): UserDefinedFunction = {
+      f: AnyRef,
+      orElse: => UserDefinedFunction): UserDefinedFunction = {
     if (SparkSession.active.sessionState.conf
       .getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED)) {
-      createUdfFromTemplate(stringStringUdfTemplate, f)
+      val inputEncoders = template.inputEncoders.map(_.map(_.copy()))
+      val outputEncoder = template.outputEncoder.map(_.copy())
+      template.copy(f = f, inputEncoders = inputEncoders, outputEncoder = outputEncoder)
     } else {
-      udf[String, String](f)
+      orElse
     }
   }
 }

@@ -113,7 +113,9 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     withSparkSession(
       SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
     ) { spark =>
+      // scalastyle:off sparkimplicits
       import spark.implicits._
+      // scalastyle:on sparkimplicits
 
       val tablePath = createTempDir()
       spark.range(1, 10).toDF("key")
@@ -146,7 +148,9 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     withSparkSession(
       SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
     ) { spark =>
+      // scalastyle:off sparkimplicits
       import spark.implicits._
+      // scalastyle:on sparkimplicits
 
       spark.range(1, 10).toDF("key")
         .withColumn("value", col("key")).write.format("delta").saveAsTable("tbl")
@@ -177,7 +181,9 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     withSparkSession(
       "spark.sql.extensions" -> classOf[DeltaSparkSessionExtension].getName
     ) { spark =>
+      // scalastyle:off sparkimplicits
       import spark.implicits._
+      // scalastyle:on sparkimplicits
       val tablePath = createTempDir()
 
       spark.range(1, 10).toDF("key").withColumn("value", col("key"))

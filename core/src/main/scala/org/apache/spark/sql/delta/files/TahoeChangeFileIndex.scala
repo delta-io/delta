@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
+import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -54,11 +54,8 @@ class TahoeChangeFileIndex(
           AddFile(f.path, newPartitionVals, f.size, 0, dataChange = false, tags = f.tags)
         }
     }
-    DeltaLog.filterFileList(
-        partitionSchema,
-        spark.createDataset(addFiles)(addFileEncoder).toDF(),
-        partitionFilters)
-      .as[AddFile](addFileEncoder)
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
       .collect()
   }
 

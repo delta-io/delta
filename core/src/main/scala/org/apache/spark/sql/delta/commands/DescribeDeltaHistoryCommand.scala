@@ -89,8 +89,9 @@ case class DescribeDeltaHistoryCommand(
         throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
       }
 
-      import sparkSession.implicits._
-      deltaLog.history.getHistory(limit).toDF().collect().toSeq
+      import org.apache.spark.sql.delta.implicits._
+      val commits = deltaLog.history.getHistory(limit)
+      sparkSession.implicits.localSeqToDatasetHolder(commits).toDF().collect().toSeq
     }
   }
 }

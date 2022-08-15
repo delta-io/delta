@@ -33,7 +33,6 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.{lit, typedLit, udf}
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -116,7 +115,7 @@ case class DeleteCommand(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
       txn: OptimisticTransaction): Seq[Action] = {
-    import sparkSession.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     var numRemovedFiles: Long = 0
     var numAddedFiles: Long = 0
@@ -207,7 +206,7 @@ case class DeleteCommand(
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
           val data = Dataset.ofRows(sparkSession, newTarget)
           val deletedRowCount = metrics("numDeletedRows")
-          val deletedRowUdf = udf { () =>
+          val deletedRowUdf = DeltaUDF.boolean { () =>
             deletedRowCount += 1
             true
           }.asNondeterministic()
@@ -337,7 +336,7 @@ case class DeleteCommand(
 
     // number of total rows that we have seen / are either copying or deleting (sum of both).
     val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = udf { () =>
+    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
       numTouchedRows += 1
       true
     }.asNondeterministic()
@@ -355,10 +354,7 @@ case class DeleteCommand(
           .filter(numTouchedRowsUdf())
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(
-              If(filterCondition, typedLit[String](CDC_TYPE_NOT_CDC).expr,
-              lit(CDC_TYPE_DELETE).expr)
-            )
+            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData

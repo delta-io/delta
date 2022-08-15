@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, DeltaUDF, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -33,7 +33,7 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct, typedLit, udf}
+import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct}
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`
@@ -87,7 +87,7 @@ case class UpdateCommand(
 
   private def performUpdate(
       sparkSession: SparkSession, deltaLog: DeltaLog, txn: OptimisticTransaction): Unit = {
-    import sparkSession.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     var numTouchedFiles: Long = 0
     var numRewrittenFiles: Long = 0
@@ -125,7 +125,7 @@ case class UpdateCommand(
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
       val updatedRowCount = metrics("numUpdatedRows")
-      val updatedRowUdf = udf { () =>
+      val updatedRowUdf = DeltaUDF.boolean { () =>
         updatedRowCount += 1
         true
       }.asNondeterministic()
@@ -249,7 +249,7 @@ case class UpdateCommand(
     // Number of total rows that we have seen, i.e. are either copying or updating (sum of both).
     // This will be used later, along with numUpdatedRows, to determine numCopiedRows.
     val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = udf { () =>
+    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
       numTouchedRows += 1
       true
     }.asNondeterministic()
@@ -317,10 +317,9 @@ object UpdateCommand {
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val updatedDataCols = namedUpdateCols :+
-        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
-      val noopRewriteCols = target.output.map(new Column(_)) :+
-        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val updatedDataCols = namedUpdateCols :+ notCdcCol
+      val noopRewriteCols = target.output.map(new Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),

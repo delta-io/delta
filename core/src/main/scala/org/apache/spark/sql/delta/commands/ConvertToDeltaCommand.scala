@@ -690,7 +690,7 @@ class CatalogFileManifest(
   }
 
   override def doList(): Dataset[SerializableFileStatus] = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
