@@ -34,14 +34,16 @@ import org.junit.Test;
 
 import org.apache.spark.sql.test.TestSparkSession;
 
-public class MergeIntoJavaSuite implements Serializable, DeltaSQLCommandJavaTest {
-    private transient SparkSession spark;
+public class MergeIntoJavaSuite implements Serializable {
+    private transient TestSparkSession spark;
     private transient String tempPath;
 
     @Before
     public void setUp() {
-        spark = buildSparkSession();
+        spark = new TestSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
+        // disable the spark conf check
+        spark.sqlContext().conf().setConfString("spark.databricks.delta.checkRequiredSparkConf.enabled", "false");
     }
 
     @After

@@ -34,16 +34,21 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
-    with SharedSparkSession    with DeltaSQLCommandTest with GivenWhenThen {
+    with SharedSparkSession    with GivenWhenThen {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
+  }
+
+  protected override def sparkConf = {
+    // disable the spark conf check
+    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
   }
 
   protected implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)

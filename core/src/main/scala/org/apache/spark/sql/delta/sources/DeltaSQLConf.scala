@@ -810,6 +810,15 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CHECK_REQUIRED_SPARK_CONF =
+    buildConf("checkRequiredSparkConf.enabled")
+      .doc(
+      """Whether we check if SparkSession is initialized with spark.sql.extensions
+          | and spark.sql.catalog.spark_catalog conf""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

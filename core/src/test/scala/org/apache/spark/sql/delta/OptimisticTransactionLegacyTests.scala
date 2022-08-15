@@ -24,20 +24,25 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 // These tests are potentially a subset of the tests already in OptimisticTransactionSuite.
 // These tests can potentially be removed but only after confirming that these tests are
 // truly a subset of the tests in OptimisticTransactionSuite.
 trait OptimisticTransactionLegacyTests
   extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with SharedSparkSession {
 
   private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
   private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
   private val addC = AddFile("c", Map.empty, 1, 1, dataChange = true)
 
   import testImplicits._
+
+  protected override def sparkConf = {
+    // disable the spark conf check
+    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+  }
 
   test("block append against metadata change") {
     withTempDir { tempDir =>

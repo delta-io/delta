@@ -17,13 +17,14 @@
 package io.delta.sql
 
 import java.nio.file.Files
-
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
-
+import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.network.util.JavaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -81,6 +82,43 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     ) { spark =>
       val v2Catalog = spark.sessionState.analyzer.catalogManager.catalog("spark_catalog")
       assert(v2Catalog.isInstanceOf[org.apache.spark.sql.delta.catalog.DeltaCatalog])
+    }
+  }
+
+  test("DeltaLog should not throw exception if spark.sql.catalog.spark_catalog " +
+    "spark.sql.catalog.spark_catalog config is not found") {
+    withTempDir { dir =>
+      withSparkSession(
+        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key ->
+          classOf[org.apache.spark.sql.delta.catalog.DeltaCatalog].getName
+      ) { spark =>
+        val path = new Path(dir.getCanonicalPath)
+        assert(DeltaLog.forTable(spark, path).tableExists == false)
+      }
+    }
+  }
+
+  test("DeltaLog should throw exception if spark.sql.catalog.spark_catalog " +
+    "config is not found") {
+    withTempDir { dir =>
+      withSparkSession("" -> "") { spark =>
+        val path = new Path(dir.getCanonicalPath)
+        val e = intercept[DeltaIllegalStateException] {
+          DeltaLog.forTable(spark, path)
+        }
+        assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+      }
+    }
+  }
+
+  test("DeltaLog should not throw exception if spark.sql.catalog.spark_catalog " +
+    "config is not found and the check is disabled") {
+    withTempDir { dir =>
+      withSparkSession(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key -> "false") { spark =>
+        val path = new Path(dir.getCanonicalPath)
+          DeltaLog.forTable(spark, path)
+        assert(DeltaLog.forTable(spark, path).tableExists == false)
+      }
     }
   }
 

@@ -27,11 +27,14 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 // scalastyle:off: removeFile
-class ActionSerializerSuite extends QueryTest with SharedSparkSession
-with DeltaSQLCommandTest {
+class ActionSerializerSuite extends QueryTest with SharedSparkSession {
+
+  protected override def sparkConf = {
+    // disable the spark conf check
+    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+  }
 
   roundTripCompare("Add",
     AddFile("test", Map.empty, 1, 1, dataChange = true))

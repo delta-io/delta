@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.stats
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{TestsStatistics, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.TestsStatistics
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
@@ -33,9 +33,14 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 class StatsCollectionSuite
   extends QueryTest
   with SharedSparkSession  with DeltaColumnMappingTestUtils
-  with TestsStatistics with DeltaSQLCommandTest {
+  with TestsStatistics {
 
   import testImplicits._
+
+  protected override def sparkConf = {
+    // disable the spark conf check
+    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+  }
 
 
   test("on write") {

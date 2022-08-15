@@ -36,7 +36,6 @@ import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
@@ -50,11 +49,10 @@ import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.spark.util.{Clock, SystemClock, Utils}
 
 /**
@@ -85,21 +83,17 @@ class DeltaLog private(
   protected def spark = SparkSession.active
 
   /**
-   * Issue 1144 - Verify the required Spark conf for delta
-   * Throw `DeltaErrors.configureSparkSessionWithExtensionAndCatalog` exception if both
-   * `spark.sql.extensions` and `spark.sql.catalog.spark_catalog` config are missing.
-   * If `DeltaSparkSessionExtension` is alternatively activated using the `.withExtension()` API,
-   * we expect the DeltaSqlParser to be available and try parse the vacuum command.
-   * If not successful, we throw exception.
+   * Verify the required Spark conf for delta
+   * Throw `DeltaErrors.configureSparkSessionWithExtensionAndCatalog` exception if
+   * `spark.sql.catalog.spark_catalog` config is missing. We do not check for
+   * `spark.sql.extensions` because DeltaSparkSessionExtension can alternatively
+   * be activated using the `.withExtension()` API. This check can be disabled
+   * by setting DELTA_CHECK_REQUIRED_SPARK_CONF to false.
    */
-  if(spark.conf.getOption(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key)
-    .orElse(Try(spark.sessionState.sqlParser.parsePlan("vacuum delta_table")).toOption)
-    .isEmpty ||
-    spark.conf.getOption(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
-    throw new DeltaRuntimeException(
-      errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
-        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName))
+  if(spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF)) {
+    if (spark.sparkContext.conf.getOption(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+      throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
+    }
   }
 
   /**
@@ -279,8 +273,7 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val hadoopConf = newDeltaHadoopConf()
-    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf)
-      .filter(f => isDeltaFile(f.getPath))
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf).filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
@@ -302,11 +295,11 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
     val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
-      .filter(f => isDeltaFile(f.getPath))
+      .filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
-      val version = deltaVersion(status.getPath)
+      val version = deltaVersion(status)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
@@ -583,11 +576,13 @@ object DeltaLog extends DeltaLogging {
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
+
   private def apply(
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
-      clock: Clock): DeltaLog = {
+      clock: Clock
+  ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {

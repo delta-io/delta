@@ -28,7 +28,6 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HDFSLogStore(sparkConf, defaultHadoopConf) {
@@ -44,11 +43,13 @@ class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configura
   }
 }
 
-class DuplicatingListLogStoreSuite extends SharedSparkSession with DeltaSQLCommandTest {
+class DuplicatingListLogStoreSuite extends SharedSparkSession {
 
   override def sparkConf: SparkConf = {
     super.sparkConf.set("spark.databricks.tahoe.logStore.class",
       classOf[DuplicatingListLogStore].getName)
+    // disable the spark conf check
+    .set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
   }
 
   def pathExists(deltaLog: DeltaLog, filePath: String): Boolean = {

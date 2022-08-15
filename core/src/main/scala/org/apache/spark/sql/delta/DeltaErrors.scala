@@ -1544,6 +1544,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def configureSparkSessionWithExtensionAndCatalog(
+      originalException: Option[Throwable]): Throwable = {
+    val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
+      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
+        catalogImplConfig, classOf[DeltaCatalog].getName),
+      cause = originalException.getOrElse(null))
+  }
+
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE",

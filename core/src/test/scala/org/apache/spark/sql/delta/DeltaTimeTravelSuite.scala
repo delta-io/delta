@@ -33,12 +33,11 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
-  with DeltaSQLCommandTest {
+  with SharedSparkSession  with SQLTestUtils {
 
   import testImplicits._
 
@@ -46,6 +45,11 @@ class DeltaTimeTravelSuite extends QueryTest
 
   private implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
+  }
+
+  protected override def sparkConf = {
+    // disable the spark conf check
+    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
   }
 
   private implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)

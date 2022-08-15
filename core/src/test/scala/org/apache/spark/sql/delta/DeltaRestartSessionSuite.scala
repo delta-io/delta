@@ -18,19 +18,14 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.SparkSession
-import io.delta.sql.DeltaSparkSessionExtension
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 class DeltaRestartSessionSuite extends SparkFunSuite {
 
   test("restart Spark session should work") {
     withTempDir { dir =>
       var spark = SparkSession.builder().master("local[2]")
-        .config(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
-          classOf[DeltaSparkSessionExtension].getName)
-        .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-          classOf[DeltaCatalog].getName)
+        .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
         .getOrCreate()
       try {
         val path = dir.getCanonicalPath
@@ -39,10 +34,7 @@ class DeltaRestartSessionSuite extends SparkFunSuite {
 
         spark.stop()
         spark = SparkSession.builder().master("local[2]")
-          .config(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
-            classOf[DeltaSparkSessionExtension].getName)
-          .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-            classOf[DeltaCatalog].getName)
+          .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
           .getOrCreate()
         spark.range(10).write.format("delta").mode("overwrite").save(path)
         spark.read.format("delta").load(path).count()
