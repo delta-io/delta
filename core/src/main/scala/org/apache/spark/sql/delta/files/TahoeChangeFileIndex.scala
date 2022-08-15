@@ -41,4 +41,7 @@ class TahoeChangeFileIndex(
 
   // Data already has cdc partition values
   override def cdcPartitionValues(): Map[String, String] = Map.empty
+
+  override protected def extractActionParameters(addCDCFile: AddCDCFile): ActionParameters =
+    ActionParameters(addCDCFile.partitionValues, addCDCFile.size, 0, false, addCDCFile.tags)
 }

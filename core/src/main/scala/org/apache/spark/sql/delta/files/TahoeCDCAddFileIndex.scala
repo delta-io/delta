@@ -31,7 +31,6 @@ import org.apache.spark.sql.types.StructType
  */
 class TahoeCDCAddFileIndex(
     override val spark: SparkSession,
-    val actionType: String = "cdcRead",
     filesByVersion: Seq[CDCDataSpec[AddFile]],
     deltaLog: DeltaLog,
     path: Path,
@@ -45,4 +44,12 @@ class TahoeCDCAddFileIndex(
 
   override def partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
+
+  override protected def extractActionParameters(addFile: AddFile): ActionParameters =
+    ActionParameters(
+      addFile.partitionValues,
+      addFile.size,
+      addFile.modificationTime,
+      addFile.dataChange,
+      addFile.tags)
 }
