@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -102,7 +103,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val deltaHadoopConf = deltaLog.newDeltaHadoopConf()
       val fs = path.getFileSystem(deltaHadoopConf)
 
-      import spark.implicits._
+      import org.apache.spark.sql.delta.implicits._
 
       val snapshot = deltaLog.update()
 
@@ -169,7 +170,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       try {
         allFilesAndDirs.cache()
 
-        val dirCounts = allFilesAndDirs.where('isDir).count() + 1 // +1 for the base path
+        val dirCounts = allFilesAndDirs.where(col("isDir")).count() + 1 // +1 for the base path
 
         // The logic below is as follows:
         //   1. We take all the files and directories listed in our reservoir
@@ -180,7 +181,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         //   6. We filter all paths with a count of 1, which will correspond to files not in the
         //      state, and empty directories. We can safely delete all of these
         val diff = allFilesAndDirs
-          .where('modificationTime < deleteBeforeTimestamp || 'isDir)
+          .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
           .mapPartitions { fileStatusIterator =>
             val reservoirBase = new Path(basePath)
             val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
@@ -197,11 +198,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                   relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = false))
               }
             }
-          }.groupBy($"value" as 'path)
+          }.groupBy(col("value").as("path"))
           .count()
           .join(validFiles, Seq("path"), "leftanti")
-          .where('count === 1)
-          .select('path)
+          .where(col("count") === 1)
+          .select(col("path"))
           .as[String]
           .map { relativePath =>
             assert(!stringToPath(relativePath).isAbsolute,
@@ -312,7 +313,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       hadoopConf: Broadcast[SerializableConfiguration],
       parallel: Boolean,
       parallelPartitions: Int): Long = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     if (parallel) {
       diff.repartition(parallelPartitions).mapPartitions { files =>

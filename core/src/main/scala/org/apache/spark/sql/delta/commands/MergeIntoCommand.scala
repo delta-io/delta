@@ -387,10 +387,10 @@ case class MergeIntoCommand(
     spark.sparkContext.register(touchedFilesAccum, TOUCHED_FILES_ACCUM_NAME)
 
     // UDFs to records touched files names and add them to the accumulator
-    val recordTouchedFileName = udf { (fileName: String) => {
+    val recordTouchedFileName = DeltaUDF.intFromString { fileName =>
       touchedFilesAccum.add(fileName)
       1
-    }}.asNondeterministic()
+    }.asNondeterministic()
 
     // Skip data based on the merge condition
     val targetOnlyPredicates =
@@ -422,10 +422,10 @@ case class MergeIntoCommand(
     // Get multiple matches and simultaneously collect (using touchedFilesAccum) the file names
     // multipleMatchCount = # of target rows with more than 1 matching source row (duplicate match)
     // multipleMatchSum = total # of duplicate matched rows
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     val (multipleMatchCount, multipleMatchSum) = matchedRowCounts
       .filter("count > 1")
-      .select(coalesce(count("*"), lit(0)), coalesce(sum("count"), lit(0)))
+      .select(coalesce(count(new Column("*")), lit(0)), coalesce(sum("count"), lit(0)))
       .as[(Long, Long)]
       .collect()
       .head
@@ -693,7 +693,7 @@ case class MergeIntoCommand(
           // Generate update expressions and set ROW_DELETED_COL = false and
           // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
           val mainDataOutput = u.resolvedActions.map(_.expr) :+ FalseLiteral :+
-            incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+            incrUpdatedCountExpr :+ CDC_TYPE_NOT_CDC
           if (cdcEnabled) {
             // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
@@ -713,13 +713,12 @@ case class MergeIntoCommand(
           // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
           // CDC_TYPE_NOT_CDC
           val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
-            Literal(CDC_TYPE_NOT_CDC)
+            CDC_TYPE_NOT_CDC
           if (cdcEnabled) {
             // For delete we do a no-op copy with ROW_DELETED_COL = false, INCR_ROW_COUNT_COL as a
             // no-op (because the metric will be incremented in `mainDataOutput`) and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
-            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
-              Literal(CDC_TYPE_DELETE)
+            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+ CDC_TYPE_DELETE
             Seq(mainDataOutput, deleteCdcOutput)
           } else {
             Seq(mainDataOutput)
@@ -740,9 +739,9 @@ case class MergeIntoCommand(
           // isDeleteWithDuplicateMatchesAndCdc definition for more details.
           insertExprs :+
             Alias(Literal(null), TARGET_ROW_ID_COL)() :+ UnresolvedAttribute(SOURCE_ROW_ID_COL) :+
-            FalseLiteral :+ incrInsertedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+            FalseLiteral :+ incrInsertedCountExpr :+ CDC_TYPE_NOT_CDC
         } else {
-          insertExprs :+ FalseLiteral :+ incrInsertedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+          insertExprs :+ FalseLiteral :+ incrInsertedCountExpr :+ CDC_TYPE_NOT_CDC
         }
       )
       if (cdcEnabled) {
@@ -774,10 +773,9 @@ case class MergeIntoCommand(
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
         resolveOnJoinedPlan(targetOutputCols :+ FalseLiteral :+ incrNoopCountExpr :+
-          Literal(CDC_TYPE_NOT_CDC)),
+          CDC_TYPE_NOT_CDC),
       deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ TrueLiteral :+ TrueLiteral :+
-          Literal(CDC_TYPE_NOT_CDC)),
+        resolveOnJoinedPlan(targetOutputCols :+ TrueLiteral :+ TrueLiteral :+ CDC_TYPE_NOT_CDC),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
@@ -903,7 +901,7 @@ case class MergeIntoCommand(
   private def makeMetricUpdateUDF(name: String): Expression = {
     // only capture the needed metric in a local variable
     val metric = metrics(name)
-    udf { () => { metric += 1; true }}.asNondeterministic().apply().expr
+    DeltaUDF.boolean { () => metric += 1; true }.asNondeterministic().apply().expr
   }
 
   private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")

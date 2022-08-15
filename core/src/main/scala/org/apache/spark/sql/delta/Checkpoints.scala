@@ -485,8 +485,6 @@ object Checkpoints extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       snapshot: Snapshot): CheckpointMetaData = withDmqTag {
-    import SingleAction._
-
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the

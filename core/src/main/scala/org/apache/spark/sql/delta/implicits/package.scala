@@ -16,104 +16,33 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.rules.{RuleId, UnknownRuleId}
-import org.apache.spark.sql.catalyst.trees.{AlwaysProcess, TreePatternBits}
-import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.implicits.RichSparkClasses
+import org.apache.spark.sql.delta.util.DeltaEncoders
 
-package object implicits {
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
-  /**
-   * This implicit class is used to provide helpful methods used throughout the code that are not
-   * provided by Spark-Catalyst's StructType.
-   */
-  implicit class RichStructType(structType: StructType) {
+package object implicits extends DeltaEncoders with RichSparkClasses {
+  // Define a few implicit classes to provide the `toDF` method. These classes are not using generic
+  // types to avoid touching Scala reflection.
+  implicit class RichAddFileSeq(files: Seq[AddFile]) {
+    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(files).toDF
 
-    /**
-     * Returns a field in this struct and its child structs, case insensitively.
-     *
-     * If includeCollections is true, this will return fields that are nested in maps and arrays.
-     *
-     * @param fieldNames The path to the field, in order from the root. For example, the column
-     *                   nested.a.b.c would be Seq("nested", "a", "b", "c").
-     */
-    def findNestedFieldIgnoreCase(
-        fieldNames: Seq[String],
-        includeCollections: Boolean = false): Option[StructField] = {
-      val fieldOption = fieldNames.headOption.flatMap {
-        fieldName => structType.find(_.name.equalsIgnoreCase(fieldName))
-      }
-      fieldOption match {
-        case Some(field) =>
-          (fieldNames.tail, field.dataType, includeCollections) match {
-            case (Seq(), _, _) =>
-              Some(field)
-
-            case (names, struct: StructType, _) =>
-              struct.findNestedFieldIgnoreCase(names, includeCollections)
-
-            case (_, _, false) =>
-              None // types nested in maps and arrays are not used
-
-            case (Seq("key"), MapType(keyType, _, _), true) =>
-              // return the key type as a struct field to include nullability
-              Some(StructField("key", keyType, nullable = false))
-
-            case (Seq("key", names @ _*), MapType(struct: StructType, _, _), true) =>
-              struct.findNestedFieldIgnoreCase(names, includeCollections)
-
-            case (Seq("value"), MapType(_, valueType, isNullable), true) =>
-              // return the value type as a struct field to include nullability
-              Some(StructField("value", valueType, nullable = isNullable))
-
-            case (Seq("value", names @ _*), MapType(_, struct: StructType, _), true) =>
-              struct.findNestedFieldIgnoreCase(names, includeCollections)
-
-            case (Seq("element"), ArrayType(elementType, isNullable), true) =>
-              // return the element type as a struct field to include nullability
-              Some(StructField("element", elementType, nullable = isNullable))
-
-            case (Seq("element", names @ _*), ArrayType(struct: StructType, _), true) =>
-              struct.findNestedFieldIgnoreCase(names, includeCollections)
-
-            case _ =>
-              None
-          }
-        case _ =>
-          None
-      }
-    }
+    def toDS(spark: SparkSession): Dataset[AddFile] =
+      spark.implicits.localSeqToDatasetHolder(files).toDS
   }
 
-  /**
-   * This implicit class is used to provide helpful methods used throughout the code that are not
-   * provided by Spark-Catalyst's LogicalPlan.
-   */
-  implicit class RichLogicalPlan(plan: LogicalPlan) {
-    /**
-     * Returns the result of running QueryPlan.transformExpressionsUpWithPruning on this node
-     * and all its children.
-     */
-    def transformAllExpressionsUpWithPruning(
-        cond: TreePatternBits => Boolean,
-        ruleId: RuleId = UnknownRuleId)(
-        rule: PartialFunction[Expression, Expression]
-      ): LogicalPlan = {
-      plan.transformUpWithPruning(cond, ruleId) {
-        case q: QueryPlan[_] =>
-          q.transformExpressionsUpWithPruning(cond, ruleId)(rule)
-      }
-    }
+  implicit class RichStringSeq(strings: Seq[String]) {
+    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(strings).toDF
 
-    /**
-     * Returns the result of running QueryPlan.transformExpressionsUp on this node
-     * and all its children.
-     */
-    def transformAllExpressionsUp(
-        rule: PartialFunction[Expression, Expression]): LogicalPlan = {
-      transformAllExpressionsUpWithPruning(AlwaysProcess.fn, UnknownRuleId)(rule)
-    }
+    def toDF(spark: SparkSession, colNames: String*): DataFrame =
+      spark.implicits.localSeqToDatasetHolder(strings).toDF(colNames: _*)
+  }
+
+  implicit class RichIntSeq(ints: Seq[Int]) {
+    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(ints).toDF
+
+    def toDF(spark: SparkSession, colNames: String*): DataFrame =
+      spark.implicits.localSeqToDatasetHolder(ints).toDF(colNames: _*)
   }
 }

@@ -36,8 +36,10 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{Encoder, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
@@ -716,30 +718,17 @@ case class SingleAction(
 }
 
 object SingleAction extends Logging {
-  private lazy val _encoder: ExpressionEncoder[SingleAction] = try {
-    ExpressionEncoder[SingleAction]()
-  } catch {
-    case e: Throwable =>
-      logError(e.getMessage, e)
-      throw e
-  }
+  implicit def encoder: Encoder[SingleAction] =
+    org.apache.spark.sql.delta.implicits.singleActionEncoder
 
-  private lazy val _addFileEncoder: ExpressionEncoder[AddFile] = try {
-    ExpressionEncoder[AddFile]()
-  } catch {
-    case e: Throwable =>
-      logError(e.getMessage, e)
-      throw e
-  }
+  implicit def addFileEncoder: Encoder[AddFile] =
+    org.apache.spark.sql.delta.implicits.addFileEncoder
 
+  lazy val nullLitForRemoveFile: Column =
+    new Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
 
-  implicit def encoder: Encoder[SingleAction] = {
-    _encoder.copy()
-  }
-
-  implicit def addFileEncoder: Encoder[AddFile] = {
-    _addFileEncoder.copy()
-  }
+  lazy val nullLitForAddCDCFile: Column =
+    new Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */
