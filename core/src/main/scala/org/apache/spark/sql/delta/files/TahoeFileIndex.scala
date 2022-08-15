@@ -22,7 +22,7 @@ import java.util.Objects
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
+import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.FileStatus
@@ -237,9 +237,8 @@ class TahoeBatchFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     DeltaLog.filterFileList(
-      snapshot.metadata.partitionSchema,
-      spark.createDataset(addFiles)(addFileEncoder).toDF(), partitionFilters)
-      .as[AddFile](addFileEncoder)
+      snapshot.metadata.partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
       .collect()
   }
 

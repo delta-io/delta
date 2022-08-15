@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SingleAction}
+import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
@@ -181,9 +182,7 @@ trait DataSkippingReaderBase
 
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
-    val implicits = spark.implicits
-    import implicits._
-    allFiles.withColumn("stats", from_json($"stats", statsSchema))
+    allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
   }
 
   private lazy val withStatsCache =
@@ -557,8 +556,6 @@ trait DataSkippingReaderBase
    */
   final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
       : Option[Column] = {
-    import org.apache.spark.sql.delta.implicits._
-
     // If the requested stats type doesn't even exist, just return None right away. This can
     // legitimately happen if we have no stats at all, or if column stats are disabled (in which
     // case only the NUM_RECORDS stat type is available).
@@ -679,9 +676,7 @@ trait DataSkippingReaderBase
   }
 
   private def buildSizeCollectorFilter(): (ArrayAccumulator, Column => Column) = {
-    val implicits = spark.implicits
-    import implicits._
-    val bytesCompressed = $"size"
+    val bytesCompressed = col("size")
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
 
     val accumulator = new ArrayAccumulator(
@@ -723,18 +718,14 @@ trait DataSkippingReaderBase
    */
   protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.getAllFiles") {
-      val implicits = spark.implicits
-      import implicits._
-
       if (keepNumRecords) {
         withStats // use withStats instead of allFiles so the `stats` column is already parsed
           // keep only the numRecords field as a Json string in the stats field
-          .withColumn("stats", to_json(struct($"stats.numRecords" as 'numRecords)))
-          .as(SingleAction.addFileEncoder)
+          .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+          .as[AddFile]
           .collect().toSeq
       } else {
-        allFiles.withColumn("stats", nullStringLiteral).as(SingleAction.addFileEncoder)
-          .collect().toSeq
+        allFiles.withColumn("stats", nullStringLiteral).as[AddFile].collect().toSeq
       }
     }
   }
@@ -762,9 +753,6 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.filterOnPartitions") {
-      val implicits = spark.implicits
-      import implicits._
-
       val files =
         if (keepNumRecords) {
           // use withStats instead of allFiles so the `stats` column is already parsed
@@ -772,15 +760,15 @@ trait DataSkippingReaderBase
             DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
           filteredFiles
             // keep only the numRecords field as a Json string in the stats field
-            .withColumn("stats", to_json(struct($"stats.numRecords" as 'numRecords)))
-            .as(SingleAction.addFileEncoder)
+            .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+            .as[AddFile]
             .collect()
         } else {
           val filteredFiles =
             DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
           filteredFiles
             .withColumn("stats", nullStringLiteral)
-            .as(SingleAction.addFileEncoder)
+            .as[AddFile]
             .collect()
         }
 
@@ -802,9 +790,6 @@ trait DataSkippingReaderBase
       dataFilters: DataSkippingPredicate,
       keepNumRecords: Boolean): (Seq[AddFile], Seq[DataSize]) = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles") {
-      val implicits = spark.implicits
-      import implicits._
-
       val (totalSize, totalFilter) = buildSizeCollectorFilter()
       val (partitionSize, partitionFilter) = buildSizeCollectorFilter()
       val (scanSize, scanFilter) = buildSizeCollectorFilter()
@@ -819,12 +804,12 @@ trait DataSkippingReaderBase
 
       val statsColumn = if (keepNumRecords) {
         // keep only the numRecords field as a Json string in the stats field
-        to_json(struct($"stats.numRecords" as 'numRecords))
+        to_json(struct(col("stats.numRecords") as 'numRecords))
       } else nullStringLiteral
 
       val files =
         recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
-        filteredFiles.withColumn("stats", statsColumn).as(SingleAction.addFileEncoder).collect()
+        filteredFiles.withColumn("stats", statsColumn).as[AddFile].collect()
       }
 
       files.toSeq -> Seq(DataSize(totalSize), DataSize(partitionSize), DataSize(scanSize))
@@ -944,10 +929,8 @@ trait DataSkippingReaderBase
    */
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
     withDmqTag {
-      val implicits = spark.implicits
-      import implicits._
-      val right = paths.toDF("path")
-      allFiles.join(right, Seq("path"), "leftsemi").as(SingleAction.addFileEncoder).collect()
+      val right = paths.toDF(spark, "path")
+      allFiles.join(right, Seq("path"), "leftsemi").as[AddFile].collect()
     }
   }
 }

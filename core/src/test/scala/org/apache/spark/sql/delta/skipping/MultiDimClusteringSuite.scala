@@ -32,7 +32,9 @@ class MultiDimClusteringSuite extends QueryTest
     with SharedSparkSession with DeltaSQLCommandTest {
 
   private lazy val sparkSession = spark
+  // scalastyle:off sparkimplicits
   import sparkSession.implicits._
+  // scalastyle:on sparkimplicits
 
   test("Negative case - ZOrder clustering expression with zero columns") {
     val ex = intercept[AssertionError] {

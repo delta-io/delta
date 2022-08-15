@@ -56,7 +56,7 @@ class DeltaTaskStatisticsTracker(
 
   // For example, when strings are involved, statsColExpr might look like
   // struct(
-  //   count("*") as "numRecords"
+  //   count(new Column("*")) as "numRecords"
   //   struct(
   //     substring(min(col), 0, stringPrefix))
   //   ) as "minValues",

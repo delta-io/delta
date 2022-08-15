@@ -94,7 +94,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       currentSnapshot: Snapshot,
       actions: Seq[Action]): Unit = recordManifestGeneration(deltaLog, full = false) {
 
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     checkColumnMappingMode(currentSnapshot.metadata)
 
@@ -249,7 +249,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       hadoopConf: SerializableConfiguration): Set[String] = {
 
     val spark = fileNamesForManifest.sparkSession
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     val tableAbsPathForManifest = LogStore(spark)
       .resolvePathOnPhysicalStorage(deltaLogDataPath, hadoopConf.value).toString

@@ -21,10 +21,12 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.Trigger
+import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.Utils
 
 class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
@@ -43,8 +45,8 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   test("serialized partition values must contain null values") {
     val tempDir = Utils.createTempDir().toString
-    val df1 = spark.range(5).withColumn("part", typedLit[String](null))
-    val df2 = spark.range(5).withColumn("part", typedLit("1"))
+    val df1 = spark.range(5).withColumn("part", new Column(Literal(null, StringType)))
+    val df2 = spark.range(5).withColumn("part", new Column(Literal("1")))
     df1.union(df2).coalesce(1).write.partitionBy("part").format("delta").save(tempDir)
 
     // Clear the cache

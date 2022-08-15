@@ -116,7 +116,7 @@ case class RestoreTableCommand(
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 
-        import spark.implicits._
+        import org.apache.spark.sql.delta.implicits._
 
         val filesToAdd = snapshotToRestoreFiles
           .join(
@@ -198,7 +198,9 @@ case class RestoreTableCommand(
     toRemove: Dataset[RemoveFile],
     snapshot: Snapshot
   ): Map[String, Long] = {
+    // scalastyle:off sparkimplicits
     import toAdd.sparkSession.implicits._
+    // scalastyle:on sparkimplicits
 
     val (numRestoredFiles, restoredFilesSize) = toAdd
       .agg("size" -> "count", "size" -> "sum").as[(Long, Option[Long])].head()
@@ -225,13 +227,13 @@ case class RestoreTableCommand(
     files: Dataset[AddFile],
     version: Long): Unit = withDescription("missing files validation") {
 
-    implicit val spark: SparkSession = files.sparkSession
+    val spark: SparkSession = files.sparkSession
 
     val path = deltaLog.dataPath
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
 
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     val missedFiles = files
       .mapPartitions { files =>

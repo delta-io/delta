@@ -190,14 +190,14 @@ private[delta] class ConflictChecker(
           Seq.empty
       }
 
-      import spark.implicits._
+      import org.apache.spark.sql.delta.implicits._
       val predicatesMatchingAddedFiles = ExpressionSet(
           currentTransactionInfo.readPredicates).iterator.flatMap { p =>
         // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
         // beginning.
         val conflictingFile = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
-          addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
+          addedFilesToCheckForConflicts.toDF(spark), p :: Nil).as[AddFile].take(1)
 
         conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
       }.take(1).toArray

@@ -18,9 +18,9 @@ package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -56,12 +56,9 @@ class CdcAddFileIndex(
           f.copy(partitionValues = newPartitionVals)
         }
     }
-    DeltaLog.filterFileList(
-        partitionSchema,
-        spark.createDataset(addFiles)(addFileEncoder).toDF(),
-        partitionFilters)
-        .as[AddFile](addFileEncoder)
-        .collect()
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
+      .collect()
   }
 
   override def inputFiles: Array[String] = {
