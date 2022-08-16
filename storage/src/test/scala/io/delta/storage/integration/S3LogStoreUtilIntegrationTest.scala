@@ -33,10 +33,9 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   )
   configuration.set("fs.s3a.paging.maximum", maxKeys.toString)
 
-  private val file = Paths.get(getClass.getClassLoader.getResource("sample.json").getPath).toFile
-
-  private def touch(key: String): UploadInfo =
-    fs.putObject(fs.newPutObjectRequest(key, fs.newObjectMetadata(), file))
+  private def touch(key: String) {
+    fs.create(new Path(s"s3a://$bucket/$key")).close()
+  }
 
   private def key(table: String, version: Int): String =
     s"$testRunUID/$table/_delta_log/%020d.json".format(version)
@@ -52,12 +51,10 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     if (runIntegrationTests) test(name, integrationTestTag)(testFun)
 
   integrationTest("setup delta logs") {
-    val uploads = Seq(
-      touch(s"$testRunUID/empty/some.json"),
-      touch(s"$testRunUID/small/_delta_log/%020d.json".format(1))) ++
-      (1 to maxKeys).map(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v))) ++
-      (1 to maxKeys * 10).map(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v)))
-    uploads.foreach(_.getUpload.waitForUploadResult())
+    touch(s"$testRunUID/empty/some.json")
+    touch(s"$testRunUID/small/_delta_log/%020d.json".format(1))
+    (1 to maxKeys).foreach(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v)))
+    (1 to maxKeys * 10).foreach(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v)))
   }
 
   integrationTest("empty") {
