@@ -36,9 +36,7 @@ lazy val commonSettings = Seq(
   scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused:imports"),
   javacOptions ++= Seq("-source", "1.8"),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", "1.8"),
-  // Enable scoverage plugin to collect metrics about tests
-  coverageEnabled := true
+  Compile / compile / javacOptions ++= Seq("-target", "1.8")
 )
 
 lazy val core = (project in file("core"))

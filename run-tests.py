@@ -38,12 +38,14 @@ def run_sbt_tests(root_dir, coverage, scala_version=None):
     print("##### Running SBT tests #####")
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
-    if scala_version is None:
-        cmd = cmd + ["+test"]
-    else:
-        cmd = cmd + ["++ %s test" % scala_version]
     if coverage:
-        cmd = cmd + ["coverageAggregate"]
+        cmd += ["coverage"]
+    if scala_version is None:
+        cmd += ["+test"]
+    else:
+        cmd += ["++ %s test" % scala_version]
+    if coverage:
+        cmd += ["coverageAggregate", "coverageOff"]
     run_cmd(cmd, stream_output=True)
 
 
