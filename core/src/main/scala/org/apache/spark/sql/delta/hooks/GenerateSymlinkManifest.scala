@@ -176,9 +176,16 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    */
   def generateFullManifest(
       spark: SparkSession,
-      deltaLog: DeltaLog): Unit = recordManifestGeneration(deltaLog, full = true) {
-
+      deltaLog: DeltaLog): Unit = {
     val snapshot = deltaLog.update(stalenessAcceptable = false)
+    generateFullManifestWithSnapshot(spark, deltaLog, snapshot)
+  }
+
+  // Separated out to allow overriding with a specific snapshot.
+  protected def generateFullManifestWithSnapshot(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      snapshot: Snapshot): Unit = recordManifestGeneration(deltaLog, full = true) {
     val partitionCols = snapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION).toString
     val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())

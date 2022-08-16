@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaThrowable, DeltaThrowableHelper, GeneratedColumn, OptimizablePartitionExpression}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaThrowable, DeltaThrowableHelper, GeneratedColumn, OptimizablePartitionExpression, Snapshot}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -230,6 +230,7 @@ object Protocol {
       None
     }
   }
+
 }
 
 /**
