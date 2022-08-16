@@ -2259,6 +2259,15 @@ trait DeltaErrorsBase
       errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
     )
   }
+
+  def unsupportedDeltaTableForPathHadoopConf(unsupportedOptions: Map[String, String]): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF",
+      messageParameters = Array(
+        DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]"),
+        unsupportedOptions.mkString(","))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

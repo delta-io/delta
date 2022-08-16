@@ -57,7 +57,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       .sessionState
       .sqlParser
       .parseTableIdentifier(tblIdentifier)
-    val generate = DeltaGenerateCommand(mode, tableId)
+    val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
     toDataset(sparkSession, generate)
   }
 
