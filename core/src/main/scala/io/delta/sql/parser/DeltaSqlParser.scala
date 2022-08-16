@@ -199,14 +199,15 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)))(interleaveBy)
+      Option(ctx.partitionPredicate).map(extractRawText(_)), Map.empty)(interleaveBy)
   }
 
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
       Option(ctx.path).map(string),
-      Option(ctx.table).map(visitTableIdentifier))
+      Option(ctx.table).map(visitTableIdentifier),
+      Map.empty)
   }
 
   override def visitDescribeDeltaHistory(
@@ -214,13 +215,15 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     DescribeDeltaHistoryCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.limit).map(_.getText.toInt))
+      Option(ctx.limit).map(_.getText.toInt),
+      Map.empty)
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
     DeltaGenerateCommand(
       modeName = ctx.modeName.getText,
-      tableId = visitTableIdentifier(ctx.table))
+      tableId = visitTableIdentifier(ctx.table),
+      Map.empty)
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {

@@ -15,7 +15,7 @@
 #
 
 from typing import (
-    TYPE_CHECKING, cast, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
+    TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
@@ -350,7 +350,12 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.4)  # type: ignore[arg-type]
-    def forPath(cls, sparkSession: SparkSession, path: str) -> "DeltaTable":
+    def forPath(
+        cls,
+        sparkSession: SparkSession,
+        path: str,
+        hadoopConf: Dict[str, str] = dict()
+    ) -> "DeltaTable":
         """
         Instantiate a :class:`DeltaTable` object representing the data at the given path,
         If the given path is invalid (i.e. either no table exists or an existing table is
@@ -358,19 +363,28 @@ class DeltaTable(object):
 
         :param sparkSession: SparkSession to use for loading the table
         :type sparkSession: pyspark.sql.SparkSession
+        :param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked
+                           up by `DeltaTable` to access the file system when executing queries.
+                           Other configurations will not be allowed.
+        :type hadoopConf: optional dict with str as key and str as value.
         :return: loaded Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
 
         Example::
 
-            deltaTable = DeltaTable.forPath(spark, "/path/to/table")
+            hadoopConf = {"fs.s3a.access.key" : "<access-key>",
+                       "fs.s3a.secret.key": "secret-key"}
+            deltaTable = DeltaTable.forPath(
+                           spark,
+                           "/path/to/table",
+                           hadoopConf)
         """
         assert sparkSession is not None
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
 
-        jdt = jvm.io.delta.tables.DeltaTable.forPath(jsparkSession, path)
+        jdt = jvm.io.delta.tables.DeltaTable.forPath(jsparkSession, path, hadoopConf)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod

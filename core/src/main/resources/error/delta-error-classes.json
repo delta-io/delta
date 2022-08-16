@@ -1233,6 +1233,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF" : {
+    "message" : [
+      "Currently DeltaTable.forPath only supports hadoop configuration keys starting with <allowedPrefixes> but got <unsupportedOptions>"
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_TABLE_FOUND_IN_EXECUTOR" : {
     "message" : [
       "DeltaTable cannot be used in executors"
