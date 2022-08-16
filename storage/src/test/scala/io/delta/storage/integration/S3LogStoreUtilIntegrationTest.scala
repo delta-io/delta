@@ -3,13 +3,11 @@ package io.delta.storage.integration
 import io.delta.storage.internal.{FileNameUtils, S3LogStoreUtil}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.fs.s3a.{S3AFileSystem, UploadInfo}
+import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.scalatest.Tag
 import org.scalatest.funsuite.AnyFunSuite
-import org.scalactic.source
 
 import java.net.URI
-import java.nio.file.Paths
 import scala.math.max
 import scala.math.ceil
 import scala.math.round

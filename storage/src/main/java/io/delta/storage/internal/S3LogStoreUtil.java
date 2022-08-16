@@ -19,7 +19,6 @@ package io.delta.storage.internal;
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.s3a.*;
-import org.apache.hadoop.util.functional.RemoteIterators;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,7 +27,6 @@ import java.util.HashSet;
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
-import static org.apache.hadoop.util.functional.RemoteIterators.typeCastingRemoteIterator;
 
 
 /**
@@ -72,7 +70,6 @@ public final class S3LogStoreUtil {
                 new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
         );
     }
-
 
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
