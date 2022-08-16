@@ -1176,7 +1176,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
         s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
         s"is now changed to ${metadata.id}."
-      logError(msg)
+      logWarning(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
         "readSnapshotVersion" -> snapshot.version,
         "readSnapshotMetadata" -> snapshot.metadata,

@@ -615,7 +615,7 @@ trait SnapshotManagement { self: DeltaLog =>
       previousSnapshot.metadata.id != newSnapshot.metadata.id) {
       val msg = s"Change in the table id detected while updating snapshot. " +
         s"\nPrevious snapshot = $previousSnapshot\nNew snapshot = $newSnapshot."
-      logError(msg)
+      logWarning(msg)
       recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
         "prevSnapshotVersion" -> previousSnapshot.version,
         "prevSnapshotMetadata" -> previousSnapshot.metadata,
