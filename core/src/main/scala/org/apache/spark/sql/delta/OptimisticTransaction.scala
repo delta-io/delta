@@ -470,6 +470,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
+
     val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)
     if (needsProtocolUpdate.isDefined) {
       newProtocol = needsProtocolUpdate
