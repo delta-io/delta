@@ -17,10 +17,7 @@
 package io.delta.storage.internal;
 
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.s3a.Listing;
 import org.apache.hadoop.fs.s3a.S3AFileStatus;
 import org.apache.hadoop.fs.s3a.S3AFileSystem;
@@ -30,7 +27,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
-import static org.apache.hadoop.fs.s3a.S3AUtils.ACCEPT_ALL;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
 
 
@@ -42,6 +38,18 @@ import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
  */
 public final class S3LogStoreUtil {
     private S3LogStoreUtil() {}
+
+    private static PathFilter ACCEPT_ALL = new PathFilter() {
+        @Override
+        public boolean accept(Path file) {
+            return true;
+        }
+
+        @Override
+        public String toString() {
+            return "ACCEPT_ALL";
+        }
+    };
 
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
