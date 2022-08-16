@@ -51,7 +51,7 @@ class TahoeRemoveFileIndex(
       // extended metadata, so all removes in a table with CDC enabled should have it.
       // (The only exception is FSCK removes, which we screen out separately because they have
       // dataChange set to false.)
-      throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
+      throw DeltaErrors.removeFileCDCMissingExtendedMetadata(removeFile.toString)
     }
     ActionParameters(
       removeFile.partitionValues,
