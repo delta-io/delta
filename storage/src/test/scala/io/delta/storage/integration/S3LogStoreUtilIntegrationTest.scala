@@ -25,11 +25,13 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     fs.initialize(new URI(s"s3a://$bucket"), configuration)
     fs
   }
+  private val maxKeys = 2
   private val configuration = new Configuration()
   configuration.set( // for local testing only
     "fs.s3a.aws.credentials.provider",
-    "com.amazonaws.auth.profile.ProfileCredentialsProvider"
+    "com.amazonaws.auth.profile.ProfileCredentialsProvider",
   )
+  configuration.set("fs.s3a.paging.maximum", maxKeys.toString)
 
   private val file = Paths.get(getClass.getClassLoader.getResource("sample.json").getPath).toFile
 
@@ -53,56 +55,47 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     val uploads = Seq(
       touch(s"$testRunUID/empty/some.json"),
       touch(s"$testRunUID/small/_delta_log/%020d.json".format(1))) ++
-      (1 to 10).map(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v))) ++
-      (1 to 1000).map(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v))) ++
-      (1 to 10000).map(v => touch(s"$testRunUID/xlarge/_delta_log/%020d.json".format(v)))
+      (1 to maxKeys).map(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v))) ++
+      (1 to maxKeys * 10).map(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v)))
     uploads.foreach(_.getUpload.waitForUploadResult())
   }
 
   integrationTest("empty") {
     val resolvedPath = path("empty", 0)
-    val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
+    val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
     assert(response.isEmpty)
   }
 
   integrationTest("small") {
     Seq(0, 1, 2, 3).foreach(v => {
       val resolvedPath = path("small", v)
-      val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
+      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
       // Check that we get consecutive versions from v to the max version. The smallest version is 1
       assert((max(1, v) to 1) == response.map(r => version(r.getPath)).toSeq)
     })
   }
 
   integrationTest("medium") {
-    Seq(1, 2, 3, 5, 10, 11, 12).foreach(v => {
+    (1 to maxKeys).foreach(v => {
       val resolvedPath = path("medium", v)
-      val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
-      assert((max(1, v) to 10) == response.map(r => version(r.getPath)).toSeq)
+      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
+      assert((max(1, v) to maxKeys) == response.map(r => version(r.getPath)).toSeq)
     })
   }
 
-  integrationTest("large") {
-    Seq(0, 1, 3, 5, 500, 998, 999, 1000, 1001).foreach(v => {
-      val resolvedPath = path("large", v)
-      val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
-      assert((max(1, v) to 1000) == response.map(r => version(r.getPath)).toSeq)
-    })
-  }
-
-  integrationTest("xlarge, also verify number of list requests") {
-    Seq(0, 1, 999, 2999, 5001, 9998, 9999, 10000, 10001).foreach(v => {
+  integrationTest("large, also verify number of list requests") {
+    (1 to maxKeys * 10).foreach(v => {
       val startCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
-      val resolvedPath = path("xlarge", v)
-      val response = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, resolvedPath.getParent)
+      val resolvedPath = path("large", v)
+      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
       val endCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
       // Check that we don't do more S3 list requests than necessary
       assert(endCount - startCount ==
-        max(round(ceil((10000 - v) / 1000.0)).toInt, 1))
+        max(round(ceil((maxKeys * 10 - (v - 1)) / maxKeys.toDouble)).toInt, 1))
       // Check that we get consecutive versions from v to the max version. The smallest version is 1
-      assert((max(1, v) to 10000) == response.map(r => version(r.getPath)).toSeq)
+      assert((max(1, v) to maxKeys * 10) == response.map(r => version(r.getPath)).toSeq)
     })
   }
 }
