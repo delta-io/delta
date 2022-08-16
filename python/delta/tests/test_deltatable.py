@@ -37,6 +37,14 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
+    def test_forPathWithOptions(self) -> None:
+        path = self.tempFile
+        fsOptions = {"fs.fake.impl": "org.apache.spark.sql.delta.FakeFileSystem",
+                     "fs.fake.impl.disable.cache": "true"}
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, path, fsOptions).toDF()
+        self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
+
     def test_forName(self) -> None:
         self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
         df = DeltaTable.forName(self.spark, "test").toDF()
