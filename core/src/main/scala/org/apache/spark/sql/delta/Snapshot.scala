@@ -158,7 +158,9 @@ class Snapshot(
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
   private lazy val cachedState = withDmqTag {
-    cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+    recordFrameProfile("Delta", "snapshot.cachedState") {
+      cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+    }
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */

@@ -54,7 +54,9 @@ trait StateCache extends DeltaLogging {
     // single-session scenarios to avoid the overhead of `Dataset` creation which can take 100ms.
     private val cachedDs = cached.synchronized {
       if (isCached) {
-        val rdd = ds.queryExecution.toRdd.map(_.copy())
+        val rdd = recordFrameProfile("Delta", "CachedDS.toRdd") {
+          ds.queryExecution.toRdd.map(_.copy())
+        }
         rdd.setName(name)
         rdd.persist(storageLevel)
         cached += rdd
@@ -104,7 +106,9 @@ trait StateCache extends DeltaLogging {
    * Create a CachedDS instance for the given Dataset and the name.
    */
   def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] = withDmqTag {
-    new CachedDS[A](ds, name)
+    recordFrameProfile("Delta", "CachedDS.cacheDS") {
+      new CachedDS[A](ds, name)
+    }
   }
 
   /** Drop any cached data for this [[Snapshot]]. */
