@@ -27,7 +27,10 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
-case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
+case class DeltaGenerateCommand(
+    modeName: String,
+    tableId: TableIdentifier,
+    options: Map[String, String])
   extends LeafRunnableCommand {
 
   import DeltaGenerateCommand._
@@ -44,7 +47,7 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
         new Path(sparkSession.sessionState.catalog.getTableMetadata(tableId).location)
     }
 
-    val deltaLog = DeltaLog.forTable(sparkSession, tablePath)
+    val deltaLog = DeltaLog.forTable(sparkSession, tablePath, options)
     if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException("GENERATE")
     }

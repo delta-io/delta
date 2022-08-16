@@ -87,6 +87,9 @@ object NodeWithOnlyDeterministicProjectAndFilter {
 object DeltaTableUtils extends PredicateHelper
   with DeltaLogging {
 
+  // The valid hadoop prefixes passed through `DeltaTable.forPath` or DataFrame APIs.
+  val validDeltaTableHadoopPrefixes: List[String] = List("fs.", "dfs.")
+
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
 
@@ -104,8 +107,11 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /** Check if the provided path is the root or the children of a Delta table. */
-  def isDeltaTable(spark: SparkSession, path: Path): Boolean = {
-    findDeltaTableRoot(spark, path).isDefined
+  def isDeltaTable(
+      spark: SparkSession,
+      path: Path,
+      options: Map[String, String] = Map.empty): Boolean = {
+    findDeltaTableRoot(spark, path, options).isDefined
   }
 
   /**

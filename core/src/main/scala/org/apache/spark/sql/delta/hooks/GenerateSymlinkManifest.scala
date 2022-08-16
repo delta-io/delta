@@ -196,7 +196,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val existingManifestPartitionRelativePaths = {
       val manifestRootDirAbsPath = fs.makeQualified(new Path(manifestRootDirPath))
       if (fs.exists(manifestRootDirAbsPath)) {
-        val index = new InMemoryFileIndex(spark, Seq(manifestRootDirAbsPath), Map.empty, None)
+        val index = new InMemoryFileIndex(
+          spark,
+          Seq(manifestRootDirAbsPath),
+          deltaLog.options,
+          None)
         val prefixToStrip = manifestRootDirAbsPath.toUri.getPath
         index.inputFiles.map { p =>
           // Remove root directory "rootDir" path from the manifest file paths like

@@ -381,6 +381,7 @@ trait DeltaCommand extends DeltaLogging {
    * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
    * @param tableIdentifier Table identifier. Expects a non-empty [[tableIdentifier]] or [[path]].
    * @param operationName Operation that is getting the DeltaLog, used in error messages.
+   * @param hadoopConf Hadoop file system options used to build DeltaLog.
    * @return DeltaLog of the table
    * @throws AnalysisException If either no Delta table exists at the given path/identifier or
    *                           there is neither [[path]] nor [[tableIdentifier]] is provided.
@@ -389,7 +390,8 @@ trait DeltaCommand extends DeltaLogging {
       spark: SparkSession,
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
-      operationName: String): DeltaLog = {
+      operationName: String,
+      hadoopConf: Map[String, String] = Map.empty): DeltaLog = {
     val tablePath =
       if (path.nonEmpty) {
         new Path(path.get)
@@ -412,7 +414,7 @@ trait DeltaCommand extends DeltaLogging {
         throw DeltaErrors.missingTableIdentifierException(operationName)
       }
 
-    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val deltaLog = DeltaLog.forTable(spark, tablePath, hadoopConf)
     if (deltaLog.snapshot.version < 0) {
       throw DeltaErrors.notADeltaTableException(
         operationName,
