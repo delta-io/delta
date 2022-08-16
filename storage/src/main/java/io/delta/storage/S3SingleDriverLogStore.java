@@ -39,8 +39,6 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
-import org.apache.hadoop.util.VersionInfo;
-import org.apache.hadoop.util.VersionUtil;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -65,6 +63,16 @@ import org.apache.hadoop.util.VersionUtil;
  * </ul>
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
+
+    /**
+     * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list requests.
+     * The feature is enabled by setting the property delta.enableFastS3ListFrom in the Hadoop configuration.
+     *
+     * This feature requires the Hadoop file system used for S3 paths to be castable to
+     * org.apache.hadoop.fs.s3a.S3AFileSystem.
+     */
+    private final boolean enableFastListFrom
+            = initHadoopConf().getBoolean("delta.enableFastS3ListFrom", false);
 
     ///////////////////////////
     // Static Helper Methods //
@@ -230,7 +238,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
         FileStatus[] statuses;
         if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem // These are needed for tests to pass
-            || VersionUtil.compareVersions("3.3.1", VersionInfo.getVersion()) > 0 // The methods used in S3LogStoreUtil are only available from Hadoop version 3.3.1
+                || !enableFastListFrom
         ) {
             statuses = fs.listStatus(parentPath);
         } else {
