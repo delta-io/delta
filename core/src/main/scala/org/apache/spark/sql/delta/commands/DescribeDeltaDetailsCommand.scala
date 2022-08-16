@@ -66,14 +66,15 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier],
+    hadoopConf: Map[String, String]) extends LeafRunnableCommand with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
 
-    val deltaLog = DeltaLog.forTable(sparkSession, basePath)
+    val deltaLog = DeltaLog.forTable(sparkSession, basePath, hadoopConf)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
       val snapshot = deltaLog.update()
       if (snapshot.version == -1) {

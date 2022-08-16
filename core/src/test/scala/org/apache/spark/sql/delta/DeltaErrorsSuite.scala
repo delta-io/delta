@@ -2269,6 +2269,20 @@ trait DeltaErrorsSuiteBase
         "enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or " +
         "RENAME COLUMN.")
     }
+    {
+      val options = Map(
+        "foo" -> "1",
+        "bar" -> "2"
+      )
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedDeltaTableForPathHadoopConf(options)
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF")
+      assert(e.getSqlState == "0A000")
+      val prefixStr = DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]")
+      assert(e.getMessage == "Currently DeltaTable.forPath only supports hadoop configuration " +
+        s"keys starting with $prefixStr but got ${options.mkString(",")}")
+    }
   }
 }
 

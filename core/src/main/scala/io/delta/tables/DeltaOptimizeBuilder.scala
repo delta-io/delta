@@ -32,11 +32,13 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
  * @param sparkSession SparkSession to use for execution
  * @param tableIdentifier Id of the table on which to
  *        execute the optimize
+ * @param options Hadoop file system options for read and write.
  * @since 2.0.0
  */
 class DeltaOptimizeBuilder private(
     sparkSession: SparkSession,
-    tableIdentifier: String) extends AnalysisHelper {
+    tableIdentifier: String,
+    options: Map[String, String]) extends AnalysisHelper {
   @volatile private var partitionFilter: Option[String] = None
 
   /**
@@ -77,7 +79,8 @@ class DeltaOptimizeBuilder private(
       .sessionState
       .sqlParser
       .parseTableIdentifier(tableIdentifier)
-    val optimize = OptimizeTableCommand(None, Some(tableId), partitionFilter)(zOrderBy = zOrderBy)
+    val optimize =
+      OptimizeTableCommand(None, Some(tableId), partitionFilter, options)(zOrderBy = zOrderBy)
     toDataset(sparkSession, optimize)
   }
 }
@@ -91,7 +94,8 @@ private[delta] object DeltaOptimizeBuilder {
   @Unstable
   private[delta] def apply(
       sparkSession: SparkSession,
-      tableIdentifier: String): DeltaOptimizeBuilder = {
-    new DeltaOptimizeBuilder(sparkSession, tableIdentifier)
+      tableIdentifier: String,
+      options: Map[String, String]): DeltaOptimizeBuilder = {
+    new DeltaOptimizeBuilder(sparkSession, tableIdentifier, options)
   }
 }
