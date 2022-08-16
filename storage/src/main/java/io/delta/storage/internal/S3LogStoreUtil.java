@@ -39,7 +39,7 @@ import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
  * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without needing to load this as
  * a dependency for tests in core.
  */
-public class S3LogStoreUtil {
+public final class S3LogStoreUtil {
     private S3LogStoreUtil() {}
 
     /**
