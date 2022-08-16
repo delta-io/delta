@@ -28,7 +28,6 @@ import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
@@ -754,8 +753,7 @@ object SnapshotManagement {
     require(oldLogSegment.version + 1 == committedVersion)
     oldLogSegment.copy(
       version = committedVersion,
-      serializableDeltas =
-        oldLogSegment.serializableDeltas :+ SerializableFileStatus.fromStatus(commitFileStatus),
+      deltas = oldLogSegment.deltas :+ commitFileStatus,
       lastCommitTimestamp = commitFileStatus.getModificationTime)
   }
 }
@@ -805,27 +803,20 @@ object SerializableFileStatus {
  * the given version of the log.
  * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
- * @param serializableDeltas The delta commit files (.json) to read
- * @param serializableCheckpoint The checkpoint file to read
+ * @param deltas The delta commit files (.json) to read
+ * @param checkpoint The checkpoint file to read
  * @param checkpointVersionOpt The checkpoint version used to start replay
  * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
  *                            monotonically increasing for the commits within this segment.
  */
 case class LogSegment(
-    logPath: String,
+    logPath: Path,
     version: Long,
-    serializableDeltas: Seq[SerializableFileStatus],
-    serializableCheckpoint: Seq[SerializableFileStatus],
-    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    deltas: Seq[FileStatus],
+    checkpoint: Seq[FileStatus],
     checkpointVersionOpt: Option[Long],
     lastCommitTimestamp: Long) {
-
-  @JsonIgnore
-  lazy val deltas: Seq[FileStatus] = serializableDeltas.map(_.toFileStatus)
-
-  @JsonIgnore
-  lazy val checkpoint: Seq[FileStatus] = serializableCheckpoint.map(_.toFileStatus)
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
 
@@ -844,41 +835,12 @@ case class LogSegment(
 }
 
 object LogSegment {
-
-  /** Alternate constructor which accepts Path/FileStatus */
-  def apply(
-      logPath: Path,
-      version: Long,
-      deltas: Seq[FileStatus],
-      checkpoint: Seq[FileStatus],
-      checkpointVersionOpt: Option[Long],
-      lastCommitTimestamp: Long): LogSegment = {
-
-    val (savedDeltas, savedCheckpoint) = (deltas, checkpoint)
-
-    new LogSegment(
-        logPath.toString,
-        version,
-        deltas.map(SerializableFileStatus.fromStatus),
-        checkpoint.map(SerializableFileStatus.fromStatus),
-        checkpointVersionOpt,
-        lastCommitTimestamp) {
-      // We override the deltas/checkpoint to directly return the savedDeltas/savedCheckpoint in
-      // order to save the FileStatus -> SerializableFileStatus -> FileStatus conversion.
-      @JsonIgnore
-      override lazy val deltas: Seq[FileStatus] = savedDeltas
-
-      @JsonIgnore
-      override lazy val checkpoint: Seq[FileStatus] = savedCheckpoint
-    }
-  }
-
   /** The LogSegment for an empty transaction log directory. */
   def empty(path: Path): LogSegment = LogSegment(
-    logPath = path.toString,
+    logPath = path,
     version = -1L,
-    serializableDeltas = Nil,
-    serializableCheckpoint = Nil,
+    deltas = Nil,
+    checkpoint = Nil,
     checkpointVersionOpt = None,
     lastCommitTimestamp = -1L)
 }
