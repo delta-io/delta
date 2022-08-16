@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.s3a.S3AFileSystem;
 import org.apache.hadoop.fs.s3a.S3ListRequest;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
 import static org.apache.hadoop.fs.s3a.S3AUtils.ACCEPT_ALL;
@@ -64,12 +65,19 @@ public final class S3LogStoreUtil {
     }
 
     /**
-     * Subtract one from the last byte of key to get the key which is lexicographically right before key.
+     * Get the key which is lexicographically right before key.
+     * If the key is empty return null.
+     * If the key ends in a null byte, remove the last byte.
+     * Otherwise, subtract one from the last byte.
      */
     static String keyBefore(String key) {
-        byte[] bytes = key.getBytes();
-        if(bytes.length == 0 || bytes[bytes.length - 1] <= 1) throw new IllegalArgumentException("Empty or invalid key: " + key);
-        bytes[bytes.length-1] -= 1;
-        return new String(bytes);
+        byte[] bytes = key.getBytes(StandardCharsets.UTF_8);
+        if(bytes.length == 0) return null;
+        if(bytes[bytes.length - 1] > 0) {
+            bytes[bytes.length - 1] -= 1;
+            return new String(bytes, StandardCharsets.UTF_8);
+        } else {
+            return new String(bytes, 0, bytes.length - 1, StandardCharsets.UTF_8);
+        }
     }
 }
