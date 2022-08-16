@@ -22,12 +22,14 @@ import org.apache.hadoop.fs.s3a.Listing;
 import org.apache.hadoop.fs.s3a.S3AFileStatus;
 import org.apache.hadoop.fs.s3a.S3AFileSystem;
 import org.apache.hadoop.fs.s3a.S3ListRequest;
+import org.apache.hadoop.util.functional.RemoteIterators;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
+import static org.apache.hadoop.util.functional.RemoteIterators.typeCastingRemoteIterator;
 
 
 /**
@@ -55,11 +57,11 @@ public final class S3LogStoreUtil {
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
      */
-    public static FileStatus[] s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
+    public static RemoteIterator<S3AFileStatus> s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
         S3AFileSystem s3afs = (S3AFileSystem) fs;
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
-        RemoteIterator<S3AFileStatus> l = listing.createFileStatusListingIterator(resolvedPath,
+        return listing.createFileStatusListingIterator(resolvedPath,
                 S3ListRequest.v2(
                         new ListObjectsV2Request()
                                 .withBucketName(s3afs.getBucket())
@@ -69,7 +71,20 @@ public final class S3LogStoreUtil {
                 ), ACCEPT_ALL,
                 new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
         );
-        return iteratorToStatuses(l, new HashSet<>());
+    }
+
+
+    /**
+     * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
+     * which are lexicographically greater than resolvedPath.
+     *
+     * Wraps s3ListFrom in an array. Contained in this class to avoid contaminating other
+     * classes with dependencies on recent Hadoop versions.
+     *
+     * TODO: Remove this method when iterators are used everywhere.
+     */
+    public static FileStatus[] s3ListFromArray(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
+        return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath), new HashSet<>());
     }
 
     /**

@@ -242,7 +242,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         ) {
             statuses = fs.listStatus(parentPath);
         } else {
-            statuses = S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath);
+            statuses = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, parentPath);
         }
 
         final List<FileStatus> listedFromFs = Arrays
