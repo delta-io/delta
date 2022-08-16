@@ -18,16 +18,15 @@ package io.delta.storage.internal;
 
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import org.apache.hadoop.fs.*;
-import org.apache.hadoop.fs.s3a.Listing;
-import org.apache.hadoop.fs.s3a.S3AFileStatus;
-import org.apache.hadoop.fs.s3a.S3AFileSystem;
-import org.apache.hadoop.fs.s3a.S3ListRequest;
+import org.apache.hadoop.fs.s3a.*;
 import org.apache.hadoop.util.functional.RemoteIterators;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
+import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
+import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
 import static org.apache.hadoop.util.functional.RemoteIterators.typeCastingRemoteIterator;
 
@@ -59,13 +58,14 @@ public final class S3LogStoreUtil {
      */
     public static RemoteIterator<S3AFileStatus> s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
         S3AFileSystem s3afs = (S3AFileSystem) fs;
+        int maxKeys = S3AUtils.intOption(s3afs.getConf(), MAX_PAGING_KEYS, DEFAULT_MAX_PAGING_KEYS, 1);
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
         return listing.createFileStatusListingIterator(resolvedPath,
                 S3ListRequest.v2(
                         new ListObjectsV2Request()
                                 .withBucketName(s3afs.getBucket())
-                                .withMaxKeys(1000)
+                                .withMaxKeys(maxKeys)
                                 .withPrefix(s3afs.pathToKey(parentPath))
                                 .withStartAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                 ), ACCEPT_ALL,
