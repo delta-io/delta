@@ -362,7 +362,7 @@ trait Checkpoints extends DeltaLogging {
   }
 
   /** Returns information about the most recent checkpoint. */
-  private[delta] def lastCheckpoint: Option[CheckpointMetaData] = {
+  private[delta] def readLastCheckpointFile(): Option[CheckpointMetaData] = {
     loadMetadataFromFile(0)
   }
 

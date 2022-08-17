@@ -189,9 +189,9 @@ class DeltaLogSuite extends QueryTest
         val txn = log.startTransaction()
         txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
       }
-      assert(log.lastCheckpoint.isDefined)
-
-      val lastCheckpoint = log.lastCheckpoint.get
+      val lastCheckpointOpt = log.readLastCheckpointFile()
+      assert(lastCheckpointOpt.isDefined)
+      val lastCheckpoint = lastCheckpointOpt.get
 
       // Create an empty "_last_checkpoint" (corrupted)
       val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
@@ -204,7 +204,8 @@ class DeltaLogSuite extends QueryTest
       assert(log ne log2)
 
       // We should get the same metadata even if "_last_checkpoint" is corrupted.
-      assert(CheckpointInstance(log2.lastCheckpoint.get) === CheckpointInstance(lastCheckpoint))
+      assert(CheckpointInstance(log2.readLastCheckpointFile().get) ===
+        CheckpointInstance(lastCheckpoint))
     }
   }
 
