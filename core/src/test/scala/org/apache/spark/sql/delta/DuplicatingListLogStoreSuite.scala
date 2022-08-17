@@ -49,7 +49,7 @@ class DuplicatingListLogStoreSuite extends SharedSparkSession {
     super.sparkConf.set("spark.databricks.tahoe.logStore.class",
       classOf[DuplicatingListLogStore].getName)
     // disable the spark conf check
-    .set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+    .set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
 
   def pathExists(deltaLog: DeltaLog, filePath: String): Boolean = {

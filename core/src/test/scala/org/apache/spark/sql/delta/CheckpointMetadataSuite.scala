@@ -32,7 +32,7 @@ class CheckpointMetadataSuite extends SharedSparkSession {
 
   protected override def sparkConf = {
     // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
   // same checkpoint schema for tests
   private val checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false))

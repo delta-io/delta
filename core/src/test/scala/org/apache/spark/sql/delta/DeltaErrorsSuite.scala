@@ -1788,7 +1788,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(new Throwable())
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(Some(new Throwable()))
       }
       assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
       assert(e.getSqlState == "42000")

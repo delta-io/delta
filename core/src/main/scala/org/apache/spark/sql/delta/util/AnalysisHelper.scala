@@ -104,7 +104,7 @@ trait AnalysisHelper {
 
     try { f } catch {
       case e: Exception if isExtensionOrCatalogError(e) =>
-        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(e)
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(Some(e))
     }
   }
 

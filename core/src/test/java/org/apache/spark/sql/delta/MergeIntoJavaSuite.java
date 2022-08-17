@@ -43,7 +43,7 @@ public class MergeIntoJavaSuite implements Serializable {
         spark = new TestSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
         // disable the spark conf check
-        spark.sqlContext().conf().setConfString("spark.databricks.delta.checkRequiredSparkConf.enabled", "false");
+        spark.sqlContext().conf().setConfString("spark.databricks.delta.requiredSparkConfsCheck.enabled", "false");
     }
 
     @After

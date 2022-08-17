@@ -48,7 +48,7 @@ trait DeltaTimeTravelTests extends QueryTest
 
   protected override def sparkConf = {
     // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
 
   protected implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)

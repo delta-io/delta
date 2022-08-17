@@ -24,14 +24,13 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with SharedSparkSession {
+class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils
+  with SharedSparkSession with DeltaSQLCommandTest {
 
   protected override def sparkConf =
     super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
-      // disable the spark conf check
-      .set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
-
   /**
    * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,
    * it won't be able to read/write any files using `fake://`.

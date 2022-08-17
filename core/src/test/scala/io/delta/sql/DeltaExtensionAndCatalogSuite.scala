@@ -24,7 +24,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalStateException, DeltaLog}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -103,10 +103,12 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     withTempDir { dir =>
       withSparkSession("" -> "") { spark =>
         val path = new Path(dir.getCanonicalPath)
-        val e = intercept[DeltaIllegalStateException] {
+        val e = intercept[java.util.concurrent.ExecutionException] {
           DeltaLog.forTable(spark, path)
         }
-        assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+        assert(e.getCause.isInstanceOf[DeltaAnalysisException])
+        assert(e.getCause.asInstanceOf[DeltaAnalysisException].getErrorClass() ==
+          "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
       }
     }
   }
@@ -114,7 +116,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
   test("DeltaLog should not throw exception if spark.sql.catalog.spark_catalog " +
     "config is not found and the check is disabled") {
     withTempDir { dir =>
-      withSparkSession(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key -> "false") { spark =>
+      withSparkSession(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key -> "false") { spark =>
         val path = new Path(dir.getCanonicalPath)
           DeltaLog.forTable(spark, path)
         assert(DeltaLog.forTable(spark, path).tableExists == false)

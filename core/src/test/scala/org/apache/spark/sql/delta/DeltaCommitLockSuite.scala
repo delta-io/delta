@@ -38,7 +38,7 @@ class DeltaCommitLockSuite extends SparkFunSuite with LocalSparkSession with SQL
     spark = SparkSession.builder()
       .config("spark.delta.logStore.class", classOf[AzureLogStore].getName)
       .master("local[2]")
-      .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+      .config(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
       .getOrCreate()
     val path = Utils.createTempDir()
     try {
@@ -59,7 +59,7 @@ class DeltaCommitLockSuite extends SparkFunSuite with LocalSparkSession with SQL
     spark = SparkSession.builder()
       .config("spark.delta.logStore.class", classOf[S3SingleDriverLogStore].getName)
       .master("local[2]")
-      .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+      .config(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
       .getOrCreate()
     val path = Utils.createTempDir()
     try {

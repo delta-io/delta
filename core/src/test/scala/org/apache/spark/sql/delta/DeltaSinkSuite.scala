@@ -42,7 +42,7 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
 
   protected override def sparkConf = {
     // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
 
   // Before we start running the tests in this suite, we should let Spark perform all necessary set

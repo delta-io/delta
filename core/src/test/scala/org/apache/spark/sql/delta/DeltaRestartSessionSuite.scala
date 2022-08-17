@@ -25,7 +25,7 @@ class DeltaRestartSessionSuite extends SparkFunSuite {
   test("restart Spark session should work") {
     withTempDir { dir =>
       var spark = SparkSession.builder().master("local[2]")
-        .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+        .config(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
         .getOrCreate()
       try {
         val path = dir.getCanonicalPath
@@ -34,7 +34,7 @@ class DeltaRestartSessionSuite extends SparkFunSuite {
 
         spark.stop()
         spark = SparkSession.builder().master("local[2]")
-          .config(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+          .config(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
           .getOrCreate()
         spark.range(10).write.format("delta").mode("overwrite").save(path)
         spark.read.format("delta").load(path).count()

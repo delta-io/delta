@@ -48,7 +48,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   protected override def sparkConf = {
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
       // disable the spark conf check
-      .set(DeltaSQLConf.DELTA_CHECK_REQUIRED_SPARK_CONF.key, "false")
+      .set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
 
   // scalastyle:off deltahadoopconfiguration
