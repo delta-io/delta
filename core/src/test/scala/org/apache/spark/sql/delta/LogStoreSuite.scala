@@ -160,7 +160,7 @@ abstract class LogStoreSuiteBase extends QueryTest
     val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log2.store.getClass.getName == logStoreClassName)
 
-    assert(log2.lastCheckpoint.map(_.version) === Some(0L))
+    assert(log2.readLastCheckpointFile().map(_.version) === Some(0L))
     assert(log2.snapshot.allFiles.count == 1)
   }
 

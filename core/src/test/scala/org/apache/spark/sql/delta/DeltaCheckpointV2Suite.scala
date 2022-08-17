@@ -272,7 +272,7 @@ class DeltaCheckpointV2Suite
     withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED.key -> "true") {
       deltaLog.checkpoint()
     }
-    deltaLog.lastCheckpoint.get.version
+    deltaLog.readLastCheckpointFile().get.version
   }
 
   /**
@@ -289,7 +289,7 @@ class DeltaCheckpointV2Suite
         s"SET TBLPROPERTIES (delta.checkpoint.writeStatsAsStruct = ${writeStatsAsStruct}${asJson})")
       deltaLog.checkpoint()
     }
-    deltaLog.lastCheckpoint.get.version
+    deltaLog.readLastCheckpointFile().get.version
   }
 
   /** A checkpoint that doesn't have any stats columns, i.e. `stats` and `stats_parsed`. */
@@ -300,7 +300,7 @@ class DeltaCheckpointV2Suite
         "delta.checkpoint.writeStatsAsJson = false)")
       deltaLog.checkpoint()
     }
-    deltaLog.lastCheckpoint.get.version
+    deltaLog.readLastCheckpointFile().get.version
   }
 
   /**

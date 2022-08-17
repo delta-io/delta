@@ -257,7 +257,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: CapturedSnapshot = {
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
       val currentTimestamp = clock.getTimeMillis()
-      val lastCheckpointOpt = lastCheckpoint
+      val lastCheckpointOpt = readLastCheckpointFile()
       createSnapshotAtInitInternal(
         initSegment = getLogSegmentFrom(lastCheckpointOpt),
         lastCheckpointOpt = lastCheckpointOpt,

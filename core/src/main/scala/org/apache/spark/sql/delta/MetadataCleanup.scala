@@ -72,7 +72,7 @@ trait MetadataCleanup extends DeltaLogging {
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Iterator[FileStatus] = {
     import org.apache.spark.sql.delta.util.FileNames._
 
-    val latestCheckpoint = lastCheckpoint
+    val latestCheckpoint = readLastCheckpointFile()
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(checkpointPrefix(logPath, 0), newDeltaHadoopConf())

@@ -50,16 +50,18 @@ class CheckpointsSuite extends QueryTest
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
       deltaLog.checkpoint()
-      assert(deltaLog.lastCheckpoint.nonEmpty)
-      assert(deltaLog.lastCheckpoint.get.checkpointSchema.nonEmpty)
-      assert(deltaLog.lastCheckpoint.get.checkpointSchema.get.fieldNames.toSeq ===
+      val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+      assert(lastCheckpointOpt.nonEmpty)
+      assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
+      assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
         Seq("txn", "add", "remove", "metaData", "protocol"))
 
       spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
       withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
         deltaLog.checkpoint()
-        assert(deltaLog.lastCheckpoint.nonEmpty)
-        assert(deltaLog.lastCheckpoint.get.checkpointSchema.isEmpty)
+        val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+        assert(lastCheckpointOpt.nonEmpty)
+        assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
       }
     }
   }
@@ -122,7 +124,7 @@ class CheckpointsSuite extends QueryTest
         // 2 file actions, 1 new file
         spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
 
-        verifyCheckpoint(deltaLog.lastCheckpoint, 1, None)
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 1, None)
 
         val checkpointPath =
           FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
@@ -130,7 +132,7 @@ class CheckpointsSuite extends QueryTest
 
         // 11 total file actions, 9 new files
         spark.range(30).repartition(9).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.lastCheckpoint, 2, Some(2))
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 2, Some(2))
 
         var checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
@@ -138,7 +140,7 @@ class CheckpointsSuite extends QueryTest
 
         // 20 total actions, 9 new files
         spark.range(100).repartition(9).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.lastCheckpoint, 3, Some(2))
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 3, Some(2))
 
         assert(deltaLog.snapshot.version == 3)
         checkpointPaths =
@@ -147,7 +149,7 @@ class CheckpointsSuite extends QueryTest
 
         // 31 total actions, 11 new files
         spark.range(100).repartition(11).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.lastCheckpoint, 4, Some(4))
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 4, Some(4))
 
         assert(deltaLog.snapshot.version == 4)
         checkpointPaths =
@@ -160,14 +162,14 @@ class CheckpointsSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, path)
         // 100 total actions, 69 new files
         spark.range(1000).repartition(69).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.lastCheckpoint, 5, None)
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 5, None)
         val checkpointPath =
           FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
         assert(new File(checkpointPath).exists())
 
         // 101 total actions, 1 new file
         spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.lastCheckpoint, 6, Some(2))
+        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 6, Some(2))
          var checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
         checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
