@@ -339,7 +339,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   test("maxFilesPerTrigger: Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      val deltaLog = DeltaLog.forTable(spark, inputDir)
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
@@ -376,7 +376,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   test("Trigger.AvailableNow with an empty table") {
     withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      val deltaLog = DeltaLog.forTable(spark, inputDir)
       val df = Seq.empty[String].toDF("value")
       df.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
 
@@ -546,7 +546,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   test("maxBytesPerTrigger: Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      val deltaLog = DeltaLog.forTable(spark, inputDir)
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
