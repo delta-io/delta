@@ -33,6 +33,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
+import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -1399,7 +1400,8 @@ class DeltaSuite extends QueryTest
   }
 
   testQuietly("SC-8810: skip deleted file") {
-    withSQLConf(("spark.sql.files.ignoreMissingFiles", "true")) {
+    withSQLConf(
+      ("spark.sql.files.ignoreMissingFiles", "true")) {
       withTempDir { tempDir =>
         val tempDirPath = new Path(tempDir.getCanonicalPath)
         Seq(1).toDF().write.format("delta").mode("append").save(tempDir.toString)
@@ -1429,6 +1431,7 @@ class DeltaSuite extends QueryTest
       }
     }
   }
+
 
   testQuietly("SC-8810: skipping deleted file still throws on corrupted file") {
     withSQLConf(("spark.sql.files.ignoreMissingFiles", "true")) {

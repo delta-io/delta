@@ -112,39 +112,39 @@ trait OptimizeZOrderSuiteBase extends QueryTest
 
   test("optimize: Zorder on col name containing dot") {
     withTempDir { tempDir =>
-      (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
-        .toDF("id")
-        .withColumn("flat.a", $"id" + 1)
-        .write
-        .format("delta")
-        .save(tempDir.toString)
+        (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
+          .toDF("id")
+          .withColumn("flat.a", $"id" + 1)
+          .write
+          .format("delta")
+          .save(tempDir.toString)
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numFilesBefore = deltaLog.snapshot.numOfFiles
-      val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("`flat.a`"))
-      val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
-      val numFilesAfter = deltaLog.snapshot.numOfFiles
-      assert(metrics.numFilesAdded === numFilesAfter)
-      assert(metrics.numFilesRemoved === numFilesBefore)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val numFilesBefore = deltaLog.snapshot.numOfFiles
+        val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("`flat.a`"))
+        val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+        val numFilesAfter = deltaLog.snapshot.numOfFiles
+        assert(metrics.numFilesAdded === numFilesAfter)
+        assert(metrics.numFilesRemoved === numFilesBefore)
     }
   }
 
   test("optimize: Zorder on a nested column") {
     withTempDir { tempDir =>
-      (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
-        .toDF("id")
-        .withColumn("nested", struct(struct('id + 2 as 'b, 'id + 3 as 'c) as 'sub))
-        .write
-        .format("delta")
-        .save(tempDir.toString)
+        (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
+          .toDF("id")
+          .withColumn("nested", struct(struct('id + 2 as 'b, 'id + 3 as 'c) as 'sub))
+          .write
+          .format("delta")
+          .save(tempDir.toString)
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numFilesBefore = deltaLog.snapshot.numOfFiles
-      val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("nested.sub.c"))
-      val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
-      val numFilesAfter = deltaLog.snapshot.numOfFiles
-      assert(metrics.numFilesAdded === numFilesAfter)
-      assert(metrics.numFilesRemoved === numFilesBefore)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val numFilesBefore = deltaLog.snapshot.numOfFiles
+        val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("nested.sub.c"))
+        val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+        val numFilesAfter = deltaLog.snapshot.numOfFiles
+        assert(metrics.numFilesAdded === numFilesAfter)
+        assert(metrics.numFilesRemoved === numFilesBefore)
     }
   }
 

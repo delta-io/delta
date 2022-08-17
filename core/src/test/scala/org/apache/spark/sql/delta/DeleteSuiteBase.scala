@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -502,15 +503,15 @@ abstract class DeleteSuiteBase extends QueryTest
       text: String,
       expectResult: Seq[Row]): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromSelect(text, isSQLTempView)
-        executeDelete(
-          "v",
-          "key >= 1 and value < 3"
-        )
-        checkAnswer(spark.read.format("delta").table("v"), expectResult)
-      }
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeDelete(
+            "v",
+            "key >= 1 and value < 3"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectResult)
+        }
     }
   }
 
