@@ -61,7 +61,8 @@ class DeltaColumnRenameSuite extends QueryTest
       val e = intercept[AnalysisException] {
         spark.table("t1").select("b").collect()
       }
-      assert(e.getErrorClass == "MISSING_COLUMN")
+      // The error class is renamed in Spark 3.4
+      assert(e.getErrorClass == "UNRESOLVED_COLUMN" || e.getErrorClass == "MISSING_COLUMN" )
 
       // rename partition column
       spark.sql(s"Alter table t1 RENAME COLUMN a to a1")
@@ -94,7 +95,8 @@ class DeltaColumnRenameSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.table("t1").select("a").collect()
       }
-      assert(e2.getErrorClass == "MISSING_COLUMN")
+      // The error class is renamed in Spark 3.4
+      assert(e2.getErrorClass == "UNRESOLVED_COLUMN" || e2.getErrorClass == "MISSING_COLUMN" )
 
       // b1.c is no longer visible
       val e3 = intercept[AnalysisException] {

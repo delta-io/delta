@@ -548,6 +548,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
           val c = constraint.asInstanceOf[DropConstraint]
           AlterTableDropConstraintDeltaCommand(table, c.constraintName, c.ifExists).run(spark)
         }
+
     }
 
     columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>

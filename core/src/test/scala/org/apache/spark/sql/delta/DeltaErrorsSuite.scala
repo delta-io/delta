@@ -43,7 +43,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, SparkVersion}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -201,15 +201,17 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "NOT NULL constraint violated for column: col1.\n")
     }
     {
+      val expr = CatalystSqlParser.parseExpression("concat(\"hello \", \"world\")")
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(
           Constraints.Check(CharVarcharConstraint.INVARIANT_NAME,
-            CatalystSqlParser.parseExpression("id < 0")),
+            LessThanOrEqual(Length(expr), Literal(5))),
           Map.empty[String, Any])
       }
       assert(e.getErrorClass == "DELTA_EXCEED_CHAR_VARCHAR_LIMIT")
       assert(e.getSqlState == "22026")
-      assert(e.getMessage == "Exceeds char/varchar type length limitation")
+      assert(e.getMessage == "Exceeds char/varchar type length limitation. " +
+        "Failed check: (length('concat(hello , world)) <= 5).")
     }
     {
       val e = intercept[DeltaInvariantViolationException] {
@@ -1765,10 +1767,10 @@ trait DeltaErrorsSuiteBase
            |configurations when creating the SparkSession as shown below.
            |
            |  SparkSession.builder()
-           |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-           |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
+           |    .config("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+           |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
-           |    .build()
+           |    .getOrCreate()
            |""".stripMargin
       assert(e.getMessage == msg)
     }

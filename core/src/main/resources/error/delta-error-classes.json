@@ -279,10 +279,10 @@
       "configurations when creating the SparkSession as shown below.",
       "",
       "  SparkSession.builder()",
-      "    .option(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")",
-      "    .option(\"<catalogKey>\", \"<catalogClassName>\")",
+      "    .config(\"spark.sql.extensions\", \"<sparkSessionExtensionName>\")",
+      "    .config(\"<catalogKey>\", \"<catalogClassName>\")",
       "    ...",
-      "    .build()",
+      "    .getOrCreate()",
       ""
     ],
     "sqlState" : "42000"
@@ -418,7 +418,7 @@
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
-      "Exceeds char/varchar type length limitation"
+      "Exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
     "sqlState" : "22026"
   },

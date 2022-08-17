@@ -240,7 +240,9 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 
   test("detect nondeterministic source - flag on") {
-    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+    withSQLConf(
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
+    ) {
       val e = intercept[UnsupportedOperationException](
         testNondeterministicOrder
       )
@@ -249,10 +251,13 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 
   test("detect nondeterministic source - flag off") {
-    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false") {
+    withSQLConf(
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
+    ) {
       testNondeterministicOrder
     }
   }
+
 
   test("merge into a dataset temp views with star") {
     withTempView("v") {

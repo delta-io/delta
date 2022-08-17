@@ -52,8 +52,9 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
@@ -310,6 +311,42 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
         "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText,
       ifExists = ctx.EXISTS != null)
+  }
+
+/**
+ * Create a [[ShowTableColumnsCommand]] logical plan.
+ *
+ * Syntax:
+ * {{{
+ *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
+ * }}}
+ * Examples:
+ * {{{
+ *   SHOW COLUMNS IN delta.`test_table`
+ *   SHOW COLUMNS IN `test_table` IN `test_database`
+ * }}}
+ */
+  override def visitShowColumns(
+      ctx: ShowColumnsContext): LogicalPlan = withOrigin(ctx) {
+    val spark = SparkSession.active
+    val tableName = visitTableIdentifier(ctx.tableName)
+    val schemaName = Option(ctx.schemaName).map(db => db.getText)
+
+    val tableIdentifier = if (tableName.database.isEmpty) {
+      schemaName match {
+        case Some(db) =>
+          TableIdentifier(tableName.identifier, Some(db))
+        case None => tableName
+      }
+    } else tableName
+
+    DeltaTableIdentifier(spark, tableIdentifier).map { id =>
+      val resolver = spark.sessionState.analyzer.resolver
+      if (schemaName.nonEmpty && tableName.database.exists(!resolver(_, schemaName.get))) {
+        throw DeltaErrors.showColumnsWithConflictDatabasesError(schemaName.get, tableName)
+      }
+      ShowTableColumnsCommand(id)
+    }.orNull
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

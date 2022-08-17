@@ -824,7 +824,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           clock.advance(defaultLogRetentionMillis + 100000000L)
 
           // Delete all logs before checkpoint
-          writersLog.cleanUpExpiredLogs()
+          writersLog.cleanUpExpiredLogs(writersLog.snapshot)
 
           // Check that the first few log files have been deleted
           val logPath = new File(inputDir, "_delta_log")
@@ -915,7 +915,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             }
           }
         }
-        deltaLog.cleanUpExpiredLogs()
+        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
         stream.processAllAvailable()
 
         val lastOffset = DeltaSourceOffset(
@@ -961,7 +961,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
             }
           }
         }
-        deltaLog.cleanUpExpiredLogs()
+        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
         stream.processAllAvailable()
 
         val lastOffset = DeltaSourceOffset(

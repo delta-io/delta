@@ -35,7 +35,10 @@ case class OptimizeStats(
     var numFilesSkippedToReduceWriteAmplification: Long = 0,
     var numBytesSkippedToReduceWriteAmplification: Long = 0,
     startTimeMs: Long = System.currentTimeMillis(),
-    var endTimeMs: Long = 0) {
+    var endTimeMs: Long = 0,
+    var totalClusterParallelism: Long = 0,
+    var totalScheduledTasks: Long = 0,
+    var autoCompactParallelismStats: AutoCompactParallelismStats = AutoCompactParallelismStats()) {
 
   def toOptimizeMetrics: OptimizeMetrics = {
     OptimizeMetrics(
@@ -52,8 +55,49 @@ case class OptimizeStats(
       numFilesSkippedToReduceWriteAmplification = numFilesSkippedToReduceWriteAmplification,
       numBytesSkippedToReduceWriteAmplification = numBytesSkippedToReduceWriteAmplification,
       startTimeMs = startTimeMs,
-      endTimeMs = endTimeMs
-    )
+      endTimeMs = endTimeMs,
+      totalClusterParallelism = totalClusterParallelism,
+      totalScheduledTasks = totalScheduledTasks,
+      autoCompactParallelismStats = autoCompactParallelismStats.toMetrics)
+  }
+}
+
+/**
+ * This statistics class keeps tracking the parallelism usage of Auto Compaction.
+ * It collects following metrics:
+ *   -- the min/max parallelism among the whole cluster are used for Auto Compact,
+ *   -- the min/max parallelism occupied by current Auto Compact session,
+ */
+case class AutoCompactParallelismStats(
+    var maxClusterUsedParallelism: Long = 0,
+    var minClusterUsedParallelism: Long = 0,
+    var maxSessionUsedParallelism: Long = 0,
+    var minSessionUsedParallelism: Long = 0) {
+  def toMetrics: Option[ParallelismMetrics] = {
+    if (maxSessionUsedParallelism == 0) {
+      return None
+    }
+    Some(ParallelismMetrics(
+      Some(maxClusterUsedParallelism),
+      Some(minClusterUsedParallelism),
+      Some(maxSessionUsedParallelism),
+      Some(minSessionUsedParallelism)))
+  }
+
+  /** Update the statistics of parallelism of current Auto Compact command. */
+  def update(clusterUsedParallelism: Long, sessionUsedParallelism: Long): Unit = {
+    maxClusterUsedParallelism = Math.max(maxClusterUsedParallelism, clusterUsedParallelism)
+    minClusterUsedParallelism = if (minClusterUsedParallelism == 0) {
+        clusterUsedParallelism
+      } else {
+        Math.min(minClusterUsedParallelism, clusterUsedParallelism)
+      }
+    maxSessionUsedParallelism = Math.max(maxSessionUsedParallelism, sessionUsedParallelism)
+    minSessionUsedParallelism = if (minSessionUsedParallelism == 0) {
+        sessionUsedParallelism
+      } else {
+        Math.min(minSessionUsedParallelism, sessionUsedParallelism)
+      }
   }
 }
 
@@ -156,6 +200,10 @@ object FileSizeStatsWithHistogram {
  *                                                  amplification.
  * @param startTimeMs The start time of Optimize command.
  * @param endTimeMs The end time of Optimize command.
+ * @param totalClusterParallelism The total number of parallelism of this cluster.
+ * @param totalScheduledTasks The total number of optimize task scheduled.
+ * @param parallelismMetrics The metrics of cluster and session parallelism used by optimize
+ *                           command.
  */
 case class OptimizeMetrics(
     numFilesAdded: Long,
@@ -173,7 +221,10 @@ case class OptimizeMetrics(
     numFilesSkippedToReduceWriteAmplification: Long = 0,
     numBytesSkippedToReduceWriteAmplification: Long = 0,
     startTimeMs: Long = 0,
-    endTimeMs: Long = 0)
+    endTimeMs: Long = 0,
+    totalClusterParallelism: Long = 0,
+    totalScheduledTasks: Long = 0,
+    autoCompactParallelismStats: Option[ParallelismMetrics] = None)
 
 /**
  * Basic Stats on file sizes.
@@ -190,3 +241,14 @@ case class FileSizeMetrics(
     avg: Double,
     totalFiles: Long,
     totalSize: Long)
+
+/**
+ * This statistics contains following metrics:
+ *   -- the min/max parallelism among the whole cluster are used,
+ *   -- the min/max parallelism occupied by current session,
+ */
+case class ParallelismMetrics(
+     maxClusterActiveParallelism: Option[Long] = None,
+     minClusterActiveParallelism: Option[Long] = None,
+     maxSessionActiveParallelism: Option[Long] = None,
+     minSessionActiveParallelism: Option[Long] = None)
