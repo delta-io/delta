@@ -176,8 +176,6 @@ trait DataSkippingReaderBase
   def numOfFiles: Long
   def redactedPath: String
 
-  val columnMappingMode = metadata.columnMappingMode
-
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */

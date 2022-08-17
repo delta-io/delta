@@ -275,7 +275,7 @@ trait SnapshotManagement { self: DeltaLog =>
         initSegment = segment,
         minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = lastCheckpointOpt,
-        checksumOpt = readChecksum(segment.version))
+        checksumOpt = None)
       snapshot
     }.getOrElse {
       logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
@@ -303,7 +303,7 @@ trait SnapshotManagement { self: DeltaLog =>
         minFileRetentionTimestamp = minFileRetentionTimestamp,
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
-        checksumOpt = checksumOpt,
+        checksumOpt = checksumOpt.orElse(readChecksum(segment.version)),
         minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
         checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
@@ -586,7 +586,7 @@ trait SnapshotManagement { self: DeltaLog =>
           initSegment = segment,
           minFileRetentionTimestamp = minFileRetentionTimestamp,
           checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt,
-          checksumOpt = readChecksum(segment.version))
+          checksumOpt = None)
         logMetadataTableIdChange(previousSnapshot, newSnapshot)
         logInfo(s"Updated snapshot to $newSnapshot")
         replaceSnapshot(newSnapshot, updateTimestamp)
@@ -705,7 +705,7 @@ trait SnapshotManagement { self: DeltaLog =>
         initSegment = segment,
         minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = None,
-        checksumOpt = readChecksum(segment.version))
+        checksumOpt = None)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
