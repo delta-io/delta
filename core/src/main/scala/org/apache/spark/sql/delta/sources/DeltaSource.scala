@@ -109,8 +109,10 @@ trait DeltaSourceBase extends Source
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    lastOffsetForTriggerAvailableNow = DeltaSourceOffset(deltaLog.tableId,
-      latestOffset(null, ReadLimit.allAvailable()))
+    val offset = latestOffset(null, ReadLimit.allAvailable())
+    if (offset != null) {
+      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+    }
   }
 
   protected def getFileChangesWithRateLimit(

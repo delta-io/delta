@@ -366,8 +366,33 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
         // Restarting the stream should immediately terminate with no progress because no more data
         q = stream.start()
-        assert(q.awaitTermination(5000))
+        assert(q.awaitTermination(10000))
         assert(q.recentProgress.length === 5)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("Trigger.AvailableNow with an empty table") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      sql(s"CREATE TABLE t1 (value STRING) USING DELTA LOCATION '${inputDir.toURI}'")
+
+      val stream = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .trigger(Trigger.AvailableNow)
+        .queryName("emptyTableTriggerAvailableNow")
+
+      var q = stream.start()
+      try {
+        assert(q.awaitTermination(10000))
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 0)
       } finally {
         q.stop()
       }
@@ -547,7 +572,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
         // Restarting the stream should immediately terminate with no progress because no more data
         q = stream.start()
-        assert(q.awaitTermination(2000))
+        assert(q.awaitTermination(10000))
         assert(q.recentProgress.length === 5)
       } finally {
         q.stop()
