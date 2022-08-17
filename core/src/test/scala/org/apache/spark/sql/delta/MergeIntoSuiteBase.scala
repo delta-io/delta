@@ -2569,6 +2569,19 @@ abstract class MergeIntoSuiteBase
     expectedWithoutEvolution = ((0, 0) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
   )
 
+  testEvolution("new column with update set and update *")(
+    targetData = Seq((0, 0), (1, 10), (2, 20)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value") :: update("*") :: Nil,
+    expected =
+      ((0, 0, null) +:
+        (1, 1, null) +: // updated by first clause
+        (2, 2, "extra2") +: // updated by second clause
+        Nil
+      ).toDF("key", "value", "extra"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: Nil).toDF("key", "value")
+  )
+
   testEvolution("update * with column not in source")(
     targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),

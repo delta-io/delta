@@ -94,14 +94,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
     val processedMatched = matched.map {
       case m: DeltaMergeIntoUpdateClause =>
-        // Get any new columns which are in the insert clause, but not the target output or this
-        // update clause.
+        // Get any new columns which are in the update/insert clauses, but not the target output
         val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
           target.output.map(_.name)
-        val newColumns = notMatched.toSeq.flatMap {
-          _.resolvedActions.filterNot { insertAct =>
+        val newColumns = (matched ++ notMatched).toSeq.flatMap {
+          _.resolvedActions.filterNot { action =>
             existingColumns.exists { colName =>
-              conf.resolver(insertAct.targetColNameParts.head, colName)
+              conf.resolver(action.targetColNameParts.head, colName)
             }
           }
         }
@@ -118,7 +117,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           builder.result()
         }
 
-        val newColsFromInsert = distinctBy(newColumns)(_.targetColNameParts).map { action =>
+        val newColumnsDistinct = distinctBy(newColumns)(_.targetColNameParts).map { action =>
           AttributeReference(action.targetColNameParts.head, action.dataType)()
         }
 
@@ -127,8 +126,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           UpdateOperation(a.targetColNameParts, a.expr)
         }
 
-        // And construct operations for columns that the insert clause will add.
-        val newOpsFromInsert = newColsFromInsert.map { col =>
+        // And construct operations for columns that the insert/update clauses will add.
+        val newUpdateOps = newColumnsDistinct.map { col =>
           UpdateOperation(Seq(col.name), Literal(null, col.dataType))
         }
 
@@ -147,7 +146,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         // that nested fields can be updated (only for existing columns).
         val alignedExprs = generateUpdateExpressions(
           finalSchemaExprs,
-          existingUpdateOps ++ newOpsFromInsert,
+          existingUpdateOps ++ newUpdateOps,
           conf.resolver,
           allowStructEvolution = migrateSchema,
           generatedColumns = generatedColumns)
