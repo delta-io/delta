@@ -48,49 +48,36 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   def integrationTest(name: String)(testFun: => Any): Unit =
     if (runIntegrationTests) test(name, integrationTestTag)(testFun)
 
-  integrationTest("setup delta logs") {
-    touch(s"$testRunUID/empty/some.json")
-    touch(s"$testRunUID/small/_delta_log/%020d.json".format(1))
-    (1 to maxKeys).foreach(v => touch(s"$testRunUID/medium/_delta_log/%020d.json".format(v)))
-    (1 to maxKeys * 10).foreach(v => touch(s"$testRunUID/large/_delta_log/%020d.json".format(v)))
-  }
+  def testCase(testName: String, numKeys: Int): Unit = integrationTest(testName) {
+    // Setup delta log
+    (1 to numKeys).foreach(v => touch(s"$testRunUID/$testName/_delta_log/%020d.json".format(v)))
 
-  integrationTest("empty") {
-    val resolvedPath = path("empty", 0)
-    val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
-    assert(response.isEmpty)
-  }
-
-  integrationTest("small") {
-    Seq(0, 1, 2, 3).foreach(v => {
-      val resolvedPath = path("small", v)
-      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
-      // Check that we get consecutive versions from v to the max version. The smallest version is 1
-      assert((max(1, v) to 1) == response.map(r => version(r.getPath)).toSeq)
-    })
-  }
-
-  integrationTest("medium") {
-    (1 to maxKeys).foreach(v => {
-      val resolvedPath = path("medium", v)
-      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
-      assert((max(1, v) to maxKeys) == response.map(r => version(r.getPath)).toSeq)
-    })
-  }
-
-  integrationTest("large, also verify number of list requests") {
-    (1 to maxKeys * 10).foreach(v => {
+    // Check number of S3 requests and correct listing
+    (1 to numKeys + 2).foreach(v => {
       val startCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
-      val resolvedPath = path("large", v)
+      val resolvedPath = path(testName, v)
       val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
       val endCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
       // Check that we don't do more S3 list requests than necessary
       assert(endCount - startCount ==
-        max(round(ceil((maxKeys * 10 - (v - 1)) / maxKeys.toDouble)).toInt, 1))
+        max(round(ceil((numKeys - (v - 1)) / maxKeys.toDouble)).toInt, 1))
       // Check that we get consecutive versions from v to the max version. The smallest version is 1
-      assert((max(1, v) to maxKeys * 10) == response.map(r => version(r.getPath)).toSeq)
+      assert((max(1, v) to numKeys) == response.map(r => version(r.getPath)).toSeq)
     })
   }
+
+  integrationTest("setup empty delta log") {
+    touch(s"$testRunUID/empty/some.json")
+  }
+
+  testCase("empty", 0)
+
+  testCase("small", 1)
+
+  testCase("medium", maxKeys)
+
+  testCase("large", 10 * maxKeys)
+
 }
