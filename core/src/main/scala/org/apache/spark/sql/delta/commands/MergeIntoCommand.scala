@@ -43,7 +43,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{DataTypes, StructType}
+import org.apache.spark.sql.types.{DataTypes, LongType, StructType}
 
 case class MergeDataSizes(
   @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -230,6 +230,12 @@ case class MergeIntoCommand(
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
 
+  override val output: Seq[Attribute] = Seq(
+    AttributeReference("num_affected_rows", LongType)(),
+    AttributeReference("num_updated_rows", LongType)(),
+    AttributeReference("num_deleted_rows", LongType)(),
+    AttributeReference("num_inserted_rows", LongType)())
+
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
   /**
@@ -369,7 +375,9 @@ case class MergeIntoCommand(
     // to be outside the recordMergeOperation because this method will update some metric.
     val executionId = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     SQLMetrics.postDriverMetricUpdates(spark.sparkContext, executionId, metrics.values.toSeq)
-    Seq.empty
+    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
+            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
+            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
   }
 
   /**
