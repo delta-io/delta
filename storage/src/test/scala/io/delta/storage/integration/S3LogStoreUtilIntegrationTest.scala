@@ -10,7 +10,6 @@ import org.scalatest.funsuite.AnyFunSuite
 import java.net.URI
 import scala.math.max
 import scala.math.ceil
-import scala.math.round
 
 class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private val runIntegrationTests: Boolean =
@@ -61,8 +60,11 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
       val endCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
       // Check that we don't do more S3 list requests than necessary
-      assert(endCount - startCount ==
-        max(round(ceil((numKeys - (v - 1)) / maxKeys.toDouble)).toInt, 1))
+      val numberOfKeysToList = numKeys - (v - 1)
+      val optimalNumberOfListRequests =
+        max(ceil(numberOfKeysToList / maxKeys.toDouble).toInt, 1)
+      val actualNumberOfListRequests = endCount - startCount
+      assert(optimalNumberOfListRequests == actualNumberOfListRequests)
       // Check that we get consecutive versions from v to the max version. The smallest version is 1
       assert((max(1, v) to numKeys) == response.map(r => version(r.getPath)).toSeq)
     })
