@@ -266,7 +266,7 @@ class DeltaLog private(
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
       lastSeenVersion = version
-      (version, store.read(p, hadoopConf).map(Action.fromJson))
+      (version, store.read(status, hadoopConf).map(Action.fromJson))
     }
   }
 

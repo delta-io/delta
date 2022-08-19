@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
@@ -90,6 +90,9 @@ abstract class LogStoreSuiteBase extends QueryTest
           s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
     }
 
+    def pathToFileStatus(path: Path): FileStatus =
+      path.getFileSystem(sessionHadoopConf).getFileStatus(path)
+
     withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
       val deltas = Seq(0, 1)
@@ -97,10 +100,18 @@ abstract class LogStoreSuiteBase extends QueryTest
       store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
       store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
+      // Test Path based read APIs
       assert(store.read(deltas.head, sessionHadoopConf) == Seq("zero", "none"))
       assert(store.readAsIterator(deltas.head, sessionHadoopConf).toSeq == Seq("zero", "none"))
       assert(store.read(deltas(1), sessionHadoopConf) == Seq("one"))
       assert(store.readAsIterator(deltas(1), sessionHadoopConf).toSeq == Seq("one"))
+      // Test FileStatus based read APIs
+      assert(store.read(pathToFileStatus(deltas.head), sessionHadoopConf) == Seq("zero", "none"))
+      assert(store.readAsIterator(pathToFileStatus(deltas.head), sessionHadoopConf).toSeq ==
+        Seq("zero", "none"))
+      assert(store.read(pathToFileStatus(deltas(1)), sessionHadoopConf) == Seq("one"))
+      assert(store.readAsIterator(pathToFileStatus(deltas(1)), sessionHadoopConf).toSeq ==
+        Seq("one"))
 
       assertNoLeakedCrcFiles(tempLogDir)
     }

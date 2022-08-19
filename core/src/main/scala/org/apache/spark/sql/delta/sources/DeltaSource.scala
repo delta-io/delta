@@ -348,7 +348,7 @@ case class DeltaSource(
           if (filestatus.getLen <
             spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
             // entire file can be read into memory
-            val actions = deltaLog.store.read(filestatus.getPath, deltaLog.newDeltaHadoopConf())
+            val actions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
               .map(Action.fromJson)
             val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
 
@@ -360,7 +360,7 @@ case class DeltaSource(
 
           } else { // file too large to read into memory
             var fileIterator = deltaLog.store.readAsIterator(
-              filestatus.getPath,
+              filestatus,
               deltaLog.newDeltaHadoopConf())
             try {
               verifyStreamHygiene(fileIterator.map(Action.fromJson), version)
