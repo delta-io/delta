@@ -309,35 +309,34 @@ trait Checkpoints extends DeltaLogging {
    * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
    * the overall commit operation.
    */
-  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = withDmqTag {
-    recordDeltaOperation(this, "delta.checkpoint") {
-      try {
-        if (snapshotToCheckpoint.version < 0) {
-          throw DeltaErrors.checkpointNonExistTable(dataPath)
-        }
-        checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
-      } catch {
-        // Catch all non-fatal exceptions, since the checkpoint is written after the commit
-        // has completed. From the perspective of the user, the commit completed successfully.
-        // However, throw if this is in a testing environment - that way any breaking changes
-        // can be caught in unit tests.
-        case NonFatal(e) =>
-          recordDeltaEvent(
-            snapshotToCheckpoint.deltaLog,
-            "delta.checkpoint.sync.error",
-            data = Map(
-              "exception" -> e.getMessage(),
-              "stackTrace" -> e.getStackTrace()
-            )
-          )
-          logWarning(s"Error when writing checkpoint synchronously", e)
-          val throwError = Utils.isTesting ||
-            spark.sessionState.conf.getConf(
-              DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
-          if (throwError) {
-            throw e
-          }
+  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = recordDeltaOperation(
+      this, "delta.checkpoint") {
+    try {
+      if (snapshotToCheckpoint.version < 0) {
+        throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
+      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
+    } catch {
+      // Catch all non-fatal exceptions, since the checkpoint is written after the commit
+      // has completed. From the perspective of the user, the commit completed successfully.
+      // However, throw if this is in a testing environment - that way any breaking changes
+      // can be caught in unit tests.
+      case NonFatal(e) =>
+        recordDeltaEvent(
+          snapshotToCheckpoint.deltaLog,
+          "delta.checkpoint.sync.error",
+          data = Map(
+            "exception" -> e.getMessage(),
+            "stackTrace" -> e.getStackTrace()
+          )
+        )
+        logWarning(s"Error when writing checkpoint synchronously", e)
+        val throwError = Utils.isTesting ||
+          spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
+        if (throwError) {
+          throw e
+        }
     }
   }
 
@@ -367,7 +366,7 @@ trait Checkpoints extends DeltaLogging {
   }
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = withDmqTag {
+  private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
@@ -396,7 +395,6 @@ trait Checkpoints extends DeltaLogging {
           verifiedCheckpoint.map(manuallyLoadCheckpoint)
       }
     }
-  }
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
   protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
@@ -484,7 +482,8 @@ object Checkpoints extends DeltaLogging {
   private[delta] def writeCheckpoint(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      snapshot: Snapshot): CheckpointMetaData = withDmqTag {
+      snapshot: Snapshot): CheckpointMetaData = recordFrameProfile(
+      "Delta", "Checkpoints.writeCheckpoint") {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
