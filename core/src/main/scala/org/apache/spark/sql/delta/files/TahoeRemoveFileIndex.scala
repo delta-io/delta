@@ -56,7 +56,7 @@ class TahoeRemoveFileIndex(
     ActionParameters(
       removeFile.partitionValues,
       removeFile.size.getOrElse(0L),
-      0,
+      modificationTime = 0,
       removeFile.dataChange,
       removeFile.tags)
   }

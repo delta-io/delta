@@ -41,8 +41,6 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       dataChange: Boolean,
       tags: Map[String, String])
 
-  protected def extractActionParameters(action: T): ActionParameters
-
   override def tableVersion: Long = snapshot.version
 
   override def matchingFiles(
@@ -78,7 +76,6 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       .collect()
   }
 
-  def cdcPartitionValues(): Map[String, String]
 
   override def inputFiles: Array[String] = {
     filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
@@ -94,5 +91,10 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
         case remove: RemoveFile => remove.size.getOrElse(0L)
       }.sum)
       .sum
+
+  def cdcPartitionValues(): Map[String, String]
+
+  protected def extractActionParameters(action: T): ActionParameters
+
 
 }
