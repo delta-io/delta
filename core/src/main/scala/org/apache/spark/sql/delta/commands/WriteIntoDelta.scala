@@ -29,10 +29,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
-import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
+import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
 import org.apache.spark.sql.types.{StringType, StructType}
 
@@ -115,6 +116,73 @@ case class WriteIntoDelta(
       })
     case CharType(length) => VarcharType(length)
     case _ => dt
+  }
+
+  /**
+   * Replace where operationMetrics need to be recorded separately.
+   * @param newFiles - AddFile and AddCDCFile added by write job
+   * @param deleteActions - AddFile, RemoveFile, AddCDCFile added by Delete job
+   */
+  private def registerReplaceWhereMetrics(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      newFiles: Seq[Action],
+      deleteActions: Seq[Action]): Unit = {
+    var numFiles = 0L
+    var numCopiedRows = 0L
+    var numOutputBytes = 0L
+    var numNewRows = 0L
+    var numAddedChangedFiles = 0L
+    var hasRowLevelMetrics = true
+
+    newFiles.foreach {
+      case a: AddFile =>
+        numFiles += 1
+        numOutputBytes += a.size
+        if (a.numLogicalRecords.isEmpty) {
+          hasRowLevelMetrics = false
+        } else {
+          numNewRows += a.numLogicalRecords.get
+        }
+      case cdc: AddCDCFile =>
+        numAddedChangedFiles += 1
+      case _ =>
+    }
+
+    deleteActions.foreach {
+      case a: AddFile =>
+        numFiles += 1
+        numOutputBytes += a.size
+        if (a.numLogicalRecords.isEmpty) {
+          hasRowLevelMetrics = false
+        } else {
+          numCopiedRows += a.numLogicalRecords.get
+        }
+      case cdc: AddCDCFile =>
+        numAddedChangedFiles += 1
+      // Remove metrics will be handled by the delete command.
+      case _ =>
+    }
+
+    var sqlMetrics = Map(
+      "numFiles" -> new SQLMetric("number of files written", numFiles),
+      "numOutputBytes" -> new SQLMetric("number of output bytes", numOutputBytes),
+      "numAddedChangeFiles" -> new SQLMetric(
+        "number of change files added", numAddedChangedFiles)
+    )
+    if (hasRowLevelMetrics) {
+      sqlMetrics ++= Map(
+        "numOutputRows" -> new SQLMetric("number of rows added", numNewRows + numCopiedRows),
+        "numCopiedRows" -> new SQLMetric("number of copied rows", numCopiedRows)
+      )
+    } else {
+      // this will get filtered out in DeltaOperations.WRITE transformMetrics
+      sqlMetrics ++= Map(
+        "numOutputRows" -> new SQLMetric("number of rows added", 0L),
+        "numCopiedRows" -> new SQLMetric("number of copied rows", 0L)
+      )
+    }
+    txn.registerSQLMetrics(spark, sqlMetrics)
   }
 
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
@@ -263,6 +331,12 @@ case class WriteIntoDelta(
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
+    // Need to handle replace where metrics separately.
+    if (replaceWhere.nonEmpty && replaceOnDataColsEnabled &&
+        sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
+      registerReplaceWhereMetrics(sparkSession, txn, newFiles, deletedFiles)
+    }
+
     val fileActions = if (rearrangeOnly) {
       val changeFiles = newFiles.collect { case c: AddCDCFile => c }
       if (changeFiles.nonEmpty) {
@@ -308,7 +382,8 @@ case class WriteIntoDelta(
     val relation = LogicalRelation(
         txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot)))
     val processedCondition = condition.reduceOption(And)
-    val command = spark.sessionState.analyzer.execute(DeleteFromTable(relation, processedCondition))
+    val command = spark.sessionState.analyzer.execute(
+      DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
   }

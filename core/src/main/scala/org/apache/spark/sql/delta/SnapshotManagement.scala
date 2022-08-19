@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
+import java.util.Objects
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
@@ -26,11 +27,12 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -99,7 +101,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
-  private final def listDeltaAndCheckpointFiles(
+  protected final def listDeltaAndCheckpointFiles(
       startVersion: Long,
       versionToLoad: Option[Long]): Option[Array[FileStatus]] =
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
@@ -108,9 +110,9 @@ trait SnapshotManagement { self: DeltaLog =>
         .filter { file => isDeltaCommitOrCheckpointFile(file.getPath) }
         // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
         // such files, hence we drop them so that we never pick up such checkpoints.
-        .filterNot { file => isCheckpointFile(file.getPath) && file.getLen == 0 }
+        .filterNot { file => isCheckpointFile(file) && file.getLen == 0 }
         // take files until the version we want to load
-        .takeWhile(f => versionToLoad.forall(v => getFileVersion(f.getPath) <= v))
+        .takeWhile(f => versionToLoad.forall(getFileVersion(f) <= _))
         .toArray
       }
     }
@@ -171,7 +173,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // singleton, so try listing from the first version
         return getLogSegmentForVersion(None, versionToLoad)
       }
-      val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
+      val (checkpoints, deltas) = newFiles.partition(isCheckpointFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
       val lastChkpoint = versionToLoad.map(CheckpointInstance(_, None))
         .getOrElse(CheckpointInstance.MaxValue)
@@ -188,7 +190,7 @@ trait SnapshotManagement { self: DeltaLog =>
           // [SC-95011] FIXME(ryan.johnson): Something has gone very wrong if the checkpoint doesn't
           // exist at all. This code should only handle rejected incomplete checkpoints.
           recordDeltaEvent(this, "delta.checkpoint.error.partial")
-          val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last.getPath))
+          val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last))
           getLogSegmentWithMaxExclusiveCheckpointVersion(snapshotVersion, startCheckpoint)
             .foreach { alternativeLogSegment => return Some(alternativeLogSegment) }
 
@@ -203,10 +205,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
       // it will list all existing delta files.
       val deltasAfterCheckpoint = deltas.filter { file =>
-        deltaVersion(file.getPath) > newCheckpointVersion
+        deltaVersion(file) > newCheckpointVersion
       }
 
-      val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
+      val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
       // We may just be getting a checkpoint file after the filtering
       if (deltaVersions.nonEmpty) {
         if (deltaVersions.head != newCheckpointVersion + 1) {
@@ -343,8 +345,7 @@ trait SnapshotManagement { self: DeltaLog =>
           startVersion = cp.version,
           versionToLoad = Some(snapshotVersion))
           .getOrElse(Array.empty)
-        val (checkpoints, deltas) =
-          filesSinceCheckpointVersion.partition(f => isCheckpointFile(f.getPath))
+        val (checkpoints, deltas) = filesSinceCheckpointVersion.partition(isCheckpointFile)
         if (deltas.isEmpty) {
           // We cannot find any delta files. Returns None as we cannot construct a `LogSegment` only
           // from checkpoint files. This is because in order to create a `LogSegment`, we need to
@@ -365,9 +366,9 @@ trait SnapshotManagement { self: DeltaLog =>
             "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
-          deltaVersion(file.getPath) > cp.version
+          deltaVersion(file) > cp.version
         }
-        val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
+        val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
         // `deltaVersions` should not be empty and `verifyDeltaVersions` will verify it
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(cp.version + 1), Some(snapshotVersion))
@@ -387,8 +388,8 @@ trait SnapshotManagement { self: DeltaLog =>
         val deltas =
           listDeltaAndCheckpointFiles(startVersion = 0, versionToLoad = Some(snapshotVersion))
             .getOrElse(Array.empty)
-            .filter(file => isDeltaFile(file.getPath))
-        val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
+            .filter(isDeltaFile)
+        val deltaVersions = deltas.map(deltaVersion)
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
         } catch {
@@ -404,6 +405,19 @@ trait SnapshotManagement { self: DeltaLog =>
           checkpointVersionOpt = None,
           lastCommitTimestamp = deltas.last.getModificationTime))
     }
+  }
+
+  /**
+   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
+   * version to the preCommitLogSegment (which must match the immediately preceding version).
+   */
+  private[delta] def getLogSegmentAfterCommit(
+      preCommitLogSegment: LogSegment,
+      committedVersion: Long): LogSegment = {
+    val committedDeltaPath = deltaFile(logPath, committedVersion)
+    val fileStatus =
+      committedDeltaPath.getFileSystem(newDeltaHadoopConf()).getFileStatus(committedDeltaPath)
+    SnapshotManagement.appendCommitToLogSegment(preCommitLogSegment, fileStatus, committedVersion)
   }
 
   /**
@@ -657,6 +671,58 @@ object SnapshotManagement {
         s"file version: $v to compute Snapshot")
     }
   }
+
+  def appendCommitToLogSegment(
+      oldLogSegment: LogSegment,
+      commitFileStatus: FileStatus,
+      committedVersion: Long): LogSegment = {
+    require(oldLogSegment.version + 1 == committedVersion)
+    oldLogSegment.copy(
+      version = committedVersion,
+      serializableDeltas =
+        oldLogSegment.serializableDeltas :+ SerializableFileStatus.fromStatus(commitFileStatus),
+      lastCommitTimestamp = commitFileStatus.getModificationTime)
+  }
+}
+
+/** A serializable variant of HDFS's FileStatus. */
+case class SerializableFileStatus(
+    path: String,
+    length: Long,
+    isDir: Boolean,
+    modificationTime: Long) {
+
+  // Important note! This is very expensive to compute, but we don't want to cache it
+  // as a `val` because Paths internally contain URIs and therefore consume lots of memory.
+  @JsonIgnore
+  def getHadoopPath: Path = new Path(path)
+
+  def toFileStatus: FileStatus = {
+    new LocatedFileStatus(
+      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
+      Array.empty[BlockLocation])
+  }
+
+  override def equals(obj: Any): Boolean = obj match {
+    // We only compare the paths to stay consistent with FileStatus.equals.
+    case other: SerializableFileStatus => Objects.equals(path, other.path)
+    case _ => false
+  }
+
+  // We only use the path to stay consistent with FileStatus.hashCode.
+  override def hashCode(): Int = Objects.hashCode(path)
+}
+
+object SerializableFileStatus {
+  def fromStatus(status: FileStatus): SerializableFileStatus = {
+    SerializableFileStatus(
+      Option(status.getPath).map(_.toString).orNull,
+      status.getLen,
+      status.isDirectory,
+      status.getModificationTime)
+  }
+
+  val EMPTY: SerializableFileStatus = fromStatus(new FileStatus())
 }
 
 /**
@@ -664,20 +730,27 @@ object SnapshotManagement {
  * the given version of the log.
  * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
- * @param deltas The delta commit files (.json) to read
- * @param checkpoint The checkpoint file to read
+ * @param serializableDeltas The delta commit files (.json) to read
+ * @param serializableCheckpoint The checkpoint file to read
  * @param checkpointVersionOpt The checkpoint version used to start replay
  * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
  *                            monotonically increasing for the commits within this segment.
  */
 case class LogSegment(
-    logPath: Path,
+    logPath: String,
     version: Long,
-    deltas: Seq[FileStatus],
-    checkpoint: Seq[FileStatus],
+    serializableDeltas: Seq[SerializableFileStatus],
+    serializableCheckpoint: Seq[SerializableFileStatus],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     checkpointVersionOpt: Option[Long],
     lastCommitTimestamp: Long) {
+
+  @JsonIgnore
+  lazy val deltas: Seq[FileStatus] = serializableDeltas.map(_.toFileStatus)
+
+  @JsonIgnore
+  lazy val checkpoint: Seq[FileStatus] = serializableCheckpoint.map(_.toFileStatus)
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
 
@@ -696,12 +769,41 @@ case class LogSegment(
 }
 
 object LogSegment {
+
+  /** Alternate constructor which accepts Path/FileStatus */
+  def apply(
+      logPath: Path,
+      version: Long,
+      deltas: Seq[FileStatus],
+      checkpoint: Seq[FileStatus],
+      checkpointVersionOpt: Option[Long],
+      lastCommitTimestamp: Long): LogSegment = {
+
+    val (savedDeltas, savedCheckpoint) = (deltas, checkpoint)
+
+    new LogSegment(
+        logPath.toString,
+        version,
+        deltas.map(SerializableFileStatus.fromStatus),
+        checkpoint.map(SerializableFileStatus.fromStatus),
+        checkpointVersionOpt,
+        lastCommitTimestamp) {
+      // We override the deltas/checkpoint to directly return the savedDeltas/savedCheckpoint in
+      // order to save the FileStatus -> SerializableFileStatus -> FileStatus conversion.
+      @JsonIgnore
+      override lazy val deltas: Seq[FileStatus] = savedDeltas
+
+      @JsonIgnore
+      override lazy val checkpoint: Seq[FileStatus] = savedCheckpoint
+    }
+  }
+
   /** The LogSegment for an empty transaction log directory. */
   def empty(path: Path): LogSegment = LogSegment(
-    logPath = path,
+    logPath = path.toString,
     version = -1L,
-    deltas = Nil,
-    checkpoint = Nil,
+    serializableDeltas = Nil,
+    serializableCheckpoint = Nil,
     checkpointVersionOpt = None,
     lastCommitTimestamp = -1L)
 }

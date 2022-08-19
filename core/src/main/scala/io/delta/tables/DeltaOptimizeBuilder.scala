@@ -16,14 +16,15 @@
 
 package io.delta.tables
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.parser.ParseException
 
 /**
  * Builder class for constructing OPTIMIZE command and executing.

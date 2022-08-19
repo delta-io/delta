@@ -17,14 +17,13 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.{File, IOException}
+import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.concurrent.Future
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -41,7 +40,6 @@ import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
@@ -52,7 +50,7 @@ import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.util.{Clock, SystemClock, Utils}
+import org.apache.spark.util._
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -258,8 +256,7 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val hadoopConf = newDeltaHadoopConf()
-    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf)
-      .filter(f => isDeltaFile(f.getPath))
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf).filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
@@ -281,11 +278,11 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
     val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
-      .filter(f => isDeltaFile(f.getPath))
+      .filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
-      val version = deltaVersion(status.getPath)
+      val version = deltaVersion(status)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
@@ -562,11 +559,13 @@ object DeltaLog extends DeltaLogging {
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
+
   private def apply(
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
-      clock: Clock): DeltaLog = {
+      clock: Clock
+  ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {

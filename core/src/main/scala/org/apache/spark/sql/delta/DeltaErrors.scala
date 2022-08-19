@@ -163,14 +163,10 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
-  def failOnCheckpoint(src: Path, dest: Path): DeltaIllegalStateException = {
-    failOnCheckpoint(src.toString, dest.toString)
-  }
-
-  def failOnCheckpoint(src: String, dest: String): DeltaIllegalStateException = {
+  def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
-      messageParameters = Array(s"$src", s"$dest"))
+      messageParameters = Array(s"${src.toString}", s"${dest.toString}"))
   }
 
   def checkpointMismatchWithSnapshot : Throwable = {
@@ -384,6 +380,12 @@ trait DeltaErrorsBase
     new IllegalArgumentException(
       s"Provided Start version($start) for reading change data is invalid. " +
         s"Start version cannot be greater than the latest version of the table($latest).")
+  }
+
+  def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
+    new IllegalArgumentException(
+      s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +
+        s"different versions ${version1} and ${version2}.")
   }
 
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
@@ -658,7 +660,7 @@ trait DeltaErrorsBase
   def unknownConfigurationKeyException(confKey: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNKNOWN_CONFIGURATION",
-      messageParameters = Array(confKey))
+      messageParameters = Array(confKey, DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key))
   }
 
   def cdcNotAllowedInThisVersion(): Throwable = {
@@ -1019,6 +1021,15 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_COLUMN_TYPE",
       messageParameters = Array(s"${field.name}", s"${field.dataType}")
+    )
+  }
+
+  def unexpectedPartitionSchemaFromUserException(
+    catalogPartitionSchema: StructType, userPartitionSchema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER",
+      messageParameters = Array(
+        formatSchema(catalogPartitionSchema), formatSchema(userPartitionSchema))
     )
   }
 
@@ -1780,20 +1791,20 @@ trait DeltaErrorsBase
       messageParameters = Array(
         s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
         s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
-        s"$oldProtocol"))
+        s"$oldProtocol",
+        columnMappingAdviceMessage))
   }
 
   private def columnMappingAdviceMessage: String = {
     s"""
        |Please upgrade your Delta table to reader version 2 and writer version 5
-       | and change the column mapping mode to 'name' mapping. You can use the following command:
+       |and change the column mapping mode to 'name' mapping. You can use the following command:
        |
-       | ALTER TABLE <table_name> SET TBLPROPERTIES (
+       |ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
        |   'delta.minReaderVersion' = '2',
        |   'delta.minWriterVersion' = '5')
-       |
-    """.stripMargin
+       |""".stripMargin
   }
 
   def columnRenameNotSupported: Throwable = {
@@ -1870,11 +1881,21 @@ trait DeltaErrorsBase
     )
   }
 
-  def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
-    val schemeConfStr = schemeConf.map("spark.delta.logStore." + _._1).mkString(", ")
+  def logStoreConfConflicts(classConf: Seq[(String, String)],
+      schemeConf: Seq[(String, String)]): Throwable = {
+    val classConfStr = classConf.map(_._1).mkString(", ")
+    val schemeConfStr = schemeConf.map(_._1).mkString(", ")
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_LOGSTORE_CONF",
-      messageParameters = Array(schemeConfStr)
+      messageParameters = Array(classConfStr, schemeConfStr)
+    )
+  }
+
+  def inconsistentLogStoreConfs(setKeys: Seq[(String, String)]): Throwable = {
+    val setKeyStr = setKeys.map(_.productIterator.mkString(" = ")).mkString(", ")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INCONSISTENT_LOGSTORE_CONFS",
+      messageParameters = Array(setKeyStr)
     )
   }
 
@@ -2188,7 +2209,9 @@ trait DeltaErrorsBase
 
   def failRelativizePath(pathName: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_FAIL_RELATIVIZE_PATH", messageParameters = Array(pathName, pathName)
+      errorClass = "DELTA_FAIL_RELATIVIZE_PATH", messageParameters = Array(
+        pathName,
+        DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key)
     )
   }
 

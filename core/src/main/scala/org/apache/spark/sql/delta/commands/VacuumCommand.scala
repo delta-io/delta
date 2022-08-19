@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
-import java.sql.Timestamp
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +25,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
-import org.apache.spark.sql.delta.commands.VacuumCommand.logInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
@@ -35,7 +33,6 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -162,7 +159,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           fileListingParallelism = Option(parallelism)
         )
-        .groupByKey(x => x.path)
+        .groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
           // of all the duplicates we can return the newest file.
@@ -189,14 +186,15 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
             fileStatusIterator.flatMap { fileStatus =>
               if (fileStatus.isDir) {
-                Iterator.single(relativize(fileStatus.getPath, fs, reservoirBase, isDir = true))
+                Iterator.single(
+                  relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = true))
               } else {
                 val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
                 val dirsWithSlash = dirs.map { p =>
                   relativize(new Path(p), fs, reservoirBase, isDir = true)
                 }
                 dirsWithSlash ++ Iterator(
-                  relativize(new Path(fileStatus.path), fs, reservoirBase, isDir = false))
+                  relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = false))
               }
             }
           }.groupBy($"value" as 'path)
@@ -322,7 +320,7 @@ trait VacuumCommandImpl extends DeltaCommand {
         val filesDeletedPerPartition =
           files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
         Iterator(filesDeletedPerPartition)
-      }.reduce(_ + _)
+      }.collect().sum
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala

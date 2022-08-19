@@ -295,9 +295,9 @@
   },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
     "message" : [
-      "Constraint '<constraintName>' already exists as a CHECK constraint. Please delete the old constraint first.",
+      "Constraint '<constraintName>' already exists. Please delete the old constraint first.",
       "Old constraint:",
-      "<checkCondition>"
+      "<oldConstraint>"
     ],
     "sqlState" : "42000"
   },
@@ -487,16 +487,12 @@
     "message" : [
       "Failed to relativize the path (<path>). This can happen when absolute paths make",
       "it into the transaction log, which start with the scheme",
-      "s3://, wasbs:// or adls://. This is a bug that has existed before DBR 5.0.",
-      "To fix this issue, please upgrade your writer jobs to DBR 5.0 and please run:",
-      "%%scala delta.Delta.fixAbsolutePathsInLog(\"<path>\").",
+      "s3://, wasbs:// or adls://.",
       "",
-      "If this table was created with a shallow clone across file systems",
-      "(different buckets/containers) and this table is NOT USED IN PRODUCTION, you can",
-      "set the SQL configuration delta.vacuum.relativize.ignoreError",
-      "to true. Using this SQL configuration could lead to accidental data loss,",
-      "therefore we do not recommend the use of this flag unless",
-      "this is a shallow clone for testing purposes."
+      "If this table is NOT USED IN PRODUCTION, you can set the SQL configuration",
+      "<config> to true.",
+      "Using this SQL configuration could lead to accidental data loss, therefore we do",
+      "not recommend the use of this flag unless this is for testing purposes."
     ],
     "sqlState" : "42000"
   },
@@ -563,6 +559,12 @@
       "The usage of <option> is not allowed when <operation> a Delta table."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
+    "message" : [
+      "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_INCORRECT_ARRAY_ACCESS" : {
     "message" : [
@@ -677,7 +679,7 @@
   },
   "DELTA_INVALID_LOGSTORE_CONF" : {
     "message" : [
-      "(`spark.delta.logStore.class`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
+      "(`<classConfig>`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
     ],
     "sqlState" : "42000"
   },
@@ -1318,10 +1320,21 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER" : {
+    "message" : [
+      "CONVERT TO DELTA was called with a partition schema different from the partition schema inferred from the catalog, please avoid providing the schema so that the partition schema can be chosen from the catalog.",
+      "",
+      "catalog partition schema:",
+      "<catalogPartitionSchema>",
+      "provided partition schema:",
+      "<userPartitionSchema>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",
-      "To disable this check, set allowArbitraryProperties.enabled=true in the Spark session configuration."
+      "To disable this check, set <config>=true in the Spark session configuration."
     ],
     "sqlState" : "0A000"
   },
@@ -1388,10 +1401,7 @@
       "<requiredVersion>",
       "Your table's current Delta protocol version:",
       "<currentVersion>",
-      "",
-      "Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.",
-      "",
-      ""
+      "<advice>"
     ],
     "sqlState" : "0A000"
   },

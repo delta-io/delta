@@ -130,10 +130,14 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
         ]
         self.scala_version = scala_version
 
+        if "spark_confs" in kwargs and isinstance(kwargs["spark_confs"], list):
+            kwargs["spark_confs"].extend(delta_spark_confs)
+        else:
+            kwargs["spark_confs"] = delta_spark_confs
+
         super().__init__(
             format_name="delta",
             maven_artifacts=self.delta_maven_artifacts(delta_version, self.scala_version),
-            spark_confs=delta_spark_confs,
             benchmark_main_class=benchmark_main_class,
             main_class_args=main_class_args,
             **kwargs
@@ -398,14 +402,21 @@ fi
         else:
             print(">>> Benchmark completed with failure\n")
 
-        # Copy reports
-        if succeeded and copy_report:
-            report_files = [json_report_file, csv_report_file]
-            for report_file in report_files:
-                run_cmd(f"scp -C -i {ssh_id_file} " +
-                        f"{ssh_user}@{cluster_hostname}:{report_file} {report_file}",
-                        stream_output=True)
-            print(">>> Copied reports to local directory")
+        # Download reports
+        if copy_report:
+            Benchmark.download_file(output_file, cluster_hostname, ssh_id_file, ssh_user)
+            if succeeded:
+                report_files = [json_report_file, csv_report_file]
+                for report_file in report_files:
+                    Benchmark.download_file(report_file, cluster_hostname, ssh_id_file, ssh_user)
+            print(">>> Downloaded reports to local directory")
+
+
+    @staticmethod
+    def download_file(file, cluster_hostname, ssh_id_file, ssh_user):
+        run_cmd(f"scp -C -i {ssh_id_file} " +
+                f"{ssh_user}@{cluster_hostname}:{file} {file}",
+                stream_output=True)
 
     def upload_delta_jars_to_cluster_and_get_version(self, cluster_hostname, ssh_id_file, ssh_user):
         if not self.local_delta_dir:

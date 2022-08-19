@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -655,6 +656,22 @@ abstract class UpdateSuiteBase
       arrayStructData,
       set = "a.b = array(-1)" :: Nil,
       errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
+  }
+
+  test("schema pruning on finding files to update") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    // spark.conf.set("spark.sql.adaptive.enabled", "false")
+    val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+      checkUpdate(condition = Some("key = 2"), setClauses = "key = 1, value = 3",
+        expectedResults = Row(1, 3) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
+    }
+
+    val scans = executedPlans.flatMap(_.collect {
+      case f: FileSourceScanExec => f
+    })
+    // The first scan is for finding files to update. We only are matching against the key
+    // so that should be the only field in the schema
+    assert(scans.head.schema == StructType(Seq(StructField("key", IntegerType))))
   }
 
   /**

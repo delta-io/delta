@@ -52,10 +52,31 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       .format("delta")
       .partitionBy("column1")
       .save(tempDir.toString())
+
+    // Check SQL details
     checkResult(
       sql(s"DESCRIBE DETAIL ${f(tempDir)}"),
       Seq("delta", Array("column1"), 1),
       Seq("format", "partitionColumns", "numFiles"))
+
+    // Check Scala details
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.toString)
+    checkResult(
+      deltaTable.details(),
+      Seq("delta", Array("column1"), 1),
+      Seq("format", "partitionColumns", "numFiles"))
+  }
+
+  test("delta table: Scala details using table name") {
+    withTable("delta_test") {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("delta_test")
+
+      val deltaTable = io.delta.tables.DeltaTable.forName(spark, "delta_test")
+      checkAnswer(
+        deltaTable.details().select("format"),
+        Seq(Row("delta"))
+      )
+    }
   }
 
   test("delta table: path") {
@@ -66,7 +87,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     describeDeltaDetailTest(f => s"delta.`${f.toString()}`")
   }
 
-  test("non-delta table: table name") {
+  test("non-delta table: SQL details using table name") {
     withTable("describe_detail") {
       sql(
         """
@@ -87,7 +108,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  test("non-delta table: path") {
+  test("non-delta table: SQL details using table path") {
     val tempDir = Utils.createTempDir().toString
     Seq(1 -> 1).toDF("column1", "column2")
       .write
@@ -101,7 +122,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       Seq("location"))
   }
 
-  test("non-delta table: path doesn't exist") {
+  test("non-delta table: SQL details when table path doesn't exist") {
     val tempDir = Utils.createTempDir()
     tempDir.delete()
     val e = intercept[FileNotFoundException] {
@@ -110,7 +131,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     assert(e.getMessage.contains(tempDir.toString))
   }
 
-  test("delta table: table name") {
+  test("delta table: SQL details using table name") {
     withTable("describe_detail") {
       sql(
         """

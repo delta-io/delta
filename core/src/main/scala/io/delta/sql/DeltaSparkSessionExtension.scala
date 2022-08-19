@@ -23,7 +23,6 @@ import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.delta.PreprocessTableRestore
-import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.

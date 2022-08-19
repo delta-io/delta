@@ -154,17 +154,16 @@ class DeltaConfigSuite extends SparkFunSuite
         }
       }
       var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
-        "allowArbitraryProperties.enabled=true in the Spark session configuration."
+        "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
+        "configuration."
       assert(e.getMessage == msg)
     }
   }
 
-  test("Allow setting isolation level") {
-    // (1) we can set serializable isolation level
+  test("allow setting valid and supported isolation level") {
     withTempDir { dir =>
       sql(
-        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint)
-           |USING delta
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
            |TBLPROPERTIES ('delta.isolationLevel' = 'Serializable')
            |""".stripMargin)
 
@@ -174,11 +173,9 @@ class DeltaConfigSuite extends SparkFunSuite
       assert(isolationLevel == Serializable)
     }
 
-    // (2) we can set write serializable isolation level
     withTempDir { dir =>
       sql(
-        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint)
-           |USING delta
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
            |TBLPROPERTIES ('delta.isolationLevel' = 'WriteSerializable')
            |""".stripMargin)
 
@@ -187,8 +184,9 @@ class DeltaConfigSuite extends SparkFunSuite
 
       assert(isolationLevel == WriteSerializable)
     }
+  }
 
-    // (3) we can not set snapshot isolation level
+  test("do not allow setting valid but unsupported isolation level") {
     withTempDir { dir =>
       val e = intercept[IllegalArgumentException] {
         sql(
@@ -197,6 +195,19 @@ class DeltaConfigSuite extends SparkFunSuite
              |""".stripMargin)
       }
       val msg = "requirement failed: delta.isolationLevel must be Serializable or WriteSerializable"
+      assert(e.getMessage == msg)
+    }
+  }
+
+  test("do not allow setting invalid isolation level") {
+    withTempDir { dir =>
+      val e = intercept[IllegalArgumentException] {
+        sql(
+          s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES ('delta.isolationLevel' = 'InvalidSerializable')
+             |""".stripMargin)
+      }
+      val msg = "invalid isolation level 'InvalidSerializable'"
       assert(e.getMessage == msg)
     }
   }

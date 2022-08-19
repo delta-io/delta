@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Helper for creating file names for specific commits / checkpoints. */
@@ -37,9 +36,11 @@ object FileNames {
 
   /** Returns the version for the given delta path. */
   def deltaVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
+  def deltaVersion(file: FileStatus): Long = deltaVersion(file.getPath)
 
   /** Returns the version for the given checksum file. */
   def checksumVersion(path: Path): Long = path.getName.stripSuffix(".crc").toLong
+  def checksumVersion(file: FileStatus): Long = checksumVersion(file.getPath)
 
   /**
    * Returns the prefix of all checkpoint files for the given version.
@@ -79,12 +80,16 @@ object FileNames {
   }
 
   def isCheckpointFile(path: Path): Boolean = checkpointFilePattern.matcher(path.getName).matches()
+  def isCheckpointFile(file: FileStatus): Boolean = isCheckpointFile(file.getPath)
 
   def isDeltaFile(path: Path): Boolean = deltaFilePattern.matcher(path.getName).matches()
+  def isDeltaFile(file: FileStatus): Boolean = isDeltaFile(file.getPath)
 
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
+  def isChecksumFile(file: FileStatus): Boolean = isChecksumFile(file.getPath)
 
   def checkpointVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
+  def checkpointVersion(file: FileStatus): Long = checkpointVersion(file.getPath)
 
   /**
    * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
@@ -106,4 +111,5 @@ object FileNames {
       // scalastyle:on throwerror
     }
   }
+  def getFileVersion(file: FileStatus): Long = getFileVersion(file.getPath)
 }

@@ -31,20 +31,18 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -293,9 +291,9 @@ abstract class ConvertToDeltaCommandBase(
     target.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
         case _ if target.catalogTable.exists(isHiveStyleParquetTable) =>
-          new ParquetTable(spark, qualifiedDir, partitionSchema)
+          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
         case checkProvider if checkProvider.equalsIgnoreCase("parquet") =>
-          new ParquetTable(spark, qualifiedDir, partitionSchema)
+          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
         case checkProvider =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, checkProvider)
       }
@@ -330,10 +328,7 @@ abstract class ConvertToDeltaCommandBase(
         throw DeltaErrors.emptyDirectoryException(convertProperties.targetDir)
       }
 
-      val partitionFields = partitionSchema
-        .orElse(targetTable.partitionSchema)
-        .getOrElse(new StructType())
-
+      val partitionFields = targetTable.partitionSchema
       val schema = targetTable.tableSchema
       val metadata = Metadata(
         schemaString = schema.json,
@@ -351,7 +346,7 @@ abstract class ConvertToDeltaCommandBase(
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
-      txn.commitLarge(
+      val (committedVersion, postCommitSnapshot) = txn.commitLarge(
         spark,
         Iterator.single(txn.protocol) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
@@ -436,8 +431,8 @@ trait ConvertTargetTable {
   /** The table properties of the target table */
   def properties: Map[String, String] = Map.empty
 
-  /** The partition schema of the target table, if known */
-  def partitionSchema: Option[StructType] = None
+  /** The partition schema of the target table */
+  def partitionSchema: StructType
 
   /** The file manifest of the target table */
   def fileManifest: ConvertTargetFileManifest
@@ -453,16 +448,33 @@ trait ConvertTargetTable {
 class ParquetTable(
     spark: SparkSession,
     basePath: String,
-    override val partitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
+    catalogTable: Option[CatalogTable],
+    userPartitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
+  // Validate user provided partition schema if catalogTable is available.
+  if (catalogTable.isDefined && userPartitionSchema.isDefined
+    && !catalogTable.get.partitionSchema.equals(userPartitionSchema.get)) {
+    throw DeltaErrors.unexpectedPartitionSchemaFromUserException(
+      catalogTable.get.partitionSchema, userPartitionSchema.get)
+  }
 
   private var _numFiles: Option[Long] = None
 
-  private var _tableSchema: Option[StructType] = None
+  private var _tableSchema: Option[StructType] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA)) {
+      catalogTable.map(_.schema)
+    } else {
+      None
+    }
+  }
 
   protected lazy val serializableConf = {
     // scalastyle:off deltahadoopconfiguration
     new SerializableConfiguration(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
+  }
+
+  override val partitionSchema: StructType = {
+    userPartitionSchema.orElse(catalogTable.map(_.partitionSchema)).getOrElse(new StructType())
   }
 
   def numFiles: Long = {
@@ -598,7 +610,7 @@ class ParquetTable(
       }
     }
 
-    val partitionFields = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
+    val partitionFields = partitionSchema.fields.toSeq
 
     _numFiles = Some(numFiles)
     _tableSchema = Some(PartitioningUtils.mergeDataAndPartitionSchema(
@@ -611,6 +623,9 @@ class ParquetTable(
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
       FileStreamSink.hasMetadata(Seq(basePath), serializableConf.value, spark.sessionState.conf)) {
       new MetadataLogFileManifest(spark, basePath)
+    } else if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_PARTITIONS) &&
+      catalogTable.isDefined) {
+      new CatalogFileManifest(spark, basePath, catalogTable.get, serializableConf)
     } else {
       new ManualListingFileManifest(spark, basePath, serializableConf)
     }
@@ -649,6 +664,46 @@ class ManualListingFileManifest(
   override def close(): Unit = list.unpersist()
 }
 
+/** A file manifest generated through listing partition paths from Metastore catalog. */
+class CatalogFileManifest(
+  spark: SparkSession,
+  override val basePath: String,
+  catalogTable: CatalogTable,
+  serializableConf: SerializableConfiguration)
+  extends ManualListingFileManifest(spark, basePath, serializableConf) {
+
+  private lazy val partitionList = {
+    if (catalogTable.partitionSchema.isEmpty) {
+      // Not a partitioned table.
+      Seq(basePath)
+    } else {
+      val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
+      partitions.map { partition =>
+        partition.storage.locationUri.map(_.toString())
+          .getOrElse {
+            val partitionDir =
+              PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
+            basePath.stripSuffix("/") + "/" + partitionDir
+          }
+      }
+    }
+  }
+
+  override def doList(): Dataset[SerializableFileStatus] = {
+    import spark.implicits._
+    // Avoid the serialization of this CatalogFileManifest during distributed execution.
+    val conf = spark.sparkContext.broadcast(serializableConf)
+    val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+    val allFiles = spark.sparkContext.parallelize(partitionList)
+      .repartition(math.min(parallelism, partitionList.length))
+      .mapPartitions { dirs =>
+        DeltaFileOperations
+          .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
+    }
+    spark.createDataset(allFiles)
+  }
+}
+
 /** A file manifest generated from pre-existing parquet MetadataLog. */
 class MetadataLogFileManifest(
     spark: SparkSession,
@@ -677,15 +732,15 @@ object ConvertToDeltaCommand {
       DeltaColumnMapping.getPhysicalName(f)
     }).getOrElse(Nil)
     val file = targetFile.fileStatus
-    val path = file.getPath
+    val path = file.getHadoopPath
     val partition = targetFile.partitionValues.getOrElse {
       // partition values are not provided by the source table format, so infer from the file path
-      val pathStr = file.getPath.toUri.toString
+      val pathStr = file.getHadoopPath.toUri.toString
       val dateFormatter = DateFormatter()
       val timestampFormatter =
         TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
       val resolver = conf.resolver
-      val dir = if (file.isDir) file.getPath else file.getPath.getParent
+      val dir = if (file.isDir) file.getHadoopPath else file.getHadoopPath.getParent
       val (partitionOpt, _) = PartitionUtils.parsePartition(
         dir,
         typeInference = false,

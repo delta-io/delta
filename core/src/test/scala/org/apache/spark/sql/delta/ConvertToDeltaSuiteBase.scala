@@ -28,6 +28,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -38,7 +39,6 @@ import org.apache.spark.util.Utils
  * extend the `SharedSparkSession`, therefore we keep this utility class as bare-bones as possible.
  */
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
-  import org.apache.spark.sql.functions._
 
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
@@ -692,6 +692,31 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
  */
 trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
 
+  // Test conversion with and without the new CatalogFileManifest.
+  protected def testCatalogFileManifest(testName: String)(block: (Boolean) => Unit): Unit = {
+    Seq(true, false).foreach { useCatalogFileManifest =>
+      test(s"$testName - $useCatalogFileManifest") {
+        withSQLConf(
+          DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_PARTITIONS.key
+            -> useCatalogFileManifest.toString) {
+          block(useCatalogFileManifest)
+        }
+      }
+    }
+  }
+
+  protected def testCatalogSchema(testName: String)(testFn: (Boolean) => Unit): Unit = {
+    Seq(true, false).foreach {
+      useCatalogSchema =>
+        test(s"$testName - $useCatalogSchema") {
+          withSQLConf(
+            DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA.key -> useCatalogSchema.toString) {
+            testFn(useCatalogSchema)
+          }
+        }
+    }
+  }
+
   protected def getPathForTableName(tableName: String): String = {
     spark
       .sessionState
@@ -774,6 +799,31 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       }
 
       assert(ae.getMessage.contains("Table or view 'faketable' not found"))
+    }
+  }
+
+  testQuietly("negative case: unmatched partition schema") {
+    val tableName = "pqtable"
+    withTable(tableName) {
+      // Create a partitioned parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Check the partition schema in the catalog, key1's data type is original Long.
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).partitionSchema
+        .equals(
+          (new StructType)
+            .add(StructField("key1", LongType, true))
+            .add(StructField("key2", StringType, true))
+        ))
+
+      // Convert to delta with partition schema mismatch on key1's data type, which is String.
+      val ae = intercept[AnalysisException] {
+        convertToDelta(tableName, Some("key1 string, key2 string"))
+      }
+
+      assert(ae.getMessage.contains("CONVERT TO DELTA was called with a partition schema " +
+        "different from the partition schema inferred from the catalog"))
     }
   }
 
@@ -894,12 +944,48 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
       // Verify that table converted to delta
       checkAnswer(
-        sql(s"select id from delta.`$path` where key1 = 1"),
-        simpleDF.filter("id % 2 == 1").select("id"))
+        sql(s"select key2 from delta.`$path` where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("key2"))
 
       checkAnswer(
-        sql(s"select id from $externalTblName where key1 = 1"),
-        simpleDF.filter("id % 2 == 1").select("id"))
+        sql(s"select key2 from $externalTblName where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("key2"))
+    }
+  }
+
+  testCatalogSchema("convert a parquet table with catalog schema") {
+    useCatalogSchema => {
+      withTempDir {
+        dir =>
+          // Create a parquet table with all 3 columns: id, key1 and key2
+          val tempDir = dir.getCanonicalPath
+          writeFiles(tempDir, simpleDF)
+
+          val tableName = "pqtable"
+          withTable(tableName) {
+            // Create a catalog table on top of the parquet table excluding column id
+            sql(s"CREATE TABLE $tableName (key1 long, key2 string) " +
+              s"USING PARQUET LOCATION '$dir'")
+
+            convertToDelta(tableName)
+
+            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+            val catalog_columns = Seq[StructField](
+              StructField("key1", LongType, true),
+              StructField("key2", StringType, true)
+            )
+
+            if (useCatalogSchema) {
+              // Catalog schema is used, column id is excluded.
+              assert(deltaLog.snapshot.metadata.schema
+                .equals(StructType(catalog_columns)))
+            } else {
+              // Schema is inferred from the data, all 3 columns are included.
+              assert(deltaLog.snapshot.metadata.schema
+                .equals(StructType(StructField("id", LongType, true) +: catalog_columns)))
+            }
+          }
+      }
     }
   }
 
@@ -1032,6 +1118,79 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       checkAnswer(
         sql(s"select id from default.$tableName where key1 = 1"),
         simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("Convert a partitioned parquet table with partition schema autofill") {
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      // Create a partitioned parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Convert to delta without partition schema, partition schema is autofill from catalog
+      convertToDelta(tableName)
+
+      // Verify that table is converted to delta
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
+
+      // Check the partition schema in the transaction log
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+        .snapshot.metadata.partitionSchema.equals(
+            (new StructType())
+              .add(StructField("key1", LongType, true))
+              .add(StructField("key2", StringType, true))
+          ))
+
+      // Check data in the converted delta table.
+      checkAnswer(
+        sql(s"SELECT id from default.$tableName where key2 = '2'"),
+        simpleDF.filter("id % 3 == 2").select("id"))
+    }
+  }
+
+  testCatalogFileManifest("convert partitioned parquet table with catalog partitions") {
+    useCatalogFileManifest => {
+      val tableName = "ppqtable"
+      withTable(tableName) {
+        simpleDF.write.partitionBy("key1").format("parquet").saveAsTable(tableName)
+        val path = getPathForTableName(tableName)
+
+        // Create an orphan partition
+        val df = spark.range(100, 200)
+          .withColumn("key1", lit(2))
+          .withColumn("key2", col("id") % 4 cast "String")
+
+        df.write.partitionBy("key1")
+          .format("parquet")
+          .mode("Append")
+          .save(path)
+
+        // The path should contains 3 partitions.
+        val partitionDirs = new File(path).listFiles().filter(_.isDirectory)
+        assert(partitionDirs.map(_.getName).sorted
+          .sameElements(Array("key1=0", "key1=1", "key1=2")))
+
+        // Catalog only contains 2 partitions.
+        assert(spark.sessionState.catalog
+          .listPartitions(TableIdentifier(tableName, Some("default"))).size == 2)
+
+        // Convert table to delta
+        convertToDelta(tableName)
+
+        // Verify that table is converted to delta
+        assert(spark.sessionState.catalog.getTableMetadata(
+          TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
+
+        // Check data in the converted delta table.
+        if (useCatalogFileManifest) {
+          // Partition "key1=2" is pruned.
+          checkAnswer(sql(s"SELECT DISTINCT key1 from default.${tableName}"), spark.range(2).toDF())
+        } else {
+          // All partitions are preserved.
+          checkAnswer(sql(s"SELECT DISTINCT key1 from default.${tableName}"), spark.range(3).toDF())
+        }
+      }
     }
   }
 

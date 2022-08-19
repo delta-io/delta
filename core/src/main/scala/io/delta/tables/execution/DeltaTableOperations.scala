@@ -21,7 +21,7 @@ import scala.collection.Map
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, RestoreTableCommand, VacuumCommand}
+import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
@@ -39,7 +39,9 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
-    val delete = DeleteFromTable(self.toDF.queryExecution.analyzed, condition)
+    val delete = DeleteFromTable(
+      self.toDF.queryExecution.analyzed,
+      condition.getOrElse(Literal.TrueLiteral))
     toDataset(sparkSession, delete)
   }
 
@@ -50,6 +52,13 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     val history = deltaLog.history
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
+  }
+
+  protected def executeDetails(
+      path: String,
+      tableIdentifier: Option[TableIdentifier]): DataFrame = {
+    val details = DescribeDeltaDetailCommand(Option(path), tableIdentifier)
+    toDataset(sparkSession, details)
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {

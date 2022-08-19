@@ -16,12 +16,10 @@
 
 package org.apache.spark.sql.delta.files
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.util.Objects
 
-import scala.collection.mutable.ArrayBuffer
-
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
@@ -190,13 +188,11 @@ case class TahoeLogFileIndex(
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
-    getSnapshot.filesForScan(
-      projection = Nil, this.partitionFilters ++ partitionFilters ++ dataFilters).files
+    getSnapshot.filesForScan(this.partitionFilters ++ partitionFilters ++ dataFilters).files
   }
 
   override def inputFiles: Array[String] = {
-    getSnapshot.filesForScan(
-      projection = Nil, partitionFilters).files.map(f => absolutePath(f.path).toString).toArray
+    getSnapshot.filesForScan(partitionFilters).files.map(f => absolutePath(f.path).toString).toArray
   }
 
   override def refresh(): Unit = {}
@@ -271,11 +267,11 @@ case class PinnedTahoeFileIndex(
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
-    snapshot.filesForScan(projection = Nil, partitionFilters ++ dataFilters).files
+    snapshot.filesForScan(partitionFilters ++ dataFilters).files
   }
 
   override def inputFiles: Array[String] = {
-    snapshot.filesForScan(Nil, Nil).files.map(f => absolutePath(f.path).toString).toArray
+    snapshot.filesForScan(Nil).files.map(f => absolutePath(f.path).toString).toArray
   }
 
   override def refresh(): Unit = {}

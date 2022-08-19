@@ -297,8 +297,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
       )
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
       gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CheckFiles(Seq("file1.txt")),
+        CreateFile("file2.txt", commitToActionLog = true),
+        CheckFiles(Seq("file2.txt")),
         ExpectFailure(
           ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
           classOf[IllegalArgumentException],
@@ -354,8 +354,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
       }
 
       gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CheckFiles(Seq("file1.txt")),
+        CreateFile("file2.txt", commitToActionLog = true),
+        CheckFiles(Seq("file2.txt")),
         GC(false, Seq(tempDir.toString), Some(0))
       )
     }

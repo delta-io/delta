@@ -45,7 +45,8 @@ class DeleteMetricsSuite extends QueryTest
   )
 
   case class TestMetricResults(
-      operationMetrics: Map[String, Long]
+      operationMetrics: Map[String, Long],
+      numAffectedRows: Long
   )
 
   /*
@@ -102,6 +103,7 @@ class DeleteMetricsSuite extends QueryTest
       testConfig: TestConfiguration): TestMetricResults = {
     val tableName = "target"
     val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
+    var numAffectedRows = -1L
     var operationMetrics: Map[String, Long] = null
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
@@ -111,12 +113,15 @@ class DeleteMetricsSuite extends QueryTest
         createTempTable(table, tableName, testConfig)
 
           val resultDf = spark.sql(s"DELETE FROM $tableName $whereClause")
+          assert(!resultDf.isEmpty)
+          numAffectedRows = resultDf.take(1).head(0).toString.toLong
 
         operationMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
       }
     }
     TestMetricResults(
-      operationMetrics
+      operationMetrics,
+      numAffectedRows
     )
   }
 
@@ -127,12 +132,15 @@ class DeleteMetricsSuite extends QueryTest
   def runDeleteAndCheckMetrics(
     table: Dataset[_],
     where: String,
+    expectedNumAffectedRows: Long,
     expectedOperationMetrics: Map[String, Long],
     testConfig: TestConfiguration): Unit = {
     // Run the delete capture and get all metrics.
     val testMetricResults = runDeleteAndCaptureMetrics(table, where, testConfig)
     val operationMetrics = testMetricResults.operationMetrics
 
+    // Check the number of deleted rows.
+    assert(testMetricResults.numAffectedRows === expectedNumAffectedRows)
 
     // Check operation metrics schema.
     val unknownKeys = operationMetrics.keySet -- DeltaOperationMetrics.DELETE --
@@ -192,11 +200,34 @@ class DeleteMetricsSuite extends QueryTest
   )
 
 
+  test("delete along partition boundary") {
+    import testImplicits._
+
+    Seq(true, false).foreach { cdfEnabled =>
+      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
+        withTable("t1") {
+          spark.range(100).withColumn("part", 'id % 10).toDF().write
+            .partitionBy("part").format("delta").saveAsTable("t1")
+          val result = spark.sql("DELETE FROM t1 WHERE part=1").take(1).head(0).toString.toLong
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics("t1")
+
+          // This is a metadata operation. We expect the result (i.e. numAffectedRows) to be -1 and
+          // the operation metric for `numDeletedRows` not to exist. This metric is filtered out
+          // explicitly inside of [[DeltaOperations.Delete.transformMetrics]].
+          assert(opMetrics("numRemovedFiles") > 0)
+          assert(!opMetrics.contains("numDeletedRows"))
+          assert(result == -1)
+        }
+      }
+    }
+  }
+
   testDeleteMetrics("delete from empty table") { testConfig =>
     for (where <- Seq("", "1 = 1", "1 != 1", "id > 50")) {
       def executeTest: Unit = runDeleteAndCheckMetrics(
         table = spark.range(0),
         where = where,
+        expectedNumAffectedRows = 0,
         expectedOperationMetrics = Map(
           "numCopiedRows" -> -1,
           "numDeletedRows" -> -1,
@@ -230,6 +261,7 @@ class DeleteMetricsSuite extends QueryTest
       runDeleteAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
+        expectedNumAffectedRows = -1L,
         expectedOperationMetrics = Map(
           "numCopiedRows" -> -1,
           "numDeletedRows" -> -1,
@@ -248,6 +280,7 @@ class DeleteMetricsSuite extends QueryTest
     runDeleteAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "1 != 1",
+      expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
         "numCopiedRows" -> -1,
         "numDeletedRows" -> -1,
@@ -268,6 +301,7 @@ class DeleteMetricsSuite extends QueryTest
     runDeleteAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id < 0 or id > 100",
+      expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
         "numCopiedRows" -> -1,
         "numDeletedRows" -> -1,
@@ -288,6 +322,7 @@ class DeleteMetricsSuite extends QueryTest
     runDeleteAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id / 200 > 1 ",
+      expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
         "numCopiedRows" -> -1,
         "numDeletedRows" -> -1,
@@ -313,6 +348,7 @@ class DeleteMetricsSuite extends QueryTest
       runDeleteAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
+        expectedNumAffectedRows = 1L,
         expectedOperationMetrics = Map(
           "numCopiedRows" -> numCopiedRows,
           "numDeletedRows" -> numRemovedRows,
@@ -332,6 +368,7 @@ class DeleteMetricsSuite extends QueryTest
     def executeTest: Unit = runDeleteAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id < 20",
+      expectedNumAffectedRows = 20L,
       expectedOperationMetrics = Map(
         "numCopiedRows" -> 0,
         "numDeletedRows" -> numRemovedRows,
@@ -362,6 +399,7 @@ class DeleteMetricsSuite extends QueryTest
     runDeleteAndCheckMetrics(
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id in (5, 25, 45, 65, 85)",
+      expectedNumAffectedRows = 5L,
       expectedOperationMetrics = Map(
         "numCopiedRows" -> numCopiedRows,
         "numDeletedRows" -> numRemovedRows,

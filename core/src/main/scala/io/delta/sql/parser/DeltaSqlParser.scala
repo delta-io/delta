@@ -52,7 +52,6 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -62,14 +61,16 @@ import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException,
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
+import org.apache.spark.sql.internal.VariableSubstitution
 import org.apache.spark.sql.types._
 
 /**
- * A SQL parser that tries to parse Delta commands. If failng to parse the SQL text, it will
+ * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
 class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   private val builder = new DeltaSqlAstBuilder
+  private val substitution = new VariableSubstitution
 
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     builder.visit(parser.singleStatement()) match {
@@ -77,6 +78,12 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
       case _ => delegate.parsePlan(sqlText)
     }
   }
+
+  /**
+   * This API is used just for parsing the SELECT queries. Delta parser doesn't override
+   * the Spark parser, that means this can be delegated directly to the Spark parser.
+   */
+  override def parseQuery(sqlText: String): LogicalPlan = delegate.parseQuery(sqlText)
 
   // scalastyle:off line.size.limit
   /**
@@ -87,7 +94,7 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   // scalastyle:on
   protected def parse[T](command: String)(toResult: DeltaSqlBaseParser => T): T = {
     val lexer = new DeltaSqlBaseLexer(
-      new UpperCaseCharStream(CharStreams.fromString(command)))
+      new UpperCaseCharStream(CharStreams.fromString(substitution.substitute(command))))
     lexer.removeErrorListeners()
     lexer.addErrorListener(ParseErrorListener)
 

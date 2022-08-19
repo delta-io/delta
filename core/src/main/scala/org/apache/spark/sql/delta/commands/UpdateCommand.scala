@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct, typedLit, udf}
 
 /**
@@ -60,9 +60,12 @@ case class UpdateCommand(
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
     "numCopiedRows" -> createMetric(sc, "number of rows copied."),
-    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
-    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "executionTimeMs" ->
+      createTimingMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" ->
+      createTimingMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" ->
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numTouchedRows" -> createMetric(sc, "number of rows touched (copied + updated)")
@@ -129,8 +132,8 @@ case class UpdateCommand(
       val pathsToRewrite =
         withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
           data.filter(new Column(updateCondition))
-            .filter(updatedRowUdf())
             .select(input_file_name())
+            .filter(updatedRowUdf())
             .distinct()
             .as[String]
             .collect()

@@ -36,7 +36,7 @@ import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
 import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -178,22 +178,11 @@ class OptimizeExecutor(
 
       val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
 
-      val parallelJobCollection = new ParVector(jobs.toVector)
-
-      // Create a task pool to parallelize the submission of optimization jobs to Spark.
-      val threadPool = ThreadUtils.newForkJoinPool(
-        "OptimizeJob",
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS))
-
-      val updates = try {
-        val forkJoinPoolTaskSupport = new ForkJoinTaskSupport(threadPool)
-        parallelJobCollection.tasksupport = forkJoinPoolTaskSupport
-
-        parallelJobCollection.flatMap(partitionBinGroup =>
-          runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)).seq
-      } finally {
-        threadPool.shutdownNow()
-      }
+      val maxThreads =
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
+      val updates = ThreadUtils.parmap(jobs, "OptimizeJob", maxThreads) { partitionBinGroup =>
+        runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)
+      }.flatten
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
@@ -316,7 +305,13 @@ class OptimizeExecutor(
         approxNumFiles,
         zOrderByColumns)
     } else {
-      input.coalesce(numPartitions = 1)
+      val useRepartition = sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
+      if (useRepartition) {
+        input.repartition(numPartitions = 1)
+      } else {
+        input.coalesce(numPartitions = 1)
+      }
     }
 
     val partitionDesc = partition.toSeq.map(entry => entry._1 + "=" + entry._2).mkString(",")

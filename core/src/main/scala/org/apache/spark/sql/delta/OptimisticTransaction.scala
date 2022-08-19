@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
@@ -33,7 +34,7 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, DeltaScanGeneratorBase, FileSizeHistogram}
+import org.apache.spark.sql.delta.stats._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
@@ -223,6 +224,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   protected var commitInfo: CommitInfo = _
 
+  /** Whether the txn should trigger a checkpoint after the commit */
+  protected var needsCheckpoint = false
+
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
@@ -231,6 +235,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Used for logging duration of retried transactions.
    */
   protected var commitAttemptStartTime: Long = _
+
+  /**
+   * Tracks actions within the transaction, will commit along with the passed-in actions in the
+   * commit function.
+   */
+  protected val actions = new ArrayBuffer[Action]
+
+  /**
+   * Record a SetTransaction action that will be committed as part of this transaction.
+   */
+  def updateSetTransaction(appId: String, version: Long, lastUpdate: Option[Long]): Unit = {
+    actions += SetTransaction(appId, version, lastUpdate)
+  }
 
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
@@ -258,6 +275,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
 
+  /**
+   * The logSegment of the snapshot prior to the commit.
+   * Will be updated only when retrying due to a conflict.
+   */
+  private[delta] var preCommitLogSegment: LogSegment = snapshot.logSegment
+
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
@@ -282,22 +305,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * IMPORTANT: It is the responsibility of the caller to ensure that files currently
    * present in the table are still valid under the new metadata.
    */
-  def updateMetadata(_metadata: Metadata): Unit = {
+  def updateMetadata(_metadata: Metadata, ignoreDefaultProperties: Boolean = false): Unit = {
     assert(!hasWritten,
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
-    updateMetadataInternal(_metadata)
+    updateMetadataInternal(_metadata, ignoreDefaultProperties)
   }
 
   /**
    * Do the actual checks and works to update the metadata and save it into the `newMetadata`
    * field, which will be added to the actions to commit in [[prepareCommit]].
    */
-  protected def updateMetadataInternal(_metadata: Metadata): Unit = {
+  protected def updateMetadataInternal(
+      _metadata: Metadata,
+      ignoreDefaultProperties: Boolean = false): Unit = {
     var latestMetadata = _metadata
     if (readVersion == -1 || isCreatingNewTable) {
-      latestMetadata = withGlobalConfigDefaults(latestMetadata)
+      // We need to ignore the default properties when trying to create an exact copy of a table
+      // (as in CLONE and SHALLOW CLONE).
+      if (!ignoreDefaultProperties) {
+        latestMetadata = withGlobalConfigDefaults(latestMetadata)
+      }
       isCreatingNewTable = true
     }
     val protocolBeforeUpdate = protocol
@@ -471,9 +500,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /** Returns a[[DeltaScan]] based on the given filters and projections. */
-  override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
-    val scan = snapshot.filesForScan(projection, filters)
+  /** Returns a[[DeltaScan]] based on the given filters. */
+  override def filesForScan(
+    filters: Seq[Expression],
+    keepNumRecords: Boolean = false
+  ): DeltaScan = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -494,7 +526,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(Nil, filters)
+    val scan = snapshot.filesForScan(filters)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -580,6 +612,30 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
+   * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
+   */
+  protected def checkForSetTransactionConflictAndDedup(actions: Seq[Action]): Seq[Action] = {
+    val finalActions = new ArrayBuffer[Action]
+    val txnIdToVersionMap = new mutable.HashMap[String, Long].empty
+    for (action <- actions) {
+      action match {
+        case st: SetTransaction =>
+          txnIdToVersionMap.get(st.appId).map { version =>
+            if (version != st.version) {
+              throw DeltaErrors.setTransactionVersionConflict(st.appId, version, st.version)
+            }
+          } getOrElse {
+            txnIdToVersionMap += (st.appId -> st.version)
+            finalActions += action
+          }
+        case _ => finalActions += action
+      }
+    }
+    finalActions.toSeq
+  }
+
+  /**
    * We want to future-proof and explicitly block any occurrences of
    * - table has CDC enabled and there are FileActions to write, AND
    * - table has column mapping enabled and there is a column mapping related metadata action
@@ -632,12 +688,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       "delta.commit") {
     commitStartNano = System.nanoTime()
 
-    val (version, actualCommittedActions) = try {
+    val (version, postCommitSnapshot, actualCommittedActions) = try {
       // Check for CDC metadata columns
       performCdcMetadataCheck()
 
+      // Check for internal SetTransaction conflicts and dedup.
+      val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
+
       // Try to commit at the next version.
-      val preparedActions = prepareCommit(actions, op)
+      val preparedActions = prepareCommit(finalActions, op)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -685,11 +744,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
 
       commitAttemptStartTime = clock.getTimeMillis()
-      val (commitVersion, updatedCurrentTransactionInfo, needsCheckpoint) =
+      val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(snapshot.version + 1, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
-      postCommit(commitVersion, needsCheckpoint)
-      (commitVersion, updatedCurrentTransactionInfo.actions)
+      postCommit(commitVersion)
+      (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
       case e: DeltaConcurrentModificationException =>
         recordDeltaEvent(deltaLog, "delta.commit.conflict." + e.conflictType)
@@ -700,7 +759,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         throw e
     }
 
-    runPostCommitHooks(version, actualCommittedActions)
+    runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
 
     version
   }
@@ -722,7 +781,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     actions: Iterator[Action],
     op: DeltaOperations.Operation,
     context: Map[String, String],
-    metrics: Map[String, String]): Long = {
+    metrics: Map[String, String]): (Long, Snapshot) = {
     commitStartNano = System.nanoTime()
     val attemptVersion = readVersion + 1
     try {
@@ -758,7 +817,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
-            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
+            removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _ =>
         }
         action
@@ -812,12 +871,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         txnId = Some(txnId))
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
-      // NOTE: We don't pass in the sequence of actions to runPostCommitHooks because commitLarge
-      //       takes in an iterator of actions as a conscious choice, as the large commit may
-      //       result in many FileActions we'd have to materialize in memory. All post commit hooks
-      //       registered for these commits should be agnostic to the list of actions.
-      runPostCommitHooks(attemptVersion, Seq.empty[Action])
-      attemptVersion
+      (attemptVersion, postCommitSnapshot)
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
         recordDeltaEvent(
@@ -1029,12 +1083,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /**
    * Returns true if we should checkpoint the version that has just been committed.
    */
-  protected def shouldCheckpoint(committedVersion: Long, latestSnapshot: Snapshot): Boolean = {
+  protected def shouldCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = {
     committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
 
   /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long, needsCheckpoint: Boolean): Unit = {
+  protected def postCommit(commitVersion: Long): Unit = {
     committed = true
     if (needsCheckpoint) {
       // We checkpoint the version to be committed to so that no two transactions will checkpoint
@@ -1060,62 +1114,58 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Commit the txn represented by `currentTransactionInfo` using `attemptVersion` version number.
    * If there are any conflicts that are found, we will retry a fixed number of times.
    *
-   * @return the real version that was committed, txn info, and if a checkpoint should be made.
+   * @return the real version that was committed, the postCommitSnapshot, and the txn info
+   *         NOTE: The postCommitSnapshot may not be the same as the version committed if racing
+   *         commits were written while we updated the snapshot.
    */
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       isolationLevel: IsolationLevel
-  ): (Long, CurrentTransactionInfo, Boolean) = lockCommitIfEnabled {
+  ): (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
 
-    var tryCommit = true
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
-    var attemptNumber = 0
-    var needsCheckpoint = false
+    val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
     recordDeltaOperation(deltaLog, "delta.commit.allAttempts") {
-      while (tryCommit) {
+      for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
-          if (attemptNumber == 0) {
-            needsCheckpoint =
-              doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
-          } else if (attemptNumber > spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)) {
-            val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTime
-            throw DeltaErrors.maxCommitRetriesExceededException(
-              attemptNumber,
-              commitVersion,
-              attemptVersion,
-              updatedCurrentTransactionInfo.finalActionsToCommit.length,
-              totalCommitAttemptTime)
+          val postCommitSnapshot = if (attemptNumber == 0) {
+            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
             commitVersion = newCommitVersion
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
-            needsCheckpoint =
-              doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           }
-          tryCommit = false
+          return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
-          case _: FileAlreadyExistsException => attemptNumber += 1
+          case _: FileAlreadyExistsException => // Do nothing, retry
         }
       }
-      (commitVersion, updatedCurrentTransactionInfo, needsCheckpoint)
     }
+    // retries all failed
+    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTime
+    throw DeltaErrors.maxCommitRetriesExceededException(
+      maxRetryAttempts + 1,
+      commitVersion,
+      attemptVersion,
+      updatedCurrentTransactionInfo.finalActionsToCommit.length,
+      totalCommitAttemptTime)
   }
-
 
   /**
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException
    * if any conflicts are detected.
    *
-   * @return if a checkpoint should be made once this commit is written
+   * @return the post-commit snapshot of the deltaLog
    */
   protected def doCommit(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      isolationLevel: IsolationLevel): Boolean = {
+      isolationLevel: IsolationLevel): Snapshot = {
     val actions = currentTransactionInfo.finalActionsToCommit
     logInfo(
       s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
@@ -1183,7 +1233,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ =>
     }
 
-    val needsCheckpoint = shouldCheckpoint(attemptVersion, postCommitSnapshot)
+    needsCheckpoint = shouldCheckpoint(attemptVersion, postCommitSnapshot)
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
@@ -1214,7 +1264,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
-    needsCheckpoint
+    postCommitSnapshot
   }
 
   /**
@@ -1280,7 +1330,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns the next attempt version given the last attempted version */
   protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    deltaLog.update().version + 1
+    val latestSnapshot = deltaLog.update()
+    preCommitLogSegment = latestSnapshot.logSegment
+    latestSnapshot.version + 1
   }
 
   /** Register a hook that will be executed once a commit is successful. */
@@ -1290,11 +1342,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
+
   /** Executes the registered post commit hooks. */
   protected def runPostCommitHooks(
       version: Long,
+      postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
-      assert(committed, "Can't call post commit hooks before committing")
+    assert(committed, "Can't call post commit hooks before committing")
 
     // Keep track of the active txn because hooks may create more txns and overwrite the active one.
     val activeCommit = OptimisticTransaction.getActive()
@@ -1303,7 +1358,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     try {
       postCommitHooks.foreach { hook =>
         try {
-          hook.run(spark, this, committedActions)
+          hook.run(spark, this, version, postCommitSnapshot, committedActions)
         } catch {
           case NonFatal(e) =>
             logWarning(s"Error when executing post-commit hook ${hook.name} " +

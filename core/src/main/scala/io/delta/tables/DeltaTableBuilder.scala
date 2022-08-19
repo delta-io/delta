@@ -19,15 +19,19 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTableStatement, ReplaceTableStatement}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedDBObjectName
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LeafNode, LogicalPlan, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /**
@@ -109,7 +113,13 @@ class DeltaTableBuilder private[tables](
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
   private var location: Option[String] = None
   private var tblComment: Option[String] = None
-  private var properties = CaseInsensitiveMap[String](Map.empty)
+  private var properties =
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE)) {
+      CaseInsensitiveMap(Map.empty[String, String])
+    } else {
+      Map.empty[String, String]
+    }
+
 
   private val FORMAT_NAME: String = "delta"
 
@@ -320,37 +330,33 @@ class DeltaTableBuilder private[tables](
       colNames.map(name => DeltaTableUtils.parseColToTransform(name))
     }.getOrElse(Seq.empty[Transform])
 
+    val tableSpec = org.apache.spark.sql.catalyst.plans.logical.TableSpec(
+      properties = properties,
+      provider = Some(FORMAT_NAME),
+      options = Map.empty,
+      location = location,
+      serde = None,
+      comment = tblComment,
+      external = false
+    )
 
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
-        CreateTableStatement(
-          table,
+        var unresolvedTable: LogicalPlan = UnresolvedDBObjectName(table, isNamespace = false)
+        CreateTable(
+          unresolvedTable,
           StructType(columns.toSeq),
           partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          false,
-          ifNotExists
-        )
+          tableSpec,
+          ifNotExists)
       case ReplaceTableOptions(orCreate) =>
-        ReplaceTableStatement(
-          table,
+        var unresolvedTable: LogicalPlan = UnresolvedDBObjectName(table, isNamespace = false)
+        ReplaceTable(
+          unresolvedTable,
           StructType(columns.toSeq),
           partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          orCreate
-        )
+          tableSpec,
+          orCreate)
     }
     val qe = spark.sessionState.executePlan(stmt)
     // call `QueryExecution.toRDD` to trigger the execution of commands.

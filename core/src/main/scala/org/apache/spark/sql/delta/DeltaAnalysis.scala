@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
-import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.RestoreTableCommand
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -35,24 +35,20 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, NamedRelation, ResolvedTable, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-import org.apache.spark.sql.delta._
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.util.Utils
 
 /**
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
@@ -60,8 +56,6 @@ import org.apache.spark.util.Utils
  */
 class DeltaAnalysis(session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
-
-  import session.sessionState.analyzer.SessionCatalogAndIdentifier
 
   type CastFunction = (Expression, DataType) => Expression
 
@@ -172,7 +166,7 @@ class DeltaAnalysis(session: SparkSession)
         d
       } else if (indices.size == 1 && indices(0).deltaLog.tableExists) {
         // It is a well-defined Delta table with a schema
-        DeltaDelete(newTarget, condition)
+        DeltaDelete(newTarget, Some(condition))
       } else {
         // Not a well-defined Delta table
         throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))

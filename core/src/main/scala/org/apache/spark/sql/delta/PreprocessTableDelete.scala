@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.commands.DeleteCommand
 
-import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule

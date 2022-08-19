@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.util
 
 import java.util.concurrent.atomic.AtomicReference
 
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 
 /**
  * A [[Dataset]] reference cache to automatically create new [[Dataset]] objects when the active
@@ -29,10 +29,15 @@ import org.apache.spark.sql.{Dataset, SparkSession}
  * cleaned up).
  *
  * The `creator` function will be called to create a new [[Dataset]] object when the old one has a
- * different session than the current active session.
+ * different session than the current active session. Note that one MUST use SparkSession.active
+ * in the creator() if creator() needs to use Spark session.
  *
  * Unlike [[StateCache]], this class only caches the [[Dataset]] reference and doesn't cache the
  * underlying `RDD`.
+ *
+ * WARNING: If there are many concurrent Spark sessions and each session calls 'get' multiple times,
+ *          then the cost of creator becomes more noticeable as everytime it switch the active
+ *          session, the older session needs to call creator again when it becomes active.
  *
  * @param creator a function to create [[Dataset]].
  */
@@ -48,3 +53,4 @@ class DatasetRefCache[T](creator: () => Dataset[T]) {
       df
     }
 }
+

@@ -156,7 +156,7 @@ class DeltaLogSuite extends QueryTest
 
     val deltas = log2.snapshot.logSegment.deltas
     assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
-    val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
+    val versions = deltas.map(FileNames.deltaVersion).sorted
     assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
   }
 
@@ -319,10 +319,10 @@ class DeltaLogSuite extends QueryTest
       val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(metadata :: add1 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add2 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add2 = AddFile("bar", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add2 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add3 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add3 = AddFile("baz", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add3 :: Nil, DeltaOperations.ManualUpdate)
 
       new File(new Path(log.logPath, "00000000000000000001.json").toUri).delete()

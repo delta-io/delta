@@ -329,7 +329,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
-        val e = intercept[IllegalStateException] {
+        val e = intercept[DeltaIllegalStateException] {
           txn.commit(Nil, ManualUpdate)
         }
         assert(e.getMessage == DeltaErrors.metadataAbsentException().getMessage)
@@ -337,7 +337,8 @@ class OptimisticTransactionSuite
 
       // Try with commit validation turned off
       withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-        DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "false") {
         txn.commit(Nil, ManualUpdate)
         assert(log.update().version === 0)
       }
@@ -427,6 +428,92 @@ class OptimisticTransactionSuite
       // future we might have other fields which may make these actions from two different
       // transactions different. In that case, the below assertion can be removed.
       assert(actionsWithoutTxnId1 === actionsWithoutTxnId2)
+    }
+  }
+
+  test("pre-command actions committed") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val version = txn.commit(Seq(), ManualUpdate)
+
+      def readActions(version: Long): Seq[Action] = {
+        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+          .map(Action.fromJson)
+      }
+      val actions = readActions(version)
+      assert(actions.collectFirst {
+        case SetTransaction("TestAppId", 1L, _) =>
+      }.isDefined)
+    }
+  }
+
+  test("has SetTransaction version conflicts") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val e = intercept[IllegalArgumentException] {
+        txn.commit(Seq(SetTransaction("TestAppId", 2L, None)), ManualUpdate)
+      }
+      assert(e.getMessage == DeltaErrors.setTransactionVersionConflict("TestAppId", 2L, 1L)
+        .getMessage)
+    }
+  }
+
+  test("removes duplicate SetTransactions") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val clock = new ManualClock()
+      val txn = new OptimisticTransaction(log)(clock)
+      txn.updateSetTransaction("TestAppId", 1L, None)
+      val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
+      def readActions(version: Long): Seq[Action] = {
+        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+          .map(Action.fromJson)
+      }
+      assert(readActions(version).collectFirst {
+        case SetTransaction("TestAppId", 1L, _) =>
+      }.isDefined)
+    }
+  }
+
+  test("preCommitLogSegment is updated during conflict checking") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+      val testTxn = log.startTransaction()
+      val testTxnStartTs = System.currentTimeMillis()
+      for (_ <- 1 to 11) {
+        log.startTransaction().commit(Seq.empty, ManualUpdate)
+      }
+      val testTxnEndTs = System.currentTimeMillis()
+
+      // preCommitLogSegment should not get updated until a commit is triggered
+      assert(testTxn.preCommitLogSegment.version == 0)
+      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
+      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.checkpointVersionOpt == None)
+
+      testTxn.commit(Seq.empty, ManualUpdate)
+
+      // preCommitLogSegment should get updated to the version right before the txn commits
+      assert(testTxn.preCommitLogSegment.version == 11)
+      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
+      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
     }
   }
 }

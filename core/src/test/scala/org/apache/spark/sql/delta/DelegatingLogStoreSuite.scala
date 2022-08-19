@@ -21,7 +21,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.LocalSparkSession._
 import org.apache.spark.sql.SparkSession
 
@@ -30,34 +29,11 @@ class DelegatingLogStoreSuite
 
 
   private val customLogStoreClassName = classOf[CustomPublicLogStore].getName
-
   private def fakeSchemeWithNoDefault = "fake"
 
-  /**
-   * Constructs SparkConf based on options.
-   *
-   * @param scheme The scheme whose corresponding conf will be set or unset.
-   */
-  private def constructSparkConf(
-      scheme: String,
-      classConf: Option[String],
-      schemeConf: Option[String]): SparkConf = {
-    val sparkConf = new SparkConf().setMaster("local")
-    val classConfKey = LogStore.logStoreClassConfKey
-    val schemeConfKey = LogStore.logStoreSchemeConfKey(scheme)
-
-    // this will set/unset spark.delta.logStore.class -> $classConf
-    classConf match {
-      case Some(conf) => sparkConf.set(classConfKey, conf)
-      case _ => sparkConf.remove(classConfKey)
-    }
-
-    // this will set/unset spark.delta.logStore.${scheme}.impl -> $schemeConf
-    schemeConf match {
-      case Some(conf) => sparkConf.set(schemeConfKey, conf)
-      case _ => sparkConf.remove(schemeConfKey)
-    }
-
+  private def constructSparkConf(confs: Seq[(String, String)]): SparkConf = {
+    val sparkConf = new SparkConf(loadDefaults = false).setMaster("local")
+    confs.foreach { case (key, value) => sparkConf.set(key, value) }
     sparkConf
   }
 
@@ -66,7 +42,7 @@ class DelegatingLogStoreSuite
    * resolution based on input `scheme`. This is not an end-to-end test.
    *
    * @param scheme The scheme to be used for testing.
-   * @param schemeConf The scheme conf value to be set. If None, scheme conf will be unset.
+   * @param sparkConf The spark configuration to use.
    * @param expClassName Expected LogStore class name resolved by DelegatingLogStore.
    * @param expAdaptor True if DelegatingLogStore is expected to resolve to LogStore adaptor, for
    *                   which the actual implementation inside will be checked. This happens when
@@ -74,10 +50,9 @@ class DelegatingLogStoreSuite
    */
   private def testDelegatingLogStore(
       scheme: String,
-      schemeConf: Option[String],
+      sparkConf: SparkConf,
       expClassName: String,
       expAdaptor: Boolean): Unit = {
-    val sparkConf = constructSparkConf(scheme, None, schemeConf)
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
       val sc = spark.sparkContext
       val delegatingLogStore = new DelegatingLogStore(sc.hadoopConfiguration)
@@ -93,45 +68,63 @@ class DelegatingLogStoreSuite
     }
   }
 
-  /**
-   * Test with class conf set and scheme conf unset using `scheme`.
-   */
-  private def testLogStoreClassConfNoSchemeConf(scheme: String) {
-    val sparkConf = constructSparkConf(scheme, Some(customLogStoreClassName), None)
-    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      assert(LogStore(spark).isInstanceOf[LogStoreAdaptor])
-      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
-        .logStoreImpl.getClass.getName == customLogStoreClassName)
-    }
+  /** Test the default LogStore resolution for `scheme` */
+  private def testDefaultSchemeResolution(scheme: String, expClassName: String): Unit = {
+    testDelegatingLogStore(
+      scheme,
+      constructSparkConf(Seq.empty), // we set no custom LogStore confs
+      expClassName,
+      expAdaptor = true // all default implementations are from delta-storage
+    )
+  }
+
+  /** Test LogStore resolution with a customized scheme conf */
+  private def testCustomSchemeResolution(
+      scheme: String, className: String, expAdaptor: Boolean): Unit = {
+    val sparkPrefixKey = LogStore.logStoreSchemeConfKey(scheme)
+    val nonSparkPrefixKey = sparkPrefixKey.stripPrefix("spark.")
+    // only set spark-prefixed key
+    testDelegatingLogStore(
+      scheme,
+      constructSparkConf(Seq((sparkPrefixKey, className))),
+      className, // we expect our custom-set LogStore class
+      expAdaptor
+    )
+    // only set non-spark-prefixed key
+    testDelegatingLogStore(
+      scheme,
+      constructSparkConf(Seq((nonSparkPrefixKey, className))),
+      className, // we expect our custom-set LogStore class
+      expAdaptor
+    )
+    // set both
+    testDelegatingLogStore(
+      scheme,
+      constructSparkConf(Seq((nonSparkPrefixKey, className), (sparkPrefixKey, className))),
+      className, // we expect our custom-set LogStore class
+      expAdaptor
+    )
   }
 
   test("DelegatingLogStore resolution using default scheme confs") {
     for (scheme <- DelegatingLogStore.s3Schemes) {
-      testDelegatingLogStore(
+      testDefaultSchemeResolution(
         scheme,
-        schemeConf = None,
-        expClassName = DelegatingLogStore.defaultS3LogStoreClassName,
-        expAdaptor = true)
+        expClassName = DelegatingLogStore.defaultS3LogStoreClassName)
     }
     for (scheme <- DelegatingLogStore.azureSchemes) {
-      testDelegatingLogStore(
+      testDefaultSchemeResolution(
         scheme,
-        schemeConf = None,
-        expClassName = DelegatingLogStore.defaultAzureLogStoreClassName,
-        expAdaptor = true)
+        expClassName = DelegatingLogStore.defaultAzureLogStoreClassName)
     }
     for (scheme <- DelegatingLogStore.gsSchemes) {
-      testDelegatingLogStore(
+      testDefaultSchemeResolution(
         scheme,
-        schemeConf = None,
-        expClassName = DelegatingLogStore.defaultGCSLogStoreClassName,
-        expAdaptor = true)
+        expClassName = DelegatingLogStore.defaultGCSLogStoreClassName)
     }
-    testDelegatingLogStore(
+    testDefaultSchemeResolution(
       scheme = fakeSchemeWithNoDefault,
-      schemeConf = None,
-      expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName,
-      expAdaptor = true)
+      expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName)
   }
 
   test("DelegatingLogStore resolution using customized scheme confs") {
@@ -150,47 +143,12 @@ class DelegatingLogStoreSuite
         customLogStoreClassName)) {
 
         // we set spark.delta.logStore.${scheme}.impl -> $store
-        testDelegatingLogStore(
+        testCustomSchemeResolution(
           scheme,
-          schemeConf = Some(store),
-          expClassName = store,
+          store,
           expAdaptor = store.contains("io.delta.storage") || store == customLogStoreClassName)
       }
     }
-  }
-
-  test("class-conf = set, scheme has no default, scheme-conf = not set") {
-    testLogStoreClassConfNoSchemeConf(fakeSchemeWithNoDefault)
-  }
-
-  test("class-conf = set, scheme has no default, scheme-conf = set") {
-    val sparkConf = constructSparkConf(fakeSchemeWithNoDefault, Some(customLogStoreClassName),
-      Some(DelegatingLogStore.defaultAzureLogStoreClassName))
-    val e = intercept[AnalysisException](
-      withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark)
-      }
-    )
-    assert(e.getMessage.contains(
-      "(`spark.delta.logStore.class`) and (`spark.delta.logStore.fake.impl`) " +
-        "cannot be set at the same time"))
-  }
-
-  test("class-conf = set, scheme has default, scheme-conf = not set") {
-    testLogStoreClassConfNoSchemeConf("s3a")
-  }
-
-  test("class-conf = set, scheme has default, scheme-conf = set") {
-    val sparkConf = constructSparkConf("s3a", Some(customLogStoreClassName),
-      Some(DelegatingLogStore.defaultAzureLogStoreClassName))
-    val e = intercept[AnalysisException](
-      withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark)
-      }
-    )
-    assert(e.getMessage.contains(
-      "(`spark.delta.logStore.class`) and (`spark.delta.logStore.s3a.impl`) " +
-        "cannot be set at the same time"))
   }
 }
 
