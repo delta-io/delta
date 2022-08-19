@@ -139,7 +139,7 @@ trait DeltaLogging
     thunk
   }
 
-  protected def withDmqTag[T](thunk: => T): T = {
+  private def withDmqTag[T](thunk: => T): T = {
     thunk
   }
 }
