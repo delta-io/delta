@@ -71,6 +71,15 @@ trait LogStore {
   def read(path: Path, hadoopConf: Configuration): Seq[String] = read(path)
 
   /**
+   * Load the given file represented by `fileStatus` and return a `Seq` of lines.
+   * The line break will be removed from each line.
+   *
+   * Note: Using a stale `FileStatus` may get an incorrect result.
+   */
+  def read(fileStatus: FileStatus, hadoopConf: Configuration): Seq[String] =
+    read(fileStatus.getPath, hadoopConf)
+
+  /**
    * Load the given file and return an iterator of lines. The line break will be removed from each
    * line. The default implementation calls `read` to load the entire file into the memory.
    * An implementation should provide a more efficient approach if possible. For example, the file
@@ -118,6 +127,21 @@ trait LogStore {
    */
   def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
     readAsIterator(path)
+  }
+
+  /**
+   * Load the file represented by given fileStatus and return an iterator of lines. The line break
+   * will be removed from each line.
+   *
+   * Note-1: the returned [[ClosableIterator]] should be closed when it's no longer used to avoid
+   * resource leak.
+   *
+   * Note-2: Using a stale `FileStatus` may get an incorrect result.
+   */
+  def readAsIterator(
+      fileStatus: FileStatus,
+      hadoopConf: Configuration): ClosableIterator[String] = {
+    readAsIterator(fileStatus.getPath, hadoopConf)
   }
 
   /**
