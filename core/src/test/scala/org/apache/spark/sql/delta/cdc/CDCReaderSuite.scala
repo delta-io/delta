@@ -146,7 +146,8 @@ class CDCReaderSuite
       // which is called by the following expression.
       val changesStats = CDCReader.changesToBatchDF(log, 0, 2, spark)
         .queryExecution.analyzed.stats
-      // 3169 is the fixed size of analyzed stats sizeInBytes found every time for this specific query
+      // 3169 is the fixed size of analyzed stats sizeInBytes found every
+      // time for this specific query (changesStats DF)
       val expectedSizeInBytes = 3169
       val expectedStats = Statistics(sizeInBytes = expectedSizeInBytes)
       assert(expectedStats == changesStats)
