@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -225,7 +225,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var commitInfo: CommitInfo = _
 
   /** Whether the txn should trigger a checkpoint after the commit */
-  protected var needsCheckpoint = false
+  private[delta] var needsCheckpoint = false
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -260,6 +260,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
+  // The CheckpointHook will only checkpoint if necessary, so always register it to run.
+  registerPostCommitHook(CheckpointHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
@@ -748,7 +750,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(snapshot.version + 1, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
-      postCommit(commitVersion)
       (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -839,6 +840,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Some(attemptVersion))
       commitEndNano = System.nanoTime()
       committed = true
+      // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
+      // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot =
         updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion, txnId)
       val postCommitReconstructionTime = System.nanoTime()
@@ -1089,16 +1092,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
 
-  /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long): Unit = {
-    committed = true
-    if (needsCheckpoint) {
-      // We checkpoint the version to be committed to so that no two transactions will checkpoint
-      // the same version.
-      deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
-    }
-  }
-
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
       deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
@@ -1141,6 +1134,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
             doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           }
+          committed = true
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
           case _: FileAlreadyExistsException => // Do nothing, retry

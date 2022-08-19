@@ -690,7 +690,6 @@ trait SnapshotManagement { self: DeltaLog =>
   /** Get the snapshot at `version`. */
   def getSnapshotAt(
       version: Long,
-      commitTimestamp: Option[Long] = None,
       lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
     val current = snapshot
     if (current.version == version) {
