@@ -437,6 +437,34 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     }
   }
 
+  test("optimize command with multiple partition predicates with multiple where") {
+    withTempDir { tempDir =>
+      def writeData(count: Int): Unit = {
+        spark.range(count).select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part)
+          .write
+          .partitionBy("date", "part")
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getAbsolutePath)
+      }
+
+      writeData(10)
+      writeData(100)
+
+      DeltaTable.forPath(tempDir.getAbsolutePath).optimize()
+        .where("date = '2017-10-10'")
+        .where("part = 3")
+        .executeCompaction()
+
+      val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      val part = "part".phy(deltaLog)
+      val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
+        "part 3 should have been optimized and have least amount of files")
+    }
+  }
+
   /**
    * Utility method to append the given data to the Delta table located at the given path.
    * Optionally partitions the data.

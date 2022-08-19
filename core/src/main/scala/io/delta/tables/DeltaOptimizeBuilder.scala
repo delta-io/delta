@@ -47,7 +47,12 @@ class DeltaOptimizeBuilder private(
    * @since 2.0.0
    */
   def where(partitionFilter: String): DeltaOptimizeBuilder = {
-    this.partitionFilter = Some(partitionFilter)
+    if (this.partitionFilter.isEmpty) {
+      this.partitionFilter = Some(partitionFilter)
+    }
+    else {
+      this.partitionFilter = Some(this.partitionFilter.getOrElse() + " and " + partitionFilter)
+    }
     this
   }
 
