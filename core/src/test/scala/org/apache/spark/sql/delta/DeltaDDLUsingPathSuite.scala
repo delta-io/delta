@@ -71,7 +71,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
               .partitionBy("v1")
               .option("path", path)
               .saveAsTable("delta.delta_test")
-            f ("`delta`.`delta_test`", path)
+            f("`delta`.`delta_test`", path)
           }
         }
       }

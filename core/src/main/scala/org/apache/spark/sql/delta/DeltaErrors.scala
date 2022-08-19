@@ -569,6 +569,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def viewInShowCreateTableException(view: TableIdentifier): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_SHOW_CREATE_TABLE",
+      messageParameters = Array(s"$view")
+    )
+  }
+
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
     new AnalysisException(
       "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "

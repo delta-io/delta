@@ -44,8 +44,9 @@ import scala.collection.mutable.ArrayBuffer
  * from [https://github.com/apache/spark/blob/branch-3.3/
  * sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/v2/ShowCreateTableExec.scala]
  */
-case class ShowCreateTableCommand(path: Option[String],
-                                  tableIdentifier: Option[TableIdentifier])
+case class ShowCreateTableCommand(
+    path: Option[String],
+    tableIdentifier: Option[TableIdentifier])
   extends LeafRunnableCommand with DeltaCommand {
 
   case class ShowCreateTableOutput(createtab_stmt: String)
@@ -66,7 +67,10 @@ case class ShowCreateTableCommand(path: Option[String],
     }
   }
 
-  private def showCreateTable(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showCreateTable(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     builder ++= s"CREATE TABLE ${table.name()} "
 
     showTableDataColumns(table, builder)
@@ -83,7 +87,10 @@ case class ShowCreateTableCommand(path: Option[String],
     showTableProperties(table, builder, tableOptions)
   }
 
-  private def showTableDataColumns(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showTableDataColumns(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     val tableSchema = table.asInstanceOf[DeltaTableV2].deltaLog.snapshot.metadata.schema
     if (tableSchema.exists(column => column.metadata.contains(
       DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY))) {
@@ -93,13 +100,17 @@ case class ShowCreateTableCommand(path: Option[String],
     builder ++= concatByMultiLines(columns)
   }
 
-  private def showTableUsing(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showTableUsing(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     builder.append("USING delta\n")
   }
 
   private def showTableOptions(
-                                builder: mutable.StringBuilder,
-                                tableOptions: Map[String, String]): Unit = {
+    builder: mutable.StringBuilder,
+    tableOptions: Map[String, String]
+  ): Unit = {
     if (tableOptions.nonEmpty) {
       val props = conf.redactOptions(tableOptions).toSeq.sortBy(_._1).map {
         case (key, value) =>
@@ -110,7 +121,10 @@ case class ShowCreateTableCommand(path: Option[String],
     }
   }
 
-  private def showTablePartitioning(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showTablePartitioning(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     if (!table.partitioning.isEmpty) {
       val transforms = new ArrayBuffer[String]
       table.partitioning.map { t =>
@@ -122,7 +136,10 @@ case class ShowCreateTableCommand(path: Option[String],
     }
   }
 
-  private def showTableLocation(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showTableLocation(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     val isExternalOption = Option(table.properties().get(DeltaTableV2.PROP_TYPE))
     // Only generate LOCATION clause if it's not managed.
     if (isExternalOption.forall(_.equalsIgnoreCase("EXTERNAL"))) {
@@ -133,10 +150,10 @@ case class ShowCreateTableCommand(path: Option[String],
   }
 
   private def showTableProperties(
-                                   table: Table,
-                                   builder: mutable.StringBuilder,
-                                   tableOptions: Map[String, String]): Unit = {
-
+    table: Table,
+    builder: mutable.StringBuilder,
+    tableOptions: Map[String, String]
+  ): Unit = {
     val showProps = table.properties.asScala
       .filterKeys(key => !CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(key)
         && !key.startsWith(TableCatalog.OPTION_PREFIX)
@@ -146,13 +163,15 @@ case class ShowCreateTableCommand(path: Option[String],
         case (key, value) =>
           s"'${escapeSingleQuotedString(key)}' = '${escapeSingleQuotedString(value)}'"
       }
-
       builder ++= "TBLPROPERTIES "
       builder ++= concatByMultiLines(props)
     }
   }
 
-  private def showTableComment(table: Table, builder: mutable.StringBuilder): Unit = {
+  private def showTableComment(
+    table: Table,
+    builder: mutable.StringBuilder
+  ): Unit = {
     Option(table.properties.get(TableCatalog.PROP_COMMENT))
       .map("COMMENT '" + escapeSingleQuotedString(_) + "'\n")
       .foreach(builder.append)
@@ -163,9 +182,10 @@ case class ShowCreateTableCommand(path: Option[String],
   }
 
   protected def getPathAndTableMetadata(
-                                         spark: SparkSession,
-                                         path: Option[String],
-                                         tableIdentifier: Option[TableIdentifier]):
+    spark: SparkSession,
+    path: Option[String],
+    tableIdentifier: Option[TableIdentifier]
+  ):
   (Path, Option[CatalogTable]) = {
     path.map(new Path(_) -> None).orElse {
       tableIdentifier.map { i =>
@@ -188,7 +208,7 @@ case class ShowCreateTableCommand(path: Option[String],
         }
       }
     }.getOrElse {
-      throw DeltaErrors.missingTableIdentifierException("DESCRIBE DETAIL")
+      throw DeltaErrors.missingTableIdentifierException("SHOW CREATE TABLE")
     }
   }
 }

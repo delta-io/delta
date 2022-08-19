@@ -28,7 +28,7 @@ import scala.reflect.io.Directory
 
 class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
-  test(testName = "Test DDL Output for External Table SHOW CREATE TABLE") {
+  test("Test DDL Output for External Table SHOW CREATE TABLE") {
     withTempDir { foo =>
       withTable("external_table") {
         val table = "external_table"
@@ -43,7 +43,28 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Output for Managed Table SHOW CREATE TABLE") {
+  test("Test DDL Output for External Table SHOW CREATE TABLE using String Equals") {
+    withTempDir { foo =>
+      withTable("external_table") {
+        val table = "external_table"
+        val fooPath = foo.getCanonicalPath
+        sql(s"CREATE TABLE `$table` (id LONG) USING delta LOCATION '$fooPath'")
+        val ddl = getShowCreateTable(table)
+        assert(ddl == s"""CREATE TABLE default.$table (
+                         |  `id` BIGINT)
+                         |USING delta
+                         |LOCATION 'file:$fooPath'
+                         |TBLPROPERTIES (
+                         |  'Type' = 'EXTERNAL',
+                         |  'delta.minReaderVersion' = '1',
+                         |  'delta.minWriterVersion' = '2',
+                         |  'external' = 'true')
+                         |""".stripMargin)
+      }
+    }
+  }
+
+  test("Test DDL Output for Managed Table SHOW CREATE TABLE") {
     val table = "managed_table"
     withTable(table) {
       sql(s"CREATE TABLE `$table` (id LONG) USING delta")
@@ -55,7 +76,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test Recreate table using DDL SHOW CREATE TABLE") {
+  test("Test Recreate table using DDL SHOW CREATE TABLE") {
     val table = "managed_table"
     var ddl = ""
     withTable(table) {
@@ -68,7 +89,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Idempotency SHOW CREATE TABLE") {
+  test("Test DDL Idempotency SHOW CREATE TABLE") {
     val table = "managed_table"
     var ddl, ddl1 = ""
     withTable(table) {
@@ -83,7 +104,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     assert(ddl1.equals(ddl)) // table DDL are the same
   }
 
-  test(testName = "Test DDL Comment SHOW CREATE TABLE") {
+  test("Test DDL Comment SHOW CREATE TABLE") {
     val table = "managed_table"
     val comment = "This is a random comment on the table"
     withTable(table) {
@@ -93,7 +114,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Partition SHOW CREATE TABLE") {
+  test("Test DDL Partition SHOW CREATE TABLE") {
     val table = "managed_table"
     withTable(table) {
       sql(
@@ -104,7 +125,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Random Table Property SHOW CREATE TABLE") {
+  test("Test DDL Random Table Property SHOW CREATE TABLE") {
     val table = "managed_table"
     withTable(table) {
       sql(
@@ -119,7 +140,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Random Option SHOW CREATE TABLE") {
+  test("Test DDL Random Option SHOW CREATE TABLE") {
     val table = "managed_table"
     withTable(table) {
       sql(
@@ -132,7 +153,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL with full variations SHOW CREATE TABLE") {
+  test("Test DDL with full variations SHOW CREATE TABLE") {
     withTempDir { foo =>
       val table = "some_external_table"
       withTable(table) {
@@ -161,7 +182,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test Generated Column Results in Exception for SHOW CREATE TABLE") {
+  test("Test Generated Column Results in Exception for SHOW CREATE TABLE") {
     val table = "people10m"
     withTable(table) {
       io.delta.tables.DeltaTable.create(spark)
@@ -180,7 +201,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL with full variations Recreate from DDL SHOW CREATE TABLE") {
+  test("Test DDL with full variations Recreate from DDL SHOW CREATE TABLE") {
     val table = "some_external_table"
     var ddl = ""
     withTempDir { foo =>
@@ -208,7 +229,7 @@ class DeltaShowCreateTableSuite extends QueryTest with SharedSparkSession with D
     }
   }
 
-  test(testName = "Test DDL Output for Table with File Path SHOW CREATE TABLE") {
+  test("Test DDL Output for Table with File Path SHOW CREATE TABLE") {
     withTempDir { foo =>
       withTable("external_table") {
         val fooPath = foo.getCanonicalPath
