@@ -27,7 +27,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, CreateTableWriter, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, TableAlreadyExistsException}
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf

@@ -23,6 +23,7 @@ import java.io.FileNotFoundException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -32,8 +33,10 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 
   import testImplicits._
 
-  val catalogAndSchema =
-      "default."
+  val catalogAndSchema = {
+    var res = "default."
+    res
+  }
 
   protected def checkResult(
     result: DataFrame,
