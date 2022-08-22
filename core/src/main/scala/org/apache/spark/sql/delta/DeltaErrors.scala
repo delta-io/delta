@@ -138,6 +138,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def unknownReadLimit(limit: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNKNOWN_READ_LIMIT",
+      messageParameters = Array(limit)
+    )
+  }
+
+  def unknownPrivilege(privilege: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNKNOWN_PRIVILEGE",
+      messageParameters = Array(privilege)
+    )
+  }
+
   /**
    * File not found hint for Delta, replacing the normal one which is inapplicable.
    *
@@ -233,11 +247,16 @@ trait DeltaErrorsBase
 
   def nestedNotNullConstraint(
       parent: String, nested: DataType, nestType: String): AnalysisException = {
-    new AnalysisException(s"The $nestType type of the field $parent contains a NOT NULL " +
-      s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
-      s"To suppress this error and silently ignore the specified constraints, set " +
-      s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
-      s"Parsed $nestType type:\n${nested.prettyJson}")
+        new DeltaAnalysisException(
+          errorClass = "DELTA_NESTED_NOT_NULL_CONSTRAINT",
+          messageParameters = Array(
+            s"$nestType",
+            s"$parent",
+            s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key}",
+            s"$nestType",
+            s"${nested.prettyJson}"
+          )
+        )
   }
 
   def nullableParentWithNotNullNestedField : Throwable = {
@@ -400,6 +419,13 @@ trait DeltaErrorsBase
       messageParameters = Array(pos, col))
   }
 
+  def dropColumnAtIndexLessThanZeroException(pos: Int): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO",
+      messageParameters = Array(s"$pos")
+    )
+  }
+
   def columnNameNotFoundException(colName: String, scheme: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_NOT_FOUND",
@@ -416,6 +442,12 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND",
       messageParameters = Array(pos))
+  }
+
+  def addColumnParentNotStructException(column: StructField, other: DataType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADD_COLUMN_PARENT_NOT_STRUCT",
+      messageParameters = Array(s"${column.name}", s"$other"))
   }
 
   def operationNotSupportedException(
@@ -569,6 +601,13 @@ trait DeltaErrorsBase
     new AnalysisException(
       "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "
       + newColumns)
+  }
+
+  def cannotWriteIntoView(table: TableIdentifier): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_INTO_VIEW",
+      messageParameters = Array(s"$table")
+    )
   }
 
   def notADeltaTable(table: String): Throwable = {
@@ -741,9 +780,13 @@ trait DeltaErrorsBase
   }
 
   def partitionColumnNotFoundException(colName: String, schema: Seq[Attribute]): Throwable = {
-    new AnalysisException(
-      s"Partition column ${formatColumn(colName)} not found in schema " +
-        s"[${schema.map(_.name).mkString(", ")}]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_PARTITION_COLUMN_NOT_FOUND",
+      messageParameters = Array(
+        s"${formatColumn(colName)}",
+        s"${schema.map(_.name).mkString(", ")}"
+      )
+    )
   }
 
   def partitionPathParseException(fragment: String): Throwable = {
@@ -1017,6 +1060,11 @@ trait DeltaErrorsBase
       messageParameters = Array(table, field))
   }
 
+  def cannotUpdateOtherField(tableName: String, dataType: DataType): Throwable = {
+    new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_OTHER_FIELD",
+      messageParameters = Array(tableName, s"$dataType"))
+  }
+
   def cannotUseDataTypeForPartitionColumnError(field: StructField): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_PARTITION_COLUMN_TYPE",
@@ -1154,15 +1202,14 @@ trait DeltaErrorsBase
       path: Path,
       specifiedColumns: Seq[String],
       existingColumns: Seq[String]): Throwable = {
-    new AnalysisException(
-      s"""The specified partitioning does not match the existing partitioning at $path.
-         |
-         |== Specified ==
-         |${specifiedColumns.mkString(", ")}
-         |
-         |== Existing ==
-         |${existingColumns.mkString(", ")}
-        """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING",
+      messageParameters = Array(
+        path.toString,
+        specifiedColumns.mkString(", "),
+        existingColumns.mkString(", ")
+      )
+    )
   }
 
   def createTableWithDifferentPropertiesException(
@@ -1229,8 +1276,10 @@ trait DeltaErrorsBase
   }
 
   def timestampInvalid(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"The provided timestamp (${expr.sql}) cannot be converted to a valid timestamp.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TIMESTAMP_INVALID",
+      messageParameters = Array(s"${expr.sql}")
+    )
   }
 
   case class TemporallyUnstableInputException(
@@ -1349,8 +1398,13 @@ trait DeltaErrorsBase
 
   def unexpectedPartitionColumnFromFileNameException(
       path: String, parsedCol: String, expectedCol: String): Throwable = {
-    new AnalysisException(s"Expecting partition column ${formatColumn(expectedCol)}, but" +
-      s" found partition column ${formatColumn(parsedCol)} from parsing the file name: $path")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNEXPECTED_PARTITION_COLUMN_FROM_FILE_NAME",
+      messageParameters = Array(
+        formatColumn(expectedCol),
+        formatColumn(parsedCol),
+        path)
+      )
   }
 
   def unexpectedNumPartitionColumnsFromFileNameException(
@@ -1560,7 +1614,10 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsNonDeltaFormatError(): Throwable = {
-    new AnalysisException("Generated columns are only supported by Delta")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_GENERATED_COLUMN_FORMAT",
+      messageParameters = Array.empty
+    )
   }
 
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
@@ -1569,10 +1626,14 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
-    new AnalysisException(
-      s"Column ${current.name} is a generated column or a column used by a generated column. " +
-        s"The data type is ${current.dataType.sql}. It doesn't accept data type " +
-        s"${update.dataType.sql}")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH",
+      messageParameters = Array(
+        s"${current.name}",
+        s"${current.dataType.sql}",
+        s"${update.dataType.sql}"
+      )
+    )
   }
 
   def generatedColumnsUDF(expr: Expression): Throwable = {
@@ -1639,6 +1700,16 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ALREADY_EXISTS",
       messageParameters = Array(s"${table.identifier.quotedString}")
+    )
+  }
+
+  def tableLocationMismatch(table: CatalogTable, existingTable: CatalogTable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TABLE_LOCATION_MISMATCH",
+      messageParameters = Array(
+        s"${table.identifier.quotedString}",
+        s"`${existingTable.location}`",
+        s"`${table.location}`")
     )
   }
 
@@ -1725,9 +1796,11 @@ trait DeltaErrorsBase
       messageParameters = Array(op, op))
   }
 
-  def cannotModifyTableProperty(prop: String): Throwable =
-    new UnsupportedOperationException(
-      s"The Delta table configuration $prop cannot be specified by the user")
+  def cannotModifyTableProperty(prop: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+      messageParameters = Array(prop))
+  }
 
   /**
    * We have plans to support more column mapping modes, but they are not implemented yet,
@@ -2012,6 +2085,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def unexpectedProject(project : String) : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNEXPECTED_PROJECT",
+      messageParameters = Array(project)
+    )
+  }
+
   def unexpectedAttributeReference(ref: String): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE",
       messageParameters = Array(ref))
@@ -2175,6 +2255,17 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
       messageParameters = Array(rightName, wrongName)
+    )
+  }
+
+  def columnPathNotNested(columnPath: String, other: DataType, column: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_PATH_NOT_NESTED",
+      messageParameters = Array(
+        s"$columnPath",
+        s"$other",
+        s"${SchemaUtils.prettyFieldName(column)}"
+      )
     )
   }
 

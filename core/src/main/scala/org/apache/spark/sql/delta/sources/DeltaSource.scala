@@ -701,7 +701,7 @@ case class DeltaSource(
       case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
       case composite: CompositeLimit =>
         Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
-      case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
+      case other => throw DeltaErrors.unknownReadLimit(other.toString())
     }
   }
 

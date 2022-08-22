@@ -261,7 +261,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           }
         case other =>
           // Should not happen since `select` should use `Project`.
-          throw new IllegalStateException(s"Expected Project but got $other")
+          throw DeltaErrors.unexpectedProject(other.toString())
       }
     // Converting columns to lower case is fine since Delta's schema is always case insensitive.
     generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
@@ -370,7 +370,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           }
         case other =>
           // Should not happen since `select` should use `Project`.
-          throw new IllegalStateException(s"Expected Project but got $other")
+          throw DeltaErrors.unexpectedProject(other.toString())
       }
     extractedPartitionExprs.groupBy(_._1).map { case (name, group) =>
       val groupedExprs = group.map(_._2)

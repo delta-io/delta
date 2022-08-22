@@ -481,7 +481,7 @@ case class AlterTableChangeColumnDeltaCommand(
       case _: AtomicType =>
       // update is okay
       case o =>
-        throw new AnalysisException(s"Cannot update ${table.name()} field of type $o")
+        throw DeltaErrors.cannotUpdateOtherField(table.name(), o)
     }
 
     if (SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,

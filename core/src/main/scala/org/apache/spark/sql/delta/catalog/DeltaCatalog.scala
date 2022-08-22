@@ -364,8 +364,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     if (tableExists) {
       val oldTable = catalog.getTableMetadata(table)
       if (oldTable.tableType == CatalogTableType.VIEW) {
-        throw new AnalysisException(
-          s"$table is a view. You may not write data into a view.")
+        throw DeltaErrors.cannotWriteIntoView(table)
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
         throw DeltaErrors.notADeltaTable(table.table)
