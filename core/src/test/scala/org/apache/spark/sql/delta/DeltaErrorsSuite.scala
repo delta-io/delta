@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.{FileNotFoundException, PrintWriter, StringWriter}
+import java.net.URI
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -41,7 +42,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
@@ -193,6 +194,22 @@ trait DeltaErrorsSuiteBase
         "from the data being written into the table.")
     }
     {
+      val parent = "parent"
+      val nested = IntegerType
+      val nestType = "nestType"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nestedNotNullConstraint(parent, nested, nestType)
+      }
+      assert(e.getErrorClass == "DELTA_NESTED_NOT_NULL_CONSTRAINT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"The $nestType type of the field $parent contains a NOT NULL " +
+        s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
+        s"To suppress this error and silently ignore the specified constraints, set " +
+        s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
+        s"Parsed $nestType type:\n${nested.prettyJson}")
+    }
+    {
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(Constraints.NotNull(Seq("col1")))
       }
@@ -239,6 +256,16 @@ trait DeltaErrorsSuiteBase
       }
       assert(
         e.getMessage == "`path` is not a Delta table. delete is only supported for Delta tables.")
+    }
+    {
+      val table = TableIdentifier("table")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteIntoView(table)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_WRITE_INTO_VIEW")
+      assert(e.getSqlState == "42000")
+      assert(
+        e.getMessage == s"$table is a view. Writes to a view are not supported.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -317,6 +344,15 @@ trait DeltaErrorsSuiteBase
         "or updating its fields")
     }
     {
+      val tableName = "table"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUpdateOtherField(tableName, IntegerType)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_UPDATE_OTHER_FIELD")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"Cannot update $tableName field of type ${IntegerType}")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.duplicateColumnsOnUpdateTable(originalException = new Exception("123"))
       }
@@ -387,6 +423,19 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getMessage == "A generated column cannot use a non-existent column or " +
         "another generated column")
+    }
+    {
+      val current = StructField("c0", IntegerType)
+      val update = StructField("c0", StringType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsUpdateColumnType(current, update)
+      }
+      assert(e.getErrorClass == "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"Column ${current.name} is a generated column or a column used by a generated column. " +
+        s"The data type is ${current.dataType.sql} and cannot be converted to data type " +
+        s"${update.dataType.sql}")
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
@@ -475,6 +524,18 @@ trait DeltaErrorsSuiteBase
         "targetType field target in tableName.")
     }
     {
+      val colName = "col1"
+      val schema = Seq(UnresolvedAttribute("col2"))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.partitionColumnNotFoundException(colName, schema)
+      }
+      assert(e.getErrorClass == "DELTA_PARTITION_COLUMN_NOT_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"Partition column ${DeltaErrors.formatColumn(colName)} not found in schema " +
+        s"[${schema.map(_.name).mkString(", ")}]")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.partitionPathParseException("fragment")
       }
@@ -558,6 +619,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Index 1 to add column a is lower than 0")
     }
     {
+      val pos = -1
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.dropColumnAtIndexLessThanZeroException(-1)
+      }
+      assert(e.getErrorClass == "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"Index $pos to drop column is lower than 0")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.incorrectArrayAccess()
       }
@@ -593,6 +663,23 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_TABLE_ALREADY_EXISTS")
       assert(e.getSqlState == "42000")
       assert(e.message == "Table `my table` already exists.")
+    }
+    {
+      val storage1 =
+        CatalogStorageFormat(Option(new URI("loc1")), null, null, null, false, Map.empty)
+      val storage2 =
+        CatalogStorageFormat(Option(new URI("loc2")), null, null, null, false, Map.empty)
+      val table = CatalogTable(TableIdentifier("table"), null, storage1, null)
+      val existingTable = CatalogTable(TableIdentifier("existing table"), null, storage2, null)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.tableLocationMismatch(table, existingTable)
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_LOCATION_MISMATCH")
+      assert(e.getSqlState == "42000")
+      assert(e.message ==
+        s"The location of the existing table ${table.identifier.quotedString} is " +
+        s"`${existingTable.location}`. It doesn't match the specified location " +
+        s"`${table.location}`.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -948,6 +1035,16 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "UPDATE command on a temp view referring to a Delta table that " +
         "contains generated columns is not supported. Please run the UPDATE command on the Delta " +
         "table directly")
+    }
+    {
+      val property = "prop"
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.cannotModifyTableProperty(property)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_MODIFY_TABLE_PROPERTY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"The Delta table configuration $property cannot be specified by the user")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1322,6 +1419,16 @@ trait DeltaErrorsSuiteBase
           "at 2022-02-28 10:00:00.")
     }
     {
+      val expr = "1".expr
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.timestampInvalid(expr)
+      }
+      assert(e.getErrorClass == "DELTA_TIMESTAMP_INVALID")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"The provided timestamp (${expr.sql}) cannot be converted to a valid timestamp.")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.notADeltaSourceException("sample")
       }
@@ -1346,6 +1453,18 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND")
       assert(e.getSqlState == "2F000")
       assert(e.getMessage == "Struct not found at position pos1")
+    }
+    {
+      val column = StructField("c0", IntegerType)
+      val other = IntegerType
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.addColumnParentNotStructException(column, other)
+      }
+      assert(e.getErrorClass == "DELTA_ADD_COLUMN_PARENT_NOT_STRUCT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"Cannot add ${column.name} because its parent is not a " +
+        s"StructType. Found $other")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1604,6 +1723,28 @@ trait DeltaErrorsSuiteBase
         "A generated column cannot use an aggregate expression")
     }
     {
+      val path = new Path("path")
+      val specifiedColumns = Seq("col1", "col2")
+      val existingColumns = Seq("col3", "col4")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithDifferentPartitioningException(
+          path, specifiedColumns, existingColumns)
+      }
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"""The specified partitioning does not match the existing partitioning at $path.
+           |
+           |== Specified ==
+           |${specifiedColumns.mkString(", ")}
+           |
+           |== Existing ==
+           |${existingColumns.mkString(", ")}
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
       val path = new Path("a/b")
       val smaps = Map("abc" -> "xyz")
       val emaps = Map("def" -> "hjk")
@@ -1667,6 +1808,21 @@ trait DeltaErrorsSuiteBase
         s"""An ArrayType was found. In order to access elements of an ArrayType, specify
            |rightName
            |Instead of wrongName
+           |""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val columnPath = "colPath"
+      val other = IntegerType
+      val column = Seq("col1", "col2")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnPathNotNested(columnPath, other, column)
+      }
+      assert(e.getErrorClass == "DELTA_COLUMN_PATH_NOT_NESTED")
+      assert(e.getSqlState == "42000")
+      val msg =
+        s"""Expected $columnPath to be a nested data type, but found $other. Was looking for the
+           |index of ${SchemaUtils.prettyFieldName(column)} in a nested field
            |""".stripMargin
       assert(e.getMessage == msg)
     }
@@ -1893,6 +2049,24 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_EMPTY_DATA")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Data used in creating the Delta table doesn't have any columns.")
+    }
+    {
+      val path = "path"
+      val parsedCol = "col1"
+      val expectedCol = "col2"
+
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedPartitionColumnFromFileNameException(path, parsedCol,
+          expectedCol)
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_PARTITION_COLUMN_FROM_FILE_NAME")
+      assert(e.getSqlState == "42000")
+
+      val msg =
+        s"Expecting partition column ${DeltaErrors.formatColumn(expectedCol)}, but" +
+          s" found partition column ${DeltaErrors.formatColumn(parsedCol)}" +
+          s" from parsing the file name: $path"
+      assert(e.getMessage == msg)
     }
     {
       val path = "path"
@@ -2140,6 +2314,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Expected Alias but got alias1")
     }
     {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unexpectedProject("project1")
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_PROJECT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Expected Project but got project1")
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nullableParentWithNotNullNestedField
       }
@@ -2167,6 +2349,24 @@ trait DeltaErrorsSuiteBase
           "10. This is currently not supported. If you'd like to ignore updates, set the " +
           "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
           "please restart this query with a fresh checkpoint directory.")
+    }
+    {
+      val limit = "limit"
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unknownReadLimit(limit)
+      }
+      assert(e.getErrorClass == "DELTA_UNKNOWN_READ_LIMIT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"Unknown ReadLimit: $limit")
+    }
+    {
+      val privilege = "unknown"
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unknownPrivilege(privilege)
+      }
+      assert(e.getErrorClass == "DELTA_UNKNOWN_PRIVILEGE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"Unknown privilege: $privilege")
     }
     {
       val e = intercept[DeltaAnalysisException] {

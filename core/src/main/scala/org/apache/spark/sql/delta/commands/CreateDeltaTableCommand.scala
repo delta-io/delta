@@ -76,11 +76,7 @@ case class CreateDeltaTableCommand(
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
-          val tableName = table.identifier.quotedString
-          throw new AnalysisException(
-            s"The location of the existing table $tableName is " +
-              s"`${existingTable.location}`. It doesn't match the specified location " +
-              s"`${table.location}`.")
+          throw DeltaErrors.tableLocationMismatch(table, existingTable)
         case _ =>
       }
       table.copy(
