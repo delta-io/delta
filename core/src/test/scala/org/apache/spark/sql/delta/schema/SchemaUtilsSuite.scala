@@ -1545,8 +1545,12 @@ class SchemaUtilsSuite extends QueryTest
     assertUnsupportedDataType(ShortType, Nil)
     assertUnsupportedDataType(IntegerType, Nil)
     assertUnsupportedDataType(LongType, Nil)
-    assertUnsupportedDataType(YearMonthIntervalType.DEFAULT, Seq(YearMonthIntervalType.DEFAULT))
-    assertUnsupportedDataType(DayTimeIntervalType.DEFAULT, Seq(DayTimeIntervalType.DEFAULT))
+    assertUnsupportedDataType(
+      YearMonthIntervalType.DEFAULT,
+      Seq(UnsupportedDataTypeInfo("col", YearMonthIntervalType.DEFAULT)))
+    assertUnsupportedDataType(
+      DayTimeIntervalType.DEFAULT,
+      Seq(UnsupportedDataTypeInfo("col", DayTimeIntervalType.DEFAULT)))
     assertUnsupportedDataType(FloatType, Nil)
     assertUnsupportedDataType(DoubleType, Nil)
     assertUnsupportedDataType(StringType, Nil)
