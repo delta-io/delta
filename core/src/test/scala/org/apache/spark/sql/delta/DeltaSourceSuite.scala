@@ -377,8 +377,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
   test("Trigger.AvailableNow with an empty table") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, inputDir)
-      val df = Seq.empty[String].toDF("value")
-      df.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      sql(s"CREATE TABLE delta.`${inputDir.toURI}` (value STRING) USING delta")
 
       val stream = spark.readStream
         .format("delta")
