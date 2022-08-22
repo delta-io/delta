@@ -733,8 +733,9 @@ trait DeltaTableCreationTests
                |LOCATION '$path'
              """.stripMargin)
         }.getMessage
+        var catalogPrefix = ""
         assert(e.contains(
-          "Cannot create table ('`default`.`delta_test`'). The associated location"))
+          s"Cannot create table ('$catalogPrefix`default`.`delta_test`'). The associated location"))
       }
     }
   }
