@@ -68,7 +68,8 @@ private[internal] class SnapshotImpl(
     new FilteredDeltaScanImpl(
       memoryOptimizedLogReplay,
       predicate,
-      metadataScala.partitionSchema)
+      metadataScala.partitionSchema,
+      hadoopConf)
 
   override def getAllFiles: java.util.List[AddFileJ] = activeFilesJ
 
@@ -103,7 +104,8 @@ private[internal] class SnapshotImpl(
     new FilteredDeltaScanImpl(
       memoryOptimizedLogReplay,
       predicate,
-      metadataScala.partitionSchema)
+      metadataScala.partitionSchema,
+      hadoopConf)
 
   def tombstones: Seq[RemoveFileJ] = state.tombstones.toSeq.map(ConversionUtils.convertRemoveFile)
   def setTransactions: Seq[SetTransactionJ] =
@@ -305,5 +307,10 @@ private class InitialSnapshotImpl(
   override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
 
   override def scan(predicate: Expression): DeltaScan =
-    new FilteredDeltaScanImpl(memoryOptimizedLogReplay, predicate, metadataScala.partitionSchema)
+    new FilteredDeltaScanImpl(
+      memoryOptimizedLogReplay,
+      predicate,
+      metadataScala.partitionSchema,
+      hadoopConf
+    )
 }

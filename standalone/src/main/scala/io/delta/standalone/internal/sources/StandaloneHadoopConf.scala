@@ -29,4 +29,12 @@ private[internal] object StandaloneHadoopConf {
 
   /** Key for the class name of the desired [[LogStore]] implementation to be used. */
   val LOG_STORE_CLASS_KEY = "delta.logStore.class"
+
+  /**
+   * If enabled, partition values evaluation result will be cached in partition pruning in
+   * `FilteredDeltaScanImpl::accept`.
+   * By default, this feature is enabled. Set to `false` to disable.
+   */
+  val PARTITION_FILTER_RECORD_CACHING_KEY =
+    "io.delta.standalone.partitionFilterRecordCaching.enabled"
 }
