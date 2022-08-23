@@ -540,6 +540,14 @@ case class MergeIntoCommand(
 
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, insertDf, deltaTxn.metadata.partitionColumns))
+      .filter {
+        // In some cases (e.g. insert-only when all rows are matched, insert-only with an empty
+        // source, insert-only with an unsatisfied condition) we can write out an empty insertDf.
+        // This is hard to catch before the write without collecting the DF ahead of time. Instead,
+        // we can just accept only the AddFiles that actually add rows.
+        case a: AddFile => a.getNumLogicalRecords > 0
+        case _ => true
+      }
 
     // Update metrics
     metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
@@ -820,6 +828,14 @@ case class MergeIntoCommand(
     // Write to Delta
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
+      .filter {
+        // In some cases (e.g. delete with empty source, or empty target, or on disjoint tables)
+        // we can write out an empty outputDF. This is hard to catch before the write without
+        // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
+        // actually add rows.
+        case a: AddFile => a.getNumLogicalRecords > 0
+        case _ => true
+      }
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
