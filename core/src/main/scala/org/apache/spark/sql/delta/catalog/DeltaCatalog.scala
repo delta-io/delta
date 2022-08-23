@@ -94,9 +94,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case _ => true
     }.toMap
     val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
-    var newSchema = schema
-    var newPartitionColumns = partitionColumns
-    var newBucketSpec = maybeBucketSpec
+    val newSchema = schema
+    val newPartitionColumns = partitionColumns
+    val newBucketSpec = maybeBucketSpec
     val conf = spark.sessionState.conf
 
     val isByPath = isPathIdentifier(ident)
@@ -117,7 +117,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val id = {
       TableIdentifier(ident.name(), ident.namespace().lastOption)
     }
-    var locUriOpt = location.map(CatalogUtils.stringToURI)
+    val locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
@@ -232,7 +232,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   private def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))
-      .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
+      .getOrElse(spark.sessionState.conf.defaultDataSourceName)
   }
 
   override def createTable(
