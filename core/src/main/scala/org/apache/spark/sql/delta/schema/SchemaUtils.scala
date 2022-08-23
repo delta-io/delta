@@ -1021,8 +1021,14 @@ object SchemaUtils extends DeltaLogging {
     case BooleanType =>
     case ByteType =>
     case ShortType =>
-    case IntegerType | _: YearMonthIntervalType =>
-    case LongType | _: DayTimeIntervalType =>
+    case IntegerType =>
+    case dt: YearMonthIntervalType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
+    case LongType =>
+    case dt: DayTimeIntervalType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
     case FloatType =>
     case DoubleType =>
     case StringType =>
