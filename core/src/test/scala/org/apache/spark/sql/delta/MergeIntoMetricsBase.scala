@@ -72,37 +72,15 @@ trait MergeIntoMetricsBase
   // test utils //
   ////////////////
 
-  // We store testName --> (partitioned, cdfEnabled) where partitioned and cdfEnabled are
-  // boolean options. If they are None, we ignore the test for both the true and false values.
-  // Otherwise we ignore only the boolean value in the option.
-  val testsToIgnore = Map(
-    // numTargetFilesAdded - only wrong when partitioned=false
-    "insert-only when all rows match" -> (Some(false), None),
-    "insert-only with unsatisfied condition" -> (Some(false), None),
-    "insert-only with empty source" -> (Some(false), None),
-    "delete-only with disjoint tables" -> (Some(false), Some(false)),
-    "delete-only delete all rows" -> (Some(false), Some(false)),
-    "delete-only with empty source" -> (Some(false), Some(false)),
-    "delete-only with empty target" -> (Some(false), Some(false)),
-    "delete-only without join empty source" -> (Some(false), Some(false)),
-
-    // numTargetRowsCopied
-    "delete-only with condition" -> (None, None),
-    "delete-only with update with unsatisfied condition" -> (None, None),
-    "delete-only with unsatisfied condition" -> (None, None),
-    "delete-only with target-only condition" -> (None, None),
-    "delete-only with source-only condition" -> (None, None),
-    "match-only with unsatisfied condition" -> (None, None)
+  val testsToIgnore = Seq(
+    // The below tests fail due to incorrect numTargetRowsCopied metric.
+    "delete-only with condition",
+    "delete-only with update with unsatisfied condition",
+    "delete-only with unsatisfied condition",
+    "delete-only with target-only condition",
+    "delete-only with source-only condition",
+    "match-only with unsatisfied condition"
   )
-
-  // Currently multiple metrics are wrong for Merge. We have added tests for these scenarios but
-  // we need to ignore the failing tests until the metrics are fixed.
-  private def shouldIgnoreTest(name: String, partitioned: Boolean, cdfEnabled: Boolean): Boolean = {
-    testsToIgnore.get(name).exists {
-      case (partitionedValue, cdfEnabledValue) =>
-        partitionedValue.forall(_ == partitioned) && cdfEnabledValue.forall(_ == cdfEnabled)
-    }
-  }
 
   // Helper to generate tests with different configurations.
   private def testMergeMetrics(name: String)(testFn: MergeTestConfiguration => Unit): Unit = {
@@ -113,7 +91,9 @@ trait MergeIntoMetricsBase
       val testConfig = MergeTestConfiguration(partitioned = partitioned, cdfEnabled = cdfEnabled)
       val testName = s"merge-metrics: $name - Partitioned = $partitioned, CDF = $cdfEnabled"
 
-      if (shouldIgnoreTest(name, partitioned, cdfEnabled)) {
+      if (testsToIgnore.contains(name)) {
+        // Currently multiple metrics are wrong for Merge. We have added tests for these scenarios
+        // but we need to ignore the failing tests until the metrics are fixed.
         ignore(testName) { testFn(testConfig) }
       } else {
         test(testName) { testFn(testConfig) }
