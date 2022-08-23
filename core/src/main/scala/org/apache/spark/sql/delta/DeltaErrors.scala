@@ -1540,6 +1540,8 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
       messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
+        catalogImplConfig, classOf[DeltaCatalog].getName,
+        classOf[DeltaSparkSessionExtension].getName,
         catalogImplConfig, classOf[DeltaCatalog].getName),
       cause = originalException)
   }
