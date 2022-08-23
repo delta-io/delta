@@ -239,7 +239,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     "as",
     "alias",
     "delete",
-    "details",
+    "detail",
     "generate",
     "history",
     "merge",
@@ -557,7 +557,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       val deltaTable = DeltaTable.forPath(spark, path, fsOptions)
       checkAnswer(
-        deltaTable.details().select("format"),
+        deltaTable.detail().select("format"),
         Seq(Row("delta"))
       )
     }
