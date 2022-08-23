@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.{DataFrame, QueryTest}

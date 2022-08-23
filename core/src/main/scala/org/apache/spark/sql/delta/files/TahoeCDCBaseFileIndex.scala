@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.files
 
+
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
@@ -76,7 +78,6 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       .collect()
   }
 
-
   override def inputFiles: Array[String] = {
     filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
   }
@@ -92,9 +93,8 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       }.sum)
       .sum
 
-  def cdcPartitionValues(): Map[String, String]
+  protected def cdcPartitionValues(): Map[String, String]
 
   protected def extractActionParameters(action: T): ActionParameters
-
 
 }

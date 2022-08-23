@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.files
 
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDCDataSpec, CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION}

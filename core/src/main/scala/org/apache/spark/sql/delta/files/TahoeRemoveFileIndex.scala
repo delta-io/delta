@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.files
 
-
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
