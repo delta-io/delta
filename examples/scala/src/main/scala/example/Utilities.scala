@@ -64,7 +64,7 @@ object Utilities {
     deltaTable.history().show()
 
     println("Describe Details for the table")
-    deltaTable.details().show()
+    deltaTable.detail().show()
 
     // Generate manifest
     println("Generate Manifest files")

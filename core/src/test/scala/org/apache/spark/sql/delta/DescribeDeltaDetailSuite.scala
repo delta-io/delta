@@ -62,7 +62,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     // Check Scala details
     val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.toString)
     checkResult(
-      deltaTable.details(),
+      deltaTable.detail(),
       Seq("delta", Array("column1"), 1),
       Seq("format", "partitionColumns", "numFiles"))
   }
@@ -73,7 +73,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 
       val deltaTable = io.delta.tables.DeltaTable.forName(spark, "delta_test")
       checkAnswer(
-        deltaTable.details().select("format"),
+        deltaTable.detail().select("format"),
         Seq(Row("delta"))
       )
     }
