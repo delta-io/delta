@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
@@ -323,8 +324,7 @@ abstract class ConvertToDeltaCommandBase(
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val manifest = targetTable.fileManifest
     try {
-      val initialList = manifest.getFiles()
-      if (!initialList.hasNext) {
+      if (!manifest.getFiles.hasNext) {
         throw DeltaErrors.emptyDirectoryException(convertProperties.targetDir)
       }
 
@@ -419,7 +419,7 @@ case class ConvertToDeltaCommand(
  */
 case class ConvertTargetFile(
     fileStatus: SerializableFileStatus,
-    partitionValues: Option[Map[String, String]] = None)
+    partitionValues: Option[Map[String, String]] = None) extends Serializable
 
 /**
  * An interface for the table to be converted to Delta.
@@ -637,8 +637,11 @@ trait ConvertTargetFileManifest extends Closeable {
   /** The base path of a table. Should be a qualified, normalized path. */
   val basePath: String
 
-  /** Return the active files for a table */
-  def getFiles(): Iterator[ConvertTargetFile]
+  /** Return all files as a Dataset for parallelized processing */
+  def allFiles: Dataset[ConvertTargetFile]
+
+  /** Return the active files for a table in sequence */
+  def getFiles: Iterator[ConvertTargetFile] = allFiles.toLocalIterator().asScala
 }
 
 /** A file manifest generated through recursively listing a base path. */
@@ -658,8 +661,10 @@ class ManualListingFileManifest(
     ds
   }
 
-  override def getFiles(): Iterator[ConvertTargetFile] =
-    list.toLocalIterator().asScala.map(ConvertTargetFile(_))
+  override lazy val allFiles: Dataset[ConvertTargetFile] = {
+    import org.apache.spark.sql.delta.implicits._
+    list.map(ConvertTargetFile(_))
+  }
 
   override def close(): Unit = list.unpersist()
 }
@@ -708,11 +713,18 @@ class CatalogFileManifest(
 class MetadataLogFileManifest(
     spark: SparkSession,
     override val basePath: String) extends ConvertTargetFileManifest {
+
   val index = new MetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
-  override def getFiles(): Iterator[ConvertTargetFile] = index.allFiles
-    .toIterator
-    .map { fs => SerializableFileStatus.fromStatus(fs) }
-    .map { ConvertTargetFile(_) }
+
+  override lazy val allFiles: Dataset[ConvertTargetFile] = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val rdd = spark.sparkContext.parallelize(index.allFiles).mapPartitions { _
+        .map(SerializableFileStatus.fromStatus)
+        .map(ConvertTargetFile(_))
+    }
+    spark.createDataset(rdd)
+  }
 
   override def close(): Unit = {}
 }
