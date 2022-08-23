@@ -80,8 +80,7 @@ object QuickstartSQL {
 
       // Read old version of the data using time travel
       print("Read old data using time travel")
-      val df2 = spark.read.format("delta").option("versionAsOf", 0).table(tableName)
-      df2.show()
+      spark.sql(s"SELECT * FROM $tableName VERSION AS OF 0").show()
     } finally {
       // Cleanup
       spark.sql(s"DROP TABLE IF EXISTS $tableName")
