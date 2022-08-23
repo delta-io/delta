@@ -827,7 +827,7 @@ case class LogSegment(
     obj match {
       case other: LogSegment =>
         version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
-          logPath == other.logPath
+          logPath == other.logPath && checkpointVersionOpt == other.checkpointVersionOpt
       case _ => false
     }
   }
