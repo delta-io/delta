@@ -20,7 +20,7 @@ import java.sql.Timestamp
 
 import scala.collection.mutable.ListBuffer
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaOperations, DeltaParquetFileFormat, DeltaTableUtils, DeltaTimeTravelSpec, NoMapping, Snapshot}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -265,8 +265,10 @@ object CDCReader extends DeltaLogging {
 
     // If the table has column mapping enabled, throw an error. With column mapping, certain schema
     // changes are possible (rename a column or drop a column) which don't work well with CDF.
-    if (snapshot.metadata.columnMappingMode != NoMapping) {
-      throw DeltaErrors.blockCdfAndColumnMappingReads()
+    // TODO: remove this after the proper blocking semantics is rolled out
+    // This is only blocking streaming CDF, batch CDF will be blocked differently below.
+    if (isStreaming && snapshot.metadata.columnMappingMode != NoMapping) {
+      throw DeltaErrors.blockCdfAndColumnMappingReads(isStreaming)
     }
 
     // A map from change version to associated commit timestamp.
@@ -276,8 +278,33 @@ object CDCReader extends DeltaLogging {
     val changeFiles = ListBuffer[CDCDataSpec[AddCDCFile]]()
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
+
+    val startVersionSnapshot = deltaLog.getSnapshotAt(start)
     if (!isCDCEnabledOnTable(deltaLog.getSnapshotAt(start).metadata)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
+    }
+
+    /**
+     * TODO: Unblock this when we figure out the correct semantics.
+     *  Currently batch CDC read on column mapping tables with Rename/Drop is blocked due to
+     *  unclear semantics.
+     *  Streaming CDF read is blocked on a separate code path in DeltaSource.
+     */
+    val shouldCheckToBlockBatchReadOnColumnMappingTable =
+      !isStreaming &&
+      snapshot.metadata.columnMappingMode != NoMapping &&
+      !spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES)
+
+    // Compare with start snapshot's metadata schema to fail fast
+    if (shouldCheckToBlockBatchReadOnColumnMappingTable &&
+        !DeltaColumnMapping.isColumnMappingReadCompatible(
+          snapshot.metadata, startVersionSnapshot.metadata)) {
+      throw DeltaErrors.blockCdfAndColumnMappingReads(
+        isStreaming,
+        Some(snapshot.metadata.schema),
+        Some(startVersionSnapshot.metadata.schema)
+      )
     }
 
     var totalBytes = 0L
@@ -295,6 +322,19 @@ object CDCReader extends DeltaLogging {
 
         if (cdcDisabled) {
           throw DeltaErrors.changeDataNotRecordedException(v, start, end)
+        }
+
+        // Check all intermediary metadata schema changes as well
+        if (shouldCheckToBlockBatchReadOnColumnMappingTable) {
+           actions.collect { case a: Metadata => a }.foreach { metadata =>
+             if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
+               throw DeltaErrors.blockCdfAndColumnMappingReads(
+                 isStreaming,
+                 Some(snapshot.metadata.schema),
+                 Some(metadata.schema)
+               )
+             }
+           }
         }
 
         // Set up buffers for all action types to avoid multiple passes.

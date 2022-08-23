@@ -793,6 +793,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
+  val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
+    buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
+      .doc(
+        "Reading change data in batch (e.g. using `table_changes()`) on Delta table with " +
+          "column mapping schema operations is currently blocked due to potential data loss and " +
+          "schema confusion. However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
