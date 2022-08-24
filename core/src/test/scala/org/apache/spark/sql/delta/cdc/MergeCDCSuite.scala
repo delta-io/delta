@@ -80,7 +80,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
 
           if (expectErrorContains != null) {
             val ex = intercept[Exception] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
+              executeMerge(s"delta.`$tempPath` t", s"source s", mergeCondition,
                 clauses.toSeq: _*)
             }
             assert(ex.getMessage.contains(expectErrorContains))
