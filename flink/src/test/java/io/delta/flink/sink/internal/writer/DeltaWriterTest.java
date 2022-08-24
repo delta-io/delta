@@ -84,7 +84,7 @@ public class DeltaWriterTest {
     // counter for the records produced by given test instance
     private int testRecordsCount = 0;
 
-    private Map<String, Counter> testCounters = new HashMap<>();
+    private final Map<String, Counter> testCounters = new HashMap<>();
 
     @Test
     public void testPreCommit() throws Exception {
@@ -368,7 +368,7 @@ public class DeltaWriterTest {
             if (time <= now) {
                 try {
                     processingTimeCallback.onProcessingTime(now);
-                } catch (IOException e) {
+                } catch (IOException | InterruptedException e) {
                     ExceptionUtils.rethrow(e);
                 }
             } else {
@@ -376,7 +376,7 @@ public class DeltaWriterTest {
             }
         }
 
-        public void advanceTo(long time) throws IOException {
+        public void advanceTo(long time) throws IOException, InterruptedException {
             if (time > now) {
                 now = time;
 

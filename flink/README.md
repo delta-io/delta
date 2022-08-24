@@ -35,10 +35,11 @@ Flink/Delta Connector includes:
 
 Depending on the version of the connector you can use it with following Apache Flink versions:
   
-| Connector's version | Flink's version |
-|:-------------------:|:---------------:|
-|  0.4.x (Sink Only)  |    1.12.0 <= X <= 1.14.5    |
-|        0.5.x        |    1.13.0 <= X <= 1.14.5    |
+| Connector's version |    Flink's version    |
+|:-------------------:|:---------------------:|
+|  0.4.x (Sink Only)  | 1.12.0 <= X <= 1.14.5 |
+|        0.5.0        | 1.13.0 <= X <= 1.13.6 |
+|   0.5.1-SNAPSHOT    | 1.14.0 <= X <= 1.14.5 |
 
 ### APIs
 
@@ -367,7 +368,7 @@ Scala 2.12:
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-runtime-blink_${scala.main.version}</artifactId>
+            <artifactId>flink-table-runtime_${scala.main.version}</artifactId>
             <version>${flink-version}</version>
             <scope>provided</scope>
         </dependency>

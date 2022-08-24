@@ -59,7 +59,7 @@ lazy val helloWorld = (project in file("hello-world")) settings (
   extraMavenRepo
 )
 
-val flinkVersion = "1.12.0"
+val flinkVersion = "1.14.0"
 val flinkHadoopVersion = "3.1.0"
 lazy val flinkExample = (project in file("flink-example")) settings (
   name := "flink",
@@ -81,6 +81,6 @@ lazy val flinkExample = (project in file("flink-example")) settings (
 
     // Below dependencies are needed only to run the example project in memory
     "org.apache.flink" %% "flink-clients" % flinkVersion,
-    "org.apache.flink" %% "flink-table-runtime-blink" % flinkVersion
+    "org.apache.flink" %% "flink-table-runtime" % flinkVersion
   )
 )
