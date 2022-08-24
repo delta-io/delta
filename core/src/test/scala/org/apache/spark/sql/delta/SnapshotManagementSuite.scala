@@ -67,6 +67,13 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }
 
+  private def deleteCheckpointVersion(path: String, version: Long): Unit = {
+    val deltaFile = new File(
+      FileNames.checkpointFileSingular(new Path(path, "_delta_log"), version).toString)
+    assert(deltaFile.exists(), s"Could not find $deltaFile")
+    assert(deltaFile.delete(), s"Failed to delete $deltaFile")
+  }
+
   private def testWithAndWithoutMultipartCheckpoint(name: String)(f: (Option[Int]) => Unit) = {
     testQuietly(name) {
       withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
@@ -438,6 +445,27 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
         log.getLogSegmentAfterCommit(newLogSegment, 0)
       }
       assert(log.getLogSegmentAfterCommit(newLogSegment, 1) == log.snapshot.logSegment)
+    }
+  }
+
+  testQuietly("checkpoint/json not found when executor restart " +
+    "after expired checkpoints in the snapshot cache are cleaned up") {
+    withTempDir { tempDir =>
+      // Create checkpoint 1 and 3
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      deltaLog.checkpoint()
+      // simulate checkpoint 1 expires and is cleaned up
+      deleteCheckpointVersion(path, 1)
+      // simulate executor hangs and restart, cache invalidation
+      deltaLog.snapshot.uncache()
+
+      spark.read.format("delta").load(path).show()
     }
   }
 }
