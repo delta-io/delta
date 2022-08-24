@@ -461,6 +461,13 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       val part = "part".phy(deltaLog)
       val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      val printasfs = files.filter(_._1._1 == part)
+      printasfs.keys.foreach(p =>
+        print(p + "\t" + printasfs(p).mkString(" ") + "\n")
+      )
+      print(printasfs.toString() + "\n")
+      print(files.filter(_._1._1 == part).minBy(_._2.length))
+
       assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
         "part 3 should have been optimized and have least amount of files")
     }
