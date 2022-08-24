@@ -108,13 +108,14 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
 case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
-    userPartitionPredicates: Seq[Option[String]])(val zOrderBy: Seq[UnresolvedAttribute])
+    userPartitionPredicates: Seq[Option[String]],
+    options: Map[String, String])(val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase with LeafRunnableCommand {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = getDeltaLog(sparkSession, path, tableId, "OPTIMIZE")
+    val deltaLog = getDeltaLog(sparkSession, path, tableId, "OPTIMIZE", options)
 
     val txn = deltaLog.startTransaction()
     if (txn.readVersion == -1) {

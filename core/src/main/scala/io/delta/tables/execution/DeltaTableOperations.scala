@@ -57,7 +57,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeDetails(
       path: String,
       tableIdentifier: Option[TableIdentifier]): DataFrame = {
-    val details = DescribeDeltaDetailCommand(Option(path), tableIdentifier)
+    val details = DescribeDeltaDetailCommand(Option(path), tableIdentifier, self.deltaLog.options)
     toDataset(sparkSession, details)
   }
 
@@ -66,7 +66,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       .sessionState
       .sqlParser
       .parseTableIdentifier(tblIdentifier)
-    val generate = DeltaGenerateCommand(mode, tableId)
+    val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
     toDataset(sparkSession, generate)
   }
 

@@ -47,49 +47,50 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
   test("OPTIMIZE command is parsed as expected") {
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("OPTIMIZE tbl") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE db.tbl") ===
-      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Seq(None), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
-      OptimizeTableCommand(None, Some(tblId("tbl_true")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl_true")), Seq(None), Map.empty)(Seq()))
 
     withSQLConf("tbl_var" -> "tbl") {
       assert(parser.parsePlan("OPTIMIZE ${tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
 
       assert(parser.parsePlan("OPTIMIZE ${spark:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
 
       assert(parser.parsePlan("OPTIMIZE ${sparkconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
 
       assert(parser.parsePlan("OPTIMIZE ${hiveconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
 
       assert(parser.parsePlan("OPTIMIZE ${hivevar:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(Seq()))
     }
 
     assert(parser.parsePlan("OPTIMIZE '/path/to/tbl'") ===
-      OptimizeTableCommand(Some("/path/to/tbl"), None, Seq(None))(Seq()))
+      OptimizeTableCommand(Some("/path/to/tbl"), None, Seq(None), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`") ===
-      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Seq(None), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (col1)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(Seq(unresolvedAttr("col1"))))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)
+      (Seq(unresolvedAttr("col1"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY col1, col2.subcol") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")))(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")), Map.empty)(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY (col1, col2.subcol)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")))(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(Some("part = 1")), Map.empty)(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
   }
 
@@ -99,18 +100,19 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     // Use the new keywords in table name
     assert(parser.parsePlan("OPTIMIZE optimize") ===
-      OptimizeTableCommand(None, Some(tblId("optimize")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("optimize")), Seq(None), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE zorder") ===
-      OptimizeTableCommand(None, Some(tblId("zorder")), Seq(None))(Seq()))
+      OptimizeTableCommand(None, Some(tblId("zorder")), Seq(None), Map.empty)(Seq()))
 
     // Use the new keywords in column name
     assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2") ===
-      OptimizeTableCommand(None, Some(tblId("tbl"))
-        , Seq(Some("zorder = 1 and optimize = 2")))(Seq()))
+      OptimizeTableCommand(None,
+        Some(tblId("tbl"))
+        , Seq(Some("zorder = 1 and optimize = 2")), Map.empty)(Seq()))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None))(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq(None), Map.empty)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
   }
 

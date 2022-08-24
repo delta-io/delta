@@ -2275,6 +2275,15 @@ trait DeltaErrorsBase
     new AnalysisException(
       s"SHOW COLUMNS with conflicting databases: '$db' != '${tableID.database.get}'")
   }
+
+  def unsupportedDeltaTableForPathHadoopConf(unsupportedOptions: Map[String, String]): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF",
+      messageParameters = Array(
+        DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]"),
+        unsupportedOptions.mkString(","))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
