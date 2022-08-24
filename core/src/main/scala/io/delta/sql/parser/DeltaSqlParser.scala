@@ -199,7 +199,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)), Map.empty)(interleaveBy)
+      Seq(Option(ctx.partitionPredicate).map(extractRawText(_))), Map.empty)(interleaveBy)
   }
 
   override def visitDescribeDeltaDetail(
