@@ -1962,10 +1962,11 @@ trait DeltaErrorsSuiteBase
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
            |    .getOrCreate()
-           |
-           |If you are using spark-shell/pyspark/spark-submit, you can add the required configurations to the command as show below:
-           |--conf spark.sql.extensions=${classOf[DeltaSparkSessionExtension].getName} --conf ${catalogImplConfig}=${classOf[DeltaCatalog].getName}
-           |""".stripMargin
+           |""".stripMargin +
+          "\nIf you are using spark-shell/pyspark/spark-submit, you can add the required " +
+           "configurations to the command as show below:\n"  +
+          s"--conf spark.sql.extensions=${classOf[DeltaSparkSessionExtension].getName} " +
+          s"--conf ${catalogImplConfig}=${classOf[DeltaCatalog].getName}\n"
       assert(e.getMessage == msg)
     }
     {
