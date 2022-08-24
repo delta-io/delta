@@ -68,8 +68,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   override def run(
       spark: SparkSession,
       txn: OptimisticTransactionImpl,
+      committedVersion: Long,
+      postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
-    generateIncrementalManifest(spark, txn.deltaLog, txn.snapshot, committedActions)
+    generateIncrementalManifest(
+      spark, txn.deltaLog, txn.snapshot, postCommitSnapshot, committedActions)
   }
 
   override def handleError(error: Throwable, version: Long): Unit = {
@@ -88,10 +91,10 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       spark: SparkSession,
       deltaLog: DeltaLog,
       txnReadSnapshot: Snapshot,
+      currentSnapshot: Snapshot,
       actions: Seq[Action]): Unit = recordManifestGeneration(deltaLog, full = false) {
 
-    import spark.implicits._
-    val currentSnapshot = deltaLog.snapshot
+    import org.apache.spark.sql.delta.implicits._
 
     checkColumnMappingMode(currentSnapshot.metadata)
 
@@ -173,9 +176,16 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    */
   def generateFullManifest(
       spark: SparkSession,
-      deltaLog: DeltaLog): Unit = recordManifestGeneration(deltaLog, full = true) {
-
+      deltaLog: DeltaLog): Unit = {
     val snapshot = deltaLog.update(stalenessAcceptable = false)
+    generateFullManifestWithSnapshot(spark, deltaLog, snapshot)
+  }
+
+  // Separated out to allow overriding with a specific snapshot.
+  protected def generateFullManifestWithSnapshot(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      snapshot: Snapshot): Unit = recordManifestGeneration(deltaLog, full = true) {
     val partitionCols = snapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION).toString
     val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
@@ -196,7 +206,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val existingManifestPartitionRelativePaths = {
       val manifestRootDirAbsPath = fs.makeQualified(new Path(manifestRootDirPath))
       if (fs.exists(manifestRootDirAbsPath)) {
-        val index = new InMemoryFileIndex(spark, Seq(manifestRootDirAbsPath), Map.empty, None)
+        val index = new InMemoryFileIndex(
+          spark,
+          Seq(manifestRootDirAbsPath),
+          deltaLog.options,
+          None)
         val prefixToStrip = manifestRootDirAbsPath.toUri.getPath
         index.inputFiles.map { p =>
           // Remove root directory "rootDir" path from the manifest file paths like
@@ -246,7 +260,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       hadoopConf: SerializableConfiguration): Set[String] = {
 
     val spark = fileNamesForManifest.sparkSession
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     val tableAbsPathForManifest = LogStore(spark)
       .resolvePathOnPhysicalStorage(deltaLogDataPath, hadoopConf.value).toString

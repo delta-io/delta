@@ -201,13 +201,20 @@ trait MergeIntoMetricsBase
    * @param mergeCmdFn The function that actually runs the merge command.
    * @param expectedOpMetrics A map with values for expected operation metrics.
    * @param testConfig The configuration options for this test
+   * @param overrideExpectedOpMetrics Sequence of expected operation metric values to override from
+   *                                  those provided in expectedOpMetrics for specific
+   *                                  configurations of partitioned and cdfEnabled. Elements
+   *                                  provided as:
+   *                                  ((partitioned, cdfEnabled), (metric_name, metric_value))
    */
   private def runMergeCmdAndTestMetrics(
       targetDf: DataFrame,
       sourceDf: DataFrame,
       mergeCmdFn: MergeCmd,
       expectedOpMetrics: Map[String, Int],
-      testConfig: MergeTestConfiguration): Unit = {
+      testConfig: MergeTestConfiguration,
+      overrideExpectedOpMetrics: Seq[((Boolean, Boolean), (String, Int))] = Seq.empty
+  ): Unit = {
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> testConfig.cdfEnabled.toString
@@ -245,8 +252,15 @@ trait MergeIntoMetricsBase
 
         // Get the default row operation metrics and override them with the provided ones.
         val metricsWithDefaultZeroValue = mergeRowMetrics.map(_ -> "0").toMap
-        val expectedOpMetricsWithDefaults = metricsWithDefaultZeroValue ++
+        var expectedOpMetricsWithDefaults = metricsWithDefaultZeroValue ++
           expectedOpMetrics.filter(m => m._2 >= 0).mapValues(_.toString)
+
+        overrideExpectedOpMetrics.foreach { case ((partitioned, cdfEnabled), (metric, value)) =>
+          if (partitioned == testConfig.partitioned && cdfEnabled == testConfig.cdfEnabled) {
+            expectedOpMetricsWithDefaults = expectedOpMetricsWithDefaults +
+              (metric -> value.toString)
+          }
+        }
 
         // Check that all operation metrics are positive numbers.
         for ((metricName, metricValue) <- operationMetrics) {
@@ -958,7 +972,13 @@ trait MergeIntoMetricsBase
       sourceDf = sourceDf,
       mergeCmdFn = mergeCmdFn,
       expectedOpMetrics = expectedOpMetrics,
-      testConfig = testConfig
+      testConfig = testConfig,
+      // When cdf=true in this test we hit the corner case where there are duplicate matches with a
+      // delete clause and we generate duplicate cdc data. This is further detailed in
+      // MergeIntoCommand at the definition of isDeleteWithDuplicateMatchesAndCdc. Our fix for this
+      // scenario includes deduplicating the output data which reshuffles the output data.
+      // Thus when the table is not partitioned, the data is rewritten into 1 new file rather than 2
+      overrideExpectedOpMetrics = Seq(((false, true), ("numTargetFilesAdded", 1)))
     )
   }}
 

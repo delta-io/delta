@@ -20,18 +20,16 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaLog, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.ScalaReflection.Schema
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
@@ -68,14 +66,15 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier],
+    hadoopConf: Map[String, String]) extends LeafRunnableCommand with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
 
-    val deltaLog = DeltaLog.forTable(sparkSession, basePath)
+    val deltaLog = DeltaLog.forTable(sparkSession, basePath, hadoopConf)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
       val snapshot = deltaLog.update()
       if (snapshot.version == -1) {

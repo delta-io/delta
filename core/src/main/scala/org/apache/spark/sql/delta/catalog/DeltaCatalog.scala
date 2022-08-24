@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.sql.Timestamp
 import java.util
 import java.util.Locale
 
@@ -29,7 +30,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -43,13 +44,10 @@ import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
-import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.command.DDLUtils
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 
 /**
@@ -187,6 +185,46 @@ class DeltaCatalog extends DelegatingCatalogExtension
         newDeltaPathTable(ident)
     }
   }
+
+  override def loadTable(ident: Identifier, timestamp: Long): Table = {
+    loadTableWithTimeTravel(ident, version = None, Some(timestamp))
+  }
+
+  override def loadTable(ident: Identifier, version: String): Table = {
+    loadTableWithTimeTravel(ident, Some(version), timestamp = None)
+  }
+
+  /**
+   * Helper method which loads a Delta table with given time travel parameters.
+   * Exactly one of the timetravel parameters (version or timestamp) must be present.
+   *
+   * @param version The table version to load
+   * @param timestamp The timestamp for the table to load, in microseconds
+   */
+  private def loadTableWithTimeTravel(
+      ident: Identifier,
+      version: Option[String],
+      timestamp: Option[Long]): Table = {
+    assert(version.isEmpty ^ timestamp.isEmpty,
+      "Either the version or timestamp should be provided for time travel")
+    val table = loadTable(ident)
+    table match {
+      case deltaTable: DeltaTableV2 =>
+        val ttOpts = Map(DeltaDataSource.TIME_TRAVEL_SOURCE_KEY -> "SQL") ++
+          (if (version.isDefined) {
+            Map(DeltaDataSource.TIME_TRAVEL_VERSION_KEY -> version.get)
+          } else {
+            val timestampMs = timestamp.get / 1000
+            Map(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY -> new Timestamp(timestampMs).toString)
+          })
+
+        deltaTable.withOptions(ttOpts)
+      // punt this problem up to the parent
+      case _ if version.isDefined => super.loadTable(ident, version.get)
+      case _ if timestamp.isDefined => super.loadTable(ident, timestamp.get)
+    }
+  }
+
 
   protected def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
     DeltaTableV2(spark, new Path(ident.name()))
@@ -326,8 +364,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     if (tableExists) {
       val oldTable = catalog.getTableMetadata(table)
       if (oldTable.tableType == CatalogTableType.VIEW) {
-        throw new AnalysisException(
-          s"$table is a view. You may not write data into a view.")
+        throw DeltaErrors.cannotWriteIntoView(table)
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
         throw DeltaErrors.notADeltaTable(table.table)

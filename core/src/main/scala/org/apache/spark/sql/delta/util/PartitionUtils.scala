@@ -46,7 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaRuntimeException}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException

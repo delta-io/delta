@@ -16,8 +16,6 @@
 
 package io.delta.tables
 
-import java.sql.Timestamp
-
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
@@ -137,6 +135,15 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Get the details of a Delta table such as the format, name, and size.
+   *
+   * @since 2.1.0
+   */
+  def details(): DataFrame = {
+    executeDetails(deltaLog.dataPath.toString, table.getTableIdentifierIfExists)
+  }
+
+  /**
    * Generate a manifest for the given Delta Table
    *
    * @param mode Specifies the mode for the generation of the manifest.
@@ -205,7 +212,7 @@ class DeltaTable private[tables](
    */
   def optimize(): DeltaOptimizeBuilder = {
     DeltaOptimizeBuilder(sparkSession,
-      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"))
+      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"), table.options)
   }
 
   /**
@@ -643,17 +650,85 @@ object DeltaTable {
    * @since 0.3.0
    */
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
+    forPath(sparkSession, path, Map.empty[String, String])
+  }
+
+  /**
+   * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
+   * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
+   * it throws a `not a Delta table` error.
+   *
+   * @param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked up
+   *                    by `DeltaTable` to access the file system when executing queries.
+   *                    Other configurations will not be allowed.
+   *
+   * {{{
+   *   val hadoopConf = Map(
+   *     "fs.s3a.access.key" -> "<access-key>",
+   *     "fs.s3a.secret.key" -> "<secret-key>"
+   *   )
+   *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
+   * }}}
+   * @since 2.1.0
+   */
+  def forPath(
+      sparkSession: SparkSession,
+      path: String,
+      hadoopConf: scala.collection.Map[String, String]): DeltaTable = {
+    // We only pass hadoopConf so that we won't pass any unsafe options to Delta.
+    val badOptions = hadoopConf.filterKeys { k =>
+      !DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }.toMap
+    if (!badOptions.isEmpty) {
+      throw DeltaErrors.unsupportedDeltaTableForPathHadoopConf(badOptions)
+    }
+    val fileSystemOptions: Map[String, String] = hadoopConf.toMap
     val hdpPath = new Path(path)
-    if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath)) {
-      new DeltaTable(sparkSession.read.format("delta").load(path),
-        DeltaTableV2(sparkSession, hdpPath))
+    if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath, fileSystemOptions)) {
+      new DeltaTable(sparkSession.read.format("delta").options(fileSystemOptions).load(path),
+        DeltaTableV2(
+          spark = sparkSession,
+          path = hdpPath,
+          options = fileSystemOptions))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
   }
 
   /**
-   * Create a DeltaTable using the given table or view name using the given SparkSession.
+  * Java friendly API to instantiate a [[DeltaTable]] object representing the data at the given
+  * path, If the given path is invalid (i.e. either no table exists or an existing table is not a
+  * Delta table), it throws a `not a Delta table` error.
+  *
+  * @param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked up
+  *                    by `DeltaTable` to access the file system when executing queries.
+  *                    Other configurations will be ignored.
+  *
+  * {{{
+  *   val hadoopConf = Map(
+  *     "fs.s3a.access.key" -> "<access-key>",
+  *     "fs.s3a.secret.key", "<secret-key>"
+  *   )
+  *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
+  * }}}
+  * @since 2.1.0
+  */
+  def forPath(
+      sparkSession: SparkSession,
+      path: String,
+      hadoopConf: java.util.Map[String, String]): DeltaTable = {
+    val fsOptions = hadoopConf.asScala.toMap
+    forPath(sparkSession, path, fsOptions)
+  }
+
+  /**
+   * Instantiate a [[DeltaTable]] object using the given table or view name. If the given
+   * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
+   * Delta table), it throws a `not a Delta table` error.
+   *
+   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -667,7 +742,13 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   * Instantiate a [[DeltaTable]] object using the given table or view name using the given
+   * SparkSession. If the given tableOrViewName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error.
+   *
+   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
    */
   def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
     val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)

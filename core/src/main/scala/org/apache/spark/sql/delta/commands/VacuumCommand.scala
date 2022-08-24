@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
-import java.sql.Timestamp
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +25,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
-import org.apache.spark.sql.delta.commands.VacuumCommand.logInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
@@ -35,7 +33,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.functions.col
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -105,7 +103,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val deltaHadoopConf = deltaLog.newDeltaHadoopConf()
       val fs = path.getFileSystem(deltaHadoopConf)
 
-      import spark.implicits._
+      import org.apache.spark.sql.delta.implicits._
 
       val snapshot = deltaLog.update()
 
@@ -172,7 +170,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       try {
         allFilesAndDirs.cache()
 
-        val dirCounts = allFilesAndDirs.where('isDir).count() + 1 // +1 for the base path
+        val dirCounts = allFilesAndDirs.where(col("isDir")).count() + 1 // +1 for the base path
 
         // The logic below is as follows:
         //   1. We take all the files and directories listed in our reservoir
@@ -183,7 +181,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         //   6. We filter all paths with a count of 1, which will correspond to files not in the
         //      state, and empty directories. We can safely delete all of these
         val diff = allFilesAndDirs
-          .where('modificationTime < deleteBeforeTimestamp || 'isDir)
+          .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
           .mapPartitions { fileStatusIterator =>
             val reservoirBase = new Path(basePath)
             val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
@@ -200,11 +198,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                   relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = false))
               }
             }
-          }.groupBy($"value" as 'path)
+          }.groupBy(col("value").as("path"))
           .count()
           .join(validFiles, Seq("path"), "leftanti")
-          .where('count === 1)
-          .select('path)
+          .where(col("count") === 1)
+          .select(col("path"))
           .as[String]
           .map { relativePath =>
             assert(!stringToPath(relativePath).isAbsolute,
@@ -315,18 +313,15 @@ trait VacuumCommandImpl extends DeltaCommand {
       hadoopConf: Broadcast[SerializableConfiguration],
       parallel: Boolean,
       parallelPartitions: Int): Long = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     if (parallel) {
-      // If there are no entries, do not call reduce as it results in empty collection error
-      if (diff.isEmpty) return 0
-
       diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
         val filesDeletedPerPartition =
           files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
         Iterator(filesDeletedPerPartition)
-      }.reduce(_ + _)
+      }.collect().sum
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala

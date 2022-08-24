@@ -182,7 +182,8 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
   }
 
   test("restore operation metrics in Delta table history") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         val df1 = Seq(1, 2, 3).toDF("id")
         val df2 = Seq(4, 5, 6).toDF("id")
@@ -215,7 +216,8 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
   }
 
   test("restore command output metrics") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         val df1 = Seq(1, 2, 3).toDF("id")
         val df2 = Seq(4, 5, 6).toDF("id")
@@ -252,7 +254,8 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
   }
 
   test("cdf + RESTORE") {
-    withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+    withSQLConf(
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
       withTempDir { tempDir =>
         val df0 = Seq(0, 1).toDF("id") // version 0 = [0, 1]
         df0.write.format("delta").save(tempDir.getAbsolutePath)

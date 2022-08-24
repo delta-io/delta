@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -72,6 +71,16 @@ trait DeltaSQLConfBase {
         |  to use the transaction log under `_spark_metadata` as the source of truth for files
         | contained in the table.
         """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_USE_CATALOG_PARTITIONS =
+    buildConf("convert.useCatalogPartitions")
+      .internal()
+      .doc(
+        """ When converting a catalog Parquet table, whether to use the partition information from
+          | the Metastore catalog and only commit files under the directories of active partitions.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -564,6 +573,17 @@ trait DeltaSQLConfBase {
           |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
           |If disabled, it falls back to the old behavior
           |to replace on partition columns only.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACEWHERE_METRICS_ENABLED =
+    buildConf("replaceWhere.dataColumns.metrics.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, replaceWhere operations metrics on arbitrary expression and
+          |arbitrary columns is enabled. This will not report row level metrics for partitioned
+          |tables and tables with no stats.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

@@ -15,7 +15,7 @@
 #
 
 from typing import (
-    TYPE_CHECKING, cast, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
+    TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
@@ -278,6 +278,23 @@ class DeltaTable(object):
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
+    @since(2.1)  # type: ignore[arg-type]
+    def details(self) -> DataFrame:
+        """
+        Get the details of a Delta table such as the format, name, and size.
+
+        Example::
+
+            detailsDF = deltaTable.details() # get the full details of the table
+
+        :return Information of the table (format, name, size, etc.)
+        :rtype: pyspark.sql.DataFrame
+        """
+        return DataFrame(
+            self._jdt.details(),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
+
     @classmethod
     @since(0.4)  # type: ignore[arg-type]
     def convertToDelta(
@@ -331,25 +348,41 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.4)  # type: ignore[arg-type]
-    def forPath(cls, sparkSession: SparkSession, path: str) -> "DeltaTable":
+    def forPath(
+        cls,
+        sparkSession: SparkSession,
+        path: str,
+        hadoopConf: Dict[str, str] = dict()
+    ) -> "DeltaTable":
         """
-        Create a DeltaTable for the data at the given `path` using the given SparkSession.
+        Instantiate a :class:`DeltaTable` object representing the data at the given path,
+        If the given path is invalid (i.e. either no table exists or an existing table is
+        not a Delta table), it throws a `not a Delta table` error.
 
         :param sparkSession: SparkSession to use for loading the table
         :type sparkSession: pyspark.sql.SparkSession
+        :param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked
+                           up by `DeltaTable` to access the file system when executing queries.
+                           Other configurations will not be allowed.
+        :type hadoopConf: optional dict with str as key and str as value.
         :return: loaded Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
 
         Example::
 
-            deltaTable = DeltaTable.forPath(spark, "/path/to/table")
+            hadoopConf = {"fs.s3a.access.key" : "<access-key>",
+                       "fs.s3a.secret.key": "secret-key"}
+            deltaTable = DeltaTable.forPath(
+                           spark,
+                           "/path/to/table",
+                           hadoopConf)
         """
         assert sparkSession is not None
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
 
-        jdt = jvm.io.delta.tables.DeltaTable.forPath(jsparkSession, path)
+        jdt = jvm.io.delta.tables.DeltaTable.forPath(jsparkSession, path, hadoopConf)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
@@ -358,7 +391,13 @@ class DeltaTable(object):
         cls, sparkSession: SparkSession, tableOrViewName: str
     ) -> "DeltaTable":
         """
-        Create a DeltaTable using the given table or view name using the given SparkSession.
+        Instantiate a :class:`DeltaTable` object using the given table or view name. If the given
+        tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
+        Delta table), it throws a `not a Delta table` error.
+
+        The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+        delta.`path`), If so, instantiate a :class:`DeltaTable` object representing the data at
+        the given path (consistent with the `forPath`).
 
         :param sparkSession: SparkSession to use for loading the table
         :param tableOrViewName: name of the table or view

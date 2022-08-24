@@ -23,23 +23,19 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
-import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
-
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.{Metadata => FieldMetadata}
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
  * SQL syntax to create a table with generated columns.
@@ -265,7 +261,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           }
         case other =>
           // Should not happen since `select` should use `Project`.
-          throw new IllegalStateException(s"Expected Project but got $other")
+          throw DeltaErrors.unexpectedProject(other.toString())
       }
     // Converting columns to lower case is fine since Delta's schema is always case insensitive.
     generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
@@ -374,7 +370,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           }
         case other =>
           // Should not happen since `select` should use `Project`.
-          throw new IllegalStateException(s"Expected Project but got $other")
+          throw DeltaErrors.unexpectedProject(other.toString())
       }
     extractedPartitionExprs.groupBy(_._1).map { case (name, group) =>
       val groupedExprs = group.map(_._2)

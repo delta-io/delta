@@ -17,14 +17,13 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.{File, IOException}
+import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.concurrent.Future
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -41,7 +40,6 @@ import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
@@ -53,7 +51,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.util.{Clock, SystemClock, Utils}
+import org.apache.spark.util._
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -271,7 +269,7 @@ class DeltaLog private(
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
       lastSeenVersion = version
-      (version, store.read(p, hadoopConf).map(Action.fromJson))
+      (version, store.read(status, hadoopConf).map(Action.fromJson))
     }
   }
 
@@ -379,6 +377,8 @@ class DeltaLog private(
     val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
 
+    val hadoopOptions = snapshot.metadata.format.options ++ options
+
     val relation = HadoopFsRelation(
       fileIndex,
       partitionSchema =
@@ -391,7 +391,7 @@ class DeltaLog private(
           ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.deltaLog.fileFormat(snapshot.metadata),
-      snapshot.metadata.format.options)(spark)
+      hadoopOptions)(spark)
 
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
@@ -478,7 +478,8 @@ object DeltaLog extends DeltaLogging {
 
   /**
    * The key type of `DeltaLog` cache. It's a pair of the canonicalized table path and the file
-   * system options (options starting with "fs." prefix) passed into `DataFrameReader/Writer`
+   * system options (options starting with "fs." or "dfs." prefix) passed into
+   * `DataFrameReader/Writer`
    */
   private type DeltaLogCacheKey = (Path, Map[String, String])
 
@@ -592,7 +593,9 @@ object DeltaLog extends DeltaLogging {
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
         // We pick up only file system options so that we don't pass any parquet or json options to
         // the code that reads Delta transaction logs.
-        options.filterKeys(_.startsWith("fs.")).toMap
+        options.filterKeys { k =>
+          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+        }.toMap
       } else {
         Map.empty
       }

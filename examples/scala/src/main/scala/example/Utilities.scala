@@ -63,6 +63,9 @@ object Utilities {
     println("Describe History for the table")
     deltaTable.history().show()
 
+    println("Describe Details for the table")
+    deltaTable.details().show()
+
     // Generate manifest
     println("Generate Manifest files")
     deltaTable.generate("SYMLINK_FORMAT_MANIFEST")

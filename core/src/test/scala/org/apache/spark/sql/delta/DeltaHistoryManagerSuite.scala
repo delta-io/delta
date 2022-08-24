@@ -16,23 +16,24 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 import java.net.URI
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
-import java.util.Locale
+import java.util.{Date, Locale}
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
@@ -41,7 +42,8 @@ import org.apache.spark.util.Utils
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
-    with SharedSparkSession    with GivenWhenThen {
+    with SharedSparkSession    with GivenWhenThen
+    with DeltaSQLCommandTest {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -64,6 +66,22 @@ trait DeltaTimeTravelTests extends QueryTest
     }
   }
 
+  protected def versionAsOf(table: String, version: Long): String = {
+    s"$table version as of $version"
+  }
+
+  protected def timestampAsOf(table: String, expr: String): String = {
+    s"$table timestamp as of $expr"
+  }
+
+  protected def verifyLogging(
+      tableVersion: Long,
+      queriedVersion: Long,
+      accessType: String,
+      apiUsed: String)(f: => Unit): Unit = {
+    // TODO: would be great to verify our logging metrics
+  }
+
   protected def getTableLocation(table: String): String = {
     spark.sessionState.catalog.getTableMetadata(TableIdentifier(table)).location.toString
   }
@@ -80,6 +98,44 @@ trait DeltaTimeTravelTests extends QueryTest
     }
   }
 
+  protected def generateCommitsAtPath(table: String, path: String, commits: Long*): Unit = {
+    generateCommitsBase(table, Some(path), commits: _*)
+  }
+
+  /** Generate commits with the given timestamp in millis. */
+  protected def generateCommits(table: String, commits: Long*): Unit = {
+    generateCommitsBase(table, None, commits: _*)
+  }
+
+  private def generateCommitsBase(table: String, path: Option[String], commits: Long*): Unit = {
+    var commitList = commits.toSeq
+    if (commitList.isEmpty) return
+    if (!spark.sessionState.catalog.tableExists(TableIdentifier(table))) {
+      if (path.isDefined) {
+        spark.range(0, 10).write.format("delta")
+          .mode("append")
+          .option("path", path.get)
+          .saveAsTable(table)
+      } else {
+        spark.range(0, 10).write.format("delta")
+          .mode("append")
+          .saveAsTable(table)
+      }
+      val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
+      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+      file.setLastModified(commitList.head)
+      commitList = commits.slice(1, commits.length) // we already wrote the first commit here
+      var startVersion = deltaLog.snapshot.version + 1
+      commitList.foreach { ts =>
+        val rangeStart = startVersion * 10
+        val rangeEnd = rangeStart + 10
+        spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
+        val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+        file.setLastModified(ts)
+        startVersion += 1
+      }
+    }
+  }
 
   /** Alternate for `withTables` as we leave some tables in an unusable state for clean up */
   protected def withTable(tableName: String, dir: String)(f: => Unit): Unit = {
@@ -161,6 +217,141 @@ trait DeltaTimeTravelTests extends QueryTest
 
       intercept[AnalysisException] {
         spark.table(s"$format.`$path@v0`").count()
+      }
+    }
+  }
+
+  ///////////////////////////
+  // Time Travel SQL Tests //
+  ///////////////////////////
+
+  test("AS OF support does not impact non-delta tables") {
+    withTable("t1") {
+      spark.range(10).write.format("parquet").mode("append").saveAsTable("t1")
+      spark.range(10, 20).write.format("parquet").mode("append").saveAsTable("t1")
+
+      // We should still use the default, non-delta code paths for a non-delta table.
+      // For parquet, that means to fail with QueryCompilationErrors::tableNotSupportTimeTravelError
+      val e = intercept[UnsupportedOperationException] {
+        spark.sql("SELECT * FROM t1 VERSION AS OF 0")
+      }.getMessage
+      assert(e.contains("does not support time travel"))
+    }
+  }
+
+  // scalastyle:off line.size.limit
+  test("as of timestamp in between commits should use commit before timestamp") {
+    // scalastyle:off line.size.limit
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
+
+      verifyLogging(2L, 0L, "timestamp", "sql") {
+        checkAnswer(
+          sql(s"select count(*) from ${timestampAsOf(tblName, start + 10.minutes)}"),
+          Row(10L)
+        )
+      }
+
+
+      verifyLogging(2L, 0L, "timestamp", "sql") {
+        checkAnswer(
+          sql("select count(*) from " +
+            s"${timestampAsOf(s"delta.`${getTableLocation(tblName)}`", start + 10.minutes)}"),
+          Row(10L)
+        )
+      }
+
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start + 30.minutes)}"),
+        Row(20L)
+      )
+    }
+  }
+
+  test("as of timestamp on exact timestamp") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes)
+
+      // Simulate getting the timestamp directly from Spark SQL
+      val ts = Seq(new Timestamp(start), new Timestamp(start + 20.minutes)).toDF("ts")
+        .select($"ts".cast("string")).as[String].collect()
+        .map(i => s"'$i'")
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, ts(0))}"),
+        Row(10L)
+      )
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start)}"),
+        Row(10L)
+      )
+
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start + 20.minutes)}"),
+        Row(20L)
+      )
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, ts(1))}"),
+        Row(20L)
+      )
+    }
+  }
+
+  test("as of with versions") {
+    val tblName = s"delta_table"
+    withTempDir { dir =>
+      withTable(tblName, dir.toString) {
+        val start = 1540415658000L
+        generateCommitsAtPath(tblName, dir.toString, start, start + 20.minutes, start + 40.minutes)
+        verifyLogging(2L, 0L, "version", "sql") {
+          checkAnswer(
+            sql(s"select count(*) from ${versionAsOf(tblName, 0)}"),
+            Row(10L)
+          )
+        }
+
+
+        verifyLogging(2L, 0L, "version", "dfReader") {
+          checkAnswer(
+            spark.read.format("delta").option("versionAsOf", "0")
+              .load(getTableLocation(tblName)).groupBy().count(),
+            Row(10)
+          )
+        }
+        checkAnswer(
+          sql(s"select count(*) from ${versionAsOf(tblName, 1)}"),
+          Row(20L)
+        )
+        checkAnswer(
+          spark.read.format("delta").option("versionAsOf", 1)
+            .load(getTableLocation(tblName)).groupBy().count(),
+          Row(20)
+        )
+        checkAnswer(
+          sql(s"select count(*) from ${versionAsOf(tblName, 2)}"),
+          Row(30L)
+        )
+        val e1 = intercept[AnalysisException] {
+          sql(s"select count(*) from ${versionAsOf(tblName, 3)}").collect()
+        }
+        assert(e1.getMessage.contains("[0, 2]"))
+
+        val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+        new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+        // Delta Lake will create a DeltaTableV2 explicitly with time travel options in the catalog.
+        // These options will be verified by DeltaHistoryManager, which will throw an
+        // AnalysisException.
+        val e2 = intercept[AnalysisException] {
+          sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
+        }
+        assert(e2.getMessage.contains("No reproducible commits found at"))
       }
     }
   }

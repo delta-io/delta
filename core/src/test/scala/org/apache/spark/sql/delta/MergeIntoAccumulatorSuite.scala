@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent, SparkListenerNodeExcluded, SparkListenerTaskEnd}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.status.TaskDataWrapper
 import org.apache.spark.util.JsonProtocol
@@ -78,11 +78,27 @@ class MergeIntoAccumulatorSuite
   }
 
   test("accumulators used by MERGE should not fail Spark event log generation") {
+    // SPARK-39489: must use reflection to shim over API changes in JsonProtocol between
+    // Spark 3.3 and 3.4:
+    val writeEvent: SparkListenerEvent => Unit = {
+      val jsonProtocolClass = JsonProtocol.getClass
+      val method = try {
+        // Spark 3.4+:
+        jsonProtocolClass.getDeclaredMethod("sparkEventToJsonString", classOf[SparkListenerEvent])
+      } catch {
+        case _: NoSuchMethodException =>
+          // Spark 3.3 and earlier:
+          jsonProtocolClass.getDeclaredMethod("sparkEventToJson", classOf[SparkListenerEvent])
+      }
+      (e: SparkListenerEvent) => method.invoke(JsonProtocol, e)
+    }
+    // Check that the reflection-based invocation works properly:
+    writeEvent(SparkListenerNodeExcluded(0, "host", 1))
     // Register a listener to convert `SparkListenerTaskEnd` to json and catch failures.
     val failure = new AtomicReference[Throwable]()
     val listener = new SparkListener {
       override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = {
-        try JsonProtocol.sparkEventToJson(taskEnd) catch {
+        try writeEvent(taskEnd) catch {
           case t: Throwable => failure.compareAndSet(null, t)
         }
       }

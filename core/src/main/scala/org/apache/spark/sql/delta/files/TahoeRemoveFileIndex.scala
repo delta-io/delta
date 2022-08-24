@@ -18,9 +18,9 @@ package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -59,15 +59,12 @@ class TahoeRemoveFileIndex(
           val newPartitionVals = r.partitionValues +
             (CDC_COMMIT_VERSION -> version.toString) +
             (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
-            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
+            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
           AddFile(r.path, newPartitionVals, r.size.getOrElse(0L), 0, r.dataChange, tags = r.tags)
         }
     }
-    DeltaLog.filterFileList(
-        partitionSchema,
-        spark.createDataset(addFiles)(addFileEncoder).toDF(),
-        partitionFilters)
-      .as[AddFile](addFileEncoder)
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
       .collect()
   }
 

@@ -379,7 +379,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.DISK_ONLY)
@@ -389,7 +389,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "NONE") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.NONE)
@@ -421,70 +421,6 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(status.isDir === obj.isDir)
       assert(status.length === obj.length)
       assert(status.path === obj.path)
-    }
-  }
-
-  test("LogSegment json serialization/deserialization") {
-    val fs1 = SerializableFileStatus("s3://j1", length = 23L, isDir = false, modificationTime = 1L)
-    val fs2 = SerializableFileStatus("s3://j2", length = 0L, isDir = false, modificationTime = 2L)
-    val fs3 = SerializableFileStatus("s3://ch1", length = 24L, isDir = false, modificationTime = 3L)
-
-    val logSegmentEmpty = LogSegment.empty(new Path("s3://p1/p2"))
-    val logSegmentFromConstructor1 = LogSegment(
-      logPath = "s3://a/b",
-      version = 23L,
-      serializableDeltas = Seq(fs1, fs2),
-      serializableCheckpoint = Seq(fs3),
-      checkpointVersionOpt = Some(20L),
-      lastCommitTimestamp = 32332324L)
-    val logSegmentFromConstructor2 = LogSegment(
-      logPath = new Path("s3://a/b"),
-      version = 23L,
-      deltas = Seq(fs1.toFileStatus, fs2.toFileStatus),
-      checkpoint = Seq(fs3.toFileStatus),
-      checkpointVersionOpt = Some(20L),
-      lastCommitTimestamp = 32332324L)
-
-    val jsonForEmptySegment = """{
-                                |  "logPath" : "s3://p1/p2",
-                                |  "version" : -1,
-                                |  "serializableDeltas" : [ ],
-                                |  "serializableCheckpoint" : [ ],
-                                |  "lastCommitTimestamp" : -1
-                                |}""".stripMargin
-
-    val jsonForNonEmptyLogSegment = """{
-                                      |  "logPath" : "s3://a/b",
-                                      |  "version" : 23,
-                                      |  "serializableDeltas" : [ {
-                                      |    "path" : "s3://j1",
-                                      |    "length" : 23,
-                                      |    "isDir" : false,
-                                      |    "modificationTime" : 1
-                                      |  }, {
-                                      |    "path" : "s3://j2",
-                                      |    "length" : 0,
-                                      |    "isDir" : false,
-                                      |    "modificationTime" : 2
-                                      |  } ],
-                                      |  "serializableCheckpoint" : [ {
-                                      |    "path" : "s3://ch1",
-                                      |    "length" : 24,
-                                      |    "isDir" : false,
-                                      |    "modificationTime" : 3
-                                      |  } ],
-                                      |  "checkpointVersionOpt" : 20,
-                                      |  "lastCommitTimestamp" : 32332324
-                                      |}""".stripMargin
-
-    val testCases = Seq(
-      logSegmentEmpty -> jsonForEmptySegment,
-      logSegmentFromConstructor1 -> jsonForNonEmptyLogSegment,
-      logSegmentFromConstructor2 -> jsonForNonEmptyLogSegment
-    )
-    for ((obj, json) <- testCases) {
-      assert(JsonUtils.toPrettyJson(obj) === json)
-      assert(JsonUtils.fromJson[LogSegment](json) === obj)
     }
   }
 

@@ -733,8 +733,9 @@ trait DeltaTableCreationTests
                |LOCATION '$path'
              """.stripMargin)
         }.getMessage
+        var catalogPrefix = ""
         assert(e.contains(
-          "Cannot create table ('`default`.`delta_test`'). The associated location"))
+          s"Cannot create table ('$catalogPrefix`default`.`delta_test`'). The associated location"))
       }
     }
   }
@@ -1968,14 +1969,14 @@ class DeltaTableCreationSuite
       // checkpointing should work
       withEmptyTable(emptyTableName) {
         getDeltaLog.checkpoint()
-        assert(getDeltaLog.lastCheckpoint.exists(_.version == 0))
+        assert(getDeltaLog.readLastCheckpointFile().exists(_.version == 0))
         // run some operations
         withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
           sql(s"INSERT INTO $emptyTableName VALUES (1,2,3)")
           checkAnswer(spark.read.table(emptyTableName), Seq(Row(1, 2, 3)))
         }
         getDeltaLog.checkpoint()
-        assert(getDeltaLog.lastCheckpoint.exists(_.version == 1))
+        assert(getDeltaLog.readLastCheckpointFile().exists(_.version == 1))
       }
 
       withEmptyTable(emptyTableName) {

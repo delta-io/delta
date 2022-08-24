@@ -17,12 +17,12 @@
 package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddCDCFile, RemoveFile}
+import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.util.StateCache
 
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.functions._
 
 /**
@@ -51,14 +51,15 @@ class DeltaSourceSnapshot(
   }
 
   protected def initialFiles: Dataset[IndexedFile] = {
-    import spark.implicits._
+    import spark.implicits.rddToDatasetHolder
+    import org.apache.spark.sql.delta.implicits._
 
     cacheDS(
       snapshot.allFiles.sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
-        .withColumn("remove", typedLit(Option.empty[RemoveFile]))
-        .withColumn("cdc", typedLit(Option.empty[AddCDCFile]))
+        .withColumn("remove", SingleAction.nullLitForRemoveFile)
+        .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
         .as[IndexedFile],
@@ -80,7 +81,7 @@ trait SnapshotIterator {
   private var result: Iterable[IndexedFile] = _
 
   def iterator(): Iterator[IndexedFile] = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     if (result == null) {
       result = DeltaLog.filterFileList(
         snapshot.metadata.partitionSchema,

@@ -37,6 +37,14 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
+    def test_forPathWithOptions(self) -> None:
+        path = self.tempFile
+        fsOptions = {"fs.fake.impl": "org.apache.spark.sql.delta.FakeFileSystem",
+                     "fs.fake.impl.disable.cache": "true"}
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, path, fsOptions).toDF()
+        self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
+
     def test_forName(self) -> None:
         self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
         df = DeltaTable.forName(self.spark, "test").toDF()
@@ -326,6 +334,16 @@ class DeltaTableTests(DeltaTestCase):
             lastMode,
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
+
+    def test_details(self) -> None:
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+        details = dt.details()
+        self.__checkAnswer(
+            details.select('format'),
+            [Row('delta')],
+            StructType([StructField('format', StringType(), True)])
+        )
 
     def test_vacuum(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])

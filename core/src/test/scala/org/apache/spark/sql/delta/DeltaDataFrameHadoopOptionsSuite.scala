@@ -96,8 +96,8 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils
           .mode("append")
           .save(path)
         // Ensure we did write the checkpoint and read it back
-        assert(
-          DeltaLog.forTable(spark, path, fakeFileSystemOptions).lastCheckpoint.get.version == 1)
+        val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+        assert(deltaLog.readLastCheckpointFile().get.version == 1)
       }
     }
   }

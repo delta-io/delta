@@ -373,7 +373,7 @@ trait OptimisticTransactionLegacyTests
   }
 
   test("block commit when full table read conflicts with add in any partition") {
-    withLog(addA_P1 :: Nil) { log =>
+    withLog(addA_P1 :: addC_P2 :: Nil) { log =>
       val tx1 = log.startTransaction()
       tx1.filterFiles()
 
@@ -544,7 +544,7 @@ trait OptimisticTransactionLegacyTests
   }
 
   test("block concurrent full table scan after concurrent write completes") {
-    withLog(addA_P1 :: addC_P2 :: addE_P3 :: Nil) { log =>
+    withLog(addA_P1 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
 
       val tx2 = log.startTransaction()
@@ -562,7 +562,7 @@ trait OptimisticTransactionLegacyTests
   }
 
   test("block concurrent commit mixed metadata and data predicate") {
-    withLog(addA_P1 :: addC_P2 :: addE_P3 :: Nil) { log =>
+    withLog(addA_P1 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
 
       val tx2 = log.startTransaction()

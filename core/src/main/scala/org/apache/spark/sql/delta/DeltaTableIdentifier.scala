@@ -22,7 +22,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An identifier for a Delta table containing one of the path or the table identifier.

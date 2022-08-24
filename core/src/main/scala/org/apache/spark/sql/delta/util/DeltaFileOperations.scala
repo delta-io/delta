@@ -215,7 +215,7 @@ object DeltaFileOperations extends DeltaLogging {
       hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
       fileListingParallelism: Option[Int] = None,
       listAsDirectories: Boolean = true): Dataset[SerializableFileStatus] = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
     val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>

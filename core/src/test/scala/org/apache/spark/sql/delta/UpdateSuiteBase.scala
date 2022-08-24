@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.util.Locale
 
@@ -873,17 +874,17 @@ abstract class UpdateSuiteBase
 
   protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
     testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromSelect(text, isSQLTempView)
-        executeUpdate(
-          "v",
-          where = "key >= 1 and value < 3",
-          set = "value = key + value, key = key + 1"
-        )
-        checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        }
       }
-    }
   }
 
   testComplexTempViews("nontrivial projection")(
@@ -895,4 +896,5 @@ abstract class UpdateSuiteBase
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
+
 }

@@ -32,10 +32,9 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
-import org.apache.spark.sql.catalyst.expressions.BasePredicate
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, BasePredicate, Expression, Literal, NamedExpression, PredicateHelper, UnsafeProjection}
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -44,7 +43,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{DataTypes, StructType}
+import org.apache.spark.sql.types.{DataTypes, LongType, StructType}
 
 case class MergeDataSizes(
   @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -91,6 +90,11 @@ case class MergeStats(
     // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
     matchedStats: Seq[MergeClauseStats],
     notMatchedStats: Seq[MergeClauseStats],
+
+    // Timings
+    executionTimeMs: Long,
+    scanTimeMs: Long,
+    rewriteTimeMs: Long,
 
     // Data sizes of source and target at different stages of processing
     source: MergeDataSizes,
@@ -140,6 +144,11 @@ object MergeStats {
       // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
       matchedStats = matchedClauses.map(MergeClauseStats(_)),
       notMatchedStats = notMatchedClauses.map(MergeClauseStats(_)),
+
+      // Timings
+      executionTimeMs = metrics("executionTimeMs").value,
+      scanTimeMs = metrics("scanTimeMs").value,
+      rewriteTimeMs = metrics("rewriteTimeMs").value,
 
       // Data sizes of source and target at different stages of processing
       source = MergeDataSizes(rows = Some(metrics("numSourceRows").value)),
@@ -221,6 +230,12 @@ case class MergeIntoCommand(
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
 
+  override val output: Seq[Attribute] = Seq(
+    AttributeReference("num_affected_rows", LongType)(),
+    AttributeReference("num_updated_rows", LongType)(),
+    AttributeReference("num_deleted_rows", LongType)(),
+    AttributeReference("num_inserted_rows", LongType)())
+
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
   /**
@@ -274,13 +289,17 @@ case class MergeIntoCommand(
     "numTargetPartitionsAddedTo" ->
       createMetric(sc, "number of target partitions to which files were added"),
     "executionTimeMs" ->
-      createMetric(sc, "time taken to execute the entire operation"),
+      createTimingMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" ->
-      createMetric(sc, "time taken to scan the files for matches"),
+      createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createMetric(sc, "time taken to rewrite the matched files"))
+      createTimingMetric(sc, "time taken to rewrite the matched files"))
 
   override def run(spark: SparkSession): Seq[Row] = {
+    metrics("executionTimeMs").set(0)
+    metrics("scanTimeMs").set(0)
+    metrics("rewriteTimeMs").set(0)
+
     if (migratedSchema.isDefined) {
       // Block writes of void columns in the Delta log. Currently void columns are not properly
       // supported and are dropped on read, but this is not enough for merge command that is also
@@ -356,7 +375,9 @@ case class MergeIntoCommand(
     // to be outside the recordMergeOperation because this method will update some metric.
     val executionId = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     SQLMetrics.postDriverMetricUpdates(spark.sparkContext, executionId, metrics.values.toSeq)
-    Seq.empty
+    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
+            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
+            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
   }
 
   /**
@@ -374,10 +395,10 @@ case class MergeIntoCommand(
     spark.sparkContext.register(touchedFilesAccum, TOUCHED_FILES_ACCUM_NAME)
 
     // UDFs to records touched files names and add them to the accumulator
-    val recordTouchedFileName = udf { (fileName: String) => {
+    val recordTouchedFileName = DeltaUDF.intFromString { fileName =>
       touchedFilesAccum.add(fileName)
       1
-    }}.asNondeterministic()
+    }.asNondeterministic()
 
     // Skip data based on the merge condition
     val targetOnlyPredicates =
@@ -409,10 +430,10 @@ case class MergeIntoCommand(
     // Get multiple matches and simultaneously collect (using touchedFilesAccum) the file names
     // multipleMatchCount = # of target rows with more than 1 matching source row (duplicate match)
     // multipleMatchSum = total # of duplicate matched rows
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     val (multipleMatchCount, multipleMatchSum) = matchedRowCounts
       .filter("count > 1")
-      .select(coalesce(count("*"), lit(0)), coalesce(sum("count"), lit(0)))
+      .select(coalesce(count(new Column("*")), lit(0)), coalesce(sum("count"), lit(0)))
       .as[(Long, Long)]
       .collect()
       .head
@@ -553,7 +574,32 @@ case class MergeIntoCommand(
   ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
     import org.apache.spark.sql.catalyst.expressions.Literal.{TrueLiteral, FalseLiteral}
 
-    val targetOutputCols = getTargetOutputCols(deltaTxn)
+    val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
+
+    var targetOutputCols = getTargetOutputCols(deltaTxn)
+    var outputRowSchema = deltaTxn.metadata.schema
+
+    // When we have duplicate matches (only allowed when the whenMatchedCondition is a delete with
+    // no match condition) we will incorrectly generate duplicate CDC rows.
+    // Duplicate matches can be due to:
+    // - Duplicate rows in the source w.r.t. the merge condition
+    // - A target-only or source-only merge condition, which essentially turns our join into a cross
+    //   join with the target/source satisfiying the merge condition.
+    // These duplicate matches are dropped from the main data output since this is a delete
+    // operation, but the duplicate CDC rows are not removed by default.
+    // See https://github.com/delta-io/delta/issues/1274
+
+    // We address this specific scenario by adding row ids to the target before performing our join.
+    // There should only be one CDC delete row per target row so we can use these row ids to dedupe
+    // the duplicate CDC delete rows.
+
+    // We also need to address the scenario when there are duplicate matches with delete and we
+    // insert duplicate rows. Here we need to additionally add row ids to the source before the
+    // join to avoid dropping these valid duplicate inserted rows and their corresponding cdc rows.
+
+    // When there is an insert clause, we set SOURCE_ROW_ID_COL=null for all delete rows because we
+    // need to drop the duplicate matches.
+    val isDeleteWithDuplicateMatchesAndCdc = multipleMatchDeleteOnlyOvercount.nonEmpty && cdcEnabled
 
     // Generate a new logical plan that has same output attributes exprIds as the target plan.
     // This allows us to apply the existing resolved update/insert expressions.
@@ -583,16 +629,21 @@ case class MergeIntoCommand(
     // with value `true`, one to each side of the join. Whether this field is null or not after
     // the outer join, will allow us to identify whether the resultant joined row was a
     // matched inner result or an unmatched result with null on one side.
-    val joinedDF = {
-      val sourceDF = Dataset.ofRows(spark, source)
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
-      val targetDF = Dataset.ofRows(spark, newTarget)
-        .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
-      sourceDF.join(targetDF, new Column(condition), joinType)
+    // We add row IDs to the targetDF if we have a delete-when-matched clause with duplicate
+    // matches and CDC is enabled, and additionally add row IDs to the source if we also have an
+    // insert clause. See above at isDeleteWithDuplicateMatchesAndCdc definition for more details.
+    var sourceDF = Dataset.ofRows(spark, source)
+      .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+    var targetDF = Dataset.ofRows(spark, newTarget)
+      .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
+    if (isDeleteWithDuplicateMatchesAndCdc) {
+      targetDF = targetDF.withColumn(TARGET_ROW_ID_COL, monotonically_increasing_id())
+      if (notMatchedClauses.nonEmpty) { // insert clause
+        sourceDF = sourceDF.withColumn(SOURCE_ROW_ID_COL, monotonically_increasing_id())
+      }
     }
-
+    val joinedDF = sourceDF.join(targetDF, new Column(condition), joinType)
     val joinedPlan = joinedDF.queryExecution.analyzed
-    val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
 
     def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {
       tryResolveReferencesForExpressions(spark, exprs, joinedPlan)
@@ -619,13 +670,38 @@ case class MergeIntoCommand(
     // Depending on the clause and whether CDC is enabled, we output between 0 and 3 rows, as a
     // Seq[Seq[Expression]]
 
+    // There is one corner case outlined above at isDeleteWithDuplicateMatchesAndCdc definition.
+    // When we have a delete-ONLY merge with duplicate matches we have N + 4 columns:
+    // N target cols, TARGET_ROW_ID_COL, ROW_DROPPED_COL, INCR_ROW_COUNT_COL, CDC_TYPE_COLUMN_NAME
+    // When we have a delete-when-matched merge with duplicate matches + an insert clause, we have
+    // N + 5 columns:
+    // N target cols, TARGET_ROW_ID_COL, SOURCE_ROW_ID_COL, ROW_DROPPED_COL, INCR_ROW_COUNT_COL,
+    // CDC_TYPE_COLUMN_NAME
+    // These ROW_ID_COL will always be dropped before the final write.
+
+    if (isDeleteWithDuplicateMatchesAndCdc) {
+      targetOutputCols = targetOutputCols :+ UnresolvedAttribute(TARGET_ROW_ID_COL)
+      outputRowSchema = outputRowSchema.add(TARGET_ROW_ID_COL, DataTypes.LongType)
+      if (notMatchedClauses.nonEmpty) { // there is an insert clause, make SRC_ROW_ID_COL=null
+        targetOutputCols = targetOutputCols :+ Alias(Literal(null), SOURCE_ROW_ID_COL)()
+        outputRowSchema = outputRowSchema.add(SOURCE_ROW_ID_COL, DataTypes.LongType)
+      }
+    }
+
+    if (cdcEnabled) {
+      outputRowSchema = outputRowSchema
+        .add(ROW_DROPPED_COL, DataTypes.BooleanType)
+        .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
+        .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
+    }
+
     def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
       val exprs = clause match {
         case u: DeltaMergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false and
           // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
           val mainDataOutput = u.resolvedActions.map(_.expr) :+ FalseLiteral :+
-            incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+            incrUpdatedCountExpr :+ CDC_TYPE_NOT_CDC
           if (cdcEnabled) {
             // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
@@ -645,13 +721,12 @@ case class MergeIntoCommand(
           // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
           // CDC_TYPE_NOT_CDC
           val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
-            Literal(CDC_TYPE_NOT_CDC)
+            CDC_TYPE_NOT_CDC
           if (cdcEnabled) {
             // For delete we do a no-op copy with ROW_DELETED_COL = false, INCR_ROW_COUNT_COL as a
             // no-op (because the metric will be incremented in `mainDataOutput`) and
             // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
-            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
-              Literal(CDC_TYPE_DELETE)
+            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+ CDC_TYPE_DELETE
             Seq(mainDataOutput, deleteCdcOutput)
           } else {
             Seq(mainDataOutput)
@@ -663,9 +738,20 @@ case class MergeIntoCommand(
     def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Seq[Expression]] = {
       // Generate insert expressions and set ROW_DELETED_COL = false and
       // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
+      val insertExprs = clause.resolvedActions.map(_.expr)
       val mainDataOutput = resolveOnJoinedPlan(
-        clause.resolvedActions.map(_.expr) :+ FalseLiteral :+ incrInsertedCountExpr :+
-          Literal(CDC_TYPE_NOT_CDC))
+        if (isDeleteWithDuplicateMatchesAndCdc) {
+          // Must be delete-when-matched merge with duplicate matches + insert clause
+          // Therefore we must keep the target row id and source row id. Since this is a not-matched
+          // clause we know the target row-id will be null. See above at
+          // isDeleteWithDuplicateMatchesAndCdc definition for more details.
+          insertExprs :+
+            Alias(Literal(null), TARGET_ROW_ID_COL)() :+ UnresolvedAttribute(SOURCE_ROW_ID_COL) :+
+            FalseLiteral :+ incrInsertedCountExpr :+ CDC_TYPE_NOT_CDC
+        } else {
+          insertExprs :+ FalseLiteral :+ incrInsertedCountExpr :+ CDC_TYPE_NOT_CDC
+        }
+      )
       if (cdcEnabled) {
         // For insert we have the same expressions as for mainDataOutput, but with
         // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
@@ -683,15 +769,6 @@ case class MergeIntoCommand(
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
-    val outputRowSchema = if (!cdcEnabled) {
-      deltaTxn.metadata.schema
-    } else {
-      deltaTxn.metadata.schema
-        .add(ROW_DROPPED_COL, DataTypes.BooleanType)
-        .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
-        .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
-    }
-
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
     val outputRowEncoder = RowEncoder(outputRowSchema).resolveAndBind()
 
@@ -704,17 +781,37 @@ case class MergeIntoCommand(
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
         resolveOnJoinedPlan(targetOutputCols :+ FalseLiteral :+ incrNoopCountExpr :+
-          Literal(CDC_TYPE_NOT_CDC)),
+          CDC_TYPE_NOT_CDC),
       deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ TrueLiteral :+ TrueLiteral :+
-          Literal(CDC_TYPE_NOT_CDC)),
+        resolveOnJoinedPlan(targetOutputCols :+ TrueLiteral :+ TrueLiteral :+ CDC_TYPE_NOT_CDC),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
 
-    val outputDF =
+    var outputDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
-        .drop(ROW_DROPPED_COL, INCR_ROW_COUNT_COL)
+
+    if (isDeleteWithDuplicateMatchesAndCdc) {
+      // When we have a delete when matched clause with duplicate matches we have to remove
+      // duplicate CDC rows. This scenario is further explained at
+      // isDeleteWithDuplicateMatchesAndCdc definition.
+
+      // To remove duplicate CDC rows generated by the duplicate matches we dedupe by
+      // TARGET_ROW_ID_COL since there should only be one CDC delete row per target row.
+      // When there is an insert clause in addition to the delete clause we additionally dedupe by
+      // SOURCE_ROW_ID_COL and CDC_TYPE_COLUMN_NAME to avoid dropping valid duplicate inserted rows
+      // and their corresponding CDC rows.
+      val columnsToDedupeBy = if (notMatchedClauses.nonEmpty) { // insert clause
+        Seq(TARGET_ROW_ID_COL, SOURCE_ROW_ID_COL, CDC_TYPE_COLUMN_NAME)
+      } else {
+        Seq(TARGET_ROW_ID_COL)
+      }
+      outputDF = outputDF
+        .dropDuplicates(columnsToDedupeBy)
+        .drop(ROW_DROPPED_COL, INCR_ROW_COUNT_COL, TARGET_ROW_ID_COL, SOURCE_ROW_ID_COL)
+    } else {
+      outputDF = outputDF.drop(ROW_DROPPED_COL, INCR_ROW_COUNT_COL)
+    }
 
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
@@ -812,7 +909,7 @@ case class MergeIntoCommand(
   private def makeMetricUpdateUDF(name: String): Expression = {
     // only capture the needed metric in a local variable
     val metric = metrics(name)
-    udf { () => { metric += 1; true }}.asNondeterministic().apply().expr
+    DeltaUDF.boolean { () => metric += 1; true }.asNondeterministic().apply().expr
   }
 
   private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
@@ -873,6 +970,8 @@ object MergeIntoCommand {
   val TOUCHED_FILES_ACCUM_NAME = "internal.metrics.MergeIntoDelta.touchedFiles"
 
   val ROW_ID_COL = "_row_id_"
+  val TARGET_ROW_ID_COL = "_target_row_id_"
+  val SOURCE_ROW_ID_COL = "_source_row_id_"
   val FILE_NAME_COL = "_file_name_"
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
   val TARGET_ROW_PRESENT_COL = "_target_row_present_"

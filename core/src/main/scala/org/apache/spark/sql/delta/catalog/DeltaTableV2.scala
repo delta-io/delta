@@ -26,10 +26,10 @@ import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMappin
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
@@ -71,11 +71,12 @@ case class DeltaTableV2(
     }
   }
 
+
   // This MUST be initialized before the deltaLog object is created, in order to accurately
   // bound the creation time of the table.
-  private val creationTimeMs = System.currentTimeMillis()
-
-
+  private val creationTimeMs = {
+      System.currentTimeMillis()
+  }
 
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.

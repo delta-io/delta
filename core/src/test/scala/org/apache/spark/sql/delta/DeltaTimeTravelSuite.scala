@@ -27,8 +27,8 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
@@ -37,7 +37,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -647,6 +648,18 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+  test("timestamp as of expression for table in database") {
+    withDatabase("testDb") {
+      sql("CREATE DATABASE testDb")
+      withTable("tbl") {
+        spark.range(10).write.format("delta").saveAsTable("testDb.tbl")
+        val ts = sql("DESCRIBE HISTORY testDb.tbl").select("timestamp").head().getTimestamp(0)
+
+        sql(s"SELECT * FROM testDb.tbl TIMESTAMP AS OF " +
+          s"coalesce(CAST ('$ts' AS TIMESTAMP), current_date())")
+      }
+    }
+  }
 
   test("time travel with schema changes - should instantiate old schema") {
     withTempDir { dir =>
@@ -686,6 +699,48 @@ class DeltaTimeTravelSuite extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(identifierWithVersion(tblLoc, 0)),
         v0)
+    }
+  }
+
+  test("time travel support in SQL") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val start = 1540415658000L
+      generateCommits(tblLoc, start, start + 20.minutes)
+      val tableName = "testTable"
+
+      withTable(tableName) {
+        spark.sql(s"create table $tableName(id long) using delta location '$tblLoc'")
+
+        checkAnswer(
+          spark.sql(s"SELECT * from $tableName FOR VERSION AS OF 0"),
+          spark.read.option("versionAsOf", 0).format("delta").load(tblLoc))
+
+        checkAnswer(
+          spark.sql(s"SELECT * from $tableName VERSION AS OF 1"),
+          spark.read.option("versionAsOf", 1).format("delta").load(tblLoc))
+
+        val ex = intercept[VersionNotFoundException] {
+          spark.sql(s"SELECT * from $tableName FOR VERSION AS OF 2")
+        }
+        assert(ex.getMessage contains
+          "Cannot time travel Delta table to version 2. Available versions: [0, 1]")
+
+        checkAnswer(
+          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '2018-10-24 14:14:18'"),
+          spark.read.option("versionAsOf", 0).format("delta").load(tblLoc))
+
+        checkAnswer(
+          spark.sql(s"SELECT * from $tableName TIMESTAMP AS OF '2018-10-24 14:34:18'"),
+          spark.read.option("versionAsOf", 1).format("delta").load(tblLoc))
+
+        val ex2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
+          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '2018-10-24 20:14:18'")
+        }
+        assert(ex2.getMessage contains
+          "The provided timestamp: 2018-10-24 20:14:18.0 is after the " +
+            "latest commit timestamp of\n2018-10-24 14:34:18.0")
+      }
     }
   }
 }

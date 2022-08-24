@@ -81,6 +81,7 @@ object DeltaThrowableHelper
       messageParameters: _*)
   }
 
+
   def getSqlState(errorClass: String): String =
     Option(errorClass).flatMap(errorClassToInfoMap.get).flatMap(_.sqlState).orNull
 

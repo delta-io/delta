@@ -17,6 +17,12 @@
     ],
     "sqlState" : "2F000"
   },
+  "DELTA_ADD_COLUMN_PARENT_NOT_STRUCT" : {
+    "message" : [
+      "Cannot add <columnName> because its parent is not a StructType. Found <other>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND" : {
     "message" : [
       "Struct not found at position <position>"
@@ -158,6 +164,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
+    "message" : [
+      "The Delta table configuration <prop> cannot be specified by the user"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_RENAME_PATH" : {
     "message" : [
       "Cannot rename <currentPath> to <newPath>"
@@ -212,6 +224,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_UPDATE_OTHER_FIELD" : {
+    "message" : [
+      "Cannot update <tableName> field of type <typeName>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_UPDATE_STRUCT_FIELD" : {
     "message" : [
       "Cannot update <tableName> field <fieldName> type: update struct by adding, deleting, or updating its fields"
@@ -221,6 +239,12 @@
   "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION" : {
     "message" : [
       "Cannot use all columns for partition columns"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CANNOT_WRITE_INTO_VIEW" : {
+    "message" : [
+      "<table> is a view. Writes to a view are not supported."
     ],
     "sqlState" : "42000"
   },
@@ -257,6 +281,14 @@
   "DELTA_COLUMN_NOT_FOUND_IN_SCHEMA" : {
     "message" : [
       "Couldn't find column <columnName> in:\n<tableSchema>"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_COLUMN_PATH_NOT_NESTED" : {
+    "message" : [
+      "Expected <columnPath> to be a nested data type, but found <other>. Was looking for the",
+      "index of <column> in a nested field",
+      ""
     ],
     "sqlState" : "42000"
   },
@@ -364,6 +396,19 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING" : {
+    "message" : [
+      "The specified partitioning does not match the existing partitioning at <path>.",
+      "",
+      "== Specified ==",
+      "<specifiedColumns>",
+      "",
+      "== Existing ==",
+      "<existingColumns>",
+      ""
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY" : {
     "message" : [
       "The specified properties do not match the existing properties at <path>.",
@@ -386,6 +431,12 @@
   "DELTA_DATA_CHANGE_FALSE" : {
     "message" : [
       "Cannot change table metadata because the 'dataChange' option is set to false. Attempted operation: '<op>'."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
+    "message" : [
+      "Index <columnIndex> to drop column is lower than 0"
     ],
     "sqlState" : "42000"
   },
@@ -552,6 +603,12 @@
     ],
     "sqlState" : "2200G"
   },
+  "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <currentName> is a generated column or a column used by a generated column. The data type is <currentDataType> and cannot be converted to data type <updateDataType>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"
@@ -653,6 +710,12 @@
   "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
     "message" : [
       "Unsupported format. Expected version should be smaller than or equal to <expectedVersion> but was <realVersion>. Please upgrade to newer version of Delta."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_GENERATED_COLUMN_FORMAT" : {
+    "message" : [
+      "Generated columns are only supported by Delta"
     ],
     "sqlState" : "42000"
   },
@@ -919,6 +982,14 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
+    "message" : [
+      "The <nestType> type of the field <parent> contains a NOT NULL constraint. Delta does not support NOT NULL constraints nested within arrays or maps. To suppress this error and silently ignore the specified constraints, set <configKey> = true.",
+      "Parsed <nestType> type:",
+      "<nestedPrettyJson>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
     "message" : [
       "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)"
@@ -1076,6 +1147,12 @@
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_PARTITION_COLUMN_NOT_FOUND" : {
+    "message" : [
+      "Partition column <columnName> not found in schema [<schemaMap>]"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
@@ -1236,9 +1313,21 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF" : {
+    "message" : [
+      "Currently DeltaTable.forPath only supports hadoop configuration keys starting with <allowedPrefixes> but got <unsupportedOptions>"
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_TABLE_FOUND_IN_EXECUTOR" : {
     "message" : [
       "DeltaTable cannot be used in executors"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TABLE_LOCATION_MISMATCH" : {
+    "message" : [
+      "The location of the existing table <tableName> is <existingTableLocation>. It doesn't match the specified location <tableLocation>."
     ],
     "sqlState" : "42000"
   },
@@ -1264,6 +1353,12 @@
     "message" : [
       "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
       "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TIMESTAMP_INVALID" : {
+    "message" : [
+      "The provided timestamp (<expr>) cannot be converted to a valid timestamp."
     ],
     "sqlState" : "42000"
   },
@@ -1323,6 +1418,12 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_UNEXPECTED_PARTITION_COLUMN_FROM_FILE_NAME" : {
+    "message" : [
+      "Expecting partition column <expectedCol>, but found partition column <parsedCol> from parsing the file name: <path>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER" : {
     "message" : [
       "CONVERT TO DELTA was called with a partition schema different from the partition schema inferred from the catalog, please avoid providing the schema so that the partition schema can be chosen from the catalog.",
@@ -1334,12 +1435,30 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_UNEXPECTED_PROJECT" : {
+    "message" : [
+      "Expected Project but got <project>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",
       "To disable this check, set <config>=true in the Spark session configuration."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_UNKNOWN_PRIVILEGE" : {
+    "message" : [
+      "Unknown privilege: <privilege>"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNKNOWN_READ_LIMIT" : {
+    "message" : [
+      "Unknown ReadLimit: <limit>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_UNRECOGNIZED_COLUMN_CHANGE" : {
     "message" : [

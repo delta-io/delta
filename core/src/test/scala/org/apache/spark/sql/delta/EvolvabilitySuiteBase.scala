@@ -46,9 +46,10 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
     assert(deltaLog.snapshot.metadata.partitionSchema === StructType.fromDDL("id INT"))
 
     // Check we can load CheckpointMetaData
-    assert(deltaLog.lastCheckpoint.get.version === 3)
-    assert(deltaLog.lastCheckpoint.get.size === 6L)
-    assert(deltaLog.lastCheckpoint.get.checkpointSchema.isEmpty)
+    val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+    assert(lastCheckpointOpt.get.version === 3)
+    assert(lastCheckpointOpt.get.size === 6L)
+    assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
 
     // Check we can parse all `Action`s in delta files. It doesn't check correctness.
     deltaLog.getChanges(0L).toList.map(_._2.toList)
@@ -146,17 +147,17 @@ object EvolvabilitySuiteBase {
       spark: SparkSession,
       path: String,
       tblProps: Map[DeltaConfig[_], String] = Map.empty): Unit = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     implicit val s = spark.sqlContext
 
-    Seq(1, 2, 3).toDF().write.format("delta").save(path)
+    Seq(1, 2, 3).toDF(spark).write.format("delta").save(path)
     if (tblProps.nonEmpty) {
       val tblPropsStr = tblProps.map { case (k, v) => s"'${k.key}' = '$v'" }.mkString(", ")
       spark.sql(s"CREATE TABLE test USING DELTA LOCATION '$path'")
       spark.sql(s"ALTER TABLE test SET TBLPROPERTIES($tblPropsStr)")
     }
-    Seq(1, 2, 3).toDF().write.format("delta").mode("append").save(path)
-    Seq(1, 2, 3).toDF().write.format("delta").mode("overwrite").save(path)
+    Seq(1, 2, 3).toDF(spark).write.format("delta").mode("append").save(path)
+    Seq(1, 2, 3).toDF(spark).write.format("delta").mode("overwrite").save(path)
 
     val checkpoint = Utils.createTempDir().toString
     val data = MemoryStream[Int]
@@ -176,7 +177,7 @@ object EvolvabilitySuiteBase {
   def validateData(spark: SparkSession, path: String): Unit = {
     import org.apache.spark.sql.delta.util.FileNames._
     import scala.reflect.runtime.{universe => ru}
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
 
@@ -216,7 +217,9 @@ object EvolvabilitySuiteBase {
 
   /** Generate the transaction log with extra column in checkpoint and json. */
   def generateTransactionLogWithExtraColumn(spark: SparkSession, path: String): Unit = {
+    // scalastyle:off sparkimplicits
     import spark.implicits._
+    // scalastyle:on sparkimplicits
     implicit val s = spark.sqlContext
 
     val absPath = new File(path).getAbsolutePath

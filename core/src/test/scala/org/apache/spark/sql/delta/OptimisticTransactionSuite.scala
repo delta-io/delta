@@ -259,7 +259,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
-        val e = intercept[IllegalStateException] {
+        val e = intercept[DeltaIllegalStateException] {
           txn.commit(Nil, ManualUpdate)
         }
         assert(e.getMessage == DeltaErrors.metadataAbsentException().getMessage)
@@ -267,7 +267,8 @@ class OptimisticTransactionSuite
 
       // Try with commit validation turned off
       withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-        DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "false") {
         txn.commit(Nil, ManualUpdate)
         assert(log.update().version === 0)
       }

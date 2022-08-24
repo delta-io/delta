@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
@@ -348,7 +348,7 @@ case class DeltaSource(
           if (filestatus.getLen <
             spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
             // entire file can be read into memory
-            val actions = deltaLog.store.read(filestatus.getPath, deltaLog.newDeltaHadoopConf())
+            val actions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
               .map(Action.fromJson)
             val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
 
@@ -360,7 +360,7 @@ case class DeltaSource(
 
           } else { // file too large to read into memory
             var fileIterator = deltaLog.store.readAsIterator(
-              filestatus.getPath,
+              filestatus,
               deltaLog.newDeltaHadoopConf())
             try {
               verifyStreamHygiene(fileIterator.map(Action.fromJson), version)
@@ -701,7 +701,7 @@ case class DeltaSource(
       case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
       case composite: CompositeLimit =>
         Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
-      case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
+      case other => throw DeltaErrors.unknownReadLimit(other.toString())
     }
   }
 

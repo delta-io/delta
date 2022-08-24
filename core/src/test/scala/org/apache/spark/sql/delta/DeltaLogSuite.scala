@@ -193,9 +193,9 @@ class DeltaLogSuite extends QueryTest
         val txn = log.startTransaction()
         txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
       }
-      assert(log.lastCheckpoint.isDefined)
-
-      val lastCheckpoint = log.lastCheckpoint.get
+      val lastCheckpointOpt = log.readLastCheckpointFile()
+      assert(lastCheckpointOpt.isDefined)
+      val lastCheckpoint = lastCheckpointOpt.get
 
       // Create an empty "_last_checkpoint" (corrupted)
       val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
@@ -208,7 +208,8 @@ class DeltaLogSuite extends QueryTest
       assert(log ne log2)
 
       // We should get the same metadata even if "_last_checkpoint" is corrupted.
-      assert(CheckpointInstance(log2.lastCheckpoint.get) === CheckpointInstance(lastCheckpoint))
+      assert(CheckpointInstance(log2.readLastCheckpointFile().get) ===
+        CheckpointInstance(lastCheckpoint))
     }
   }
 
@@ -323,10 +324,10 @@ class DeltaLogSuite extends QueryTest
       val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(metadata :: add1 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add2 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add2 = AddFile("bar", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add2 :: Nil, DeltaOperations.ManualUpdate)
 
-      val add3 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val add3 = AddFile("baz", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
       log.startTransaction().commit(add3 :: Nil, DeltaOperations.ManualUpdate)
 
       new File(new Path(log.logPath, "00000000000000000001.json").toUri).delete()
