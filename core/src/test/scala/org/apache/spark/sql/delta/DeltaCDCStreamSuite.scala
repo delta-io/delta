@@ -826,8 +826,8 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       val e = intercept[StreamingQueryException] {
         f
       }.getCause.getMessage
-      assert(e == "Change data feed (CDF) reads are currently not supported on tables " +
-        "with column mapping enabled.")
+      assert(e.contains("Change Data Feed (CDF) reads are not supported on tables with " +
+        "column mapping schema changes (e.g. rename or drop)"))
     }
 
     Seq(0, 1).foreach { startingVersion =>

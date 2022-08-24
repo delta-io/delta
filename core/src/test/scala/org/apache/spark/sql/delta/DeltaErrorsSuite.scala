@@ -2250,12 +2250,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {
-        throw DeltaErrors.blockCdfAndColumnMappingReads()
+        throw DeltaErrors.blockCdfAndColumnMappingReads(isStreaming = false)
       }
       assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage == "Change data feed (CDF) reads are currently not supported on tables " +
-        "with column mapping enabled.")
+      assert(e.getMessage.contains("Change Data Feed (CDF) reads are not supported on tables with" +
+        " column mapping schema changes (e.g. rename or drop)"))
+      assert(e.getMessage.contains(
+        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key))
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {

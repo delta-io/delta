@@ -2265,9 +2265,22 @@ trait DeltaErrorsBase
     // scalastyle:on line.size.limit
   }
 
-  def blockCdfAndColumnMappingReads(): Throwable = {
+
+  val columnMappingCDFBatchBlockHint: String =
+    s"You may force enable batch CDF read at your own risk by turning on " +
+      s"${DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key}."
+
+  def blockCdfAndColumnMappingReads(
+      isStreaming: Boolean,
+      readSchema: Option[StructType] = None,
+      incompatibleSchema: Option[StructType] = None): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS"
+      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS",
+      messageParameters = Array(
+        readSchema.map(_.json).getOrElse(""),
+        incompatibleSchema.map(_.json).getOrElse(""),
+        if (isStreaming) "" else columnMappingCDFBatchBlockHint
+      )
     )
   }
 

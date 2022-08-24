@@ -21,6 +21,7 @@ import java.util.{Locale, UUID}
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
@@ -52,7 +53,11 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    *
    * This list is case-insensitive.
    */
-  protected val DELTA_INTERNAL_COLUMNS: Set[String] = Set.empty
+  protected val DELTA_INTERNAL_COLUMNS: Set[String] =
+    (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
+      CDCReader.CDC_COMMIT_VERSION,
+      CDCReader.CDC_COMMIT_TIMESTAMP)
+    ).map(_.toLowerCase(Locale.ROOT)).toSet
 
   val supportedModes: Set[DeltaColumnMappingMode] =
     Set(NoMapping, NameMapping)
@@ -503,6 +508,44 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       .exists { case (physicalPath, field) =>
         newPhysicalToLogicalMap.get(physicalPath).exists(_.name != field.name)
       }
+  }
+
+  /**
+   * Compare the old metadata's schema with new metadata's schema for column mapping schema changes.
+   *
+   * newMetadata's snapshot version must be >= oldMetadata's snapshot version so we could reliably
+   * detect the difference between ADD COLUMN and DROP COLUMN.
+   *
+   * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
+   * no rename column or drop column has happened in-between.
+   */
+  def isColumnMappingReadCompatible(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+    val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
+    if (oldMode != NoMapping && newMode != NoMapping) {
+      // Both changes are post column mapping enabled
+      !isRenameColumnOperation(newMetadata, oldMetadata) &&
+      !isDropColumnOperation(newMetadata, oldMetadata)
+    } else if (oldMode == NoMapping && newMode != NoMapping) {
+      // The old metadata does not have column mapping while the new metadata does, in this case
+      // we assume an upgrade has happened in between.
+      // So we manually construct a post-upgrade schema for the old metadata and compare that with
+      // the new metadata, as the upgrade would use the logical name as the physical name, we could
+      // easily capture any difference in the schema using the same is{XXX}ColumnOperation utils.
+      var upgradedMetadata = assignColumnIdAndPhysicalName(
+        oldMetadata, oldMetadata, isChangingModeOnExistingTable = true
+      )
+      // need to change to a column mapping mode too so the utils below can recognize
+      upgradedMetadata = upgradedMetadata.copy(
+        configuration = upgradedMetadata.configuration ++
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
+      )
+      // use the same check
+      !isRenameColumnOperation(newMetadata, upgradedMetadata) &&
+        !isDropColumnOperation(newMetadata, upgradedMetadata)
+    } else {
+      // Not column mapping, don't block
+      true
+    }
   }
 }
 

@@ -64,7 +64,7 @@
   },
   "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" : {
     "message" : [
-      "Change data feed (CDF) reads are currently not supported on tables with column mapping enabled."
+      "Change Data Feed (CDF) reads are not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <newSchema>. Incompatible schema: <oldSchema>. <hint>"
     ],
     "sqlState" : "0A000"
   },
