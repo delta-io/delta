@@ -25,7 +25,6 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedDBObjectName
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LeafNode, LogicalPlan, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -342,7 +341,8 @@ class DeltaTableBuilder private[tables](
 
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
-        var unresolvedTable: LogicalPlan = UnresolvedDBObjectName(table, isNamespace = false)
+        val unresolvedTable: LogicalPlan =
+          org.apache.spark.sql.catalyst.analysis.UnresolvedDBObjectName(table, isNamespace = false)
         CreateTable(
           unresolvedTable,
           StructType(columns.toSeq),
@@ -350,7 +350,8 @@ class DeltaTableBuilder private[tables](
           tableSpec,
           ifNotExists)
       case ReplaceTableOptions(orCreate) =>
-        var unresolvedTable: LogicalPlan = UnresolvedDBObjectName(table, isNamespace = false)
+        val unresolvedTable: LogicalPlan =
+          org.apache.spark.sql.catalyst.analysis.UnresolvedDBObjectName(table, isNamespace = false)
         ReplaceTable(
           unresolvedTable,
           StructType(columns.toSeq),
