@@ -652,7 +652,10 @@ class ManualListingFileManifest(
 
   protected def doList(): Dataset[SerializableFileStatus] = {
     val conf = spark.sparkContext.broadcast(serializableConf)
-    DeltaFileOperations.recursiveListDirs(spark, Seq(basePath), conf).where("!isDir")
+    DeltaFileOperations
+      .recursiveListDirs(
+        spark, Seq(basePath), conf, hiddenDirNameFilter = ConvertToDeltaCommand.hiddenDirNameFilter)
+      .where("!isDir")
   }
 
   private lazy val list: Dataset[SerializableFileStatus] = {
@@ -813,5 +816,10 @@ object ConvertToDeltaCommand {
     }
 
     AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
+  }
+
+  def hiddenDirNameFilter(fileName: String): Boolean = {
+    // Allow partition column name starting with underscore and dot
+    DeltaFileOperations.defaultHiddenFileFilter(fileName) && !fileName.contains("=")
   }
 }
