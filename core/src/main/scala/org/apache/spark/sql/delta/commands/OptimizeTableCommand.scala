@@ -108,7 +108,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
 case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
-    userPartitionPredicates: Seq[Option[String]],
+    userPartitionPredicates: Seq[String],
     options: Map[String, String])(val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase with LeafRunnableCommand {
 
@@ -125,18 +125,17 @@ case class OptimizeTableCommand(
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
-
-    val partitionPredicates = userPartitionPredicates.flatMap { partitionPredicate =>
-      partitionPredicate.map { predicate =>
+    val partitionPredicates = userPartitionPredicates.flatMap { predicate =>
+        print(predicate + "\n")
         val predicates = parsePredicates(sparkSession, predicate)
+        print(predicates + "\n")
         verifyPartitionPredicates(
           sparkSession,
           partitionColumns,
           predicates)
         predicates
-      }.getOrElse(Seq.empty)
     }
-
+    print(partitionPredicates + "\n")
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 

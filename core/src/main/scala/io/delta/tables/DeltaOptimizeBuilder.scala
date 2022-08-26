@@ -39,7 +39,7 @@ class DeltaOptimizeBuilder private(
     sparkSession: SparkSession,
     tableIdentifier: String,
     options: Map[String, String]) extends AnalysisHelper {
-  @volatile private var partitionFilter: Seq[Option[String]] = Seq.empty
+  private var partitionFilter: Seq[String] = Seq.empty
 
   /**
    * Apply partition filter on this optimize command builder to limit
@@ -49,7 +49,7 @@ class DeltaOptimizeBuilder private(
    * @since 2.0.0
    */
   def where(partitionFilter: String): DeltaOptimizeBuilder = {
-    this.partitionFilter = this.partitionFilter :+ Some(partitionFilter)
+    this.partitionFilter = this.partitionFilter :+ partitionFilter
     this
   }
 
