@@ -126,15 +126,16 @@ case class OptimizeTableCommand(
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
 
-    val partitionPredicates = userPartitionPredicates.flatMap(partitionPredicate =>
-      partitionPredicate.map(predicate => {
-      val predicates = parsePredicates(sparkSession, predicate)
-      verifyPartitionPredicates(
-        sparkSession,
-        partitionColumns,
-        predicates)
-      predicates
-    }).getOrElse(Seq.empty))
+    val partitionPredicates = userPartitionPredicates.flatMap { partitionPredicate =>
+      partitionPredicate.map { predicate =>
+        val predicates = parsePredicates(sparkSession, predicate)
+        verifyPartitionPredicates(
+          sparkSession,
+          partitionColumns,
+          predicates)
+        predicates
+      }.getOrElse(Seq.empty)
+    }
 
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
