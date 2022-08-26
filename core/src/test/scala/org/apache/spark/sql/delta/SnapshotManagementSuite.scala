@@ -465,7 +465,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       // simulate executor hangs and restart, cache invalidation
       deltaLog.snapshot.uncache()
 
-      spark.read.format("delta").load(path).show()
+      spark.read.format("delta").load(path).collect()
     }
   }
 }
