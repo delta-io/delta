@@ -897,11 +897,7 @@ class SchemaEnforcementWithTableSuite
 
 class SchemaEnforcementStreamingSuite
   extends AppendOutputModeTests
-  with CompleteOutputModeTests {
-
-  protected override def sparkConf = {
-    // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
-  }
+  with CompleteOutputModeTests
+  with DeltaSQLCommandTest {
 }
 

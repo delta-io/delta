@@ -31,15 +31,12 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils with DeltaSQLCommandTest {
 
-  protected override def sparkConf = {
-    // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
-  }
   protected val testOp = Truncate()
 
   testQuietly("checkpoint") {

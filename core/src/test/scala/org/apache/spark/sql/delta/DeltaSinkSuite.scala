@@ -34,16 +34,13 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
+class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
-
-  protected override def sparkConf = {
-    // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
-  }
 
   // Before we start running the tests in this suite, we should let Spark perform all necessary set
   // up that needs to be done for streaming. Without this, the first test in the suite may be flaky

@@ -34,8 +34,8 @@ import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
 import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 /////////////////////
 // Base Test Suite //
@@ -43,14 +43,13 @@ import org.apache.spark.util.Utils
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   def logStoreClassName: String
 
   protected override def sparkConf = {
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
-      // disable the spark conf check
-      .set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
   }
 
   // scalastyle:off deltahadoopconfiguration

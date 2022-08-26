@@ -29,18 +29,14 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class StatsCollectionSuite
   extends QueryTest
   with SharedSparkSession  with DeltaColumnMappingTestUtils
-  with TestsStatistics {
+  with TestsStatistics with DeltaSQLCommandTest {
 
   import testImplicits._
-
-  protected override def sparkConf = {
-    // disable the spark conf check
-    super.sparkConf.set(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key, "false")
-  }
 
 
   test("on write") {
