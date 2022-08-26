@@ -176,19 +176,23 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
 
   /**
    * Get the changes starting from (fromVersion, fromIndex). fromVersion is included.
-   * It returns an  iterator of (log_version, fileActions)
+   * It returns an iterator of (log_version, fileActions)
+   *
+   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
+   * metadata changes.
    */
   protected def getFileChangesForCDC(
       fromVersion: Long,
       fromIndex: Long,
       isStartingVersion: Boolean,
       limits: Option[AdmissionLimits],
-      endOffset: Option[DeltaSourceOffset]): Iterator[(Long, Iterator[IndexedFile])] = {
+      endOffset: Option[DeltaSourceOffset],
+      verifyMetadataAction: Boolean = true): Iterator[(Long, Iterator[IndexedFile])] = {
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[(Long, IndexedChangeFileSeq)] = {
       deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
-        val fileActions = filterCDCActions(actions, version)
+        val fileActions = filterCDCActions(actions, version, verifyMetadataAction)
         val itr = Iterator(IndexedFile(version, -1, null)) ++ fileActions
           .zipWithIndex.map {
           case (action: AddFile, index) =>
@@ -247,10 +251,14 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
   /**
    * Filter out non CDC actions and only return CDC ones. This will either be AddCDCFiles
    * or AddFile and RemoveFiles
+   *
+   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
+   * metadata changes.
    */
   private def filterCDCActions(
       actions: Seq[Action],
-      version: Long): Seq[FileAction] = {
+      version: Long,
+      verifyMetadataAction: Boolean = true): Seq[FileAction] = {
     if (actions.exists(_.isInstanceOf[AddCDCFile])) {
       actions.filter(_.isInstanceOf[AddCDCFile]).asInstanceOf[Seq[FileAction]]
     } else {
@@ -262,9 +270,12 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case cdc: AddCDCFile =>
           false
         case m: Metadata =>
-          val cdcSchema = CDCReader.cdcReadSchema(m.schema)
-          if (!SchemaUtils.isReadCompatible(cdcSchema, schema)) {
-            throw DeltaErrors.schemaChangedException(schema, cdcSchema, false)
+          if (verifyMetadataAction) {
+            checkColumnMappingSchemaChangesDuringStreaming(m, version)
+            val cdcSchema = CDCReader.cdcReadSchema(m.schema)
+            if (!SchemaUtils.isReadCompatible(cdcSchema, schema)) {
+              throw DeltaErrors.schemaChangedException(schema, cdcSchema, false)
+            }
           }
           false
         case protocol: Protocol =>

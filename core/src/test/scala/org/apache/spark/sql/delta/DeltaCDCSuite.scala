@@ -799,10 +799,10 @@ abstract class DeltaCDCColumnMappingSuiteBase extends DeltaCDCScalaSuite
   with DeltaColumnMappingTestUtils {
 
   private def assertBlocked(f: => Unit): Unit = {
-    val e = intercept[DeltaUnsupportedOperationException] {
+    val e = intercept[DeltaColumnMappingUnsupportedSchemaIncompatibleException] {
       f
     }
-    assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" &&
+    assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" &&
       e.getMessage.contains(
         DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key))
   }

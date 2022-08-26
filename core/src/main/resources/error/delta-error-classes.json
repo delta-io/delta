@@ -68,15 +68,15 @@
     ],
     "sqlState" : "42000"
   },
-  "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" : {
-    "message" : [
-      "Change Data Feed (CDF) reads are not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <newSchema>. Incompatible schema: <oldSchema>. <hint>"
-    ],
-    "sqlState" : "0A000"
-  },
   "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION" : {
     "message" : [
       "Operation \"<opName>\" is not allowed when the table has enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME COLUMN."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" : {
+    "message" : [
+      "<opName> is not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <readSchema>. Incompatible schema: <incompatibleSchema>. You may force enable streaming read at your own risk by turning on <config>."
     ],
     "sqlState" : "0A000"
   },
@@ -1294,6 +1294,12 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
+    "message" : [
+      "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
       "Unable to enable Change Data Capture on the table. The table already contains",
@@ -1538,12 +1544,6 @@
       "Schema changes are not allowed during the change of column mapping mode.",
       "",
       ""
-    ],
-    "sqlState" : "0A000"
-  },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS" : {
-    "message" : [
-      "Streaming reads from a Delta table with column mapping enabled are not supported."
     ],
     "sqlState" : "0A000"
   },

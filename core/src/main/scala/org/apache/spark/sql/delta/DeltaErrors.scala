@@ -981,11 +981,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def blockStreamingReadsOnColumnMappingEnabledTable: Throwable = {
-    new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS")
-  }
-
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER",
@@ -2356,23 +2351,37 @@ trait DeltaErrorsBase
     // scalastyle:on line.size.limit
   }
 
-
-  val columnMappingCDFBatchBlockHint: String =
-    s"You may force enable batch CDF read at your own risk by turning on " +
-      s"${DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key}."
-
-  def blockCdfAndColumnMappingReads(
-      isStreaming: Boolean,
-      readSchema: Option[StructType] = None,
-      incompatibleSchema: Option[StructType] = None): Throwable = {
-    new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS",
-      messageParameters = Array(
-        readSchema.map(_.json).getOrElse(""),
-        incompatibleSchema.map(_.json).getOrElse(""),
-        if (isStreaming) "" else columnMappingCDFBatchBlockHint
-      )
+  def blockBatchCdfReadOnColumnMappingEnabledTable(
+      readSchema: StructType,
+      incompatibleSchema: StructType): Throwable = {
+    new DeltaColumnMappingUnsupportedSchemaIncompatibleException(
+      "Change Data Feed (CDF) read",
+      readSchema,
+      incompatibleSchema,
+      DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key
     )
+  }
+
+  def blockStreamingReadsOnColumnMappingEnabledTable(
+      readSchema: StructType,
+      incompatibleSchema: StructType,
+      isCdfRead: Boolean,
+      detectedDuringStreaming: Boolean): Throwable = {
+    new DeltaColumnMappingUnsupportedSchemaIncompatibleException(
+      if (isCdfRead) "Streaming read of Change Data Feed (CDF)" else "Streaming read",
+      readSchema,
+      incompatibleSchema,
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key,
+      additionalProperties = Map(
+        "detectedDuringStreaming" -> detectedDuringStreaming.toString
+      ))
+  }
+
+  def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
+      Array(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key),
+      Some(cause))
   }
 
   def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {
@@ -2641,3 +2650,21 @@ class ColumnMappingUnsupportedException(msg: String)
   extends UnsupportedOperationException(msg)
 case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
   extends AnalysisException(msg)
+
+/**
+ * Errors thrown when an operation is not supported with column mapping schema changes
+ * (rename / drop column).
+ *
+ * To make compatible with existing behavior for those who accidentally has already used this
+ * operation, user should always be able to use `escapeConfigName` to fall back at own risk.
+ */
+class DeltaColumnMappingUnsupportedSchemaIncompatibleException(
+    opName: String,
+    readSchema: StructType,
+    incompatibleSchema: StructType,
+    escapeConfigName: String,
+    val additionalProperties: Map[String, String] = Map.empty)
+  extends DeltaUnsupportedOperationException(
+    errorClass = "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION",
+    messageParameters = Array(opName, readSchema.json, incompatibleSchema.json, escapeConfigName)
+  )

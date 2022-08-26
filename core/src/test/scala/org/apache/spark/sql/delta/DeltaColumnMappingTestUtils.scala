@@ -352,6 +352,21 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
     sql(s"CONVERT TO DELTA $tableOrPath")
   }
 
+  /**
+   * Force enable streaming read (with possible data loss) on column mapping enabled table with
+   * drop / rename schema changes.
+   */
+  protected def withStreamingReadOnColumnMappingTableEnabled(f: => Unit): Unit = {
+    if (columnMappingEnabled) {
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "true") {
+        f
+      }
+    } else {
+      f
+    }
+  }
+
 }
 
 trait DeltaColumnMappingTestUtils extends DeltaColumnMappingTestUtilsBase
