@@ -51,3 +51,4 @@ class RestoreTableScalaSuite extends RestoreTableSuiteBase {
     deltaTable.restoreToTimestamp(timestamp)
   }
 }
+

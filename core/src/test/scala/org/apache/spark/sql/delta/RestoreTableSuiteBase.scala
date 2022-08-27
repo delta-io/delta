@@ -87,15 +87,26 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
 
       // Set a custom timestamp for the commit
       val desiredTime = "1996-01-12"
-      val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-      val time = format.parse(desiredTime).getTime
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
-      file.setLastModified(time)
+      setTimestampToCommitFileAtVersion(deltaLog, version = 0, time = desiredTime)
 
       // restore by timestamp to version 0
       restoreTableToTimestamp(path, desiredTime, false)
       checkAnswer(spark.read.format("delta").load(path), df1)
     }
+  }
+
+  protected def timeStringToTimestamp(time: String): Long = {
+    val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+    format.parse(time).getTime
+  }
+
+  protected def setTimestampToCommitFileAtVersion(
+      deltaLog: DeltaLog,
+      version: Int,
+      time: String): Unit = {
+    val timestamp = timeStringToTimestamp(time)
+    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    file.setLastModified(timestamp)
   }
 
   test("metastore based table") {
