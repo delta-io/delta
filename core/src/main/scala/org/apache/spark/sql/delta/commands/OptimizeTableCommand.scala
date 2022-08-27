@@ -125,17 +125,16 @@ case class OptimizeTableCommand(
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
+
     val partitionPredicates = userPartitionPredicates.flatMap { predicate =>
-        print(predicate + "\n")
         val predicates = parsePredicates(sparkSession, predicate)
-        print(predicates + "\n")
         verifyPartitionPredicates(
           sparkSession,
           partitionColumns,
           predicates)
         predicates
     }
-    print(partitionPredicates + "\n")
+
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
