@@ -640,6 +640,7 @@ The following per-column statistics are currently supported:
 
 Name | Description
 -|-
+numRecords| The number of the all records
 nullCount | The number of null values for this column
 minValues | A value smaller than all values present in the file for this column
 maxValues | A value larger than all values present in the file for this column
