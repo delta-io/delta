@@ -2659,10 +2659,10 @@ case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
  * operation, user should always be able to use `escapeConfigName` to fall back at own risk.
  */
 class DeltaColumnMappingUnsupportedSchemaIncompatibleException(
-    opName: String,
-    readSchema: StructType,
-    incompatibleSchema: StructType,
-    escapeConfigName: String,
+    val opName: String,
+    val readSchema: StructType,
+    val incompatibleSchema: StructType,
+    val escapeConfigName: String,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
     errorClass = "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION",
