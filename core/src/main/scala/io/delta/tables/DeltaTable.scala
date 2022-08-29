@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
@@ -522,7 +523,6 @@ class DeltaTable private[tables](
     executeRestore(table, None, Some(timestamp))
   }
 
-
   /**
    * Updates the protocol version of the table to leverage new features. Upgrading the reader
    * version will prevent all clients that have an older version of Delta Lake from accessing this
@@ -534,7 +534,12 @@ class DeltaTable private[tables](
    * @since 0.8.0
    */
   def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
-    deltaLog.upgradeProtocol(Protocol(readerVersion, writerVersion))
+    val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
+      table,
+      Map(
+        "delta.minReaderVersion" -> readerVersion.toString,
+        "delta.minWriterVersion" -> writerVersion.toString))
+    toDataset(sparkSession, alterTableCmd)
   }
 }
 
