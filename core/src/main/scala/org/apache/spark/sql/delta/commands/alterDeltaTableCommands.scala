@@ -396,6 +396,7 @@ case class AlterTableChangeColumnDeltaCommand(
           sparkSession, columnPath :+ columnName, newMetadata, txn.protocol, "rename")
       }
 
+
       txn.updateMetadata(newMetadata)
 
       if (newColumn.name != columnName) {
