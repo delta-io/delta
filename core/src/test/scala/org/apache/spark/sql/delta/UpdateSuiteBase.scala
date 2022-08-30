@@ -28,6 +28,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -671,8 +672,12 @@ abstract class UpdateSuiteBase
       case f: FileSourceScanExec => f
     })
     // The first scan is for finding files to update. We only are matching against the key
-    // so that should be the only field in the schema
-    assert(scans.head.schema == StructType(Seq(StructField("key", IntegerType))))
+    // so that should be the only field in the schema.
+    assert(scans.head.schema == StructType(
+      Seq(
+        StructField("key", IntegerType)
+      )
+    ))
   }
 
   /**
