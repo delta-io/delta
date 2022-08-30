@@ -263,14 +263,6 @@ object CDCReader extends DeltaLogging {
 
     val snapshot = deltaLog.snapshot
 
-    // If the table has column mapping enabled, throw an error. With column mapping, certain schema
-    // changes are possible (rename a column or drop a column) which don't work well with CDF.
-    // TODO: remove this after the proper blocking semantics is rolled out
-    // This is only blocking streaming CDF, batch CDF will be blocked differently below.
-    if (isStreaming && snapshot.metadata.columnMappingMode != NoMapping) {
-      throw DeltaErrors.blockCdfAndColumnMappingReads(isStreaming)
-    }
-
     // A map from change version to associated commit timestamp.
     val timestampsByVersion: Map[Long, Timestamp] =
       getTimestampsByVersion(deltaLog, start, end, spark)
@@ -280,7 +272,7 @@ object CDCReader extends DeltaLogging {
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!isCDCEnabledOnTable(deltaLog.getSnapshotAt(start).metadata)) {
+    if (!isCDCEnabledOnTable(startVersionSnapshot.metadata)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -300,11 +292,8 @@ object CDCReader extends DeltaLogging {
     if (shouldCheckToBlockBatchReadOnColumnMappingTable &&
         !DeltaColumnMapping.isColumnMappingReadCompatible(
           snapshot.metadata, startVersionSnapshot.metadata)) {
-      throw DeltaErrors.blockCdfAndColumnMappingReads(
-        isStreaming,
-        Some(snapshot.metadata.schema),
-        Some(startVersionSnapshot.metadata.schema)
-      )
+      throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
+        snapshot.metadata.schema, startVersionSnapshot.metadata.schema)
     }
 
     var totalBytes = 0L
@@ -328,11 +317,8 @@ object CDCReader extends DeltaLogging {
         if (shouldCheckToBlockBatchReadOnColumnMappingTable) {
            actions.collect { case a: Metadata => a }.foreach { metadata =>
              if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
-               throw DeltaErrors.blockCdfAndColumnMappingReads(
-                 isStreaming,
-                 Some(snapshot.metadata.schema),
-                 Some(metadata.schema)
-               )
+               throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
+                 snapshot.metadata.schema, metadata.schema)
              }
            }
         }

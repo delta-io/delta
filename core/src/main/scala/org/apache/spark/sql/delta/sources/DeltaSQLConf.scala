@@ -793,6 +793,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+      .doc(
+        "Streaming read on Delta table with column mapping schema operations " +
+          "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
+        "schema confusion. However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(

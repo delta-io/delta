@@ -26,11 +26,12 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -820,69 +821,30 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       }
     }
   }
-
-  test("should block CDC reads when Column Mapping enabled - streaming") {
-    def assertError(f: => Any): Unit = {
-      val e = intercept[StreamingQueryException] {
-        f
-      }.getCause.getMessage
-      assert(e.contains("Change Data Feed (CDF) reads are not supported on tables with " +
-        "column mapping schema changes (e.g. rename or drop)"))
-    }
-
-    Seq(0, 1).foreach { startingVersion =>
-      withClue(s"using CDC starting version $startingVersion") {
-        withTable("t1") {
-          withTempDir { dir =>
-            val path = dir.getCanonicalPath
-            sql(
-              s"""
-                 |CREATE TABLE t1 (id LONG) USING DELTA
-                 |TBLPROPERTIES(
-                 |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
-                 |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
-                 |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
-                 |)
-                 |LOCATION '$path'
-                 |""".stripMargin)
-
-            spark.range(10).write.format("delta").mode("append").save(path)
-            spark.range(10, 20).write.format("delta").mode("append").save(path)
-
-            val df = spark.readStream
-              .format("delta")
-              .option(DeltaOptions.CDC_READ_OPTION, "true")
-              .option("startingVersion", startingVersion)
-              .load(path)
-
-            // case 1: column-mapping is enabled mid-stream
-            testStream(df)(
-              ProcessAllAvailable(),
-              Execute { _ =>
-                sql(s"""
-                       |ALTER TABLE t1
-                       |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
-                       |""".stripMargin)
-              },
-              AddToReservoir(dir, spark.range(10, 20).toDF()),
-              Execute { q =>
-                assertError {
-                  q.processAllAvailable()
-                }
-              }
-            )
-
-            // case 2: perform CDC stream read on table with column mapping already enabled
-            assertError {
-              val stream = df.writeStream.format("console").start()
-              stream.awaitTermination(2000)
-              stream.stop()
-            }
-          }
-        }
-      }
-    }
-  }
 }
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
+abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
+  with ColumnMappingStreamingWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {
+
+  override protected def isCdcTest: Boolean = true
+
+
+  override def runOnlyTests: Seq[String] = Seq(
+    "no startingVersion should result fetch the entire snapshot",
+    "user provided startingVersion",
+    "maxFilesPerTrigger - 2 successive AddCDCFile commits",
+
+    // streaming blocking semantics test
+    "deltaLog snapshot should not be updated outside of the stream",
+    "column mapping + streaming - allowed workflows - column addition",
+    "column mapping + streaming - allowed workflows - upgrade to name mode",
+    "column mapping + streaming: blocking workflow - drop column",
+    "column mapping + streaming: blocking workflow - rename column"
+  )
+
+}
+
+
+class DeltaCDCStreamNameColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
+  with DeltaColumnMappingEnableNameMode

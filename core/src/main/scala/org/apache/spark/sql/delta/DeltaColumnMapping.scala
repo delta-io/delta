@@ -522,15 +522,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def isColumnMappingReadCompatible(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
+      require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
       !isRenameColumnOperation(newMetadata, oldMetadata) &&
-      !isDropColumnOperation(newMetadata, oldMetadata)
+        !isDropColumnOperation(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
       // So we manually construct a post-upgrade schema for the old metadata and compare that with
       // the new metadata, as the upgrade would use the logical name as the physical name, we could
-      // easily capture any difference in the schema using the same is{XXX}ColumnOperation utils.
+      // easily capture any difference in the schema using the same is{Drop,Rename}ColumnOperation
+      // utils.
       var upgradedMetadata = assignColumnIdAndPhysicalName(
         oldMetadata, oldMetadata, isChangingModeOnExistingTable = true
       )

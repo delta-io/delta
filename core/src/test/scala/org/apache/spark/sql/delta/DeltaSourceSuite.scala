@@ -41,7 +41,9 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
+class DeltaSourceSuite extends DeltaSourceSuiteBase
+  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -1182,11 +1184,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       }.getMessage.contains("Cannot time travel Delta table to version 0"))
 
       // Can start from version 1 even if it's not recreatable
-      withTempView("startingVersion_test") {
-        testStartingVersion(1L)
-        checkAnswer(
-          spark.table("startingVersion_test"),
-          (10 until 20).map(_.toLong).toDF())
+      // TODO: currently we would error out if we couldn't construct the snapshot to check column
+      //  mapping enable tables. Unblock this once we roll out the proper semantics.
+      withStreamingReadOnColumnMappingTableEnabled {
+        withTempView("startingVersion_test") {
+          testStartingVersion(1L)
+          checkAnswer(
+            spark.table("startingVersion_test"),
+            (10 until 20).map(_.toLong).toDF())
+        }
       }
     }
   }
@@ -1242,19 +1248,23 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
       // Although version 1 has been deleted, restarting the query should still work as we have
       // processed files in version 1. In other words, query restart should ignore "startingVersion"
-      testStartingVersion(1L)
-      checkAnswer(
-        spark.read.format("delta").load(outputDir.getCanonicalPath),
-        ((10 until 30) ++ (40 until 50)).map(_.toLong).toDF()) // the gap caused by "alter table"
+      // TODO: currently we would error out if we couldn't construct the snapshot to check column
+      //  mapping enable tables. Unblock this once we roll out the proper semantics.
+      withStreamingReadOnColumnMappingTableEnabled {
+        testStartingVersion(1L)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          ((10 until 30) ++ (40 until 50)).map(_.toLong).toDF()) // the gap caused by "alter table"
 
-      // But if we start a new query, it should fail.
-      val newCheckpointDir = Utils.createTempDir()
-      try {
-        assert(intercept[StreamingQueryException] {
-          testStartingVersion(1L, newCheckpointDir.getCanonicalPath)
-        }.getMessage.contains("[2, 4]"))
-      } finally {
-        Utils.deleteRecursively(newCheckpointDir)
+        // But if we start a new query, it should fail.
+        val newCheckpointDir = Utils.createTempDir()
+        try {
+          assert(intercept[StreamingQueryException] {
+            testStartingVersion(1L, newCheckpointDir.getCanonicalPath)
+          }.getMessage.contains("[2, 4]"))
+        } finally {
+          Utils.deleteRecursively(newCheckpointDir)
+        }
       }
     }
   }
@@ -1329,11 +1339,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Can start from version 1 even if it's not recreatable
-      withTempView("startingTimestamp_test") {
-        testStartingTimestamp("2020-07-14")
-        checkAnswer(
-          spark.table("startingTimestamp_test"),
-          (10 until 20).map(_.toLong).toDF())
+      // TODO: currently we would error out if we couldn't construct the snapshot to check column
+      //  mapping enable tables. Unblock this once we roll out the proper semantics.
+      withStreamingReadOnColumnMappingTableEnabled {
+        withTempView("startingTimestamp_test") {
+          testStartingTimestamp("2020-07-14")
+          checkAnswer(
+            spark.table("startingTimestamp_test"),
+            (10 until 20).map(_.toLong).toDF())
+        }
       }
     }
   }
@@ -1409,80 +1423,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         } finally {
           q.stop()
         }
-      }
-    }
-  }
-
-  test(s"block streaming reads from a column mapping enabled table") {
-    withTempDir { inputDir =>
-      val path = inputDir.getCanonicalPath
-      withTable("t1") {
-        sql(
-          s"""
-             |CREATE TABLE t1 (value STRING) USING DELTA
-             |TBLPROPERTIES(
-             |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
-             |${DeltaConfigs.MIN_READER_VERSION.key} = '2',
-             |${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
-             |) LOCATION '$path'
-             |""".stripMargin)
-
-        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
-            .write.format("delta").mode("append").saveAsTable("t1")
-
-        Seq(true, false).foreach { isStartVersion0 =>
-          withClue(s"isStartVersion0 = $isStartVersion0") {
-            var dfr = spark.readStream.format("delta")
-            if (isStartVersion0) {
-              // By default the stream starts at the latest version in the table
-              dfr = dfr.option("startingVersion", "0")
-            }
-            val df = dfr.load(path).filter($"value" contains "keep")
-
-            val ex = intercept[Exception] {
-              testStream(df)(ProcessAllAvailable())
-            }
-            assert(ex.getMessage contains
-              "Streaming reads from a Delta table with column mapping enabled are not supported.")
-          }
-        }
-      }
-    }
-  }
-
-  test("block streaming reads after a table is upgraded with column mapping") {
-    withTempDir { inputDir =>
-      val path = inputDir.getCanonicalPath
-      withTable("t1") {
-        sql(s"CREATE TABLE t1 (value STRING) USING DELTA LOCATION '$path'")
-
-        Seq("keep1", "keep2", "keep3", "drop1").toDF("value")
-            .write.format("delta").mode("append").saveAsTable("t1")
-
-        val df = spark.readStream
-            .format("delta")
-            .load(path)
-            .filter($"value" contains "keep")
-
-        val ex = intercept[Exception] {
-          testStream(df)(
-            ProcessAllAvailable(),
-            Execute { _ =>
-              sql(
-                s"""
-                   |ALTER TABLE t1
-                   |SET TBLPROPERTIES (
-                   |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
-                   |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5',
-                   |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
-                   |""".stripMargin)
-            },
-            AddToReservoir(inputDir, Seq("keep7", "drop2").toDF()),
-            ProcessAllAvailable()
-          )
-        }
-        assert(ex.getMessage contains
-          "Streaming reads from a Delta table with column mapping enabled are not supported.")
       }
     }
   }
@@ -1939,132 +1879,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 }
-
-abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
-  import testImplicits._
-
-  testQuietly("drop column from source disallowed by MicroBatchExecution") {
-    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
-      withTempDir { inputDir =>
-        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-        (0 until 5).foreach { i =>
-          val v = Seq((i.toString, i.toString)).toDF("id", "value")
-          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
-        }
-
-        val checkpointDir = new File(inputDir, "_checkpoint")
-
-        // reinitialize stream after restart
-        def df: DataFrame = spark.readStream
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
-
-        testStream(df)(
-          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-          ProcessAllAvailable(),
-          CheckAnswerRows((0 until 5).map(i => Row(i.toString, i.toString)), false, false),
-          Execute { _ =>
-            sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value")
-          },
-          Execute { _ =>
-            // write more data
-            (5 until 10).foreach { i =>
-              val v = Seq(i.toString).toDF("id")
-              v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
-            }
-          },
-          // should have another batch with diff schema and should fail
-          ExpectFailure[SparkException] { t =>
-            assert(t.asInstanceOf[SparkThrowable].getErrorClass === "INTERNAL_ERROR")
-            assert(t.getCause.getMessage.contains("Invalid batch"))
-          }
-        )
-
-        // Restart the stream from the same checkpoint should pick up the new schema
-        // Since `testStream` creates a new sink every time, the rows for the new data will
-        // be refreshed as well.
-        testStream(df)(
-          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-          ProcessAllAvailable(),
-          // 5-10 is recovered due to the previous failure, and is the only data in the sink
-          // note they only have one item, which is the new schema
-          CheckAnswerRows((5 until 10).map(i => Row(i.toString)), false, false),
-          Execute { _ =>
-            // write more data
-            (10 until 15)
-              .map(i => i.toString)
-              .toDF("id")
-              .write
-              .format("delta")
-              .mode("append")
-              .save(deltaLog.dataPath.toString)
-          },
-          ProcessAllAvailable(),
-          CheckAnswerRows((5 until 15).map(i => Row(i.toString)), false, false)
-        )
-      }
-    }
-  }
-
-  testQuietly("rename a column disallowed by DeltaSource's schema check") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq((i.toString, i.toString)).toDF("id", "value")
-        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
-      }
-
-      val checkpointDir = new File(inputDir, "_checkpoint")
-
-      // reinitialize stream after restart
-      def df: DataFrame = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
-
-      testStream(df)(
-        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-        ProcessAllAvailable(),
-        CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
-        Execute { _ =>
-          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` " +
-            s"RENAME COLUMN value TO new_value")
-        },
-        Execute { _ =>
-          (5 until 10).foreach { i =>
-            val v = Seq((i.toString, i.toString)).toDF("id", "new_value")
-            v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
-          }
-        },
-        ExpectFailure[IllegalStateException](t =>
-          assert(t.getMessage.contains("Detected schema change")))
-      )
-
-      // Restart the stream from the same checkpoint should pick up the new schema
-      // Since `testStream` creates a new sink every time, the rows for the new data will
-      // be refreshed as well.
-      testStream(df)(
-        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-        ProcessAllAvailable(),
-        // 5-10 is recovered due to the previous failure, and is the only data in the sink
-        CheckAnswerRows((5 until 10).map(i => Row(i.toString, i.toString)), false, false),
-        Execute { _ =>
-          // write more data
-          (10 until 15)
-            .map(i => (i.toString, i.toString))
-            .toDF("id", "new_value")
-            .write
-            .format("delta")
-            .mode("append")
-            .save(deltaLog.dataPath.toString)
-        },
-        ProcessAllAvailable(),
-        CheckAnswerRows((5 until 15).map(i => Row(i.toString, i.toString)), false, false)
-      )
-    }
-  }
-
-}
-
 
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.
