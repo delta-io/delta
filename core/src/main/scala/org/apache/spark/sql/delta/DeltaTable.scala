@@ -213,15 +213,6 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Enrich the metadata received from the catalog on Delta tables with the Delta table metadata.
-   */
-  def combineWithCatalogMetadata(sparkSession: SparkSession, table: CatalogTable): CatalogTable = {
-    val deltaLog = DeltaLog.forTable(sparkSession, new Path(table.location))
-    val metadata = deltaLog.snapshot.metadata
-    table.copy(schema = metadata.schema, partitionColumnNames = metadata.partitionColumns)
-  }
-
-  /**
    * Does the predicate only contains partition columns?
    */
   def isPredicatePartitionColumnsOnly(

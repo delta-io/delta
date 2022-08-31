@@ -274,7 +274,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     private def containsPartitionFiltersOnly(
         filters: Seq[Expression],
         fileIndex: TahoeLogFileIndex): Boolean = {
-      val partitionColumns = fileIndex.deltaLog.snapshot.metadata.partitionColumns
+      val partitionColumns = fileIndex.snapshotAtAnalysis.metadata.partitionColumns
       import DeltaTableUtils._
       filters.forall(expr => !containsSubquery(expr) &&
         isPredicatePartitionColumnsOnly(expr, partitionColumns, spark))

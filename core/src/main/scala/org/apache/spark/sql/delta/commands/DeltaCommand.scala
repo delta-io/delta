@@ -252,8 +252,9 @@ trait DeltaCommand extends DeltaLogging {
         throw DeltaErrors.missingTableIdentifierException(operationName)
       }
 
+    val startTime = Some(System.currentTimeMillis)
     val deltaLog = DeltaLog.forTable(spark, tablePath, hadoopConf)
-    if (deltaLog.snapshot.version < 0) {
+    if (deltaLog.update(checkIfUpdatedSinceTs = startTime).version < 0) {
       throw DeltaErrors.notADeltaTableException(
         operationName,
         DeltaTableIdentifier(path, tableIdentifier))
