@@ -31,7 +31,7 @@ class DeltaParquetFileFormat(
     val referenceSchema: StructType)
   extends ParquetFileFormat {
 
-  private def prepareSchema(inputSchema: StructType): StructType = {
+  def prepareSchema(inputSchema: StructType): StructType = {
     DeltaColumnMapping.createPhysicalSchema(inputSchema, referenceSchema, columnMappingMode)
   }
 
