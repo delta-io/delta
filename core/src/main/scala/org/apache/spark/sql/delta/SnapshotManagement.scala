@@ -415,17 +415,24 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /**
-   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
-   * version to the preCommitLogSegment (which must match the immediately preceding version).
-   */
-  private[delta] def getLogSegmentAfterCommit(
+  /** Used to compute the LogSegment after a commit */
+  protected[delta] def getLogSegmentAfterCommit(
       preCommitLogSegment: LogSegment,
       committedVersion: Long): LogSegment = {
-    val committedDeltaPath = deltaFile(logPath, committedVersion)
-    val fileStatus =
-      committedDeltaPath.getFileSystem(newDeltaHadoopConf()).getFileStatus(committedDeltaPath)
-    SnapshotManagement.appendCommitToLogSegment(preCommitLogSegment, fileStatus, committedVersion)
+    /**
+     * We can't specify `versionToLoad = committedVersion` for the call below.
+     * If there are a lot of concurrent commits to the table on the same cluster, each
+     * would generate a different snapshot, and thus each would trigger a new state
+     * reconstruction. The last commit would get stuck waiting for each of the previous
+     * jobs to finish to grab the update lock.
+     * Instead, just do a general update to the latest available version. The racing commits
+     * can then use the version check short-circuit to avoid constructing a new snapshot.
+     */
+    getLogSegmentForVersion(preCommitLogSegment.checkpointVersionOpt).getOrElse {
+      // This shouldn't be possible right after a commit
+      logError(s"No delta log found for the Delta table at $logPath")
+      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+    }
   }
 
   /**
@@ -658,12 +665,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val previousSnapshot = currentSnapshot.snapshot
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
-      val segment = getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
-        .getOrElse {
-          // This shouldn't be possible right after a commit
-          logError(s"No delta log found for the Delta table at $logPath")
-          throw DeltaErrors.emptyDirectoryException(logPath.toString)
-        }
+      val segment = getLogSegmentAfterCommit(preCommitLogSegment, committedVersion)
 
       // This likely implies a list-after-write inconsistency
       if (segment.version < committedVersion) {

@@ -436,14 +436,6 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val newLogSegment = log.snapshot.logSegment
       assert(log.getLogSegmentAfterCommit(oldLogSegment, 0) == newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
-      intercept[IllegalArgumentException] {
-        // Version exists, but not contiguous with old logSegment
-        log.getLogSegmentAfterCommit(oldLogSegment, 1)
-      }
-      intercept[IllegalArgumentException] {
-        // Version exists, but newLogSegment already contains it
-        log.getLogSegmentAfterCommit(newLogSegment, 0)
-      }
       assert(log.getLogSegmentAfterCommit(newLogSegment, 1) == log.snapshot.logSegment)
     }
   }
