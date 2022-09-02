@@ -672,7 +672,7 @@ object DeltaTable {
    *   )
    *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
    * }}}
-   * @since 2.1.0
+   * @since 2.2.0
    */
   def forPath(
       sparkSession: SparkSession,
@@ -714,7 +714,7 @@ object DeltaTable {
   *   )
   *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
   * }}}
-  * @since 2.1.0
+  * @since 2.2.0
   */
   def forPath(
       sparkSession: SparkSession,
