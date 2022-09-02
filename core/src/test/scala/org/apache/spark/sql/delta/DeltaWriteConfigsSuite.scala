@@ -91,7 +91,7 @@ class DeltaWriteConfigsSuite extends QueryTest
     sql_output.toSeq
       .toDF("Output Location", "Config Input", s"SQL Operation", "AS SELECT",
         "Contains OPTION no-prefix", "Contains OPTION prefix", "Contains TBLPROPERTIES no-prefix",
-        "Contains TBLPROPERTIES prefix", "Config")
+        "Contains TBLPROPERTIES prefix", "Legacy store option", "Config")
       .show(100, false)
 
     // scalastyle:on println
