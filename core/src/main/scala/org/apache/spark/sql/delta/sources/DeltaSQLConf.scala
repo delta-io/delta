@@ -586,7 +586,6 @@ trait DeltaSQLConfBase {
           |tables and tables with no stats.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
   val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
     buildConf("replaceWhere.constraintCheck.enabled")
       .doc(
@@ -850,6 +849,18 @@ trait DeltaSQLConfBase {
           | Please note that if you set this to true, the lower case of the
           | key will be used for non delta prefix table properties.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  // TODO(SC-109291): Force wipe history, too.
+  val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
+    buildConf("restore.protocolDowngradeAllowed")
+      .doc("Whether a table may be restored to a lower protocol version than the current." +
+        " This setting also affects CLONE TABLE." +
+        " Note that allowing protocol downgrades may make the history unreadable. It is strongly" +
+        " recommended to wipe the table history with VACUUM RETAIN 0 HOURS after running a" +
+        " RESTORE or CLONE with this setting enabled. This command should also be run without any" +
+        " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
 }

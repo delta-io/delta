@@ -89,6 +89,7 @@ class RestoreTableSQLNameColumnMappingSuite extends RestoreTableSQLSuite
     "metastore based table"
   )
 
+
   test("restore prior to column mapping upgrade should fail") {
     withTempDir { tempDir =>
       val df1 = Seq(1, 2, 3).toDF("id")

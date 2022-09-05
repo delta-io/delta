@@ -192,6 +192,35 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
     }
   }
 
+  for (downgradeAllowed <- DeltaTestUtils.BOOLEAN_DOMAIN)
+  test(s"restore downgrade protocol (allowed=$downgradeAllowed)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(5).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val oldProtocolVersion = deltaLog.snapshot.protocol
+      // Update table to latest version.
+      deltaLog.upgradeProtocol()
+      val newProtocolVersion = deltaLog.snapshot.protocol
+      assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
+        newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
+        s"newProtocolVersion=$newProtocolVersion is not strictly greater than" +
+          s" oldProtocolVersion=$oldProtocolVersion")
+
+      withSQLConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key ->
+          downgradeAllowed.toString) {
+        // Restore to before the upgrade.
+        restoreTableToVersion(path, version = 0, isMetastoreTable = false)
+      }
+      val restoredProtocolVersion = deltaLog.snapshot.protocol
+      if (downgradeAllowed) {
+        assert(restoredProtocolVersion === oldProtocolVersion)
+      } else {
+        assert(restoredProtocolVersion === newProtocolVersion)
+      }
+    }
+  }
+
   test("restore operation metrics in Delta table history") {
     withSQLConf(
         DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
