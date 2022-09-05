@@ -24,6 +24,7 @@ import scala.util.{Success, Try}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
@@ -156,10 +157,24 @@ case class RestoreTableCommand(
 
         txn.updateMetadata(snapshotToRestore.metadata)
 
+        val sourceProtocol = snapshotToRestore.protocol
+        val targetProtocol = latestSnapshot.protocol
+        // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
+        // time travel.
+        val protocolDowngradeAllowed =
+        conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED)
+        val newProtocol = if ((sourceProtocol.minReaderVersion >= targetProtocol.minReaderVersion &&
+            sourceProtocol.minWriterVersion >= targetProtocol.minWriterVersion) ||
+            protocolDowngradeAllowed) {
+          sourceProtocol
+        } else {
+          targetProtocol
+        }
+
         commitLarge(
           spark,
           txn,
-          addActions ++ removeActions,
+          Iterator.single(newProtocol) ++ addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
           metrics.mapValues(_.toString).toMap)
