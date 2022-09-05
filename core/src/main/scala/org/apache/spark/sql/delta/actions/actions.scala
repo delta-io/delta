@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
-import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 
@@ -54,6 +54,11 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
     messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
   )) with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+}
+
+class JsonRawDeserializer extends JsonDeserializer[String] {
+  override def deserialize(jp: JsonParser, context: DeserializationContext): String =
+    JsonUtils.mapper.writeValueAsString(context.readValue(jp, classOf[JsonNode]))
 }
 
 object Action {
@@ -282,6 +287,7 @@ case class AddFile(
     modificationTime: Long,
     override val dataChange: Boolean,
     @JsonRawValue
+    @JsonDeserialize(using = classOf[JsonRawDeserializer])
     stats: String = null,
     override val tags: Map[String, String] = null
 ) extends FileAction {
