@@ -265,19 +265,25 @@ The following is an example `metaData` action:
 <!-- TODO: forward references configuration options -->
 
 ### Add File and Remove File
-The `add` and `remove` actions are used to modify the data in a table by adding or removing individual data files respectively.
+The `add` and `remove` actions are used to modify the data in a table by adding or removing individual _logical files_ respectively.
 
-The path of a file acts as the primary key for the entry in the set of files.
-When an `add` action is encountered for a path that is already present in the table, statistics and other information from the latest version should replace that from any previous version.
-As such, additional statistics can be added for a path already present in the table by adding it again.
+Every _logical file_ of the table (referred to as just a _file_ going forward) is represented by a path to a data file, combined with a Deletion Vector (DV) that indicates which rows of the data file are no longer in the table. The path of the data file acts as the primary key for the entry in the set of files. Deletion Vectors are an optional feature. In tables that do not have this feature enabled, all Deletion Vectors are considered to be empty.
+
+When an `add` action is encountered for a file (i.e., a data file and Deletion Vector combination) that is already present in the table, statistics and other information from the latest version should replace that from any previous version.
+The primary key for the entry of a file in the set of files is a tuple of the data file's `path` as well as a unique id describing the DV.
 
 The `remove` action includes a timestamp that indicates when the removal occurred.
-Physical deletion of the file can happen lazily after some user-specified expiration time threshold.
+Physical deletion of the data and Deletion Vector file can happen lazily after some user-specified expiration time threshold.
 This delay allows concurrent readers to continue to execute against a stale snapshot of the data.
 A `remove` action should remain in the state of the table as a _tombstone_ until it has expired.
-A tombstone expires when the creation timestamp of the delta file exceeds the expiration threshold added to the `remove` action timestamp.
+A tombstone expires when *current time* (according to the node performing the cleanup) exceeds the expiration threshold added to the `remove` action timestamp.
 
-Since actions within a given Delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
+In the following statements, a "DV" can refer to either a specific Deletion Vector, or to the empty deletion vector that indicates that no rows are deleted. Since actions within a given Delta commit are not guaranteed to be applied in order, a **valid** version is restricted to contain at most one file action for any one combination of data file and DV. Moreover, for simplicity it is required that there is at most one file action for any data file (regardless of DV).
+That means specifically that for any commit…
+
+ - it is **legal** for the same data file to occur in an `add` action and a `remove` action, but with two different DVs (one of which may be the empty DV).
+ - it is **legal** for the same data file to be added and/or removed and also occur in an `AddCDCFile` action.
+ - it is **illegal** for the same data file to be added twice or removed twice with different DVs.
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -286,13 +292,14 @@ The schema of the `add` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path to a file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path.
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
-size| Long | The size of this file in bytes
+size| Long | The size of this data file in bytes
 modificationTime | Long | The time this file was created, as milliseconds since the epoch
 dataChange | Boolean | When `false` the file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version
 stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this file
 tags | Map[String, String] | Map containing metadata about this file
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is associated with this data file.
 
 The following is an example `add` action:
 ```
@@ -312,13 +319,14 @@ The schema of the `remove` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path.
 deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
 extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
-size| Long | The size of this file in bytes
+size| Long | The size of this data file in bytes
 tags | Map[String, String] | Map containing metadata about this file
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is associated with this data file.
 
 The following is an example `remove` action.
 ```
@@ -415,19 +423,21 @@ An example of storing provenance information related to an `INSERT` operation:
 
 # Action Reconciliation
 A given snapshot of the table can be computed by replaying the events committed to the table in ascending order by commit version. A given snapshot of a Delta table consists of:
+
  - A single `protocol` action
  - A single `metaData` action
  - A map from `appId` to transaction `version`
- - A collection of `add` actions with unique `path`s
- - A collection of `remove` actions with unique `path`s. The intersection of the paths in the `add` collection and `remove` collection must be empty. That means a file cannot exist in both the `remove` and `add` collections. The `remove` actions act as _tombstones_. 
+ - A collection of `add` actions with unique `path`s.
+ - A collection of `remove` actions with unique `path`s. The intersection of the `(path, deletionVector.uniqueId)` tuples in the `add` collection and `remove` collection must be empty. That means a data file with a particular associated DV cannot exist in both the `remove` and `add` collections; however, the same data file can exist with different DVs, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
+ 
  - The latest `protocol` action seen wins
  - The latest `metaData` action seen wins
  - For transaction identifiers, the latest `version` seen for a given `appId` wins
- - All `add` actions for different paths need to be accumulated as a list. The latest `add` action (from a more recent delta file) observed for a given path wins.
- - All `remove` actions for different paths need to be accumulated as a list. If a `remove` action is received **later** (from a more recent delta file) for the same path as an `add` operation, the corresponding `add` action should be removed from the `add` collection and the file needs to be tracked as part of the `remove` collection.
- - If an `add` action is received **later** (from a more recent delta file) for the same path as a `remove` operation, the corresponding `remove` action should be removed from the `remove` collection and the file needs to be tracked as part of the `add` collection.
+ - Files in a table are identified by a `(path, deletionVector.uniqueId)` tuple. File actions (`add` or `remove`) reference files, and a log can contain any number of references to a single file.
+ - To replay the log, scan all file actions and keep only the newest reference for each file.
+ - `add` actions in the result identify files currently present in the table (for queries). `remove` actions in the result identify tombstones of files no longer present in the table (for VACUUM).
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32 bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`. The column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`.
@@ -603,6 +613,102 @@ Reader Version 2 | Respect [Column Mapping](#column-mapping)
 
 # Appendix
 
+## Deletion Vectors
+
+`add` and `remove` actions can optionally include with a Deletion Vector (DV) that provides information about logically deleted rows, that are however still physically present in the underlying data file and must thus be skipped during processing. 
+
+DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
+
+### Deletion Vector Descriptor Schema
+
+The schema of the `DeletionVectorDescriptor` struct is as follows:
+
+Field Name | Data Type | Description
+-|-|-
+storageType | String | A single character to indicate how to access the DV. (See below.)
+pathOrInlineDv | String | Three format options are currently proposed:<ul><li>If `storageType = 'u'` then  `<random prefix - optional><base85 encoded uuid>`: The deletion vector is stored in a file with a path relative to the data directory of this Delta table, and the  file name can be reconstructed from the UUID. See Derived Fields for how to reconstruct the file name. The random prefix is recovered as the extra characters before the (20 characters fixed length) uuid.</li><li>If `storageType = 'i'` then `<base85 encoded bytes>`: The deletion vector is stored inline in the log. The format used is the `RoaringBitmapArray` format also used when the DV is stored on disk and described in [Deletion Vector Format](#Deletion-Vector-Format).</li><li>If `storageType = 'p'` then `<absolute path>`: The DV is stored in a file with an absolute path given by this path, which has the same format as the `path` field in the `add`/`remove` actions.</li></ul>
+offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`.
+sizeInBytes | Int | Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding, if inline).
+cardinality | Long | Number of rows the given DV logically removes from the file.
+
+The concrete Base85 variant used is [Z85](https://rfc.zeromq.org/spec/32/), because it is JSON-friendly.
+
+#### Derived Fields
+
+Some fields that are necessary to use the DV are not stored explicitly but can be derived in code from the stored fields.
+
+Field Name | Data Type | Description | Computed As
+-|-|-|-
+uniqueId | String | Uniquely identifies a DV for a given file. This is used for snapshot reconstruction to differentiate the same file with different DVs in successive versions. | If `offset` is `None` then `<storageType><pathOrInlineDv>`. <br> Otherwise `<storageType><pathOrInlineDv>@<offset>`.
+absolutePath | String/URI/Path | The absolute path of the DV file. Can be calculated for relative path DVs by providing a parent directory path. | If `storageType='p'`, just use the already absolute path. If `storageType='u'`, the DV is stored at `<parent path>/<random prefix>/deletion_vector_<uuid in canonical textual representation>.bin`. This is not a legal field if `storageType='i'`, as an inline DV has no absolute path.
+
+#### JSON Example 1 — On Disk with Relative Path (with Random Prefix)
+```json
+{
+  "storageType" : "u",
+  "pathOrInlineDv" : "ab^-aqEH.-t@S}K{vb[*k^",
+  "offset" : 4,
+  "sizeInBytes" : 40,
+  "cardinality" : 6
+}
+```
+Assuming that this DV is stored relative to an `s3://mytable/` directory, the absolute path to be resolved here would be: `s3://mytable/ab/deletion_vector_d2c639aa-8816-431a-aaf6-d3fe2512ff61.bin`.
+
+#### JSON Example 2 — On Disk with Absolute Path
+```json
+{
+  "storageType" : "p",
+  "pathOrInlineDv" : "s3://mytable/deletion_vector_d2c639aa-8816-431a-aaf6-d3fe2512ff61.bin",
+  "offset" : 4,
+  "sizeInBytes" : 40,
+  "cardinality" : 6
+}
+```
+
+#### JSON Example 3 — Inline
+```json
+{
+  "storageType" : "i",
+  "pathOrInlineDv" : "wi5b=000010000siXQKl0rr91000f55c8Xg0@@D72lkbi5=-{L",
+  "sizeInBytes" : 40,
+  "cardinality" : 6
+}
+```
+The row indexes encoded in this DV are: 3, 4, 7, 11, 18, 29.
+
+
+### Deletion Vector Format
+
+Deletion Vectors are basically sets of row indexes, that is 64-bit integers that describe the position (index) of a row in a parquet file starting from zero. We store these sets in a compressed format. The fundamental building block for this is the open source [RoaringBitmap](https://roaringbitmap.org/) library. RoaringBitmap is a flexible format for storing 32-bit integers that automatically switches between three different encodings at the granularity of a 16-bit block (64K values):
+
+- Simple integer array, when the number of values in the block is small.
+- Bitmap-compressed, when the number of values in the block is large and scattered.
+- Run-length encoded, when the number of values in the block is large, but clustered.
+
+The serialization format is standardized, and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
+
+Since RoaringBitmap only covers 32-bit integers, we extend the format in a simple manner by keeping an array of 32-bit RoaringBitmaps and using the upper 32-bits to index into the array.
+
+The serialization format for such a `RoaringBitmapArray` is as follows (all numerical values are written in little endian byte order):
+
+Bytes | Name | Description
+-|-|-
+0 — 3 | magicNumber | 1681511376; Indicates that the following bytes are serialised in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
+4 — 7 | numBitmaps | The number of 32-bit bitmaps in the array
+`repeat for i in 0 to length` | | For each 32-bit RoaringBitmap
+`<start of i>` — `<start of i> + 3` | bitmapDataSize | Number of bytes of this bitmap’s serialized representation.
+`<start of i> + 4` — `<start of i> + 4 +  bitmapDataSize` | bitmapData | Serialized bytes in the RoaringBitmap standard serialization format.
+
+The format for storing DVs in file storage is one (or more) of these `RoaringBitmapArray`s per file, together with a checksum for each DV:
+
+Bytes | Name | Description
+-|-|-
+0 — 1 | version | The format version of this file: `1` for the format described here.
+`repeat for each DV i` | | For each DV
+`<start of i>` — `<start of i> + 3` | dataSize | Size of this DV’s data (without the checksum)
+`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One `RoaringBitmapArray` serialised as described above.
+`<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
+
 ## Per-file Statistics
 `add` actions can optionally contain statistics about the data in the file being added to the table.
 These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
@@ -613,6 +719,9 @@ The following global statistic is currently supported:
 Name | Description
 -|-
 numRecords | The number of records in this file.
+tightBounds | Whether per-column statistics are currently **tight** or **wide** (see below).
+
+In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping.
 
 Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
 For example, given the following data schema:
@@ -626,6 +735,7 @@ Statistics could be stored with the following schema:
 ```
 |-- stats: struct
 |    |-- numRecords: long
+|    |-- tightBounds: boolean
 |    |-- minValues: struct
 |    |    |-- a: struct
 |    |    |    |-- b: struct
@@ -638,11 +748,13 @@ Statistics could be stored with the following schema:
 
 The following per-column statistics are currently supported:
 
-Name | Description
--|-
-nullCount | The number of null values for this column
-minValues | A value smaller than all values present in the file for this column
-maxValues | A value larger than all values present in the file for this column
+Name | Description (`stats.tightBounds=true`) | Description (`stats.tightBounds=false`)
+-|-|-
+nullCount | The number of `null` values for this column | <p>If the `nullCount` for a column equals the physical number of records (`stats.numRecords`) then **all** valid rows for this column must have `null` values (the reverse is not necessarily true).</p><p>If the `nullCount` for a column equals 0 then **all** valid rows are non-`null` in this column (the reverse is not necessarily true).</p><p>If the `nullCount` for a column is any value other than these two special cases, the value carries no information and should be treated as if absent.</p>
+minValues | A value that is equal to the smallest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is less than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information. 
+maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
+
+[^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
 
 ## Partition Value Serialization
 
