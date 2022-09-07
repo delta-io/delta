@@ -47,6 +47,7 @@ import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -78,6 +79,8 @@ class DeltaLog private(
   private lazy implicit val _clock = clock
 
   protected def spark = SparkSession.active
+
+  checkRequiredConfigurations()
 
   /**
    * Keep a reference to `SparkContext` used to create `DeltaLog`. `DeltaLog` cannot be used when
@@ -453,6 +456,22 @@ class DeltaLog private(
     }
   }
 
+  /**
+   * Verify the required Spark conf for delta
+   * Throw `DeltaErrors.configureSparkSessionWithExtensionAndCatalog` exception if
+   * `spark.sql.catalog.spark_catalog` config is missing. We do not check for
+   * `spark.sql.extensions` because DeltaSparkSessionExtension can alternatively
+   * be activated using the `.withExtension()` API. This check can be disabled
+   * by setting DELTA_CHECK_REQUIRED_SPARK_CONF to false.
+   */
+  protected def checkRequiredConfigurations(): Unit = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK)) {
+      if (spark.conf.getOption(
+        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
+      }
+    }
+  }
 }
 
 object DeltaLog extends DeltaLogging {

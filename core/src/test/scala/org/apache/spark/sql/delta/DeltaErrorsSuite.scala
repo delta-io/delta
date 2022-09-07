@@ -1946,7 +1946,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(new Throwable())
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(Some(new Throwable()))
       }
       assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
       assert(e.getSqlState == "42000")
@@ -1962,7 +1962,11 @@ trait DeltaErrorsSuiteBase
            |    .config("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
            |    ...
            |    .getOrCreate()
-           |""".stripMargin
+           |""".stripMargin +
+          "\nIf you are using spark-shell/pyspark/spark-submit, you can add the required " +
+           "configurations to the command as show below:\n"  +
+          s"--conf spark.sql.extensions=${classOf[DeltaSparkSessionExtension].getName} " +
+          s"--conf ${catalogImplConfig}=${classOf[DeltaCatalog].getName}\n"
       assert(e.getMessage == msg)
     }
     {

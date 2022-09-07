@@ -897,6 +897,7 @@ class SchemaEnforcementWithTableSuite
 
 class SchemaEnforcementStreamingSuite
   extends AppendOutputModeTests
-  with CompleteOutputModeTests {
+  with CompleteOutputModeTests
+  with DeltaSQLCommandTest {
 }
 

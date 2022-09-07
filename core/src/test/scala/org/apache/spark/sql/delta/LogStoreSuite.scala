@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage._
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
 
@@ -42,7 +43,7 @@ import org.apache.spark.util.Utils
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
-  with SharedSparkSession {
+  with SharedSparkSession  with DeltaSQLCommandTest {
 
   def logStoreClassName: String
 

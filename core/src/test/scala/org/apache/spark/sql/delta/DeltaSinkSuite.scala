@@ -22,6 +22,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -35,7 +36,7 @@ import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
+class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._

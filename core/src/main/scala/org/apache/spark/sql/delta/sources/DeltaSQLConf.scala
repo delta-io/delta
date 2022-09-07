@@ -852,6 +852,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_REQUIRED_SPARK_CONFS_CHECK =
+    buildConf("requiredSparkConfsCheck.enabled")
+      .doc("Whether to verify SparkSession is initialized with required configurations.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   // TODO(SC-109291): Force wipe history, too.
   val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
     buildConf("restore.protocolDowngradeAllowed")

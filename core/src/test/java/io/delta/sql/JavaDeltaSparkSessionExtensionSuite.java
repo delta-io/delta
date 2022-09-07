@@ -30,6 +30,8 @@ public class JavaDeltaSparkSessionExtensionSuite {
                 .appName("JavaDeltaSparkSessionExtensionSuiteUsingSQLConf")
                 .master("local[2]")
                 .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+                .config("spark.sql.catalog.spark_catalog",
+                        "org.apache.spark.sql.delta.catalog.DeltaCatalog")
                 .getOrCreate();
         try {
             String input = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "input")

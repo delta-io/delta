@@ -315,6 +315,9 @@
       "    .config(\"<catalogKey>\", \"<catalogClassName>\")",
       "    ...",
       "    .getOrCreate()",
+      "",
+      "If you are using spark-shell/pyspark/spark-submit, you can add the required configurations to the command as show below:",
+      "--conf spark.sql.extensions=<sparkSessionExtensionName> --conf <catalogKey>=<catalogClassName>",
       ""
     ],
     "sqlState" : "42000"
