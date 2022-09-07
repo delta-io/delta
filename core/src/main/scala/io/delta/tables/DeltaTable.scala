@@ -666,7 +666,7 @@ object DeltaTable {
    * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
    * it throws a `not a Delta table` error.
    *
-   * @param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked up
+   * @param hadoopConf Hadoop configuration starting with "fs." or "dfs." will be picked up
    *                    by `DeltaTable` to access the file system when executing queries.
    *                    Other configurations will not be allowed.
    *
@@ -677,7 +677,7 @@ object DeltaTable {
    *   )
    *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
    * }}}
-   * @since 2.1.0
+   * @since 2.2.0
    */
   def forPath(
       sparkSession: SparkSession,
@@ -708,7 +708,7 @@ object DeltaTable {
   * path, If the given path is invalid (i.e. either no table exists or an existing table is not a
   * Delta table), it throws a `not a Delta table` error.
   *
-  * @param hadoopConf: Hadoop configuration starting with "fs." or "dfs." will be picked up
+  * @param hadoopConf Hadoop configuration starting with "fs." or "dfs." will be picked up
   *                    by `DeltaTable` to access the file system when executing queries.
   *                    Other configurations will be ignored.
   *
@@ -719,7 +719,7 @@ object DeltaTable {
   *   )
   *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
   * }}}
-  * @since 2.1.0
+  * @since 2.2.0
   */
   def forPath(
       sparkSession: SparkSession,
