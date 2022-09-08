@@ -133,7 +133,7 @@ def run_pypi_packaging_tests(root_dir):
     run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
 
     # install helper pip packages
-    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
+    run_cmd(["pip3", "install", "wheel", "setuptools", "--upgrade"], stream_output=True)
 
     wheel_dist_dir = path.join(root_dir, "dist")
 
