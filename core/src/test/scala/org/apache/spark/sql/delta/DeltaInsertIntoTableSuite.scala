@@ -26,13 +26,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.scalatest.BeforeAndAfter
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.{SparkConf, SparkContext, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
+import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
 
 class DeltaInsertIntoSQLSuite
@@ -221,7 +221,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           case e: AnalysisException =>
             assert(e.getMessage.contains("Inserting into a view is not allowed") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
-              e.getMessage.contains("Table default.v not found"))
+              e.getMessage.contains("Table default.v not found") ||
+              e.getMessage.contains("Table or view 'v' not found in database 'default'"))
         }
       }
     }
@@ -697,7 +698,9 @@ trait InsertIntoSQLOnlyTests
         }
 
         verifyTable(t1, spark.emptyDataFrame)
-        assert(exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+        assert(
+          exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+          exc.getMessage.contains("PARTITION clause cannot contain the non-partition column") ||
           exc.getMessage.contains(
             "[NON_PARTITION_COLUMN] PARTITION clause cannot contain the non-partition column"))
         assert(exc.getMessage.contains("id"))
@@ -714,7 +717,9 @@ trait InsertIntoSQLOnlyTests
         }
 
         verifyTable(t1, spark.emptyDataFrame)
-        assert(exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+        assert(
+          exc.getMessage.contains("PARTITION clause cannot contain a non-partition column") ||
+          exc.getMessage.contains("PARTITION clause cannot contain the non-partition column") ||
           exc.getMessage.contains(
             "[NON_PARTITION_COLUMN] PARTITION clause cannot contain the non-partition column"))
         assert(exc.getMessage.contains("data"))

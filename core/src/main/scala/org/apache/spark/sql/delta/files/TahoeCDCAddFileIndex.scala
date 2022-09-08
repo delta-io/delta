@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.files
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.types.StructType
 
@@ -42,6 +44,26 @@ class TahoeCDCAddFileIndex(
   // basis.
   override def cdcPartitionValues(): Map[String, String] =
     Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
+
+  override def matchingFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
+    val addFiles = filesByVersion.flatMap {
+      case CDCDataSpec(version, ts, files) =>
+        files.map { f =>
+          // We add the metadata as faked partition columns in order to attach it on a per-file
+          // basis.
+          val newPartitionVals = f.partitionValues +
+            (CDC_COMMIT_VERSION -> version.toString) +
+            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
+            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
+          f.copy(partitionValues = newPartitionVals)
+        }
+    }
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
+      .collect()
+  }
 
   override def partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)

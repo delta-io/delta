@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.files
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.types.StructType
 
@@ -40,10 +42,38 @@ class TahoeRemoveFileIndex(
   // We add the metadata as faked partition columns in order to attach it on a per-file
   // basis.
   override def cdcPartitionValues(): Map[String, String] =
-    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
+    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
 
   override def partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
+
+  override def matchingFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
+    // Make some fake AddFiles to satisfy the interface.
+    val addFiles = filesByVersion.flatMap {
+      case CDCDataSpec(version, ts, files) =>
+        files.map { r =>
+          if (!r.extendedFileMetadata.getOrElse(false)) {
+            // This shouldn't happen in user queries - the CDC flag was added at the same time as
+            // extended metadata, so all removes in a table with CDC enabled should have it. (The
+            // only exception is FSCK removes, which we screen out separately because they have
+            // dataChange set to false.)
+            throw DeltaErrors.removeFileCDCMissingExtendedMetadata(r.toString)
+          }
+          // We add the metadata as faked partition columns in order to attach it on a per-file
+          // basis.
+          val newPartitionVals = r.partitionValues +
+            (CDC_COMMIT_VERSION -> version.toString) +
+            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
+            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
+          AddFile(r.path, newPartitionVals, r.size.getOrElse(0L), 0, r.dataChange, tags = r.tags)
+        }
+    }
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
+      .as[AddFile]
+      .collect()
+  }
 
   override protected def extractActionParameters(removeFile: RemoveFile): ActionParameters = {
     if (!removeFile.extendedFileMetadata.getOrElse(false)) {

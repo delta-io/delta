@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.StringType
  * - using table name or table path
  * X
  * - CREATE or REPLACE or CREATE OR REPLACE (table already exists) OR CREATE OR REPLACE (table
- *   doesn't already exist)
+ * doesn't already exist)
  *
  * At the end of the test suite, it prints out summary tables all of the cases above.
  */
@@ -97,15 +97,12 @@ class DeltaWriteConfigsSuite extends QueryTest
     super.afterAll()
   }
 
-  private val dfw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
-  private val dsw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
-  private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
-  private val dtb_output =
-    new ListBuffer[(String, String, Boolean, Boolean, Boolean, Boolean, String)]
-  private val sql_output =
-    new ListBuffer[(
-      String, String, String, Boolean,
-      String, String, String, String, String)]
+
+  private val dfw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
+  private val dsw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
+  private val dfw_v2_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
+  private val dtb_output = new ListBuffer[DeltaTableBuilderAPITestOutput]
+  private val sql_output = new ListBuffer[SQLAPIOutput]
 
   // scalastyle:off line.size.limit
   /*
@@ -153,8 +150,14 @@ class DeltaWriteConfigsSuite extends QueryTest
             assert(answer_prefix)
             assert(config.size == 1)
 
-            dfw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
-              config.mkString(",")))
+            dfw_output += DeltaFrameStreamAPITestOutput(
+              outputLocation = outputLoc,
+              outputMode = outputMode,
+              containsNoPrefixOption = answer_no_prefix,
+              containsPrefixOption = answer_prefix,
+              config = config.mkString(",")
+            )
+
           }
         }
       }
@@ -221,8 +224,14 @@ class DeltaWriteConfigsSuite extends QueryTest
               assert(!answer_no_prefix)
               assert(!answer_prefix)
 
-              dsw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
-                config.mkString(",")))
+              dsw_output += DeltaFrameStreamAPITestOutput(
+                outputLocation = outputLoc,
+                outputMode = outputMode,
+                containsNoPrefixOption = answer_no_prefix,
+                containsPrefixOption = answer_prefix,
+                config = config.mkString(",")
+              )
+
             }
           }
         }
@@ -286,8 +295,14 @@ class DeltaWriteConfigsSuite extends QueryTest
             assert(answer_prefix)
             assert(config.size == 1)
 
-            dfw_v2_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
-              config.mkString(",")))
+            dfw_v2_output += DeltaFrameStreamAPITestOutput(
+              outputLocation = outputLoc,
+              outputMode = outputMode,
+              containsNoPrefixOption = answer_no_prefix,
+              containsPrefixOption = answer_prefix,
+              config = config.mkString(",")
+            )
+
           }
         }
       }
@@ -300,14 +315,14 @@ class DeltaWriteConfigsSuite extends QueryTest
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   |Output Location|Output Mode   |Contains No-Prefix Option (lowercase)|Contains No-Prefix Option|Contains Prefix-Option|ERROR|Config                                                                                 |
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
-  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
   |path           |c_or_r_replace|false                                |false                    |false                 |true |                                                                                       |
-  |table          |create        |true                                 |false                    |true                  |false|dataskippingnumindexedcols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
-  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
-  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |table          |create        |true                                 |false                    |true                  |false|dataSkippingNumIndexedCols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
+  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33|
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   */
   // scalastyle:on line.size.limit
@@ -365,7 +380,15 @@ class DeltaWriteConfigsSuite extends QueryTest
                 // Specified schema is missing field(s): bar
                 // Specified schema has additional field(s): foo
                 assert(outputLoc == "path" && outputMode == "c_or_r_replace")
-                dtb_output += ((outputLoc, outputMode, false, false, false, true, ""))
+                dtb_output += DeltaTableBuilderAPITestOutput(
+                  outputLocation = outputLoc,
+                  outputMode = outputMode,
+                  containsNoPrefixOptionLowerCase = false,
+                  containsNoPrefixOption = false,
+                  containsPrefixOption = false,
+                  error = true,
+                  config = ""
+                )
               case _ =>
                 val config = log.snapshot.metadata.configuration
 
@@ -374,13 +397,20 @@ class DeltaWriteConfigsSuite extends QueryTest
                 val answer_no_prefix = config.contains(config_no_prefix)
                 val answer_prefix = config.contains(config_prefix)
 
-                assert(answer_no_prefix_lowercase) // bizarre!
-                assert(!answer_no_prefix)
+                assert(!answer_no_prefix_lowercase)
+                assert(answer_no_prefix)
                 assert(answer_prefix)
-                assert(config.size == 2) // bizarre!
+                assert(config.size == 2)
 
-                dtb_output += ((outputLoc, outputMode, answer_no_prefix_lowercase,
-                  answer_no_prefix, answer_prefix, false, config.mkString(",")))
+                dtb_output += DeltaTableBuilderAPITestOutput(
+                  outputLocation = outputLoc,
+                  outputMode = outputMode,
+                  containsNoPrefixOptionLowerCase = answer_no_prefix_lowercase,
+                  containsNoPrefixOption = answer_no_prefix,
+                  containsPrefixOption = answer_prefix,
+                  error = false,
+                  config = config.mkString(",")
+                )
             }
           }
         }
@@ -525,7 +555,7 @@ class DeltaWriteConfigsSuite extends QueryTest
 
                 assert(config.size == expectedSize)
 
-                sql_output += ((
+                sql_output += SQLAPIOutput(
                   outputLoc,
                   configInput,
                   sqlOp,
@@ -535,7 +565,7 @@ class DeltaWriteConfigsSuite extends QueryTest
                   if (tblproperties_was_set) tblproperties_no_prefix.toString else "N/A",
                   if (tblproperties_was_set) tblproperties_prefix.toString else "N/A",
                   config.mkString(",")
-                ))
+                )
               }
             }
           }
@@ -543,5 +573,32 @@ class DeltaWriteConfigsSuite extends QueryTest
       }
     }
   }
-
 }
+
+// Need to be outside to be stable references for Spark to generate the case classes
+case class DeltaFrameStreamAPITestOutput(
+    outputLocation: String,
+    outputMode: String,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    config: String)
+
+case class DeltaTableBuilderAPITestOutput(
+    outputLocation: String,
+    outputMode: String,
+    containsNoPrefixOptionLowerCase: Boolean,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    error: Boolean,
+    config: String)
+
+case class SQLAPIOutput(
+    outputLocation: String,
+    confiInput: String,
+    sqlOperation: String,
+    asSelect: Boolean,
+    containsOptionNoPrefix: String,
+    containsOptionPrefix: String,
+    containsTblPropertiesNoPrefix: String,
+    containsTblPropertiesPrefix: String,
+    config: String)

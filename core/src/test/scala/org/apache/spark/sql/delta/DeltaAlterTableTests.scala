@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -391,9 +392,10 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
   }
 
   private def checkErrMsg(msg: String, field: Seq[String]): Unit = {
-    val fieldParent = field.dropRight(1)
-    assert(msg.contains(s"Field name ${field.mkString(".")} is invalid: " +
-      s"${fieldParent.mkString(".")} is not a struct"))
+    val fieldStr = field.map(f => s"`$f`").mkString(".")
+    val fieldParentStr = field.dropRight(1).map(f => s"`$f`").mkString(".")
+    assert(msg.contains(
+      s"Field name $fieldStr is invalid: $fieldParentStr is not a struct"))
   }
 
   ddlTest("ADD COLUMNS should not be able to add column to basic type key/value of " +
@@ -1441,6 +1443,22 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
     }
   }
 
+  testQuietly("SET LOCATION: external delta table") {
+    withTable("delta_table") {
+      withTempDir { oldDir =>
+        spark.range(1).write.format("delta").save(oldDir.getCanonicalPath)
+        sql(s"CREATE TABLE delta_table USING delta LOCATION '${oldDir.getCanonicalPath}'")
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          spark.range(1, 2).write.format("delta").save(path)
+          checkAnswer(spark.table("delta_table"), Seq(Row(0)))
+          sql(s"alter table delta_table set location '$path'")
+          checkAnswer(spark.table("delta_table"), Seq(Row(1)))
+        }
+      }
+    }
+  }
+
   test(
       "SET LOCATION - negative cases") {
     withTable("delta_table") {
@@ -1632,6 +1650,7 @@ class DeltaAlterTableByNameSuite
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
+
 
 
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {

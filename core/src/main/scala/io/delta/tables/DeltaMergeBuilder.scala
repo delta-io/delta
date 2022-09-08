@@ -22,7 +22,6 @@ import scala.collection.Map
 import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
 import org.apache.spark.sql.delta.DeltaViewHelper
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._

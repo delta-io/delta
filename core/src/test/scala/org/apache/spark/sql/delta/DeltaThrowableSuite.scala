@@ -43,6 +43,7 @@ class DeltaThrowableSuite extends SparkFunSuite {
         "sql/testOnly *DeltaThrowableSuite -- -t \"Error classes are correctly formatted\""
    }}}
    */
+
   private val regenerateGoldenFiles: Boolean = System.getenv("SPARK_GENERATE_GOLDEN_FILES") == "1"
 
   def checkIfUnique(ss: Seq[Any]): Unit = {

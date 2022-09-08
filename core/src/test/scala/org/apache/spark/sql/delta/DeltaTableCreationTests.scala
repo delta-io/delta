@@ -733,8 +733,9 @@ trait DeltaTableCreationTests
                |LOCATION '$path'
              """.stripMargin)
         }.getMessage
+        var catalogPrefix = ""
         assert(e.contains(
-          "Cannot create table ('`default`.`delta_test`'). The associated location"))
+          s"Cannot create table ('$catalogPrefix`default`.`delta_test`'). The associated location"))
       }
     }
   }
@@ -1630,7 +1631,7 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(filterV2TableProperties(getTableProperties("t2")).filter(_._1 != "Type") ==
+        assert(filterV2TableProperties(getTableProperties("t2")) ==
           Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.
@@ -1968,14 +1969,14 @@ class DeltaTableCreationSuite
       // checkpointing should work
       withEmptyTable(emptyTableName) {
         getDeltaLog.checkpoint()
-        assert(getDeltaLog.lastCheckpoint.exists(_.version == 0))
+        assert(getDeltaLog.readLastCheckpointFile().exists(_.version == 0))
         // run some operations
         withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
           sql(s"INSERT INTO $emptyTableName VALUES (1,2,3)")
           checkAnswer(spark.read.table(emptyTableName), Seq(Row(1, 2, 3)))
         }
         getDeltaLog.checkpoint()
-        assert(getDeltaLog.lastCheckpoint.exists(_.version == 1))
+        assert(getDeltaLog.readLastCheckpointFile().exists(_.version == 1))
       }
 
       withEmptyTable(emptyTableName) {
@@ -2014,7 +2015,9 @@ class DeltaTableCreationSuite
 
         checkAnswer(
           sql(s"COMMENT ON TABLE $emptyTableName IS 'My Empty Cool Table'"), Nil)
-        assert(sql(s"DESCRIBE TABLE $emptyTableName").collect().length == 3)
+        var answer = 3
+        assert(sql(s"DESCRIBE TABLE $emptyTableName").collect().length == answer)
+
         // create table, alter tbl property, tbl comment
         assert(sql(s"DESCRIBE HISTORY $emptyTableName").collect().length == 3)
 

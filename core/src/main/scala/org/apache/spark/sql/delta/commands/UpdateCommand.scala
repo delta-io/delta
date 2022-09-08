@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, DeltaUDF, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -26,14 +26,15 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct, typedLit, udf}
+import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
+import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct}
+import org.apache.spark.sql.types.LongType
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`
@@ -51,6 +52,10 @@ case class UpdateCommand(
     condition: Option[Expression])
   extends LeafRunnableCommand with DeltaCommand {
 
+  override val output: Seq[Attribute] = {
+    Seq(AttributeReference("num_affected_rows", LongType)())
+  }
+
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
@@ -60,9 +65,12 @@ case class UpdateCommand(
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
     "numCopiedRows" -> createMetric(sc, "number of rows copied."),
-    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
-    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "executionTimeMs" ->
+      createTimingMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" ->
+      createTimingMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" ->
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numTouchedRows" -> createMetric(sc, "number of rows touched (copied + updated)")
@@ -79,12 +87,12 @@ case class UpdateCommand(
       // this data source relation.
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
     }
-    Seq.empty[Row]
+    Seq(Row(metrics("numUpdatedRows").value))
   }
 
   private def performUpdate(
       sparkSession: SparkSession, deltaLog: DeltaLog, txn: OptimisticTransaction): Unit = {
-    import sparkSession.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     var numTouchedFiles: Long = 0
     var numRewrittenFiles: Long = 0
@@ -122,15 +130,15 @@ case class UpdateCommand(
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
       val updatedRowCount = metrics("numUpdatedRows")
-      val updatedRowUdf = udf { () =>
+      val updatedRowUdf = DeltaUDF.boolean { () =>
         updatedRowCount += 1
         true
       }.asNondeterministic()
       val pathsToRewrite =
         withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
           data.filter(new Column(updateCondition))
-            .filter(updatedRowUdf())
             .select(input_file_name())
+            .filter(updatedRowUdf())
             .distinct()
             .as[String]
             .collect()
@@ -246,7 +254,7 @@ case class UpdateCommand(
     // Number of total rows that we have seen, i.e. are either copying or updating (sum of both).
     // This will be used later, along with numUpdatedRows, to determine numCopiedRows.
     val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = udf { () =>
+    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
       numTouchedRows += 1
       true
     }.asNondeterministic()
@@ -314,10 +322,9 @@ object UpdateCommand {
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val updatedDataCols = namedUpdateCols :+
-        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
-      val noopRewriteCols = target.output.map(new Column(_)) :+
-        typedLit[String](CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val updatedDataCols = namedUpdateCols :+ notCdcCol
+      val noopRewriteCols = target.output.map(new Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),

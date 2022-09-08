@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -72,6 +71,25 @@ trait DeltaSQLConfBase {
         |  to use the transaction log under `_spark_metadata` as the source of truth for files
         | contained in the table.
         """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_USE_CATALOG_PARTITIONS =
+    buildConf("convert.useCatalogPartitions")
+      .internal()
+      .doc(
+        """ When converting a catalog Parquet table, whether to use the partition information from
+          | the Metastore catalog and only commit files under the directories of active partitions.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_USE_CATALOG_SCHEMA =
+    buildConf("convert.useCatalogSchema")
+      .doc(
+        """ When converting to a catalog Parquet table, whether to use the catalog schema as the
+          | source of truth.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -558,6 +576,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACEWHERE_METRICS_ENABLED =
+    buildConf("replaceWhere.dataColumns.metrics.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, replaceWhere operations metrics on arbitrary expression and
+          |arbitrary columns is enabled. This will not report row level metrics for partitioned
+          |tables and tables with no stats.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
     buildConf("replaceWhere.constraintCheck.enabled")
       .doc(
@@ -651,6 +680,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val FAST_INTERLEAVE_BITS_ENABLED =
+    buildConf("optimize.zorder.fastInterleaveBits.enabled")
+      .internal()
+      .doc("When true, a faster version of the bit interleaving algorithm is used.")
+      .booleanConf
+      .createWithDefault(false)
+
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
       .internal()
@@ -667,6 +703,14 @@ trait DeltaSQLConfBase {
       .doc(
       "Whether to extract partition filters automatically from data filters for a partition" +
         " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
+  val GENERATED_COLUMN_ALLOW_NULLABLE =
+    buildConf("generatedColumn.allowNullableIngest.enabled")
+      .internal()
+      .doc("When enabled this will allow tables with generated columns enabled to be able " +
+        "to write data without providing values for a nullable column via DataFrame.write")
       .booleanConf
       .createWithDefault(true)
 
@@ -701,6 +745,17 @@ trait DeltaSQLConfBase {
         .intConf
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
+
+  val DELTA_OPTIMIZE_REPARTITION_ENABLED =
+    buildConf("optimize.repartition.enabled")
+      .internal()
+      .doc("Use repartition(1) instead of coalesce(1) to merge small files. " +
+        "coalesce(1) is executed with only one task, if there are many tiny files " +
+        "within a bin (e.g. 1000 files of 50MB), it cannot be optimized with more executors. " +
+        "repartition(1) incurs a shuffle stage, but the job can be distributed."
+      )
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
@@ -738,6 +793,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
+  val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
+    buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
+      .doc(
+        "Reading change data in batch (e.g. using `table_changes()`) on Delta table with " +
+          "column mapping schema operations is currently blocked due to potential data loss and " +
+          "schema confusion. However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
@@ -760,6 +826,19 @@ trait DeltaSQLConfBase {
           |incorrectly (for example, misspelled).""".stripMargin
       )
       .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE =
+    buildConf("deltaTableBuilder.forceTablePropertyLowerCase.enabled")
+      .internal()
+      .doc(
+        """Whether the keys of table properties should be set to lower case.
+          | Turn on this flag if you want keys of table properties not starting with delta
+          | to be backward compatible when the table is created via DeltaTableBuilder
+          | Please note that if you set this to true, the lower case of the
+          | key will be used for non delta prefix table properties.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 }

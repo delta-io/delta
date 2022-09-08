@@ -26,14 +26,14 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, If, InputFileName, Literal, Not}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{lit, typedLit, udf}
+import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
+import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
@@ -52,9 +52,12 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "numCopiedRows" -> createMetric(sc, "number of rows copied"),
     "numBytesAdded" -> createMetric(sc, "number of bytes added"),
     "numBytesRemoved" -> createMetric(sc, "number of bytes removed"),
-    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
-    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "executionTimeMs" ->
+      createTimingMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" ->
+      createTimingMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" ->
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numTouchedRows" -> createMetric(sc, "number of rows touched")
@@ -79,6 +82,8 @@ case class DeleteCommand(
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
+  override val output: Seq[Attribute] = Seq(AttributeReference("num_affected_rows", LongType)())
+
   override lazy val metrics = createMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -95,14 +100,22 @@ case class DeleteCommand(
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
     }
 
-    Seq.empty[Row]
+    // Adjust for deletes at partition boundaries. Deletes at partition boundaries is a metadata
+    // operation, therefore we don't actually have any information around how many rows were deleted
+    // While this info may exist in the file statistics, it's not guaranteed that we have these
+    // statistics. To avoid any performance regressions, we currently just return a -1 in such cases
+    if (metrics("numRemovedFiles").value > 0 && metrics("numDeletedRows").value == 0) {
+      Seq(Row(-1L))
+    } else {
+      Seq(Row(metrics("numDeletedRows").value))
+    }
   }
 
   def performDelete(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
       txn: OptimisticTransaction): Seq[Action] = {
-    import sparkSession.implicits._
+    import org.apache.spark.sql.delta.implicits._
 
     var numRemovedFiles: Long = 0
     var numAddedFiles: Long = 0
@@ -193,7 +206,7 @@ case class DeleteCommand(
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
           val data = Dataset.ofRows(sparkSession, newTarget)
           val deletedRowCount = metrics("numDeletedRows")
-          val deletedRowUdf = udf { () =>
+          val deletedRowUdf = DeltaUDF.boolean { () =>
             deletedRowCount += 1
             true
           }.asNondeterministic()
@@ -323,7 +336,7 @@ case class DeleteCommand(
 
     // number of total rows that we have seen / are either copying or deleting (sum of both).
     val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = udf { () =>
+    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
       numTouchedRows += 1
       true
     }.asNondeterministic()
@@ -341,10 +354,7 @@ case class DeleteCommand(
           .filter(numTouchedRowsUdf())
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(
-              If(filterCondition, typedLit[String](CDC_TYPE_NOT_CDC).expr,
-              lit(CDC_TYPE_DELETE).expr)
-            )
+            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData

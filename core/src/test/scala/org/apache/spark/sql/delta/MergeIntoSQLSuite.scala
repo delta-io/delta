@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
-import org.apache.spark.sql.{AnalysisException, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
@@ -82,7 +82,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
         update = "key2 = 20 + src.key3, value = 20 + src.value",
         insert = "(key2, value) VALUES (src.key3 - 10, src.value + 10)")
 
-      sql(cte + merge)
+      QueryTest.checkAnswer(sql(cte + merge), Seq(Row(2, 1, 0, 1)))
       checkAnswer(readDeltaTable(tempPath),
         Row(1, 4) :: // No change
         Row(22, 23) :: // Update

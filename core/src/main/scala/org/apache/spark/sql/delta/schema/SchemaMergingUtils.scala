@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, IntegerType, MapType, Metadata, NullType, ShortType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, IntegerType, MapType, NullType, ShortType, StructField, StructType}
 
 /**
  * Utils to merge table schema with data schema.
@@ -104,11 +104,20 @@ object SchemaMergingUtils {
    *
    * @param schema the schema to check for duplicates
    * @param colType column type name, used in an exception message
+   * @param caseSensitive Whether we should exception if two columns have casing conflicts. This
+   *                      should default to false for Delta.
    */
-  def checkColumnNameDuplication(schema: StructType, colType: String): Unit = {
+  def checkColumnNameDuplication(
+      schema: StructType,
+      colType: String,
+      caseSensitive: Boolean = false): Unit = {
     val columnNames = explodeNestedFieldNames(schema)
     // scalastyle:off caselocale
-    val names = columnNames.map(_.toLowerCase)
+    val names = if (caseSensitive) {
+      columnNames
+    } else {
+      columnNames.map(_.toLowerCase)
+    }
     // scalastyle:on caselocale
     if (names.distinct.length != names.length) {
       val duplicateColumns = names.groupBy(identity).collect {
@@ -150,14 +159,17 @@ object SchemaMergingUtils {
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
    * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
+   * @param caseSensitive Whether we should keep field mapping case-sensitively.
+   *                      This should default to false for Delta, which is case insensitive.
    */
   def mergeSchemas(
       tableSchema: StructType,
       dataSchema: StructType,
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
-      fixedTypeColumns: Set[String] = Set.empty): StructType = {
-    checkColumnNameDuplication(dataSchema, "in the data to save")
+      fixedTypeColumns: Set[String] = Set.empty,
+      caseSensitive: Boolean = false): StructType = {
+    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
     def merge(
         current: DataType,
         update: DataType,
@@ -165,7 +177,7 @@ object SchemaMergingUtils {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
           // Merge existing fields.
-          val updateFieldMap = toFieldMap(updateFields)
+          val updateFieldMap = toFieldMap(updateFields, caseSensitive)
           val updatedCurrentFields = currentFields.map { currentField =>
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
@@ -196,7 +208,7 @@ object SchemaMergingUtils {
           }
 
           // Identify the newly added fields.
-          val nameToFieldMap = toFieldMap(currentFields)
+          val nameToFieldMap = toFieldMap(currentFields, caseSensitive)
           val newFields = updateFields.filterNot(f => nameToFieldMap.contains(f.name))
 
           // Create the merged struct, the new fields are appended at the end of the struct.
@@ -277,8 +289,15 @@ object SchemaMergingUtils {
     TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
   }
 
-  def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {
-    CaseInsensitiveMap(fields.map(field => field.name -> field).toMap)
+  def toFieldMap(
+      fields: Seq[StructField],
+      caseSensitive: Boolean = false): Map[String, StructField] = {
+    val fieldMap = fields.map(field => field.name -> field).toMap
+    if (caseSensitive) {
+      fieldMap
+    } else {
+      CaseInsensitiveMap(fieldMap)
+    }
   }
 
   /**

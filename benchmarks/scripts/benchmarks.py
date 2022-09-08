@@ -116,6 +116,8 @@ class TPCDSBenchmarkSpec(BenchmarkSpec):
             "--scale-in-gb", str(scale_in_gb)
         ])
 
+
+
 # ============== Delta benchmark specifications ==============
 
 
@@ -130,10 +132,14 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
         ]
         self.scala_version = scala_version
 
+        if "spark_confs" in kwargs and isinstance(kwargs["spark_confs"], list):
+            kwargs["spark_confs"].extend(delta_spark_confs)
+        else:
+            kwargs["spark_confs"] = delta_spark_confs
+
         super().__init__(
             format_name="delta",
             maven_artifacts=self.delta_maven_artifacts(delta_version, self.scala_version),
-            spark_confs=delta_spark_confs,
             benchmark_main_class=benchmark_main_class,
             main_class_args=main_class_args,
             **kwargs
@@ -174,7 +180,6 @@ class ParquetBenchmarkSpec(BenchmarkSpec):
             main_class_args=main_class_args,
             **kwargs
         )
-
 
 class ParquetTPCDSDataLoadSpec(TPCDSDataLoadSpec, ParquetBenchmarkSpec):
     def __init__(self, scale_in_gb=1):
@@ -240,10 +245,10 @@ set -e
         shell_cmd = self.benchmark_spec.get_sparkshell_cmd(jar_path, shell_init_file_name)
         return f"""
 #!/bin/bash
-jps | grep "Spark" | cut -f 1 -d ' ' |  xargs kill -9 
-echo '{shell_init_file_content}' > {shell_init_file_name} 
+jps | grep "Spark" | cut -f 1 -d ' ' |  xargs kill -9
+echo '{shell_init_file_content}' > {shell_init_file_name}
 {shell_cmd} 2>&1 | tee {self.output_file}
-touch {self.completed_file} 
+touch {self.completed_file}
 """.strip()
 
     def upload_jar_to_cluster(self, cluster_hostname, ssh_id_file, ssh_user, delta_version_to_use=None):
@@ -273,10 +278,10 @@ package='screen'
 if [ -x "$(command -v yum)" ]; then
     if rpm -q $package; then
         echo "$package has already been installed"
-    else	    
+    else
         sudo yum -y install $package
     fi
-elif [ -x "$(command -v apt)" ]; then 
+elif [ -x "$(command -v apt)" ]; then
     if dpkg -s $package; then
         echo "$package has already been installed"
     else
@@ -398,14 +403,21 @@ fi
         else:
             print(">>> Benchmark completed with failure\n")
 
-        # Copy reports
-        if succeeded and copy_report:
-            report_files = [json_report_file, csv_report_file]
-            for report_file in report_files:
-                run_cmd(f"scp -C -i {ssh_id_file} " +
-                        f"{ssh_user}@{cluster_hostname}:{report_file} {report_file}",
-                        stream_output=True)
-            print(">>> Copied reports to local directory")
+        # Download reports
+        if copy_report:
+            Benchmark.download_file(output_file, cluster_hostname, ssh_id_file, ssh_user)
+            if succeeded:
+                report_files = [json_report_file, csv_report_file]
+                for report_file in report_files:
+                    Benchmark.download_file(report_file, cluster_hostname, ssh_id_file, ssh_user)
+            print(">>> Downloaded reports to local directory")
+
+
+    @staticmethod
+    def download_file(file, cluster_hostname, ssh_id_file, ssh_user):
+        run_cmd(f"scp -C -i {ssh_id_file} " +
+                f"{ssh_user}@{cluster_hostname}:{file} {file}",
+                stream_output=True)
 
     def upload_delta_jars_to_cluster_and_get_version(self, cluster_hostname, ssh_id_file, ssh_user):
         if not self.local_delta_dir:

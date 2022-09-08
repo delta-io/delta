@@ -33,11 +33,14 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 /**
  * A logical placeholder for describing a Delta table's history, so that the history can be
  * leveraged in subqueries. Replaced with `DescribeDeltaHistoryCommand` during planning.
+ *
+ * @param options: Hadoop file system options used for read and write.
  */
 case class DescribeDeltaHistory(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier],
     limit: Option[Int],
+    options: Map[String, String],
     output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
   extends LeafNode with MultiInstanceRelation  {
   override def computeStats(): Statistics = Statistics(sizeInBytes = conf.defaultSizeInBytes)
@@ -47,11 +50,14 @@ case class DescribeDeltaHistory(
 
 /**
  * A command for describing the history of a Delta table.
+ *
+ * @param options: Hadoop file system options used for read and write.
  */
 case class DescribeDeltaHistoryCommand(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier],
     limit: Option[Int],
+    options: Map[String, String],
     override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
   extends LeafRunnableCommand with DeltaLogging {
 
@@ -83,14 +89,15 @@ case class DescribeDeltaHistoryCommand(
       throw DeltaErrors.maxArraySizeExceeded()
     }
 
-    val deltaLog = DeltaLog.forTable(sparkSession, basePath)
+    val deltaLog = DeltaLog.forTable(sparkSession, basePath, options)
     recordDeltaOperation(deltaLog, "delta.ddl.describeHistory") {
       if (!deltaLog.tableExists) {
         throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
       }
 
-      import sparkSession.implicits._
-      deltaLog.history.getHistory(limit).toDF().collect().toSeq
+      import org.apache.spark.sql.delta.implicits._
+      val commits = deltaLog.history.getHistory(limit)
+      sparkSession.implicits.localSeqToDatasetHolder(commits).toDF().collect().toSeq
     }
   }
 }

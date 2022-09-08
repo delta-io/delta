@@ -93,6 +93,12 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       }.sum)
       .sum
 
+  /**
+   * Should return a metadata to help [[org.apache.spark.sql.delta.commands.cdc.CDCReader]]
+   * determine mostly about the type of that change. For example,
+   * Map([[org.apache.spark.sql.delta.commands.cdc.CDCReader.CDC_TYPE_COLUMN_NAME]]
+   * -> [[org.apache.spark.sql.delta.commands.cdc.CDCReader.CDC_TYPE_DELETE_STRING]]).
+   */
   protected def cdcPartitionValues(): Map[String, String]
 
   protected def extractActionParameters(action: T): ActionParameters

@@ -47,4 +47,4 @@ jobs:
           pipenv run pip install mypy==0.910
       - name: Run Scala/Java and Python tests
         run: |
-          pipenv run python run-tests.py
+          pipenv run python run-tests.py --coverage

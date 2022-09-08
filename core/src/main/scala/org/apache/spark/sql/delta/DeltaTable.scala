@@ -26,16 +26,15 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
-import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expression, NamedExpression, Or, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructType
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -87,6 +86,9 @@ object NodeWithOnlyDeterministicProjectAndFilter {
 object DeltaTableUtils extends PredicateHelper
   with DeltaLogging {
 
+  // The valid hadoop prefixes passed through `DeltaTable.forPath` or DataFrame APIs.
+  val validDeltaTableHadoopPrefixes: List[String] = List("fs.", "dfs.")
+
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
 
@@ -105,8 +107,11 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /** Check if the provided path is the root or the children of a Delta table. */
-  def isDeltaTable(spark: SparkSession, path: Path): Boolean = {
-    findDeltaTableRoot(spark, path).isDefined
+  def isDeltaTable(
+      spark: SparkSession,
+      path: Path,
+      options: Map[String, String] = Map.empty): Boolean = {
+    findDeltaTableRoot(spark, path, options).isDefined
   }
 
   /**

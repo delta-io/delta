@@ -20,9 +20,12 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 
+import scala.collection.JavaConverters._
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -32,7 +35,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit}
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{LongType, StructType}
+import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 abstract class DeltaCDCSuiteBase
   extends QueryTest
@@ -634,32 +637,6 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
-  test("should block CDC reads when Column Mapping enabled - batch") {
-    withTable("t1") {
-      sql(
-        s"""
-          |CREATE TABLE t1 (id LONG) USING DELTA
-          |TBLPROPERTIES(
-          |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name',
-          |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
-          |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
-          |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
-          |)
-          |""".stripMargin)
-      spark.range(10).write.format("delta").mode("append").saveAsTable("t1")
-
-      // case 1: batch read
-      spark.read.format("delta").table("t1").show()
-
-      // case 2: batch CDC read
-      val e = intercept[DeltaUnsupportedOperationException] {
-        cdcRead(new TableName("t1"), StartingVersion("0"), EndingVersion("1")).show()
-      }.getMessage
-      assert(e == "Change data feed (CDF) reads are currently not supported on tables with " +
-        "column mapping enabled.")
-    }
-  }
-
   test("batch write: append, dynamic partition overwrite + CDF") {
     withSQLConf(
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
@@ -818,3 +795,184 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
 }
 
+abstract class DeltaCDCColumnMappingSuiteBase extends DeltaCDCScalaSuite
+  with DeltaColumnMappingTestUtils {
+
+  private def assertBlocked(f: => Unit): Unit = {
+    val e = intercept[DeltaUnsupportedOperationException] {
+      f
+    }
+    assert(e.getErrorClass == "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" &&
+      e.getMessage.contains(
+        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key))
+  }
+
+  // Drop CDC fields because they are not useful for testing the blocking behavior
+  private def dropCDCFields(df: DataFrame): DataFrame =
+    df.drop(CDC_COMMIT_TIMESTAMP)
+      .drop(CDC_TYPE_COLUMN_NAME)
+      .drop(CDC_COMMIT_VERSION)
+
+  import testImplicits._
+
+  /**
+   * Write test delta data to test blocking column mapping for CDC batch queries, it takes a
+   * sequence and write out as a row of strings, assuming the delta log's schema are all strings.
+   */
+  private def writeDeltaData(
+      data: Seq[Int],
+      deltaLog: DeltaLog,
+      userSpecifiedSchema: Option[StructType] = None): Unit = {
+    val schema = userSpecifiedSchema.getOrElse(deltaLog.update().schema)
+    data.foreach { i =>
+      val data = Seq(Row(schema.map(_ => i.toString): _*))
+      spark.createDataFrame(data.asJava, schema)
+        .write.format("delta").mode("append").save(deltaLog.dataPath.toString)
+    }
+  }
+
+  /**
+   * Set up initial table data, considering current column mapping mode
+   */
+  protected def setupInitialDeltaTable(dir: File): Unit = {
+    require(columnMappingModeString != NoMapping.name)
+    val tablePath = dir.getCanonicalPath
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+    if (columnMappingModeString == NameMapping.name) {
+      // For name mode, we do an upgrade then write to test that behavior as well
+      // init table with 5 versions without column mapping
+      withColumnMappingConf("none") {
+        writeDeltaData((0 until 5), deltaLog, userSpecifiedSchema = Some(
+          new StructType().add("id", StringType, true).add("value", StringType, true)
+        ))
+      }
+      // upgrade to name mode
+      sql(
+        s"""
+           |ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |SET TBLPROPERTIES (
+           |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+      // write more data
+      writeDeltaData((5 until 10), deltaLog)
+    }
+
+    checkAnswer(
+      dropCDCFields(
+        cdcRead(
+          new TablePath(dir.getCanonicalPath),
+          StartingVersion("0"),
+          EndingVersion(deltaLog.update().version.toString))),
+      (0 until 10).map(_.toString).toDF("id").withColumn("value", col("id")))
+  }
+
+  test(s"blocking batch cdc read") {
+    withTempDir { dir =>
+      // Set up an initial table with 10 records in schema <id string, value string>
+      setupInitialDeltaTable(dir)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // add column should not be blocked
+      sql(
+        s"""
+           |ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |ADD COLUMN (name string)
+           |""".stripMargin)
+
+      // write more data
+      writeDeltaData((10 until 15), deltaLog)
+
+      checkAnswer(
+        dropCDCFields(
+          cdcRead(
+            new TablePath(dir.getCanonicalPath),
+            StartingVersion("0"),
+            EndingVersion(deltaLog.update().version.toString))),
+        (0 until 10).map(_.toString).toDF("id")
+          .withColumn("value", col("id"))
+          .withColumn("name", lit(null)) union
+        (10 until 15).map(_.toString).toDF("id")
+          .withColumn("value", col("id"))
+          .withColumn("name", col("id")))
+    }
+
+    withTempDir { dir =>
+      // Set up an initial table with 10 records in schema <id string, value string>
+      setupInitialDeltaTable(dir)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // drop column would cause CDC read to be blocked
+      sql(
+        s"""
+           |ALTER TABLE delta.`${dir.getCanonicalPath}` DROP COLUMN value
+           |""".stripMargin)
+
+      assertBlocked {
+        cdcRead(
+          new TablePath(dir.getCanonicalPath),
+          StartingVersion("0"),
+          EndingVersion(deltaLog.update().version.toString)).collect()
+      }
+    }
+
+    withTempDir { dir =>
+      // Set up an initial table with 10 records in schema <id string, value string>
+      setupInitialDeltaTable(dir)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // rename column would cause CDC read to be blocked
+      sql(
+        s"""
+           |ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id TO id2
+           |""".stripMargin)
+
+      assertBlocked {
+        cdcRead(
+          new TablePath(dir.getCanonicalPath),
+          StartingVersion("0"),
+          EndingVersion(deltaLog.update().version.toString)).collect()
+      }
+
+      // rename the column back
+      sql(
+        s"""
+          |ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id2 TO id
+          |""".stripMargin)
+
+      // Case 1 - would still block because we detected an intermediary action with a conflicting
+      //  schema (the first rename).
+      assertBlocked {
+        cdcRead(
+          new TablePath(dir.getCanonicalPath),
+          StartingVersion("0"),
+          EndingVersion(deltaLog.update().version.toString)).collect()
+      }
+
+      // Case 2 - would NOT block if we exclude the second rename back, because the data schemas
+      //  before that are now consistent with the latest.
+      checkAnswer(
+        dropCDCFields(
+          cdcRead(
+            new TablePath(dir.getCanonicalPath),
+            StartingVersion("0"),
+            // -2 to get rid of the last 2 schema change commits
+            EndingVersion((deltaLog.update().version - 2).toString))),
+        (0 until 10).map(_.toString).toDF("id").withColumn("value", col("id")))
+    }
+  }
+}
+
+
+class DeltaCDCNameColumnMappingSuite extends DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableNameMode with DeltaColumnMappingSelectedTestMixin {
+
+  override def runOnlyTests: Seq[String] = Seq(
+    "changes from table by name",
+    "changes from table by path",
+    "batch write: append, dynamic partition overwrite + CDF",
+    "blocking batch cdc read"
+  )
+
+}

@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.util.Random
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -215,7 +215,7 @@ object DeltaFileOperations extends DeltaLogging {
       hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
       fileListingParallelism: Option[Int] = None,
       listAsDirectories: Boolean = true): Dataset[SerializableFileStatus] = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
     val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>

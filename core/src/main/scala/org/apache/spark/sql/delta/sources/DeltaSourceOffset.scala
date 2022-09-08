@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
 
+import org.apache.spark.sql.connector.read.streaming.{Offset => OffsetV2}
 import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
 
 /**
@@ -87,10 +88,10 @@ object DeltaSourceOffset {
     )
   }
 
-  def apply(reservoirId: String, offset: Offset): DeltaSourceOffset = {
+  def apply(reservoirId: String, offset: OffsetV2): DeltaSourceOffset = {
     offset match {
       case o: DeltaSourceOffset => o
-      case s: SerializedOffset =>
+      case s =>
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
@@ -110,7 +111,7 @@ object DeltaSourceOffset {
       throw DeltaErrors.cannotFindSourceVersionException(json)
     }
 
-    var maxVersion = VERSION_1
+    val maxVersion = VERSION_1
 
     if (versionOpt.get > maxVersion) {
       throw DeltaErrors.invalidFormatFromSourceVersion(versionOpt.get, maxVersion)

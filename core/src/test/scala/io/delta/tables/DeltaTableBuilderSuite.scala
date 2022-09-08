@@ -19,6 +19,7 @@ package io.delta.tables
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
@@ -362,8 +363,95 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
           .location(path)
           .execute()
       }
-      assert(e.getMessage.equals("Database 'parquet' not found") ||
+      assert(e.getMessage == "Database 'main.parquet' not found" ||
+        e.getMessage == "Database 'parquet' not found" ||
         e.getMessage.contains("is not a valid name"))
     }
   }
+
+  test("delta table property case") {
+    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
+    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
+
+    sealed trait DeltaTablePropertySetOperation {
+      def setTableProperty(tablePath: String): Unit
+
+      def expectedConfig: Map[String, String]
+
+      def description: String
+    }
+
+    trait CasePreservingTablePropertySetOperation extends DeltaTablePropertySetOperation {
+
+      val expectedConfig = preservedCaseConfig
+    }
+
+    case object SetPropertyThroughCreate extends CasePreservingTablePropertySetOperation {
+      def setTableProperty(tablePath: String): Unit = sql(
+        s"CREATE TABLE delta.`$tablePath`(id INT) " +
+          s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar' ) "
+      )
+
+      val description = "Setting Table Property at Table Creation"
+    }
+
+    case object SetPropertyThroughAlter extends CasePreservingTablePropertySetOperation {
+      def setTableProperty(tablePath: String): Unit = {
+        spark.range(1, 10).write.format("delta").save(tablePath)
+        sql(s"ALTER TABLE delta.`$tablePath` " +
+          s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar')")
+      }
+
+      val description = "Setting Table Property via Table Alter"
+    }
+
+    case class SetPropertyThroughTableBuilder(backwardCompatible: Boolean) extends
+      DeltaTablePropertySetOperation {
+
+      def setTableProperty(tablePath: String): Unit = {
+        withSQLConf(DeltaSQLConf.TABLE_BUILDER_FORCE_TABLEPROPERTY_LOWERCASE.key
+          -> backwardCompatible.toString) {
+          DeltaTable.create()
+            .location(tablePath)
+            .property("delta.appendOnly", "true")
+            .property("Foo", "Bar")
+            .property("foo", "Bar")
+            .execute()
+        }
+      }
+
+      override def expectedConfig : Map[String, String] = {
+        if (backwardCompatible) {
+          lowerCaseEnforcedConfig
+        }
+        else {
+          preservedCaseConfig
+        }
+      }
+
+      val description = s"Setting Table Property on DeltaTableBuilder." +
+        s" Backward compatible enabled = ${backwardCompatible}"
+    }
+
+    val examples = Seq(
+      SetPropertyThroughCreate,
+      SetPropertyThroughAlter,
+      SetPropertyThroughTableBuilder(backwardCompatible = true),
+      SetPropertyThroughTableBuilder(backwardCompatible = false)
+    )
+
+    for (example <- examples) {
+      withClue(example.description) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath()
+          example.setTableProperty(path)
+          val config = DeltaLog.forTable(spark, path).snapshot.metadata.configuration
+          assert(
+            config == example.expectedConfig,
+            s"$example's result is not correct: $config")
+        }
+      }
+    }
+  }
+
 }

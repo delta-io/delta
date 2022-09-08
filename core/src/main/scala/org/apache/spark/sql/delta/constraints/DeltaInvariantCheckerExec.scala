@@ -25,16 +25,14 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.{Analyzer, TypeCoercion, UnresolvedAttribute, UnresolvedExtractValue, UnresolvedFunction}
-import org.apache.spark.sql.catalyst.analysis.TypeCoercion.ImplicitTypeCasts
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, ExtractValue, GetStructField, Literal, SortOrder}
+import org.apache.spark.sql.catalyst.analysis._
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.catalyst.optimizer.ReplaceExpressions
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.rules.RuleExecutor
 import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy, UnaryExecNode}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -43,8 +41,9 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantChecker(
     child: LogicalPlan,
-    deltaConstraints: Seq[Constraint])
-  extends UnaryNode {
+    deltaConstraints: Seq[Constraint]) extends UnaryNode {
+  assert(deltaConstraints.nonEmpty)
+
   override def output: Seq[Attribute] = child.output
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
@@ -54,13 +53,7 @@ case class DeltaInvariantChecker(
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case DeltaInvariantChecker(child, constraints) =>
-      val plannedChild = planLater(child)
-      val plan = if (constraints.nonEmpty) {
-        DeltaInvariantCheckerExec(plannedChild, constraints)
-      } else {
-        plannedChild
-      }
-      plan :: Nil
+      DeltaInvariantCheckerExec(planLater(child), constraints) :: Nil
     case _ => Nil
   }
 }

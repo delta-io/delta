@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException, RandomAccessFile}
 import java.util.concurrent.ExecutionException
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -375,7 +375,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.DISK_ONLY)
@@ -385,7 +385,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "NONE") {
-        spark.read.format("delta").load(path).collect()
+        DeltaLog.forTable(spark, path).snapshot.stateDS.collect()
         val persistedRDDs = sparkContext.getPersistentRDDs
         assert(persistedRDDs.size == 1)
         assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.NONE)
@@ -399,6 +399,45 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
           spark.read.format("delta").load(path).collect()
         }
       }
+    }
+  }
+
+  test("SerializableFileStatus json serialization/deserialization") {
+    val testCases = Seq(
+      SerializableFileStatus(path = "xyz", length = -1, isDir = true, modificationTime = 0)
+        -> """{"path":"xyz","length":-1,"isDir":true,"modificationTime":0}""",
+      SerializableFileStatus(
+        path = "s3://a.b/pq", length = 123L, isDir = false, modificationTime = 246L)
+        -> """{"path":"s3://a.b/pq","length":123,"isDir":false,"modificationTime":246}"""
+    )
+    for ((obj, json) <- testCases) {
+      assert(JsonUtils.toJson(obj) == json)
+      val status = JsonUtils.fromJson[SerializableFileStatus](json)
+      assert(status.modificationTime === obj.modificationTime)
+      assert(status.isDir === obj.isDir)
+      assert(status.length === obj.length)
+      assert(status.path === obj.path)
+    }
+  }
+
+  test("getLogSegmentAfterCommit can find specified commit") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val oldLogSegment = log.snapshot.logSegment
+      spark.range(10).write.format("delta").save(path)
+      val newLogSegment = log.snapshot.logSegment
+      assert(log.getLogSegmentAfterCommit(oldLogSegment, 0) == newLogSegment)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      intercept[IllegalArgumentException] {
+        // Version exists, but not contiguous with old logSegment
+        log.getLogSegmentAfterCommit(oldLogSegment, 1)
+      }
+      intercept[IllegalArgumentException] {
+        // Version exists, but newLogSegment already contains it
+        log.getLogSegmentAfterCommit(newLogSegment, 0)
+      }
+      assert(log.getLogSegmentAfterCommit(newLogSegment, 1) == log.snapshot.logSegment)
     }
   }
 }

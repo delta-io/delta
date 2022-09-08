@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -26,7 +26,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Analyzer, CannotReplaceMissingTableException}
+import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -76,11 +76,7 @@ case class CreateDeltaTableCommand(
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
-          val tableName = table.identifier.quotedString
-          throw new AnalysisException(
-            s"The location of the existing table $tableName is " +
-              s"`${existingTable.location}`. It doesn't match the specified location " +
-              s"`${table.location}`.")
+          throw DeltaErrors.tableLocationMismatch(table, existingTable)
         case _ =>
       }
       table.copy(
@@ -97,7 +93,6 @@ case class CreateDeltaTableCommand(
       //    CTAS flow.
       table
     }
-
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
@@ -225,7 +220,6 @@ case class CreateDeltaTableCommand(
       result
     }
   }
-
 
   private def getProvidedMetadata(table: CatalogTable, schemaString: String): Metadata = {
     Metadata(

@@ -74,8 +74,7 @@ class DeltaHistoryManager(
   def getHistory(
       start: Long,
       end: Option[Long] = None): Seq[DeltaHistory] = {
-    val _spark = spark
-    import _spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
     // We assume that commits are contiguous, therefore we try to load all of them in order
@@ -205,7 +204,7 @@ class DeltaHistoryManager(
     val files = deltaLog.store.listFrom(
         FileNames.deltaFile(deltaLog.logPath, 0),
         deltaLog.newDeltaHadoopConf())
-      .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
+      .filter(f => FileNames.isDeltaFile(f) || FileNames.isCheckpointFile(f))
 
     // A map of checkpoint version and number of parts, to number of parts observed
     val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int), Int]()
@@ -284,12 +283,12 @@ object DeltaHistoryManager extends DeltaLogging {
     val earliestVersionOpt = deltaLog.store.listFrom(
       FileNames.deltaFile(deltaLog.logPath, 0),
       deltaLog.newDeltaHadoopConf())
-      .filter(f => FileNames.isDeltaFile(f.getPath))
+      .filter(FileNames.isDeltaFile)
       .take(1).toArray.headOption
     if (earliestVersionOpt.isEmpty) {
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)
     }
-    FileNames.deltaVersion(earliestVersionOpt.get.getPath)
+    FileNames.deltaVersion(earliestVersionOpt.get)
   }
 
   /**
@@ -313,9 +312,9 @@ object DeltaHistoryManager extends DeltaLogging {
       hadoopConf: Configuration): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
     val commits = logStore.listFrom(deltaFile(logPath, start), hadoopConf)
-      .filter(f => isDeltaFile(f.getPath))
+      .filter(isDeltaFile)
       .map { fileStatus =>
-        Commit(deltaVersion(fileStatus.getPath), fileStatus.getModificationTime)
+        Commit(deltaVersion(fileStatus), fileStatus.getModificationTime)
       }
       .takeWhile(_.version < until)
 
@@ -386,7 +385,7 @@ object DeltaHistoryManager extends DeltaLogging {
       start: Long,
       end: Long,
       step: Long): Commit = {
-    import spark.implicits._
+    import org.apache.spark.sql.delta.implicits._
     val possibleCommits = spark.range(start, end, step).mapPartitions { startVersions =>
       val logStore = LogStore(SparkEnv.get.conf, conf.value)
       val basePath = new Path(logPath)

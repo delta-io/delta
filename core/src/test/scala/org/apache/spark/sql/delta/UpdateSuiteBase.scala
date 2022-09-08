@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.util.Locale
 
@@ -26,6 +27,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -657,6 +659,22 @@ abstract class UpdateSuiteBase
       errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
   }
 
+  test("schema pruning on finding files to update") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    // spark.conf.set("spark.sql.adaptive.enabled", "false")
+    val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+      checkUpdate(condition = Some("key = 2"), setClauses = "key = 1, value = 3",
+        expectedResults = Row(1, 3) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
+    }
+
+    val scans = executedPlans.flatMap(_.collect {
+      case f: FileSourceScanExec => f
+    })
+    // The first scan is for finding files to update. We only are matching against the key
+    // so that should be the only field in the schema
+    assert(scans.head.schema == StructType(Seq(StructField("key", IntegerType))))
+  }
+
   /**
    * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
@@ -856,17 +874,17 @@ abstract class UpdateSuiteBase
 
   protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
     testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromSelect(text, isSQLTempView)
-        executeUpdate(
-          "v",
-          where = "key >= 1 and value < 3",
-          set = "value = key + value, key = key + 1"
-        )
-        checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        }
       }
-    }
   }
 
   testComplexTempViews("nontrivial projection")(
@@ -878,4 +896,5 @@ abstract class UpdateSuiteBase
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
+
 }

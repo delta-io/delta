@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -975,6 +975,253 @@ trait DescribeDeltaHistorySuiteBase
         val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
         assert(operationMetrics === Map.empty)
+      }
+    }
+  }
+
+  def testReplaceWhere(testName: String)(f: (Boolean, Boolean) => Unit): Unit = {
+    Seq(true, false).foreach { enableCDF =>
+      Seq(true, false).foreach { enableStats =>
+        test(testName + s"enableCDF=${enableCDF} -  enableStats ${enableStats}") {
+          withSQLConf(
+            DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString,
+            DeltaSQLConf.DELTA_COLLECT_STATS.key ->enableStats.toString,
+            DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+             f(enableCDF, enableStats)
+          }
+        }
+      }
+    }
+  }
+
+  testReplaceWhere("replaceWhere on data column") { (enableCDF, enableStats) =>
+    withTable("tbl") {
+      // create a table with one row
+      spark.range(10)
+        .repartition(1) // 1 file table
+        .withColumn("b", lit(1))
+        .write
+        .format("delta")
+        .saveAsTable("tbl")
+      val deltaTable = io.delta.tables.DeltaTable.forName("tbl")
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+
+      // replace where
+      spark.range(20)
+        .withColumn("b", lit(1))
+        .repartition(1) // write 1 file
+        .write
+        .format("delta")
+        .option("replaceWhere", "b = 1")
+        .mode("overwrite")
+        .saveAsTable("tbl")
+
+      val numWrittenFiles = deltaLog.getChanges(1).flatMap {
+        case (a, v) => v
+      }.filter(_.isInstanceOf[AddFile])
+        .toSeq
+        .size
+
+      val numAddedChangeFiles = if (enableCDF) {
+        deltaLog.getChanges(1).flatMap {
+          case (a, v) => v
+        }.filter(_.isInstanceOf[AddCDCFile])
+          .toSeq
+          .size
+      } else {
+        0
+      }
+
+      if (enableStats) {
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> (numWrittenFiles).toString,
+            "numOutputRows" -> "20",
+            "numCopiedRows" -> "0",
+            "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+            "numDeletedRows" -> "10",
+            "numRemovedFiles" -> "1"
+          ),
+          getOperationMetrics(deltaTable.history(1)),
+          DeltaOperationMetrics.WRITE_REPLACE_WHERE
+        )
+      } else {
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> (numWrittenFiles).toString,
+            "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+            "numRemovedFiles" -> "1"
+          ),
+          getOperationMetrics(deltaTable.history(1)),
+          DeltaOperationMetrics.WRITE_REPLACE_WHERE.filter(!_.contains("Rows"))
+        )
+      }
+    }
+  }
+
+  testReplaceWhere(s"replaceWhere on data column - partial rewrite") { (enableCDF, enableStats) =>
+    // Whats different from the above test
+    // replace where has a append + delete.
+    // make the delete also write new files
+    withTable("tbl") {
+      // create a table with one row
+      spark.range(10)
+        .repartition(1) // 1 file table
+        .withColumn("b", 'id % 2) // 1 file contains 2 values
+        .write
+        .format("delta")
+        .saveAsTable("tbl")
+      val deltaTable = io.delta.tables.DeltaTable.forName("tbl")
+
+      // replace where
+      spark.range(20)
+        .withColumn("b", lit(1L))
+        .repartition(3) // write 3 files
+        .write
+        .format("delta")
+        .option("replaceWhere", "b = 1") // partial match
+        .mode("overwrite")
+        .saveAsTable("tbl")
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+      val numAddedChangeFiles = if (enableCDF) {
+        deltaLog.getChanges(1).flatMap {
+          case (a, v) => v
+        }.filter(_.isInstanceOf[AddCDCFile])
+          .toSeq
+          .size
+      } else {
+        0
+      }
+
+      if (enableStats) {
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> "4", // 3(append) + 1(delete)
+            "numOutputRows" -> "25", // 20 + 5
+            "numCopiedRows" -> "5",
+            "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+            "numDeletedRows" -> "5",
+            "numRemovedFiles" -> "1"
+          ),
+          getOperationMetrics(deltaTable.history(1)),
+          DeltaOperationMetrics.WRITE_REPLACE_WHERE
+        )
+      } else {
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> "4", // 3(append) + 1(delete)
+            "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+            "numRemovedFiles" -> "1"
+          ),
+          getOperationMetrics(deltaTable.history(1)),
+          DeltaOperationMetrics.WRITE_REPLACE_WHERE.filter(!_.contains("Rows"))
+        )
+
+      }
+    }
+  }
+
+  Seq("true", "false").foreach { enableArbitraryRW =>
+    testReplaceWhere(s"replaceWhere on partition column " +
+        s"- arbitraryReplaceWhere=${enableArbitraryRW}") { (enableCDF, enableStats) =>
+      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enableArbitraryRW) {
+        withTable("tbl") {
+          // create a table with one row
+          spark.range(10)
+            .repartition(1) // 1 file table
+            .withColumn("b", lit(1))
+            .write
+            .format("delta")
+            .partitionBy("b")
+            .saveAsTable("tbl")
+          val deltaTable = io.delta.tables.DeltaTable.forName("tbl")
+
+          // replace where
+          spark.range(20)
+            .repartition(2) // write 2 files
+            .withColumn("b", lit(1))
+            .write
+            .format("delta")
+            .option("replaceWhere", "b = 1") // partial match
+            .mode("overwrite")
+            .saveAsTable("tbl")
+
+          // metrics are a subset here as it would involve a partition delete
+          if (enableArbitraryRW.toBoolean) {
+            if (enableStats) {
+              checkOperationMetrics(
+                Map(
+                  "numFiles" -> "2",
+                  "numOutputRows" -> "20",
+                  "numAddedChangeFiles" -> "0",
+                  "numRemovedFiles" -> "1"
+                ),
+                getOperationMetrics(deltaTable.history(1)),
+                DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS
+              )
+            } else {
+              checkOperationMetrics(
+                Map(
+                  "numFiles" -> "2",
+                  "numAddedChangeFiles" -> "0",
+                  "numRemovedFiles" -> "1"
+                ),
+                getOperationMetrics(deltaTable.history(1)),
+                DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS.filter(!_.contains("Rows"))
+              )
+
+            }
+          } else {
+            // legacy replace where mentioned output rows regardless of stats or not.
+            checkOperationMetrics(
+              Map(
+                "numFiles" -> "2",
+                "numOutputRows" -> "20"
+              ),
+              getOperationMetrics(deltaTable.history(1)),
+              DeltaOperationMetrics.WRITE
+            )
+          }
+        }
+      }
+    }
+  }
+
+  test("replaceWhere metrics turned off - reverts to old behavior") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false") {
+      withTable("tbl") {
+        // create a table with one row
+        spark.range(10)
+          .repartition(1) // 1 file table
+          .withColumn("b", lit(1))
+          .write
+          .format("delta")
+          .partitionBy("b")
+          .saveAsTable("tbl")
+        val deltaTable = io.delta.tables.DeltaTable.forName("tbl")
+
+        // replace where
+        spark.range(20)
+          .repartition(2) // write 2 files
+          .withColumn("b", lit(1))
+          .write
+          .format("delta")
+          .option("replaceWhere", "b = 1") // partial match
+          .mode("overwrite")
+          .saveAsTable("tbl")
+
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> "2",
+            "numOutputRows" -> "20"
+          ),
+          getOperationMetrics(deltaTable.history(1)),
+          DeltaOperationMetrics.WRITE
+        )
       }
     }
   }

@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, NoMapping, Snapshot, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
@@ -36,7 +36,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.connector.read.streaming
-import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
+import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 
@@ -93,6 +93,7 @@ private[delta] case class IndexedFile(
  */
 trait DeltaSourceBase extends Source
     with SupportsAdmissionControl
+    with SupportsTriggerAvailableNow
     with DeltaLogging { self: DeltaSource =>
 
   override val schema: StructType = {
@@ -106,6 +107,13 @@ trait DeltaSourceBase extends Source
   }
 
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
+
+  override def prepareForTriggerAvailableNow(): Unit = {
+    val offset = latestOffset(null, ReadLimit.allAvailable())
+    if (offset != null) {
+      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+    }
+  }
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
@@ -348,7 +356,7 @@ case class DeltaSource(
           if (filestatus.getLen <
             spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
             // entire file can be read into memory
-            val actions = deltaLog.store.read(filestatus.getPath, deltaLog.newDeltaHadoopConf())
+            val actions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
               .map(Action.fromJson)
             val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
 
@@ -360,7 +368,7 @@ case class DeltaSource(
 
           } else { // file too large to read into memory
             var fileIterator = deltaLog.store.readAsIterator(
-              filestatus.getPath,
+              filestatus,
               deltaLog.newDeltaHadoopConf())
             try {
               verifyStreamHygiene(fileIterator.map(Action.fromJson), version)
@@ -701,7 +709,7 @@ case class DeltaSource(
       case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
       case composite: CompositeLimit =>
         Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
-      case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
+      case other => throw DeltaErrors.unknownReadLimit(other.toString())
     }
   }
 

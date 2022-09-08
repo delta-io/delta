@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
-import scala.collection.Set._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
@@ -557,10 +556,7 @@ object SchemaUtils extends DeltaLogging {
             prettyFieldName(stack ++ Seq(thisCol, "value")))
         case (_, o) =>
           if (column.length > 1) {
-            throw new AnalysisException(
-              s"""Expected $columnPath to be a nested data type, but found $o. Was looking for the
-                 |index of ${prettyFieldName(column)} in a nested field
-              """.stripMargin)
+            throw DeltaErrors.columnPathNotNested(columnPath, o, column)
           }
           (Nil, 0)
       }
@@ -650,15 +646,11 @@ object SchemaUtils extends DeltaLogging {
             case (MAP_VALUE_INDEX, MapType(k, value: StructType, nullability)) =>
               MapType(k, addColumn(value, column, posTail.tail), nullability)
             case _ =>
-              throw new AnalysisException(
-                s"""
-                  |Cannot add ${column.name} because its parent is not a StructType.
-                """.stripMargin)
+              throw DeltaErrors.addColumnParentNotStructException(column, IntegerType)
           }
           StructField(name, addedMap, nullable, metadata)
         case o =>
-          throw new AnalysisException(s"Cannot add ${column.name} because its parent is not a " +
-            s"StructType. Found ${o.dataType}")
+          throw DeltaErrors.addColumnParentNotStructException(column, o.dataType)
       }
       StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length))
     } else {
@@ -680,7 +672,7 @@ object SchemaUtils extends DeltaLogging {
     require(position.nonEmpty, "Don't know where to drop the column")
     val slicePosition = position.head
     if (slicePosition < 0) {
-      throw new AnalysisException(s"Index $slicePosition to drop column is lower than 0")
+      throw DeltaErrors.dropColumnAtIndexLessThanZeroException(slicePosition)
     }
     val length = schema.length
     if (slicePosition >= length) {
@@ -1029,8 +1021,14 @@ object SchemaUtils extends DeltaLogging {
     case BooleanType =>
     case ByteType =>
     case ShortType =>
-    case IntegerType | _: YearMonthIntervalType =>
-    case LongType | _: DayTimeIntervalType =>
+    case IntegerType =>
+    case dt: YearMonthIntervalType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
+    case LongType =>
+    case dt: DayTimeIntervalType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
     case FloatType =>
     case DoubleType =>
     case StringType =>

@@ -24,10 +24,9 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataInputStream, Path}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession
@@ -52,8 +51,20 @@ abstract class HadoopFileSystemLogStore(
   }
 
   override def read(path: Path, hadoopConf: Configuration): Seq[String] = {
-    val fs = path.getFileSystem(hadoopConf)
-    val stream = fs.open(path)
+    readStream(open(path, hadoopConf))
+  }
+
+  override def readAsIterator(path: Path): ClosableIterator[String] = {
+    readAsIterator(path, getHadoopConfiguration)
+  }
+
+  override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] =
+    readStreamAsIterator(open(path, hadoopConf))
+
+  private def open(path: Path, hadoopConf: Configuration): FSDataInputStream =
+    path.getFileSystem(hadoopConf).open(path)
+
+  private def readStream(stream: FSDataInputStream): Seq[String] = {
     try {
       val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
       IOUtils.readLines(reader).asScala.map(_.trim).toSeq
@@ -62,13 +73,7 @@ abstract class HadoopFileSystemLogStore(
     }
   }
 
-  override def readAsIterator(path: Path): ClosableIterator[String] = {
-    readAsIterator(path, getHadoopConfiguration)
-  }
-
-  override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
-    val fs = path.getFileSystem(hadoopConf)
-    val stream = fs.open(path)
+  private def readStreamAsIterator(stream: FSDataInputStream): ClosableIterator[String] = {
     val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
     new LineClosableIterator(reader)
   }

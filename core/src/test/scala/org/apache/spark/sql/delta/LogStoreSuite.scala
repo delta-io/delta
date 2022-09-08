@@ -18,15 +18,17 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, IOException}
 import java.net.URI
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
@@ -88,6 +90,9 @@ abstract class LogStoreSuiteBase extends QueryTest
           s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
     }
 
+    def pathToFileStatus(path: Path): FileStatus =
+      path.getFileSystem(sessionHadoopConf).getFileStatus(path)
+
     withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
       val deltas = Seq(0, 1)
@@ -95,10 +100,18 @@ abstract class LogStoreSuiteBase extends QueryTest
       store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
       store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
+      // Test Path based read APIs
       assert(store.read(deltas.head, sessionHadoopConf) == Seq("zero", "none"))
       assert(store.readAsIterator(deltas.head, sessionHadoopConf).toSeq == Seq("zero", "none"))
       assert(store.read(deltas(1), sessionHadoopConf) == Seq("one"))
       assert(store.readAsIterator(deltas(1), sessionHadoopConf).toSeq == Seq("one"))
+      // Test FileStatus based read APIs
+      assert(store.read(pathToFileStatus(deltas.head), sessionHadoopConf) == Seq("zero", "none"))
+      assert(store.readAsIterator(pathToFileStatus(deltas.head), sessionHadoopConf).toSeq ==
+        Seq("zero", "none"))
+      assert(store.read(pathToFileStatus(deltas(1)), sessionHadoopConf) == Seq("one"))
+      assert(store.readAsIterator(pathToFileStatus(deltas(1)), sessionHadoopConf).toSeq ==
+        Seq("one"))
 
       assertNoLeakedCrcFiles(tempLogDir)
     }
@@ -158,7 +171,7 @@ abstract class LogStoreSuiteBase extends QueryTest
     val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log2.store.getClass.getName == logStoreClassName)
 
-    assert(log2.lastCheckpoint.map(_.version) === Some(0L))
+    assert(log2.readLastCheckpointFile().map(_.version) === Some(0L))
     assert(log2.snapshot.allFiles.count == 1)
   }
 
@@ -189,15 +202,29 @@ abstract class LogStoreSuiteBase extends QueryTest
     "use isPartialWriteVisible to decide whether use rename") {
     withTempDir { tempDir =>
       import testImplicits._
-      Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getCanonicalPath)
+      // Write 5 files to delta table
+      (1 to 100).toDF().repartition(5).write.format("delta").save(tempDir.getCanonicalPath)
       withSQLConf(
           "fs.file.impl" -> classOf[TrackingRenameFileSystem].getName,
           "fs.file.impl.disable.cache" -> "true") {
-        val logStore = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
-        TrackingRenameFileSystem.numOfRename = 0
-        logStore.checkpoint()
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        TrackingRenameFileSystem.renameCounter.set(0)
+        deltaLog.checkpoint()
         val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
-        assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+        assert(TrackingRenameFileSystem.renameCounter.get() === expectedNumOfRename)
+
+        withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "9") {
+          // Write 5 more files to the delta table
+          (1 to 100).toDF().repartition(5).write
+            .format("delta").mode("append").save(tempDir.getCanonicalPath)
+          // At this point table has total 10 files, which won't fit in 1 checkpoint part file (as
+          // DELTA_CHECKPOINT_PART_SIZE is set to 9 in this test). So this will end up generating
+          // 2 PART files.
+          TrackingRenameFileSystem.renameCounter.set(0)
+          deltaLog.checkpoint()
+          val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 2 else 0
+          assert(TrackingRenameFileSystem.renameCounter.get() === expectedNumOfRename)
+        }
       }
     }
   }
@@ -479,13 +506,14 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
  */
 class TrackingRenameFileSystem extends RawLocalFileSystem {
   override def rename(src: Path, dst: Path): Boolean = {
-    TrackingRenameFileSystem.numOfRename += 1
+    TrackingRenameFileSystem.renameCounter.incrementAndGet()
     super.rename(src, dst)
   }
 }
 
 object TrackingRenameFileSystem {
-  @volatile var numOfRename = 0
+  val renameCounter = new AtomicInteger(0)
+  def resetCounter(): Unit = renameCounter.set(0)
 }
 
 /**

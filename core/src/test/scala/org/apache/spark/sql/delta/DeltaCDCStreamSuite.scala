@@ -32,7 +32,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest}
+import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
 
 trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
@@ -625,6 +625,49 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("maxFilesPerTrigger with Trigger.AvailableNow respects read limits") {
+    withTempDir { inputDir =>
+      // version 0 - 2 AddFiles
+      spark.range(2)
+        .withColumn("part", 'id % 2)
+        .withColumn("col3", lit(0))
+        .repartition(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(inputDir.getAbsolutePath)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+      // version 1 - 2 AddCDCFiles
+      deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("0")))
+
+      // version 2 - 2 AddCDCFiles
+      deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
+
+      val df = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "3")
+        .option(DeltaOptions.CDC_READ_OPTION, "true")
+        .option("startingVersion", "0")
+        .load(inputDir.getCanonicalPath)
+
+      // test whether the AddCDCFile commits do not get split up.
+      val rowsPerBatch = Seq(
+        2, // 2 rows from the 2 AddFile
+        4, // 4 rows(pre and post image) from the 2 AddCDCFiles
+        4 // 4 rows(pre and post image) from 2 AddCDCFiles
+      )
+
+      testStream(df)(
+        StartStream(Trigger.AvailableNow),
+        Execute { query =>
+          assert(query.awaitTermination(10000))
+        },
+        CheckProgress(rowsPerBatch)
+      )
+    }
+  }
+
   test("excludeRegex works with cdc") {
     withTempDir { inputDir =>
       spark.range(2)
@@ -783,8 +826,8 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       val e = intercept[StreamingQueryException] {
         f
       }.getCause.getMessage
-      assert(e == "Change data feed (CDF) reads are currently not supported on tables " +
-        "with column mapping enabled.")
+      assert(e.contains("Change Data Feed (CDF) reads are not supported on tables with " +
+        "column mapping schema changes (e.g. rename or drop)"))
     }
 
     Seq(0, 1).foreach { startingVersion =>

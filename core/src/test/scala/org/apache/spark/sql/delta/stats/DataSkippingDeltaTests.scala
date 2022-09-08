@@ -1115,7 +1115,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       predicate: String,
       checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
     val parsed = parse(deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(projection = Nil, parsed)
+    val res = deltaLog.snapshot.filesForScan(parsed)
     assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
     assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
     assert(res.scanned.files.get == res.files.size)

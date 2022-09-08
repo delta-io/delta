@@ -495,6 +495,106 @@ class DeltaColumnMappingSuite extends QueryTest
     assert(DeltaColumnMapping.findMaxColumnId(new StructType()) == 0)
   }
 
+  // TODO: repurpose this once we roll out the proper semantics for CM + streaming
+  testColumnMapping("isColumnMappingReadCompatible") { mode =>
+    // Set up table based on mode and return the initial metadata actions for comparison
+    def setupInitialTable(deltaLog: DeltaLog): (MetadataAction, MetadataAction) = {
+      val tablePath = deltaLog.dataPath.toString
+      if (mode == NameMapping.name) {
+        Seq((1, "a"), (2, "b")).toDF("id", "name")
+          .write.mode("append").format("delta").save(tablePath)
+        // schema: <id, name>
+        val m0 = deltaLog.update().metadata
+
+        // add a column
+        sql(s"ALTER TABLE delta.`$tablePath` ADD COLUMN (score long)")
+        // schema: <id, name, score>
+        val m1 = deltaLog.update().metadata
+
+        // column mapping not enabled -> not blocked at all
+        assert(DeltaColumnMapping.isColumnMappingReadCompatible(m1, m0))
+
+        // upgrade to name mode
+        alterTableWithProps(s"delta.`$tablePath`", Map(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+
+        (m0, m1)
+      } else {
+        // for id mode, just create the table
+        withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "id") {
+          Seq((1, "a"), (2, "b")).toDF("id", "name")
+            .write.mode("append").format("delta").save(tablePath)
+        }
+        // schema: <id, name>
+        val m0 = deltaLog.update().metadata
+
+        // add a column
+        sql(s"ALTER TABLE delta.`$tablePath` ADD COLUMN (score long)")
+        // schema: <id, name, score>
+        val m1 = deltaLog.update().metadata
+
+        // add column shouldn't block
+        assert(DeltaColumnMapping.isColumnMappingReadCompatible(m1, m0))
+
+        (m0, m1)
+      }
+    }
+
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+      val (m0, m1) = setupInitialTable(deltaLog)
+
+      // schema: <id, name, score>
+      val m2 = deltaLog.update().metadata
+
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m2, m1))
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m2, m0))
+
+      // rename column
+      sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN score TO age")
+      // schema: <id, name, age>
+      val m3 = deltaLog.update().metadata
+
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m3, m2))
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m3, m1))
+      // But IS read compatible with the initial schema, because the added column should not
+      // be blocked by this column mapping check.
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m3, m0))
+
+      // drop a column
+      sql(s"ALTER TABLE delta.`$tablePath` DROP COLUMN age")
+      // schema: <id, name>
+      val m4 = deltaLog.update().metadata
+
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m4, m3))
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m4, m2))
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m4, m1))
+      // but IS read compatible with the initial schema, because the added column is dropped
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m4, m0))
+
+      // add back the same column
+      sql(s"ALTER TABLE delta.`$tablePath` ADD COLUMN (score long)")
+      // schema: <id, name, score>
+      val m5 = deltaLog.update().metadata
+
+      // It IS read compatible with the previous schema, because the added column should not
+      // blocked by this column mapping check.
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m5, m4))
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m5, m3))
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m5, m2))
+      // But Since the new added column has a different physical name as all previous columns,
+      // even it has the same logical name as say, m1.schema, we will still block
+      assert(!DeltaColumnMapping.isColumnMappingReadCompatible(m5, m1))
+      // But it IS read compatible with the initial schema, because the added column should not
+      // be blocked by this column mapping check.
+      assert(DeltaColumnMapping.isColumnMappingReadCompatible(m5, m0))
+    }
+  }
+
   test("create table under id mode should be blocked") {
     withTable("t1") {
       val mode = "id"
@@ -1348,13 +1448,13 @@ class DeltaColumnMappingSuite extends QueryTest
 
       if (shouldFail) {
         val e = intercept[DeltaUnsupportedOperationException] {
-          txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+          txn.commit(Seq(action), DeltaOperations.ManualUpdate)
         }.getMessage
         assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
           "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
           "COLUMN.")
       } else {
-        txn.commit(action :: Nil, DeltaOperations.ManualUpdate)
+        txn.commit(Seq(action), DeltaOperations.ManualUpdate)
       }
     }
 
@@ -1393,7 +1493,8 @@ class DeltaColumnMappingSuite extends QueryTest
           withTable("t1") {
             createTable()
             val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-            withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
+            withSQLConf(
+                DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
               withTable("t2") {
                 sql("DROP TABLE IF EXISTS t2")
                 sql("CREATE TABLE t2 USING DELTA AS SELECT * FROM t1")
@@ -1407,11 +1508,13 @@ class DeltaColumnMappingSuite extends QueryTest
 
         // case 3: drop column with FileAction should fail if $shouldBlock == true
         fileActions.foreach { fileAction =>
-          withTable("t1") {
-            createTable()
-            val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-            val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
-            checkHelper(log, droppedColumnSchema, fileAction)
+          {
+            withTable("t1") {
+              createTable()
+              val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+              val droppedColumnSchema = sql("SELECT * FROM t1").drop(colName).schema
+              checkHelper(log, droppedColumnSchema, fileAction)
+            }
           }
         }
       }

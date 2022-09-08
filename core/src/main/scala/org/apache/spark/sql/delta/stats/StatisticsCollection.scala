@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
@@ -128,7 +127,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
         // Truncate and pad string max values as necessary
         case (c, SkippingEligibleDataType(StringType)) =>
           val udfTruncateMax =
-            DeltaUDF.stringStringUdf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
+            DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
         // Collect all numeric max values

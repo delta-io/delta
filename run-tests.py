@@ -20,15 +20,33 @@ import os
 import subprocess
 import shlex
 from os import path
+import argparse
 
 
-def run_sbt_tests(root_dir, scala_version=None):
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--coverage",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Enables test coverage and generates an aggregate report for all subprojects")
+    return parser.parse_args()
+
+
+def run_sbt_tests(root_dir, coverage, scala_version=None):
     print("##### Running SBT tests #####")
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
+    cmd = [sbt_path, "clean"]
+    if coverage:
+        cmd += ["coverage"]
     if scala_version is None:
-        run_cmd([sbt_path, "clean", "+test"], stream_output=True)
+        cmd += ["+test"]
     else:
-        run_cmd([sbt_path, "clean", "++ %s test" % scala_version], stream_output=True)
+        cmd += ["++ %s test" % scala_version]
+    if coverage:
+        cmd += ["coverageAggregate", "coverageOff"]
+    run_cmd(cmd, stream_output=True)
 
 
 def run_python_tests(root_dir):
@@ -150,6 +168,10 @@ def run_tests_in_docker(image_tag):
     if scala_version is not None:
         envs = envs + "-e SCALA_VERSION=%s " % scala_version
 
+    test_parallelism = os.getenv("TEST_PARALLELISM_COUNT")
+    if test_parallelism is not None:
+        envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
@@ -161,12 +183,13 @@ def run_tests_in_docker(image_tag):
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.abspath(__file__))
+    args = get_args()
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
         run_tests_in_docker(test_env_image_tag)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, scala_version)
+        run_sbt_tests(root_dir, args.coverage, scala_version)
         # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
         if scala_version is None or scala_version.startswith("2.12"):
             run_python_tests(root_dir)
