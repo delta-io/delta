@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
@@ -153,6 +152,105 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
         }
         Seq("update", "not support").foreach { msg =>
           assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg))
+        }
+      }
+    }
+  }
+
+  test("streaming overwrite") {
+    failAfter(streamingTimeout) {
+      withTempDirs { (outputDir, checkpointDir) =>
+        val inputData1 = MemoryStream[Int]
+        val df1 = inputData1.toDF()
+        val checkpoint1 = new File(checkpointDir, "checkpoint1")
+        val query1 = df1.writeStream
+          .option("checkpointLocation", checkpoint1.getCanonicalPath)
+          .option("streamingOverwrite", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+        try {
+          inputData1.addData(1)
+          query1.processAllAvailable()
+
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          checkDatasetUnorderly(outputDf.as[Int], 1)
+          assert(log.update().transactions.head == (query1.id.toString -> 0L))
+
+          inputData1.addData(2)
+          query1.processAllAvailable()
+
+          checkDatasetUnorderly(outputDf.as[Int], 1, 2)
+          assert(log.update().transactions.head == (query1.id.toString -> 1L))
+        } finally {
+          query1.stop()
+        }
+
+        // Start a new stream, first commit should overwrite the table
+        val inputData2 = MemoryStream[Int]
+        val df2 = inputData2.toDF()
+        val checkpoint2 = new File(checkpointDir, "checkpoint2")
+        val query2 = df2.writeStream
+          .option("checkpointLocation", checkpoint2.getCanonicalPath)
+          .option("streamingOverwrite", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          inputData2.addData(3)
+          query2.processAllAvailable()
+
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          checkDatasetUnorderly(outputDf.as[Int], 3)
+          assert(log.update().version == 2L)
+          assert(log.update().transactions(query2.id.toString) == 0L)
+
+          inputData2.addData(4)
+          query2.processAllAvailable()
+
+          checkDatasetUnorderly(outputDf.as[Int], 3, 4)
+          assert(log.update().version == 3L)
+          assert(log.update().transactions(query2.id.toString) == 1L)
+        } finally {
+          query2.stop()
+        }
+
+        // New stream with a different schema
+        val inputData3 = MemoryStream[String]
+        val df3 = inputData3.toDF()
+        val checkpoint3 = new File(checkpointDir, "checkpoint3")
+        val query3 = df3.writeStream
+          .option("checkpointLocation", checkpoint3.getCanonicalPath)
+          .option("streamingOverwrite", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          inputData3.addData("a")
+          val wrapperException = intercept[StreamingQueryException] {
+            query3.processAllAvailable()
+          }
+          assert(wrapperException.cause.isInstanceOf[AnalysisException])
+          assert(wrapperException.cause.getMessage.contains("incompatible"))
+        } finally {
+          query3.stop()
+        }
+
+        // Enable overwriting the schema
+        val query4 = df3.writeStream
+          .option("checkpointLocation", checkpoint3.getCanonicalPath)
+          .option("streamingOverwrite", "true")
+          .option("overwriteSchema", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          query4.processAllAvailable()
+
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema == df3.schema)
+          checkDatasetUnorderly(outputDf.as[String], "a")
+          assert(log.update().version == 4L)
+          assert(log.update().transactions(query4.id.toString) == 0L)
+        } finally {
+          query4.stop()
         }
       }
     }

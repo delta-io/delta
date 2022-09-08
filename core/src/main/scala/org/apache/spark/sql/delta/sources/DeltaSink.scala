@@ -45,8 +45,11 @@ class DeltaSink(
 
   private val sqlConf = sqlContext.sparkSession.sessionState.conf
 
+  protected val overwriteOnFirstBatch =
+    outputMode != OutputMode.Complete() && options.overwriteOnFirstBatch
+
   override protected val canOverwriteSchema: Boolean =
-    outputMode == OutputMode.Complete() && options.canOverwriteSchema
+    (overwriteOnFirstBatch || outputMode == OutputMode.Complete()) && options.canOverwriteSchema
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
@@ -63,6 +66,13 @@ class DeltaSink(
       throw DeltaErrors.streamWriteNullTypeException
     }
 
+    // If we are doing a streaming overwrite and this is the first batch, then switch
+    // to complete mode to delete all data and possibly overwrite the schema.
+    val effectiveOutputMode = if (overwriteOnFirstBatch && batchId == 0) {
+      OutputMode.Complete()
+    } else {
+      outputMode
+    }
 
     // If the batch reads the same Delta table as this sink is going to write to, then this
     // write has dependencies. Then make sure that this commit set hasDependencies to true
@@ -78,7 +88,7 @@ class DeltaSink(
 
     // Streaming sinks can't blindly overwrite schema. See Schema Management design doc for details
     updateMetadata(data.sparkSession, txn, data.schema, partitionColumns, Map.empty,
-      outputMode == OutputMode.Complete(), rearrangeOnly = false)
+      effectiveOutputMode == OutputMode.Complete(), rearrangeOnly = false)
 
     val currentVersion = txn.txnVersion(queryId)
     if (currentVersion >= batchId) {
@@ -86,7 +96,7 @@ class DeltaSink(
       return
     }
 
-    val deletedFiles = outputMode match {
+    val deletedFiles = effectiveOutputMode match {
       case o if o == OutputMode.Complete() =>
         deltaLog.assertRemovable()
         txn.filterFiles().map(_.remove)
@@ -94,7 +104,8 @@ class DeltaSink(
     }
     val newFiles = txn.writeFiles(data, Some(options))
     val setTxn = SetTransaction(queryId, batchId, Some(deltaLog.clock.getTimeMillis())) :: Nil
-    val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId, options.userMetadata)
+    val info = DeltaOperations.StreamingUpdate(effectiveOutputMode, queryId, batchId,
+      options.userMetadata)
     metrics("numRemovedFiles").set(deletedFiles.size)
     metrics("numAddedFiles").set(newFiles.size)
     txn.registerSQLMetrics(sqlContext.sparkSession, metrics)

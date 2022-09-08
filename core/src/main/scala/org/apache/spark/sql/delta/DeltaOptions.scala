@@ -85,6 +85,13 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
+   * Whether we should overwrite the Delta table on the first batch of a stream.
+   */
+  def overwriteOnFirstBatch: Boolean = {
+    options.get(STREAMING_OVERWRITE).exists(toBoolean(_, STREAMING_OVERWRITE))
+  }
+
+  /**
    * Whether to write new data to the table or just rearrange data that is already
    * part of the table. This option declares that the data being written by this job
    * does not change any data in the table and merely rearranges existing data.
@@ -219,6 +226,8 @@ object DeltaOptions extends DeltaLogging {
   val MERGE_SCHEMA_OPTION = "mergeSchema"
   /** An option to allow overwriting schema and partitioning during an overwrite write operation. */
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
+  /** An option to make a stream overwrite any existing data on the frist batch. */
+  val STREAMING_OVERWRITE = "streamingOverwrite"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
 
@@ -256,6 +265,7 @@ object DeltaOptions extends DeltaLogging {
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
+    STREAMING_OVERWRITE,
     USER_METADATA_OPTION,
     PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
