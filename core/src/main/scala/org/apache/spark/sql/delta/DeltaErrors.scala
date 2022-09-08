@@ -124,17 +124,23 @@ trait DeltaErrorsBase
        |get deleted based on retention settings.
      """.stripMargin
 
-  def deltaSourceIgnoreDeleteError(version: Long, removedFile: String): Throwable = {
+  def deltaSourceIgnoreDeleteError(
+      version: Long,
+      removedFile: String,
+      dataPath: String): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_SOURCE_IGNORE_DELETE",
-      messageParameters = Array(removedFile, version.toString)
+      messageParameters = Array(removedFile, version.toString, dataPath)
     )
   }
 
-  def deltaSourceIgnoreChangesError(version: Long, removedFile: String): Throwable = {
+  def deltaSourceIgnoreChangesError(
+      version: Long,
+      removedFile: String,
+      dataPath: String): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_SOURCE_TABLE_IGNORE_CHANGES",
-      messageParameters = Array(removedFile, version.toString)
+      messageParameters = Array(removedFile, version.toString, dataPath)
     )
   }
 

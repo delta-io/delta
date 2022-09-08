@@ -632,9 +632,17 @@ case class DeltaSource(
     }
     if (removeFileActionPath.isDefined) {
       if (seenFileAdd && !ignoreChanges) {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath.get)
+        throw DeltaErrors.deltaSourceIgnoreChangesError(
+          version,
+          removeFileActionPath.get,
+          deltaLog.dataPath.toString
+        )
       } else if (!seenFileAdd && !ignoreDeletes) {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath.get)
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(
+          version,
+          removeFileActionPath.get,
+          deltaLog.dataPath.toString
+        )
       }
     }
   }
@@ -685,9 +693,17 @@ case class DeltaSource(
     }
     if (removeFileActionPath.isDefined) {
       if (seenFileAdd && !ignoreChanges) {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath.get)
+        throw DeltaErrors.deltaSourceIgnoreChangesError(
+          version,
+          removeFileActionPath.get,
+          deltaLog.dataPath.toString
+        )
       } else if (!seenFileAdd && !ignoreDeletes) {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath.get)
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(
+          version,
+          removeFileActionPath.get,
+          deltaLog.dataPath.toString
+        )
       }
     }
 

@@ -2094,8 +2094,9 @@ trait DeltaErrorsSuiteBase
     {
       val version = 100L
       val removedFile = "file"
+      val dataPath = "tablePath"
       val e = intercept[DeltaUnsupportedOperationException] {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removedFile)
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removedFile, dataPath)
       }
       assert(e.getErrorClass == "DELTA_SOURCE_IGNORE_DELETE")
       assert(e.getSqlState == "0A000")
@@ -2103,7 +2104,8 @@ trait DeltaErrorsSuiteBase
       val msg =
         s"Detected deleted data (for example $removedFile) from streaming source at " +
           s"version $version. This is currently not supported. If you'd like to ignore deletes, " +
-          "set the option 'ignoreDeletes' to 'true'."
+          "set the option 'ignoreDeletes' to 'true'. The source table can be found " +
+          s"at path $dataPath."
       assert(e.getMessage == msg)
     }
     {
@@ -2344,7 +2346,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(10, "removedFile")
+        throw DeltaErrors.deltaSourceIgnoreChangesError(10, "removedFile", "tablePath")
       }
       assert(e.getErrorClass == "DELTA_SOURCE_TABLE_IGNORE_CHANGES")
       assert(e.getSqlState == "42000")
@@ -2352,7 +2354,8 @@ trait DeltaErrorsSuiteBase
         "Detected a data update (for example removedFile) in the source table at version " +
           "10. This is currently not supported. If you'd like to ignore updates, set the " +
           "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
-          "please restart this query with a fresh checkpoint directory.")
+          "please restart this query with a fresh checkpoint directory. The source table can be " +
+          "found at path tablePath.")
     }
     {
       val limit = "limit"

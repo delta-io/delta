@@ -1593,7 +1593,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version") {
+  testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = spark.readStream.format("delta").load(inputDir.toString)
@@ -1630,10 +1630,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           "'ignoreChanges' to 'true'."))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
+      assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version") {
+  testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = spark.readStream.format("delta").load(inputDir.toString)
@@ -1666,6 +1667,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           "'ignoreDeletes' to 'true'."))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
+      assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
     }
   }
 
