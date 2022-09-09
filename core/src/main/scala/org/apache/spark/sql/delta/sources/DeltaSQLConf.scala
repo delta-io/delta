@@ -888,6 +888,13 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_STATS_RETURN_VALUE =
+    buildConf("stats.returnValues")
+      .internal()
+      .doc("When true, statistics are used for returning results")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

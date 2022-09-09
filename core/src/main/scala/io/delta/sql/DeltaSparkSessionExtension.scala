@@ -16,7 +16,7 @@
 
 package io.delta.sql
 
-import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
+import org.apache.spark.sql.delta.optimizer.{RangePartitionIdRewrite, StatsBasedDataSkipping}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
@@ -91,6 +91,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     // range partition boundaries)
     extensions.injectOptimizerRule { session =>
       new RangePartitionIdRewrite(session)
+    }
+    extensions.injectOptimizerRule { session =>
+      new StatsBasedDataSkipping(session)
     }
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableUpdate(session.sessionState.conf)
