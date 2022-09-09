@@ -30,6 +30,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
+
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
@@ -553,6 +554,7 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
       }
     }
   }
+
 }
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite {
