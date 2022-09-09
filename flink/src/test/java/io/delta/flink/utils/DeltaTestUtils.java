@@ -149,7 +149,9 @@ public class DeltaTestUtils {
 
     public static MiniClusterWithClientResource buildCluster(int parallelismLevel) {
         Configuration configuration = new Configuration();
-        configuration.set(CoreOptions.CHECK_LEAKED_CLASSLOADER, false);
+
+        // By default, let's check for leaked classes in tests.
+        configuration.set(CoreOptions.CHECK_LEAKED_CLASSLOADER, true);
 
         return new MiniClusterWithClientResource(
             new MiniClusterResourceConfiguration.Builder()

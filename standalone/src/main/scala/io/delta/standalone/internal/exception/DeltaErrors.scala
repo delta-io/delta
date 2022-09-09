@@ -26,7 +26,6 @@ import io.delta.standalone.exceptions._
 import io.delta.standalone.types.{DataType, StructType}
 
 import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
-import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.JsonUtils
 
 /** A holder object for Delta errors. */

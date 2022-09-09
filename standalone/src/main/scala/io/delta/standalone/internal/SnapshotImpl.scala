@@ -17,9 +17,12 @@
 package io.delta.standalone.internal
 
 import java.net.URI
+import java.util.concurrent.{Executors, ExecutorService}
 
 import scala.collection.JavaConverters._
+import scala.collection.parallel.ExecutionContextTaskSupport
 import scala.collection.parallel.immutable.ParVector
+import scala.concurrent.ExecutionContext
 
 import com.github.mjakubowski84.parquet4s.ParquetReader
 import org.apache.hadoop.conf.Configuration
@@ -170,27 +173,50 @@ private[internal] class SnapshotImpl(
   }
 
   private def loadInMemory(paths: Seq[Path]): Seq[SingleAction] = {
-    new ParVector(paths.map(_.toString).sortWith(_ < _).toVector).par.flatMap { path =>
-      if (path.endsWith("json")) {
-        import io.delta.standalone.internal.util.Implicits._
-        deltaLog.store
-          .read(new Path(path), hadoopConf)
-          .toArray
-          .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
-      } else if (path.endsWith("parquet")) {
-        val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
-          path,
-          ParquetReader.Options(
-            timeZone = deltaLog.timezone,
-            hadoopConf = hadoopConf)
-        )
-        try {
-          parquetIterable.toArray.map(_.unwrap)
-        } finally {
-          parquetIterable.close()
-        }
-      } else Seq.empty[SingleAction]
-    }.toList
+    // `ParVector`, by default, uses ForkJoinPool.commonPool(). This is a static ForkJoinPool
+    // instance shared by the entire JVM. This can cause issues for downstream connectors (e.g.
+    // the flink-delta connector) that require no object reference leaks between jobs. See #424 for
+    // more details. To solve this, we create and use our own ForkJoinPool instance per each method
+    // invocation. If we instead create this on a per-Snapshot instance then we couldn't close the
+    // pool and might leak threads. ALso, if we instead create this statically in Snapshot or
+    // DeltaLog (for less overhead) then we are back to the original problem of having a static
+    // ForkJoinPool.
+    //
+    // Note that we cannot create a ForkJoinPool directly as Scala 2.11 uses
+    // scala.collection.forkjoin.ForkJoinPool but Scala 2.12/2.13 uses
+    // java.util.concurrent.ForkJoinPool.
+
+    // Under the hood, creates a new ForkJoinPool instance. This instance will use a thread pool of
+    // size equal to the number of processors available to the JVM.
+    val execContextService = ExecutionContext.fromExecutorService(null)
+
+    try {
+      val pv = new ParVector(paths.map(_.toString).sortWith(_ < _).toVector)
+      pv.tasksupport = new ExecutionContextTaskSupport(execContextService)
+      pv.flatMap { path =>
+        if (path.endsWith("json")) {
+          import io.delta.standalone.internal.util.Implicits._
+          deltaLog.store
+            .read(new Path(path), hadoopConf)
+            .toArray
+            .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
+        } else if (path.endsWith("parquet")) {
+          val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
+            path,
+            ParquetReader.Options(
+              timeZone = deltaLog.timezone,
+              hadoopConf = hadoopConf)
+          )
+          try {
+            parquetIterable.toArray.map(_.unwrap)
+          } finally {
+            parquetIterable.close()
+          }
+        } else Seq.empty[SingleAction]
+      }.toList
+    } finally {
+      execContextService.shutdown()
+    }
   }
 
   private def files: Seq[Path] = {

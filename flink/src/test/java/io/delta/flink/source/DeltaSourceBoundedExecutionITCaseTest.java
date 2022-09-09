@@ -200,7 +200,10 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
         "2022-06-15 13:24:33.613",
         "2022-06-15 13:25:33.632",
         "2022-06-15 13:26:33.633",
-        "2022-06-15 13:27:33.634"
+
+        // Local filesystem will truncate the logFile last modified timestamps to the nearest
+        // second. So, for example, "2022-06-15 13:27:33.001" would be after last commit.
+        "2022-06-15 13:27:33.000"
     };
 
     /**
