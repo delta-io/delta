@@ -1470,7 +1470,10 @@ class DeltaSuite extends QueryTest
         }
 
         val thrown = intercept[SparkException] {
-          data.toDF().count()
+          // Disable query rewrite or else the parquet files are not scanned.
+          withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "false") {
+            data.toDF().count()
+          }
         }
         assert(thrown.getMessage.contains("is not a Parquet file"))
       }
@@ -1497,10 +1500,13 @@ class DeltaSuite extends QueryTest
           assert(deleted)
         }
 
-        // We don't have a good way to tell which specific values got deleted, so just check that
-        // the right number remain. (Note that this works because there's 1 value per append, which
-        // means 1 value per file.)
-        assert(data.toDF().count() == 6)
+        // Disable query rewrite or else the parquet files are not scanned.
+        withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "false") {
+          // We don't have a good way to tell which specific values got deleted, so just check that
+          // the right number remain. (Note that this works because there's 1 value per append,
+          // which means 1 value per file.)
+          assert(data.toDF().count() == 6)
+        }
       }
     }
   }
@@ -1525,7 +1531,10 @@ class DeltaSuite extends QueryTest
       }
 
       val thrown = intercept[SparkException] {
-        data.toDF().count()
+        // Disable query rewrite or else the parquet files are not scanned.
+        withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "false") {
+          data.toDF().count()
+        }
       }
       assert(thrown.getMessage.contains("FileNotFound"))
     }
