@@ -47,7 +47,7 @@ class DeltaParquetFileFormat(
     }
   }
 
-  override def hashCode(): Int = getClass.hashCode()
+  override def hashCode(): Int = getClass.getCanonicalName.hashCode()
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
