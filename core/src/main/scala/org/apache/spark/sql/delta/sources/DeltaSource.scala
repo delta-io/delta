@@ -60,6 +60,9 @@ import org.apache.spark.sql.types.StructType
  *               to the end of a log version file, we check this flag to advance immediately to the
  *               next one in the persisted offset. Without this special case we would re-read the
  *               already completed log file.
+ * @param shouldSkip A flag to indicate whether this IndexedFile should be skipped. Currently, we
+ *                   skip processing an IndexedFile on no-op merges to avoid producing redundant
+ *                   records.
  */
 private[delta] case class IndexedFile(
     version: Long,
@@ -67,7 +70,8 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    isLast: Boolean = false) {
+    isLast: Boolean = false,
+    shouldSkip: Boolean = false) {
 
   def getFileAction: FileAction = {
     if (add != null) {
@@ -186,7 +190,7 @@ trait DeltaSourceBase extends Source
     } else {
       val changes = getFileChanges(startVersion, startIndex, isStartingVersion)
       try {
-        val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _) =>
+        val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _, _) =>
           version < endOffset.reservoirVersion ||
             (version == endOffset.reservoirVersion && index <= endOffset.index)
         }
@@ -277,7 +281,7 @@ trait DeltaSourceBase extends Source
       indexedFile: IndexedFile,
       version: Long,
       isStartingVersion: Boolean): Option[DeltaSourceOffset] = {
-    val IndexedFile(v, i, _, _, _, isLastFileInVersion) = indexedFile
+    val IndexedFile(v, i, _, _, _, isLastFileInVersion, _) = indexedFile
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
         s"tableId: $tableId")
@@ -513,14 +517,14 @@ case class DeltaSource(
     }
 
     iter = iter.withClose { it =>
-      it.filter { case IndexedFile(version, index, _, _, _, _) =>
+      it.filter { case IndexedFile(version, index, _, _, _, _, _) =>
         version > fromVersion || (index == -1 || index > fromIndex)
       }
     }
 
     if (lastOffsetForTriggerAvailableNow != null) {
       iter = iter.withClose { it =>
-        it.filter { case IndexedFile(version, index, _, _, _, _) =>
+        it.filter { case IndexedFile(version, index, _, _, _, _, _) =>
           version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
             (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
               index <= lastOffsetForTriggerAvailableNow.index)

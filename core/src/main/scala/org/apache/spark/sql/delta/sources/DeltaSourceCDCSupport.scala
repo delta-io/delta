@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -79,7 +79,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         fromVersion: Long,
         fromIndex: Long,
         endOffset: Option[DeltaSourceOffset]): Boolean = {
-      hasFileAction(indexedFile) && moreThanFrom(indexedFile, fromVersion, fromIndex) &&
+      !indexedFile.shouldSkip && hasFileAction(indexedFile) &&
+        moreThanFrom(indexedFile, fromVersion, fromIndex) &&
         lessThanEnd(indexedFile, endOffset) && noMatchesRegex(indexedFile) &&
         lessThanEnd(indexedFile, Option(lastOffsetForTriggerAvailableNow))
     }
@@ -192,25 +193,35 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[(Long, IndexedChangeFileSeq)] = {
       deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
-        val fileActions = filterCDCActions(actions, version, verifyMetadataAction)
+        // skipIndexedFile must be applied after creating IndexedFile so that
+        // IndexedFile.index is consistent across all versions.
+        val (fileActions, skipIndexedFile) =
+          filterCDCActions(actions, version, verifyMetadataAction)
         val itr = Iterator(IndexedFile(version, -1, null)) ++ fileActions
           .zipWithIndex.map {
           case (action: AddFile, index) =>
-            IndexedFile(version, index.toLong, action, isLast = index + 1 == fileActions.size)
+            IndexedFile(
+              version,
+              index.toLong,
+              action,
+              isLast = index + 1 == fileActions.size,
+              shouldSkip = skipIndexedFile)
           case (cdcFile: AddCDCFile, index) =>
             IndexedFile(
               version,
               index.toLong,
               add = null,
               cdc = cdcFile,
-              isLast = index + 1 == fileActions.size)
+              isLast = index + 1 == fileActions.size,
+              shouldSkip = skipIndexedFile)
           case (remove: RemoveFile, index) =>
             IndexedFile(
               version,
               index.toLong,
               add = null,
               remove = remove,
-              isLast = index + 1 == fileActions.size)
+              isLast = index + 1 == fileActions.size,
+              shouldSkip = skipIndexedFile)
         }
         (version,
           new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
@@ -258,11 +269,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
   private def filterCDCActions(
       actions: Seq[Action],
       version: Long,
-      verifyMetadataAction: Boolean = true): Seq[FileAction] = {
+      verifyMetadataAction: Boolean = true): (Seq[FileAction], Boolean) = {
+    var shouldSkipIndexedFile = false
     if (actions.exists(_.isInstanceOf[AddCDCFile])) {
-      actions.filter(_.isInstanceOf[AddCDCFile]).asInstanceOf[Seq[FileAction]]
+      (actions.filter(_.isInstanceOf[AddCDCFile]).asInstanceOf[Seq[FileAction]],
+       shouldSkipIndexedFile)
     } else {
-      actions.filter {
+      (actions.filter {
         case a: AddFile =>
           a.dataChange
         case r: RemoveFile =>
@@ -281,11 +294,14 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case protocol: Protocol =>
           deltaLog.protocolRead(protocol)
           false
-        case _: SetTransaction | _: CommitInfo =>
+        case commitInfo: CommitInfo =>
+          shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
+          false
+        case _: SetTransaction =>
           false
         case null => // Some crazy future feature. Ignore
           false
-      }.asInstanceOf[Seq[FileAction]]
+      }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile)
     }
   }
 }

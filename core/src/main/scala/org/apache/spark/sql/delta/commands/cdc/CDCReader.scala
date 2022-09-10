@@ -225,6 +225,30 @@ object CDCReader extends DeltaLogging {
   }
 
   /**
+   * Function to check if file actions should be skipped for no-op merges based on
+   * CommitInfo metrics.
+   * MERGE will sometimes rewrite files in a way which *could* have changed data
+   * (so dataChange = true) but did not actually do so (so no CDC will be produced).
+   * In this case the correct CDC output is empty - we shouldn't serve it from
+   * those files. This should be handled within the command, but as a hotfix-safe fix, we check
+   * the metrics. If the command reported 0 rows inserted, updated, or deleted, then CDC
+   * shouldn't be produced.
+   */
+  def shouldSkipFileActionsInCommit(commitInfo: CommitInfo): Boolean = {
+    val isMerge = commitInfo.operation == DeltaOperations.Merge(None, Nil, Nil).name
+    val knownToHaveNoChangedRows = {
+      val metrics = commitInfo.operationMetrics.getOrElse(Map.empty)
+      // Note that if any metrics are missing, this condition will be false and we won't skip.
+      // Unfortunately there are no predefined constants for these metric values.
+      Seq("numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsDeleted").forall {
+        metrics.get(_).contains("0")
+      }
+    }
+    isMerge && knownToHaveNoChangedRows
+  }
+
+
+  /**
    * For a sequence of changes(AddFile, RemoveFile, AddCDCFile) create a DataFrame that represents
    * that captured change data between start and end inclusive.
    *
@@ -354,24 +378,8 @@ object CDCReader extends DeltaLogging {
         if (cdcActions.nonEmpty) {
           changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq))
         } else {
-          // MERGE will sometimes rewrite files in a way which *could* have changed data
-          // (so dataChange = true) but did not actually do so (so no CDC will be produced).
-          // In this case the correct CDC output is empty - we shouldn't serve it from
-          // those files.
-          // This should be handled within the command, but as a hotfix-safe fix, we check the
-          // metrics. If the command reported 0 rows inserted, updated, or deleted, then CDC
-          // shouldn't be produced.
-          val isMerge = commitInfo.isDefined &&
-            commitInfo.get.operation == DeltaOperations.Merge(None, Nil, Nil).name
-          val knownToHaveNoChangedRows = {
-            val metrics = commitInfo.flatMap(_.operationMetrics).getOrElse(Map.empty)
-            // Note that if any metrics are missing, this condition will be false and we won't skip.
-            // Unfortunately there are no predefined constants for these metric values.
-            Seq("numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsDeleted").forall {
-              metrics.get(_).contains("0")
-            }
-          }
-          if (isMerge && knownToHaveNoChangedRows) {
+          val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
+          if (shouldSkipIndexedFile) {
             // This was introduced for a hotfix, so we're mirroring the existing logic as closely
             // as possible - it'd likely be safe to just return an empty dataframe here.
             addFiles.append(CDCDataSpec(v, ts, Nil))

@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames
+import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkThrowable}
@@ -356,6 +357,62 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       checkAnswer(
         spark.read.format("delta").load(outputDir.getCanonicalPath),
         Seq(4, 4, 5, 5, 5, 5, 6, 6).map(_.toLong).toDF("id"))
+    }
+  }
+
+  test("cdc streams with noop merge") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
+    ) {
+      withTempDirs { (srcDir, targetDir, checkpointDir) =>
+        // write source table
+        Seq((1, "a"), (2, "b"))
+          .toDF("key1", "val1")
+          .write
+          .format("delta")
+          .save(srcDir.getCanonicalPath)
+
+        // write target table
+        Seq((1, "t"), (2, "u"))
+          .toDF("key2", "val2")
+          .write
+          .format("delta")
+          .save(targetDir.getCanonicalPath)
+
+        val srcDF = spark.read.format("delta").load(srcDir.getCanonicalPath)
+        val tgtTable = io.delta.tables.DeltaTable.forPath(targetDir.getCanonicalPath)
+
+        // Perform the merge where all matching and non-matching conditions fail for
+        // target rows.
+        tgtTable
+          .merge(srcDF,
+            "key1 = key2")
+          .whenMatched("key1 = 10")
+          .updateExpr(Map("key2" -> "key1", "val2" -> "val1"))
+          .whenNotMatched("key1 = 11")
+          .insertExpr(Map("key2" -> "key1", "val2" -> "val1"))
+          .execute()
+
+        // Read the target dir with cdc read option and ensure that
+        // data frame is empty.
+        val q = spark.readStream
+          .format("delta")
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .option("startingVersion", "1")
+          .load(targetDir.getCanonicalPath)
+          .writeStream
+          .format("memory")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .queryName("testQuery")
+          .start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+
+        assert(spark.table("testQuery").isEmpty)
+      }
     }
   }
 
