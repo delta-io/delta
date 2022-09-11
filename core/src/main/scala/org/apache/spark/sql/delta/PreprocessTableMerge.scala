@@ -54,7 +54,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     target, source, condition, matched, notMatched, migrateSchema, finalSchemaOpt) = mergeInto
 
     if (finalSchemaOpt.isEmpty) {
-      throw new AnalysisException("Target Table Final Schema is empty.")
+      throw DeltaErrors.targetTableFinalSchemaEmptyException()
     }
 
     val finalSchema = finalSchemaOpt.get

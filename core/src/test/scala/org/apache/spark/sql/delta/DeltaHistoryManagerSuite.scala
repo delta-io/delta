@@ -345,7 +345,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        assert(e2.getMessage.contains("No reproducible commits found at"))
+        assert(e2.getMessage.contains("No recreatable commits found at"))
       }
     }
   }

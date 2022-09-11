@@ -36,10 +36,11 @@ import org.json4s.JValue
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -761,10 +762,10 @@ trait DeltaErrorsBase
   }
 
   def logFileNotFoundExceptionForStreamingSource(e: FileNotFoundException): Throwable = {
-    new FileNotFoundException(e.getMessage + " If you never deleted it, it's " +
-      "likely your query is lagging behind. Please delete its checkpoint to restart" +
-      " from scratch. To avoid this happening again, you can update your retention " +
-      "policy of your Delta table").initCause(e)
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE",
+      messageParameters = Array.empty
+    ).initCause(e)
   }
 
   def logFailedIntegrityCheck(version: Long, mismatchOption: String): Throwable = {
@@ -775,8 +776,9 @@ trait DeltaErrorsBase
   }
 
   def checkpointNonExistTable(path: Path): Throwable = {
-    new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
-      s"delete files in the _delta_log directory?")
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_CHECKPOINT_NON_EXIST_TABLE",
+      messageParameters = Array(s"$path"))
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
@@ -844,8 +846,9 @@ trait DeltaErrorsBase
   }
 
   def illegalDeltaOptionException(name: String, input: String, explain: String): Throwable = {
-    new IllegalArgumentException(
-      s"Invalid value '$input' for option '$name', $explain")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_ILLEGAL_OPTION",
+      messageParameters = Array(input, name, explain))
   }
 
   def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
@@ -871,7 +874,9 @@ trait DeltaErrorsBase
   def startingVersionAndTimestampBothSetException(
       versionOptKey: String,
       timestampOptKey: String): Throwable = {
-    new IllegalArgumentException(s"Please either provide '$versionOptKey' or '$timestampOptKey'")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_STARTING_VERSION_AND_TIMESTAMP_BOTH_SET",
+      messageParameters = Array(versionOptKey, timestampOptKey))
   }
 
   def unrecognizedLogFile(path: Path): Throwable = {
@@ -921,11 +926,15 @@ trait DeltaErrorsBase
         |
         |new schema: ${formatSchema(newSchema)}
         |
-        |Please try restarting the query. If this issue repeats across query restarts without making
-        |progress, you have made an incompatible schema change and need to start your query from
-        |scratch using a new checkpoint directory.
-      """.stripMargin
-    new IllegalStateException(msg)
+        |Please try restarting the query. If this issue repeats across query restarts without
+        |making progress, you have made an incompatible schema change and need to start your
+        |query from scratch using a new checkpoint directory.
+        |""".stripMargin
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_SCHEMA_CHANGED",
+      messageParameters = Array(
+        formatSchema(oldSchema),
+        formatSchema(newSchema)))
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -950,9 +959,9 @@ trait DeltaErrorsBase
   }
 
   def schemaNotProvidedException: Throwable = {
-    new AnalysisException(
-      "Table schema is not provided. Please provide the schema of the table when using " +
-        "REPLACE table and an AS SELECT query is not provided.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_SCHEMA_NOT_PROVIDED",
+      messageParameters = Array.empty)
   }
 
   def outputModeNotSupportedException(dataSource: String, outputMode: String): Throwable = {
@@ -1135,8 +1144,9 @@ trait DeltaErrorsBase
   }
 
   def inSubqueryNotSupportedException(operation: String): Throwable = {
-    new AnalysisException(
-      s"In subquery is not supported in the $operation condition.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_IN_SUBQUERY",
+      messageParameters = Array(operation))
   }
 
   def convertMetastoreMetadataMismatchException(
@@ -1233,6 +1243,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def targetTableFinalSchemaEmptyException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TARGET_TABLE_FINAL_SCHEMA_EMPTY",
+      messageParameters = Array.empty)
+  }
+
   def nonDeterministicNotSupportedException(op: String, cond: Expression): Throwable = {
     val condStr = s"(condition = ${cond.sql})."
     new DeltaAnalysisException(
@@ -1247,8 +1263,10 @@ trait DeltaErrorsBase
       messageParameters = Array(logPath.toString))
   }
 
-  def noReproducibleHistoryFound(logPath: Path): Throwable = {
-    new AnalysisException(s"No reproducible commits found at $logPath")
+  def noRecreatableHistoryFound(logPath: Path): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NO_RECREATABLE_HISTORY_FOUND",
+      messageParameters = Array(s"$logPath"))
   }
 
   def unsupportedAbsPathAddFile(str: String): Throwable = {
@@ -1345,6 +1363,12 @@ trait DeltaErrorsBase
       Array(column, schema))
   }
 
+  def noRelationTable(tableIdent: Identifier): Throwable = {
+    new DeltaNoSuchTableException(
+      errorClass = "DELTA_NO_RELATION_TABLE",
+      messageParameters = Array(s"${tableIdent.quoted}"))
+  }
+
   def provideOneOfInTimeTravel: Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_ONEOF_IN_TIMETRAVEL", messageParameters = null)
@@ -1376,12 +1400,6 @@ trait DeltaErrorsBase
       errorClass = "DELTA_LOG_ALREADY_EXISTS",
       messageParameters = Array(path)
     )
-  }
-
-  // should only be used by fast import
-  def commitAlreadyExistsException(version: Long, logPath: Path): Throwable = {
-    new IllegalStateException(
-      s"Commit of version $version already exists in the log: ${logPath.toUri.toString}")
   }
 
   def missingProviderForConvertException(path: String): Throwable = {
@@ -1447,7 +1465,9 @@ trait DeltaErrorsBase
   }
 
   def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
-    new AnalysisException("Cannot change the location of a path based table.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER",
+      messageParameters = Array.empty)
   }
 
   def useSetLocation(): Throwable = {
@@ -1640,8 +1660,9 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsUDF(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"Found ${expr.sql}. A generated column cannot use a user-defined function")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UDF_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${expr.sql}"))
   }
 
   def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
@@ -1714,6 +1735,12 @@ trait DeltaErrorsBase
         s"`${existingTable.location}`",
         s"`${table.location}`")
     )
+  }
+
+  def nonSinglePartNamespaceForCatalog(ident: String): Throwable = {
+    new DeltaNoSuchTableException(
+      errorClass = "DELTA_NON_SINGLE_PART_NAMESPACE_FOR_CATALOG",
+      messageParameters = Array(ident))
   }
 
   def indexLargerThanStruct(pos: Int, column: StructField, len: Int): Throwable = {
@@ -2213,12 +2240,18 @@ trait DeltaErrorsBase
     )
   }
 
-  def failedFindAttributeInOutputCollumns(newAttrName: String, targetCollNames: String): Throwable =
+  def failedFindAttributeInOutputColumns(newAttrName: String, targetColNames: String): Throwable =
   {
     new DeltaAnalysisException(
-      errorClass = "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS",
-      messageParameters = Array(newAttrName, targetCollNames)
+      errorClass = "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLUMNS",
+      messageParameters = Array(newAttrName, targetColNames)
     )
+  }
+
+  def failedFindPartitionColumnInOutputPlan(partitionColumn: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_FAILED_FIND_PARTITION_COLUMN_IN_OUTPUT_PLAN",
+      messageParameters = Array(partitionColumn))
   }
 
   def deltaTableFoundInExecutor(): Throwable = {
@@ -2276,6 +2309,14 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE",
       messageParameters = Array(tableName)
+    )
+  }
+
+  def showPartitionInNotPartitionedColumn(badColumns: Set[String]): Throwable = {
+    val badCols = badColumns.mkString("[", ", ", "]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_COLUMN",
+      messageParameters = Array(badCols)
     )
   }
 
@@ -2649,6 +2690,15 @@ class DeltaSparkException(
     cause: Throwable = null)
   extends SparkException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+class DeltaNoSuchTableException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends NoSuchTableException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 }

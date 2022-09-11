@@ -150,7 +150,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           withMetadata(deltaLog, StructType.fromDDL("id int, value int"))
           true
         },
-        ExpectFailure[IllegalStateException](t =>
+        ExpectFailure[DeltaIllegalStateException](t =>
           assert(t.getMessage.contains("Detected schema change")))
       )
     }

@@ -162,7 +162,7 @@ class DeltaTimeTravelSuite extends QueryTest
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
-    assert(e.getMessage.contains("reproducible"))
+    assert(e.getMessage.contains("recreatable"))
   }
 
   historyTest("resolving commits should return commit before timestamp") { deltaLog =>
@@ -536,7 +536,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
-      assert(e2.getMessage.contains("reproducible"))
+      assert(e2.getMessage.contains("recreatable"))
     }
   }
 

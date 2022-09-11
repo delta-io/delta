@@ -819,7 +819,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           withMetadata(deltaLog, StructType.fromDDL("id int, value string"))
           true
         },
-        ExpectFailure[IllegalStateException](t =>
+        ExpectFailure[DeltaIllegalStateException](t =>
           assert(t.getMessage.contains("Detected schema change")))
       )
     }
