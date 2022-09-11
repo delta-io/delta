@@ -18,13 +18,12 @@ package org.apache.spark.sql.delta.files
 
 
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDCDataSpec, CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION}
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 
 /**
  * A base [[TahoeFileIndex]] for all CDC file indexes
@@ -52,22 +51,32 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
       .flatMap {
         case CDCDataSpec(version, timestamp, actions) =>
           actions.map { action =>
-            val params = extractActionParameters(action)
+            action match {
+              case removeFile: RemoveFile if !removeFile.extendedFileMetadata.getOrElse(false) =>
+                // This shouldn't happen in user queries - the CDC flag was added at the same
+                // time as extended metadata, so all removes in a table with CDC enabled
+                // should have it. (The only exception is FSCK removes, which we screen out
+                // separately because they have dataChange set to false.)
+                throw DeltaErrors.removeFileCDCMissingExtendedMetadata(removeFile.toString)
+            }
 
             val newPartitionValues =
-              params.partitionValues ++
+              action.partitionValues ++
                 (Map(
                   CDC_COMMIT_VERSION -> version.toString,
                   CDC_COMMIT_TIMESTAMP -> Option(timestamp).map(_.toString).orNull)
                   ++ cdcPartitionValues())
-
+            val modificationTime = action match {
+              case a: AddFile => a.modificationTime
+              case _ => 0
+            }
             AddFile(
               action.path,
               newPartitionValues,
-              params.size,
-              params.modificationTime,
-              params.dataChange,
-              tags = params.tags)
+              action.getFileSize,
+              modificationTime,
+              action.dataChange,
+              tags = action.tags)
           }
       }
     DeltaLog.filterFileList(
@@ -84,14 +93,11 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
 
   override def refresh(): Unit = {}
 
-  override def sizeInBytes: Long =
+  override def sizeInBytes: Long = {
     filesByVersion
-      .map(_.actions.map {
-        case change: AddCDCFile => change.size
-        case add: AddFile => add.size
-        case remove: RemoveFile => remove.size.getOrElse(0L)
-      }.sum)
+      .map(_.actions.map(_.getFileSize).sum)
       .sum
+  }
 
   /**
    * Should return a metadata to help [[org.apache.spark.sql.delta.commands.cdc.CDCReader]]
@@ -100,7 +106,5 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
    * -> [[org.apache.spark.sql.delta.commands.cdc.CDCReader.CDC_TYPE_DELETE_STRING]]).
    */
   protected def cdcPartitionValues(): Map[String, String]
-
-  protected def extractActionParameters(action: T): ActionParameters
 
 }

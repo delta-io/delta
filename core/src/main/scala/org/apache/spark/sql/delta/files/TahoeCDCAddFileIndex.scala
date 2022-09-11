@@ -68,11 +68,4 @@ class TahoeCDCAddFileIndex(
   override def partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
-  override protected def extractActionParameters(addFile: AddFile): ActionParameters =
-    ActionParameters(
-      addFile.partitionValues,
-      addFile.size,
-      addFile.modificationTime,
-      addFile.dataChange,
-      addFile.tags)
 }

@@ -75,19 +75,4 @@ class TahoeRemoveFileIndex(
       .collect()
   }
 
-  override protected def extractActionParameters(removeFile: RemoveFile): ActionParameters = {
-    if (!removeFile.extendedFileMetadata.getOrElse(false)) {
-      // This shouldn't happen in user queries - the CDC flag was added at the same time as
-      // extended metadata, so all removes in a table with CDC enabled should have it.
-      // (The only exception is FSCK removes, which we screen out separately because they have
-      // dataChange set to false.)
-      throw DeltaErrors.removeFileCDCMissingExtendedMetadata(removeFile.toString)
-    }
-    ActionParameters(
-      removeFile.partitionValues,
-      removeFile.size.getOrElse(0L),
-      modificationTime = 0,
-      removeFile.dataChange,
-      removeFile.tags)
-  }
 }
