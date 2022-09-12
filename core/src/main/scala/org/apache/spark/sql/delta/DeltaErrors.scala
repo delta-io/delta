@@ -1353,9 +1353,16 @@ trait DeltaErrorsBase
     )
   }
 
-  def nonExistentDeltaTable(table: String): Throwable = {
+  def nonExistentDeltaTable(tableId: DeltaTableIdentifier): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TABLE_NOT_FOUND",
+      messageParameters = Array(s"$tableId"))
+  }
+
+  def nonExistentDeltaTableStreaming(table: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_NOT_FOUND", messageParameters = Array(table))
+      errorClass = "DELTA_TABLE_NOT_FOUND_STREAMING",
+      messageParameters = Array(table))
   }
 
   def nonExistentColumnInSchema(column: String, schema: String): Throwable = {

@@ -1419,6 +1419,12 @@
   },
   "DELTA_TABLE_NOT_FOUND" : {
     "message" : [
+      "Delta table <tableName> doesn't exist."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TABLE_NOT_FOUND_STREAMING" : {
+    "message" : [
       "Delta table <tableName> doesn't exist. Please delete your streaming query checkpoint and restart."
     ],
     "sqlState" : "42000"

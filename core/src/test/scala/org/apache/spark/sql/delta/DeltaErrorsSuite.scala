@@ -386,10 +386,19 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Column c is not specified in INSERT")
     }
     {
-      val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.nonExistentDeltaTable("t")
+      val table = DeltaTableIdentifier(Some("path"))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonExistentDeltaTable(table)
       }
-      assert(e.getMessage == "Delta table t doesn't exist. Please delete your streaming query " +
+      assert(e.getMessage == s"Delta table $table doesn't exist.")
+    }
+    {
+      val table = "t"
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.nonExistentDeltaTableStreaming(table)
+      }
+      assert(e.getMessage ==
+        s"Delta table $table doesn't exist. Please delete your streaming query " +
         "checkpoint and restart.")
     }
     {

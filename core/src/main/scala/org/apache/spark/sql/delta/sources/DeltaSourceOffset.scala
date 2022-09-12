@@ -94,7 +94,7 @@ object DeltaSourceOffset {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw DeltaErrors.nonExistentDeltaTable(o.reservoirId)
+          throw DeltaErrors.nonExistentDeltaTableStreaming(o.reservoirId)
         }
         o
     }

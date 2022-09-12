@@ -353,11 +353,12 @@ abstract class UpdateSuiteBase
   test("Negative case - non-delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
       .write.mode("overwrite").format("parquet").save(tempPath)
-    val e = intercept[AnalysisException] {
+    val e = intercept[DeltaAnalysisException] {
       executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
+      e.contains("Incompatible format"))
   }
 
   test("Negative case - check target columns during analysis") {
