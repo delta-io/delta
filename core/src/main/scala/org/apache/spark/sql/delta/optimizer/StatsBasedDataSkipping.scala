@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.optimizer
 
 import org.apache.spark.sql.{Column, Row, SparkSession, functions}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, PredicateHelper}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Count}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -35,15 +35,18 @@ class StatsBasedDataSkipping(protected val spark: SparkSession)
       plan
     } else {
       plan transform {
-        case CountStarDeltaTable(aliasName, countValue) =>
-          createLocalRelationPlan(aliasName, countValue)
+        case CountStarDeltaTable(aliasName, exprId, qualifier, countValue) =>
+          createLocalRelationPlan(aliasName, exprId, qualifier, countValue)
       }
     }
   }
 
-  private def createLocalRelationPlan(aliasName: String, rowCount: Long): LogicalPlan = {
+  private def createLocalRelationPlan(aliasName: String,
+                                      exprId: ExprId,
+                                      qualifier: Seq[String],
+                                      rowCount: Long): LogicalPlan = {
     val relation = LocalRelation.fromExternalRows(
-      output = Seq(AttributeReference(aliasName, LongType)()),
+      output = Seq(AttributeReference(aliasName, LongType)(exprId, qualifier)),
       data = Seq(Row(rowCount)))
 
     relation
@@ -58,12 +61,15 @@ class StatsBasedDataSkipping(protected val spark: SparkSession)
      * This is an extractor method (basically, the opposite of a constructor) which takes in an
      * object `plan` and tries to give back the arguments as a [[CountStarDeltaTable]].
      */
-    def unapply(plan: Aggregate): Option[(String, Long)] = {
+    def unapply(plan: Aggregate): Option[(String, ExprId, Seq[String], Long)] = {
       plan match {
-        case Aggregate(Nil,
-        Seq(Alias(AggregateExpression(Count(Seq(Literal(1, _))), _, false, None, _), aliasName)),
+        case Aggregate(
+        Nil,
+        Seq(oldAlias@Alias
+          (AggregateExpression(Count(Seq(Literal(1, _))), _, false, None, _), aliasName)),
         Project(_, DeltaTable(tahoeLogFileIndex: TahoeLogFileIndex))) =>
-          extractGlobalCount(tahoeLogFileIndex).map(rowCount => (aliasName, rowCount))
+          extractGlobalCount(tahoeLogFileIndex).map(rowCount =>
+            (oldAlias.name, oldAlias.exprId, oldAlias.qualifier, rowCount))
         case _ => None
       }
     }
