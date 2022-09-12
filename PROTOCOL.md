@@ -374,7 +374,7 @@ The following is an example of `cdc` action.
 
 #### Writer Requirements for AddCDCFile
 
-As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. Writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files)
+As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files)
 
 #### Reader Requirements for AddCDCFile
 
