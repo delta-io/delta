@@ -84,7 +84,7 @@ The state of a table at a given version is called a _snapshot_ and is defined by
  - **Set of applications-specific transactions** that have been successfully committed to the table
 
 ## File Types
-A Delta table is stored within a directory and is composed of five different types of files.
+A Delta table is stored within a directory and is composed of the following different types of files.
 
 Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
 ```
@@ -106,7 +106,7 @@ Actual partition values for a file must be read from the transaction log.
 ### Change Data Files
 Change data files are stored in a directory at the root of the table named `_change_data`, and represent the changes for the table version they are in. For data with partition values, change data files are stored within the `_change_data` directory in their respective partitions (i.e. `_change_data/part1=value1/...`). Writers can _optionally_ produce these change data files as a consequence of operations that change underlying data, like `UPDATE`, `DELETE`, and `MERGE` operations to a Delta Lake table. Operations that only add new data should not produce separate change files. When available, change data readers should use the change data files instead of computing changes from the underlying data files.
 
-In addition to the data columns, change data files contain metadata columns that identify the type of change event:
+In addition to the data columns, change data files contain additional columns that identify the type of change event:
 
 Field Name | Data Type | Description
 -|-|-
@@ -348,7 +348,7 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When CDC readers encounter a `cdc` action in a particular Delta version, they must read from that version exclusively using the `cdc` files, rather than inferring changes from add and remove actions as they do for the other type of operations.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When CDC readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
 
 The schema of the `cdc` action is as follows:
 
@@ -371,6 +371,14 @@ The following is an example of `cdc` action.
   }
 }
 ```
+
+#### Writer Requirements for AddCDCFile
+
+As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. Writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files)
+
+#### Reader Requirements for AddCDCFile
+
+When available, change data readers should use the `AddCDCFile`s in a given table version instead of computing changes from the underlying data files referenced by the `add` and `remove` actions.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
