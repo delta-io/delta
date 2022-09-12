@@ -683,7 +683,9 @@ object Checkpoints extends DeltaLogging {
     // opt in our out of the struct conf.
     val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)
     if (includeStructColumns) {
-      additionalCols ++= CheckpointV2.extractPartitionValues(snapshot.metadata.partitionSchema)
+      val partitionValues = CheckpointV2.extractPartitionValues(
+        snapshot.metadata.partitionSchema, "add.partitionValues")
+      additionalCols ++= partitionValues
     }
     state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
@@ -717,12 +719,14 @@ object CheckpointV2 {
    * Creates a nested struct column of partition values that extract the partition values
    * from the original MapType.
    */
-  def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
+  def extractPartitionValues(partitionSchema: StructType, partitionValuesColName: String):
+      Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
+      val attribute = UnresolvedAttribute.quotedString(partitionValuesColName)
       new Column(Cast(
         ElementAt(
-          UnresolvedAttribute("add" :: "partitionValues" :: Nil),
+          attribute,
           Literal(physicalName),
           failOnError = false),
         field.dataType,
