@@ -475,14 +475,13 @@ trait SnapshotManagement { self: DeltaLog =>
     throw new IllegalStateException("should not happen")
   }
 
-  /** Checks if the snapshot of the table has surpassed our allowed staleness. */
-  private def isSnapshotStale(lastUpdateTimestamp: Long): Boolean = {
-    val stalenessLimit = spark.sessionState.conf.getConf(
+  /** Checks if the given timestamp is outside the current staleness window */
+  protected def isCurrentlyStale: Long => Boolean = {
+    val limit = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
-    stalenessLimit == 0L || lastUpdateTimestamp < 0 ||
-      clock.getTimeMillis() - lastUpdateTimestamp >= stalenessLimit
+    val cutoffOpt = if (limit > 0) Some(math.max(0, clock.getTimeMillis() - limit)) else None
+    timestamp => cutoffOpt.forall(timestamp < _)
   }
-
 
   /**
    * Checks if the snapshot has already been updated since the specified timestamp.
@@ -525,7 +524,7 @@ trait SnapshotManagement { self: DeltaLog =>
     if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
       return capturedSnapshot.snapshot
     }
-    val doAsync = stalenessAcceptable && !isSnapshotStale(capturedSnapshot.updateTimestamp)
+    val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
