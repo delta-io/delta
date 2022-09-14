@@ -56,7 +56,9 @@ class OptimisticTransactionSuite
     setup = Seq(
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
-        partitionColumns = Seq("x"))
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
     ),
     reads = Seq(
       t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
@@ -73,7 +75,9 @@ class OptimisticTransactionSuite
     setup = Seq(
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
-        partitionColumns = Seq("x"))
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
     ),
     reads = Seq(
       t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
@@ -144,7 +148,9 @@ class OptimisticTransactionSuite
     setup = Seq(
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
-        partitionColumns = Seq("x"))
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
     ),
     reads = Seq(
       t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
@@ -161,7 +167,9 @@ class OptimisticTransactionSuite
     setup = Seq(
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
-        partitionColumns = Seq("x"))
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
     ),
     reads = Seq(
       t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
