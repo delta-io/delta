@@ -6,7 +6,7 @@ Delta lake governance is conducted by the Technical Steering Committee (TSC), wh
  - Reynold Xin (reynoldx@gmail.com)
  - Matei Zaharia (matei@cs.stanford.edu)
 
-The founding technical charter can be found [here](https://delta.io/wp-content/uploads/2019/12/delta-charter.pdf).
+The founding technical charter can be found [here](https://delta.io/pdfs/delta-charter.pdf).
 
 # Communication
 Before starting work on a major feature, please reach out to us via GitHub, Slack, email, etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
