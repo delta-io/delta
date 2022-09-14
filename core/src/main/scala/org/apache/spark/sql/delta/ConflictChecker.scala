@@ -98,6 +98,7 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   } else {
     addedFiles.filter(_.dataChange)
   }
+  val changedDataRemovedFiles: Seq[RemoveFile] = removedFiles.filter(_.dataChange)
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
 
@@ -231,7 +232,7 @@ private[delta] class ConflictChecker(
       // Fail if files have been deleted that the txn read.
       val readFilePaths = currentTransactionInfo.readFiles.map(
         f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = winningCommitSummary.removedFiles
+      val deleteReadOverlap = winningCommitSummary.changedDataRemovedFiles
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val filePath = deleteReadOverlap.get.path
@@ -239,8 +240,9 @@ private[delta] class ConflictChecker(
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo, s"$filePath in $partition")
       }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-        val filePath = winningCommitSummary.removedFiles.head.path
+      if (winningCommitSummary.changedDataRemovedFiles.nonEmpty &&
+        currentTransactionInfo.readWholeTable) {
+        val filePath = winningCommitSummary.changedDataRemovedFiles.head.path
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo, s"$filePath")
       }
