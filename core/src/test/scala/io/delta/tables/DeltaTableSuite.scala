@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, Fake
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{Path, UnsupportedFileSystemException}

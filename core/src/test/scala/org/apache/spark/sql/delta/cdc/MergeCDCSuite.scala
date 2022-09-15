@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.cdc
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.{DeltaTable => IODeltaTable}
 
 import org.apache.spark.SparkConf

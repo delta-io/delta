@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}

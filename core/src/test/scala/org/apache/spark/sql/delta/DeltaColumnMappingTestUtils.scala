@@ -21,6 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 

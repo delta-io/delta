@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.DataFrame
 

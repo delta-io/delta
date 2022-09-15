@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_COLLECT_STATS, GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED}
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier

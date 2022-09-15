@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path

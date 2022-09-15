@@ -20,6 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{AzureLogStore, S3SingleDriverLogStore}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.{LocalSparkSession, SparkSession}
