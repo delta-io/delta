@@ -161,28 +161,28 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
 trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
 
   /**
-   * Validate checksum by performing state reconstruction and comparing that result to the checksum.
+   * Validate checksum (if any) by comparing it against the snapshot's state reconstruction.
    * @param contextInfo caller context that will be added to the logging if validation fails
+   * @return True iff validation succeeded.
+   * @throws IllegalStateException if validation failed and corruption is configured as fatal.
    */
-  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Unit =
-      checksumOpt.foreach { checksum =>
-    val mismatchStringOpt = checkMismatch(checksum)
-    if (mismatchStringOpt.isDefined) {
-      // Report the failure to usage logs.
-      recordDeltaEvent(
-        this.deltaLog,
-        "delta.checksum.invalid",
-        data = Map("error" -> mismatchStringOpt.get) ++ contextInfo)
-      // We get the active SparkSession, which may be different than the SparkSession of the
-      // Snapshot that was created, since we cache `DeltaLog`s.
-      val spark = SparkSession.getActiveSession.getOrElse {
-        throw DeltaErrors.sparkSessionNotSetException()
-      }
-      val conf = DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL
-      if (spark.sessionState.conf.getConf(conf)) {
-        throw DeltaErrors.logFailedIntegrityCheck(version, mismatchStringOpt.get)
-      }
+  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Boolean = {
+    val mismatchString = checksumOpt.flatMap(checkMismatch).getOrElse { return true }
+    // Report the failure to usage logs.
+    recordDeltaEvent(
+      this.deltaLog,
+      "delta.checksum.invalid",
+      data = Map("error" -> mismatchString) ++ contextInfo)
+    // We get the active SparkSession, which may be different than the SparkSession of the
+    // Snapshot that was created, since we cache `DeltaLog`s.
+    val spark = SparkSession.getActiveSession.getOrElse {
+      throw DeltaErrors.sparkSessionNotSetException()
     }
+    val conf = DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL
+    if (spark.sessionState.conf.getConf(conf)) {
+      throw DeltaErrors.logFailedIntegrityCheck(version, mismatchString)
+    }
+    false
   }
 
   private def checkMismatch(checksum: VersionChecksum): Option[String] = {
