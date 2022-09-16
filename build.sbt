@@ -18,7 +18,7 @@ import java.nio.file.Files
 import TestParallelization._
 
 val sparkVersion = "3.3.0"
-val scala212 = "2.12.14"
+val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
