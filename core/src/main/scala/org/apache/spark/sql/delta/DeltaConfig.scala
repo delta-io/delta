@@ -145,40 +145,32 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Validates specified configurations and returns the normalized key -> value map.
    */
   def validateConfigurations(configurations: Map[String, String]): Map[String, String] = {
-    val deltaLegazyOptions = SparkSession.active.sessionState.conf
-      .getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)
-
-    val configurationsNormalized = if (deltaLegazyOptions) {
-      configurations
-    } else {
-      configurations.map(x => (x._1.stripPrefix("option."), x._2))
-    }
-    configurationsNormalized
-      .map {
-        case kv@(key, _) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
-          // This is a CHECK constraint, we should allow it.
-          kv
-        case kv@(key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-          Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta."))) match {
-            case Some(deltaConfig) => deltaConfig(value) // validate the value
-            case None if
-              SparkSession.active.sessionState.conf
-                .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
+    configurations.map {
+      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        // This is a CHECK constraint, we should allow it.
+        kv
+      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
+        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta."))) match {
+          case Some(deltaConfig) => deltaConfig(value) // validate the value
+          case None if
+            SparkSession.active.sessionState.conf
+              .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
             =>
-              logConsole(s"You are setting a property: $key that is not recognized by this " +
-                s"version of Delta")
-              kv
-            case None => throw DeltaErrors.unknownConfigurationKeyException(key)
-          }
-        case keyvalue@(key, _) => if (entries.containsKey(key.toLowerCase(Locale.ROOT))) {
+            logConsole(s"You are setting a property: $key that is not recognized by this " +
+              s"version of Delta")
+            kv
+          case None => throw DeltaErrors.unknownConfigurationKeyException(key)
+        }
+      case keyvalue @ (key, _) =>
+        if (entries.containsKey(key.toLowerCase(Locale.ROOT))) {
           logConsole(
             s"""
-               |You are trying to set a property the key of which is the same as Delta config: $key.
-               |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
-               |""".stripMargin)
+              |You are trying to set a property the key of which is the same as Delta config: $key.
+              |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
+            """.stripMargin)
         }
-          keyvalue
-      }
+        keyvalue
+    }
   }
 
   /**
