@@ -99,6 +99,7 @@ class DeltaWriteConfigsSuite extends QueryTest
     super.afterAll()
   }
 
+
   private val dfw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
   private val dsw_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
   private val dfw_v2_output = new ListBuffer[DeltaFrameStreamAPITestOutput]
@@ -644,30 +645,30 @@ class DeltaWriteConfigsSuite extends QueryTest
 
 // Need to be outside to be stable references for Spark to generate the case classes
 case class DeltaFrameStreamAPITestOutput(
-                                          outputLocation: String,
-                                          outputMode: String,
-                                          containsNoPrefixOption: Boolean,
-                                          containsPrefixOption: Boolean,
-                                          config: String)
+    outputLocation: String,
+    outputMode: String,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    config: String)
 
 case class DeltaTableBuilderAPITestOutput(
-                                           outputLocation: String,
-                                           outputMode: String,
-                                           containsNoPrefixOptionLowerCase: Boolean,
-                                           containsNoPrefixOption: Boolean,
-                                           containsPrefixOption: Boolean,
-                                           error: Boolean,
-                                           config: String)
+    outputLocation: String,
+    outputMode: String,
+    containsNoPrefixOptionLowerCase: Boolean,
+    containsNoPrefixOption: Boolean,
+    containsPrefixOption: Boolean,
+    error: Boolean,
+    config: String)
 
 case class SQLAPIOutput(
-                         outputLocation: String,
-                         confiInput: String,
-                         sqlOperation: String,
-                         asSelect: Boolean,
-                         containsOptionNoPrefix: String,
-                         containsOptionPrefix: String,
-                         containsOptionWithOptionPrefix: String,
-                         containsTblPropertiesNoPrefix: String,
-                         containsTblPropertiesPrefix: String,
-                         asLegazy: Boolean,
-                         config: String)
+    outputLocation: String,
+    confiInput: String,
+    sqlOperation: String,
+    asSelect: Boolean,
+    containsOptionNoPrefix: String,
+    containsOptionPrefix: String,
+    containsOptionWithOptionPrefix: String,
+    containsTblPropertiesNoPrefix: String,
+    containsTblPropertiesPrefix: String,
+    asLegazy: Boolean,
+    config: String)
