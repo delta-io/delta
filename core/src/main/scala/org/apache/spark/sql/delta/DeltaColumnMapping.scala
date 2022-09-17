@@ -227,14 +227,34 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
+  def assignPhysicalName(field: StructField, physicalName: String): StructField = {
+    field.copy(metadata = new MetadataBuilder()
+      .withMetadata(field.metadata)
+      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+      .build())
+  }
+
   def assignPhysicalNames(schema: StructType): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      val existingName = if (hasPhysicalName(field)) Option(getPhysicalName(field)) else None
-      val metadata = new MetadataBuilder()
-        .withMetadata(field.metadata)
-        .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, existingName.getOrElse(generatePhysicalName))
-        .build()
-      field.copy(metadata = metadata)
+      if (hasPhysicalName(field)) field else assignPhysicalName(field, generatePhysicalName)
+    }
+  }
+
+  /** Set physical name based on field path, skip if field path not found in the map */
+  def setPhysicalNames(
+      schema: StructType,
+      fieldPathToPhysicalName: Map[Seq[String], String]): StructType = {
+    if (fieldPathToPhysicalName.isEmpty) {
+      schema
+    } else {
+      SchemaMergingUtils.transformColumns(schema) { (parent, field, _) =>
+        val path = parent :+ field.name
+        if (fieldPathToPhysicalName.contains(path)) {
+          assignPhysicalName(field, fieldPathToPhysicalName(path))
+        } else {
+          field
+        }
+      }
     }
   }
 

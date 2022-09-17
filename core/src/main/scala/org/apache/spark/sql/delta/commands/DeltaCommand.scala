@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Helper trait for all delta commands.
@@ -186,8 +187,7 @@ trait DeltaCommand extends DeltaLogging {
         // is path
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
         // is table
-        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
-          true
+        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) => true
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
