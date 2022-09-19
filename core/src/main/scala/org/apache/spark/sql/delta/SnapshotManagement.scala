@@ -66,7 +66,7 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
-  protected def listFrom(startVersion: Long): Iterator[FileStatus] = {
+  private[delta] def listFrom(startVersion: Long): Iterator[FileStatus] = {
     store.listFrom(checkpointPrefix(logPath, startVersion), newDeltaHadoopConf())
   }
 
