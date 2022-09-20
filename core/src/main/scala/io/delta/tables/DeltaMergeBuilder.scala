@@ -203,7 +203,7 @@ class DeltaMergeBuilder private(
    *
    * @since 0.3.0
    */
-  def execute(): Unit = improveUnsupportedOpError {
+  def execute(): DataFrame = {
     val sparkSession = targetTable.toDF.sparkSession
     // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
     // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
@@ -226,8 +226,7 @@ class DeltaMergeBuilder private(
     val mergeIntoCommand =
       PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
         .asInstanceOf[MergeIntoCommand]
-    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
+    toDataset(sparkSession, mergeIntoCommand)
   }
 
   /**
