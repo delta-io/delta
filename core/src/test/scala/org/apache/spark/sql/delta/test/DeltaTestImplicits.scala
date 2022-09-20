@@ -16,9 +16,17 @@
 
 package org.apache.spark.sql.delta.test
 
+import java.io.File
+
+import org.apache.spark.sql.delta.{DeltaLog, DeltaLogObjectBase, DeltaTableIdentifier, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.util.Clock
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -32,6 +40,49 @@ object DeltaTestImplicits {
       } else {
         txn.commit(actions, ManualUpdate)
       }
+    }
+  }
+
+  implicit class DeltaLogForTableOverloads(self: DeltaLogObjectBase) {
+    import DeltaLog.{apply, logPathFor}
+
+    /** Creates a DeltaLog from a path string, with options */
+    def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
+      apply(spark, logPathFor(dataPath), options = options)
+    }
+
+    /** Creates a DeltaLog from [[File]] */
+    def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
+      apply(spark, logPathFor(dataPath.getAbsolutePath))
+    }
+
+    /** Creates a DeltaLog from [[File]], with a custom clock */
+    def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
+      apply(spark, logPathFor(dataPath.getAbsolutePath), clock = Some(clock))
+    }
+
+    /** Creates a DeltaLog from a string path, with a custom clock */
+    def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
+      apply(spark, logPathFor(dataPath), clock = Some(clock))
+    }
+
+    /** Creates a DeltaLog with a custom clock */
+    def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
+      apply(spark, logPathFor(dataPath), clock = Some(clock))
+    }
+
+    /** Creates a DeltaLog from a [[TableIdentifier]], with a custom clock */
+    def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
+      if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+        forTable(spark, tableName.table, clock)
+      } else {
+        forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
+      }
+    }
+
+    /** Creates a DeltaLog from a [[CatalogTable]], with a custom clock */
+    def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
+      apply(spark, logPathFor(new Path(table.location)), clock = Some(clock))
     }
   }
 }

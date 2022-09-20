@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.optimize
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -195,7 +196,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
   }
 
   test("optimize ZOrderBy operation metrics in Delta table history") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         // create a partitioned table with each partition containing multiple files
         0.to(100).seq.toDF()
