@@ -148,10 +148,10 @@ class DeltaTableTests(DeltaTestCase):
 
         # String expressions in merge condition and dicts
         reset_table()
-        dt.merge(source, "key = k") \
-            .whenMatchedUpdate(set={"value": "v + 0"}) \
-            .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
-            .execute()
+        self.__checkAnswer(dt.merge(source, "key = k")
+                           .whenMatchedUpdate(set={"value": "v + 0"})
+                           .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"})
+                           .execute(), ([(4, 0, 2, 2)]))
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
