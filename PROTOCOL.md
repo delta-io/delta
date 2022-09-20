@@ -357,6 +357,7 @@ Field Name | Data Type | Description
 path| String | A relative path to a change data file from the root of the table or an absolute path to a change data file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
+dataChange | Boolean | Should always be set to `false` for `cdc` actions because they _do not_ change the underlying data of the table
 tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example of `cdc` action.
@@ -378,7 +379,10 @@ As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect
 
 #### Reader Requirements for AddCDCFile
 
-When available, change data readers should use the `AddCDCFile`s in a given table version instead of computing changes from the underlying data files referenced by the `add` and `remove` actions.
+When available, change data readers should use the `cdc` actions in a given table version instead of computing changes from the underlying data files referenced by the `add` and `remove` actions.
+Specifically, to read the row-level changes made in a version, the following strategy should be used:
+1. If there are `cdc` actions in this version, then read only those to get the row-level changes, and skip the remaining `add` and `remove` actions in this version.
+2. Otherwise, if there are no `cdc` actions in this version, read and treat all the rows in the `add` and `remove` actions as inserted and deleted rows, respectively.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -638,7 +642,7 @@ The requirements of the writers according to the protocol versions are summarize
 -|-
 Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
 Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
-Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
+Writer Version 4 | - Support [Change Data Feed](#add-cdc-file)<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
 Writer Version 6 | Support [Identity Columns](#identity-columns)
 
