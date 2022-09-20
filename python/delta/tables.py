@@ -936,7 +936,7 @@ class DeltaMergeBuilder(object):
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
         """
         return DataFrame(
-            self._jbuilder.executeCompaction(),
+            self._jbuilder.execute(),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
