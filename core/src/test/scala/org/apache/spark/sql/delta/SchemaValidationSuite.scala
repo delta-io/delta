@@ -29,9 +29,9 @@ import org.apache.spark.sql.test.SharedSparkSession
 trait SchemaValidationSuiteBase extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   def checkMergeException(e: Exception, col: String): Unit = {
-    assert(e.isInstanceOf[MetadataChangedException])
+    assert(e.isInstanceOf[DeltaAnalysisException])
     assert(e.getMessage.contains(
-      "The metadata of the Delta table has been changed by a concurrent update"))
+      s"Latest schema is missing field(s): $col"))
   }
 }
 
