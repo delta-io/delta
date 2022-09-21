@@ -58,6 +58,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
+    buildConf("stats.collect.using.tableSchema")
+      .internal()
+      .doc("When collecting stats while writing files into Delta table" +
+        s" (${DELTA_COLLECT_STATS.key} needs to be true), whether to use the table schema (true)" +
+        " or the DataFrame schema (false) as the stats collection schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")

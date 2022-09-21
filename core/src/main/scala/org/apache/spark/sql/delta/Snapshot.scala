@@ -285,7 +285,10 @@ class Snapshot(
   /** Returns the schema of the table. */
   def schema: StructType = metadata.schema
 
-  /** Returns the data schema of the table, the schema of the columns written out to file. */
+  /** Returns the data schema of the table, used for reading stats */
+  def tableDataSchema: StructType = metadata.dataSchema
+
+  /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
