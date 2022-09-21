@@ -403,7 +403,9 @@ trait CDCReaderImpl extends DeltaLogging {
     if (changeFiles.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new TahoeChangeFileIndex(spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new TahoeChangeFileIndex(
+          spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath,
+          snapshot.version, snapshot.metadata),
         snapshot.metadata,
         isStreaming))
     }
@@ -442,7 +444,8 @@ trait CDCReaderImpl extends DeltaLogging {
       dfs.append(scanIndex(
         spark,
         new TahoeRemoveFileIndex(
-          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath,
+          snapshot.version, snapshot.metadata),
         snapshot.metadata,
         isStreaming))
     }
