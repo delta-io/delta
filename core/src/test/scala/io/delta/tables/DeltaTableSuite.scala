@@ -168,6 +168,74 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
+  test("isDeltaTableForPath - with _delta_log dir") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      assert(DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTableForPath - with empty _delta_log dir") {
+    withTempDir { dir =>
+      new File(dir, "_delta_log").mkdirs()
+      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTableForPath - with no _delta_log dir") {
+    withTempDir { dir =>
+      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTableForPath - with non-existent dir") {
+    withTempDir { dir =>
+      JavaUtils.deleteRecursively(dir)
+      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTableForPath - with non-Delta table path") {
+    withTempDir { dir =>
+      testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTableForPath - with table name in current path") {
+    val currDir = System.getProperty("user.dir")
+    try {
+      testData.write.format("delta").save(currDir + "/deltaTableName")
+      assert(DeltaTable.isDeltaTableForPath("deltaTableName"))
+    } finally {
+      JavaUtils.deleteRecursively(new File(currDir, "deltaTableName"))
+    }
+  }
+
+  test("isDeltaTableForName - with table name") {
+    val tblName = "anotherDeltaTable"
+    withTable(tblName) {
+      testData.write.format("delta").saveAsTable(tblName)
+      assert(DeltaTable.isDeltaTableForName(tblName))
+    }
+  }
+
+  test("isDeltaTableForName - with fully qualified table name") {
+    withDatabase("delta") {
+        sql("CREATE DATABASE delta")
+        withTable("deltatablename") {
+          testData.write.format("delta").saveAsTable("delta.deltatablename")
+          assert(DeltaTable.isDeltaTableForName("delta.deltatablename"))
+      }
+    }
+  }
+
+  test("isDeltaTableForName - with view name") {
+    withView("vwDeltaName") {
+      assert(!DeltaTable.isDeltaTableForName("vwDeltaName"))
+    }
+  }
+
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))

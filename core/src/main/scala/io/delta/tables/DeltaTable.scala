@@ -17,6 +17,7 @@
 package io.delta.tables
 
 import scala.collection.JavaConverters._
+import scala.util.Try
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
@@ -782,15 +783,10 @@ object DeltaTable {
    * }}}
    *
    * @since 0.4.0
+   * @deprecated("Use isDeltaTableForPath(sparkSession: SparkSession, identifier: String)")
    */
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
-    val identifierPath = new Path(identifier)
-    if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
-      val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
-      rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
-    } else {
-      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
-    }
+    isDeltaTableForPath(sparkSession, identifier)
   }
 
   /**
@@ -803,16 +799,88 @@ object DeltaTable {
    *
    * An example would be
    * {{{
-   *   DeltaTable.isDeltaTable(spark, "/path/to/table")
+   *   DeltaTable.isDeltaTable("/path/to/table")
    * }}}
    *
    * @since 0.4.0
+   * @deprecated("Use isDeltaTableForPath(identifier: String)")
    */
   def isDeltaTable(identifier: String): Boolean = {
+    isDeltaTableForPath(identifier)
+  }
+
+  /**
+   * Check if the provided `path` string is the root of a Delta table using the given SparkSession.
+   *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTableForPath(spark, "path/to/table")
+   * }}}
+   *
+   * @since 2.1.1
+   */
+  def isDeltaTableForPath(sparkSession: SparkSession, path: String): Boolean = {
+    val identifierPath = new Path(path)
+    if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
+      val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
+      rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
+    } else {
+      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
+    }
+  }
+
+  /**
+   * Check if the provided `path` string is the root of a Delta table using the given SparkSession.
+   *
+   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTableForPath("/path/to/table")
+   * }}}
+   *
+   * @since 2.1.1
+   */
+  def isDeltaTableForPath(path: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw DeltaErrors.activeSparkSessionNotFound()
     }
-    isDeltaTable(sparkSession, identifier)
+    isDeltaTable(sparkSession, path)
+  }
+
+  /**
+   * Check if the provided `tableOrViewName` string represents a Delta table.
+   *
+   * Example:
+   * {{{
+   *   DeltaTable.isDeltaTableForName(spark, "MyDeltaTable")
+   * }}}
+   *
+   * @since 2.1.1
+   */
+  def isDeltaTableForName(sparkSession: SparkSession, tableOrViewName: String): Boolean = {
+    val tableId: Try[TableIdentifier] =
+      Try(sparkSession.sessionState.sqlParser.parseTableIdentifier(tableOrViewName))
+    tableId.isSuccess && DeltaTableUtils.isDeltaTable(sparkSession, tableId.get)
+  }
+
+  /**
+   * Check if the provided `tableOrViewName` string represents a Delta table.
+   *
+   * Example:
+   * {{{
+   *   DeltaTable.isDeltaTableForName("MyDeltaTable")
+   * }}}
+   *
+   * @since 2.1.1
+   */
+  def isDeltaTableForName(tableOrViewName: String): Boolean = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw DeltaErrors.activeSparkSessionNotFound()
+    }
+    isDeltaTableForName(sparkSession, tableOrViewName)
   }
 
   /**
