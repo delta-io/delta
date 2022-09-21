@@ -82,7 +82,11 @@ object MimaExcludes {
 
       // Changes in 1.2.0
       ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.LogStore"),
-      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator")
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator"),
+
+
+      // Changes in 2.13.0
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute"),
 
       // scalastyle:on line.size.limit
   )
