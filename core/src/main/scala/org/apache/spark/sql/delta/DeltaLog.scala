@@ -520,11 +520,18 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
     apply(spark, logPathFor(dataPath))
   }
 
+  /** Creates a DeltaLog for a given path */
+  def forTable(
+    spark: SparkSession,
+    dataPath: Path): DeltaLog = {
+    apply(spark, logPathFor(dataPath))
+  }
+
   /** Creates a DeltaLog for a given path and file options */
   def forTable(
       spark: SparkSession,
       dataPath: Path,
-      options: Map[String, String] = Map.empty): DeltaLog = {
+      options: Map[String, String]): DeltaLog = {
     apply(spark, logPathFor(dataPath), options = options)
   }
 
