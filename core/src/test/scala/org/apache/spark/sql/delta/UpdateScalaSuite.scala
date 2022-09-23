@@ -20,8 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableTestUtils
-
-import org.apache.spark.sql.{functions, Row}
+import org.apache.spark.sql.{QueryTest, Row, functions}
 
 class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -38,7 +37,7 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
   test("update usage test - without condition, using Column") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
-    table.update(Map("key" -> functions.expr("100")))
+    QueryTest.checkAnswer(table.update(Map("key" -> functions.expr("100"))), Seq(Row(4)))
     checkAnswer(readDeltaTableByPath(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
   }

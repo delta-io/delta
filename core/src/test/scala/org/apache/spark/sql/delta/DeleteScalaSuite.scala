@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableTestUtils
 
-import org.apache.spark.sql.{functions, Row}
+import org.apache.spark.sql.{QueryTest, Row, functions}
 
 class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
 
@@ -28,21 +28,21 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
   test("delete usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
-    table.delete()
+    QueryTest.checkAnswer(table.delete(), Seq(Row(-1)))
     checkAnswer(readDeltaTable(tempPath), Nil)
   }
 
   test("delete usage test - with condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
-    table.delete("key = 1 or key = 2")
+    QueryTest.checkAnswer(table.delete("key = 1 or key = 2"), Seq(Row(2)))
     checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
   }
 
   test("delete usage test - with Column condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
-    table.delete(functions.expr("key = 1 or key = 2"))
+    QueryTest.checkAnswer(table.delete(functions.expr("key = 1 or key = 2")), Seq(Row(2)))
     checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
   }
 

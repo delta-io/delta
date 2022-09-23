@@ -62,7 +62,7 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
         # delete with condition as str
-        dt.delete("key = 'a'")
+        self.__checkAnswer(dt.delete("key = 'a'"), [(1,)], ["num_affected_rows"])
         self.__checkAnswer(dt.toDF(), [('b', 2), ('c', 3), ('d', 4)])
 
         # delete with condition as Column
@@ -102,11 +102,12 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
         # update with condition as str and with set exprs as str
-        dt.update("key = 'a' or key = 'b'", {"value": "1"})
+        self.__checkAnswer(dt.update("key = 'a' or key = 'b'", {"value": "1"}), [(2,)], ["num_affected_rows"])
         self.__checkAnswer(dt.toDF(), [('a', 1), ('b', 1), ('c', 3), ('d', 4)])
 
         # update with condition as Column and with set exprs as Columns
-        dt.update(expr("key = 'a' or key = 'b'"), {"value": expr("0")})
+        self.__checkAnswer(dt.update(expr("key = 'a' or key = 'b'"), {"value": expr("0")}), [(2,)]
+                           , ["num_affected_rows"])
         self.__checkAnswer(dt.toDF(), [('a', 0), ('b', 0), ('c', 3), ('d', 4)])
 
         # update without condition

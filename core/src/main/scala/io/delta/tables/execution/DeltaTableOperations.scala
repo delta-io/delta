@@ -38,7 +38,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
  */
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
-  protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
+  protected def executeDelete(condition: Option[Expression]): DataFrame = {
     val delete = DeleteFromTable(
       self.toDF.queryExecution.analyzed,
       condition.getOrElse(Literal.TrueLiteral))
@@ -72,7 +72,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeUpdate(
       set: Map[String, Column],
-      condition: Option[Column]): Unit = improveUnsupportedOpError {
+      condition: Option[Column]): DataFrame = {
     val assignments = set.map { case (targetColName, column) =>
       Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
     }.toSeq

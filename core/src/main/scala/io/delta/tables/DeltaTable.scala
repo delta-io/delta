@@ -169,7 +169,7 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  def delete(condition: String): Unit = {
+  def delete(condition: String): DataFrame = {
     delete(functions.expr(condition))
   }
 
@@ -177,10 +177,9 @@ class DeltaTable private[tables](
    * Delete data from the table that match the given `condition`.
    *
    * @param condition Boolean SQL expression
-   *
    * @since 0.3.0
    */
-  def delete(condition: Column): Unit = {
+  def delete(condition: Column): DataFrame = {
     executeDelete(Some(condition.expr))
   }
 
@@ -189,7 +188,7 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  def delete(): Unit = {
+  def delete(): DataFrame = {
     executeDelete(None)
   }
 
@@ -233,7 +232,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  def update(set: Map[String, Column]): Unit = {
+  def update(set: Map[String, Column]): DataFrame = {
     executeUpdate(set, None)
   }
 
@@ -256,7 +255,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  def update(set: java.util.Map[String, Column]): Unit = {
+  def update(set: java.util.Map[String, Column]): DataFrame = {
     executeUpdate(set.asScala, None)
   }
 
@@ -278,7 +277,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  def update(condition: Column, set: Map[String, Column]): Unit = {
+  def update(condition: Column, set: Map[String, Column]): DataFrame = {
     executeUpdate(set, Some(condition))
   }
 
@@ -304,7 +303,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
+  def update(condition: Column, set: java.util.Map[String, Column]): DataFrame = {
     executeUpdate(set.asScala, Some(condition))
   }
 
@@ -320,7 +319,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  def updateExpr(set: Map[String, String]): Unit = {
+  def updateExpr(set: Map[String, String]): DataFrame = {
     executeUpdate(toStrColumnMap(set), None)
   }
 
@@ -340,7 +339,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  def updateExpr(set: java.util.Map[String, String]): Unit = {
+  def updateExpr(set: java.util.Map[String, String]): DataFrame = {
     executeUpdate(toStrColumnMap(set.asScala), None)
   }
 
@@ -361,7 +360,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  def updateExpr(condition: String, set: Map[String, String]): Unit = {
+  def updateExpr(condition: String, set: Map[String, String]): DataFrame = {
     executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)))
   }
 
@@ -385,7 +384,7 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
+  def updateExpr(condition: String, set: java.util.Map[String, String]): DataFrame = {
     executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)))
   }
 
