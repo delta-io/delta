@@ -1462,9 +1462,10 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String =
-    s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
-      s""""nullCount":{"$colName":0}}""".stripMargin
+  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0}}""".stripMargin
+  }
 
   test("data skipping get specific files with Stats API") {
     withTempDir { tempDir =>
@@ -1727,8 +1728,8 @@ trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
 
   override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
     val x = colName.phy(deltaLog)
-    s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
-      s""""nullCount":{"$x":0}}""".stripMargin
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0}}""".stripMargin
   }
 }
 

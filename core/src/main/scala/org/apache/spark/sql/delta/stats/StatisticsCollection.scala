@@ -31,6 +31,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types._
 
 /**
@@ -108,6 +109,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     }
   }
 
+
   /**
    * Returns a struct column that can be used to collect statistics for the current
    * schema of the table.
@@ -119,7 +121,8 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
-    struct(
+
+    val statCols = Seq(
       count(new Column("*")) as NUM_RECORDS,
       collectStats(MIN, statCollectionSchema) {
         // Truncate string min values as necessary
@@ -144,8 +147,9 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       collectStats(NULL_COUNT, statCollectionSchema) {
         case (c, _, true) => sum(when(c.isNull, 1).otherwise(0))
         case (_, _, false) => count(new Column("*"))
-      }
-    ) as 'stats
+      })
+
+    struct(statCols: _*).as('stats)
   }
 
   /** Returns schema of the statistics collected. */
@@ -184,10 +188,13 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionSchema)
     val nullCountSchemaOpt = getNullCountSchema(statCollectionSchema)
 
-    val fields = Array("numRecords" -> LongType) ++
-      minMaxStatsSchemaOpt.map("minValues" -> _) ++
-      minMaxStatsSchemaOpt.map("maxValues" -> _) ++
-      nullCountSchemaOpt.map("nullCount" -> _)
+
+    val fields =
+      Array(NUM_RECORDS -> LongType) ++
+      minMaxStatsSchemaOpt.map(MIN -> _) ++
+      minMaxStatsSchemaOpt.map(MAX -> _) ++
+      nullCountSchemaOpt.map(NULL_COUNT -> _)
+
     StructType(fields.map {
       case (name, dataType) => StructField(name, dataType)
     })
