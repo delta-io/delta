@@ -54,7 +54,8 @@ case class VersionChecksum(
     protocol: Protocol,
     metadata: Metadata,
     histogramOpt: Option[FileSizeHistogram],
-    txnId: Option[String])
+    txnId: Option[String],
+    allFiles: Option[Seq[AddFile]])
 
 /**
  * Record the state of the table as a checksum file along with a commit.

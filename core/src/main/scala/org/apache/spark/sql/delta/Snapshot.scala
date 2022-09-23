@@ -266,7 +266,8 @@ class Snapshot(
     protocol = protocol,
     metadata = metadata,
     histogramOpt = fileSizeHistogram,
-    txnId = None)
+    txnId = None,
+    allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
