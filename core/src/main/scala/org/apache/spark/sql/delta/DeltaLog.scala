@@ -474,15 +474,7 @@ class DeltaLog private(
   }
 }
 
-/**
- * Tag trait that allows [[DeltaTestImplicits]] to implicitly add test-only methods to the
- * [[DeltaLog]] companion object, by actually adding those methods to this trait.
- *
- * NOTE: It is enough to inherit from this trait; it doesn't need to define any methods.
- */
-trait DeltaLogObjectBase
-
-object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
+object DeltaLog extends DeltaLogging {
 
   /**
    * The key type of `DeltaLog` cache. It's a pair of the canonicalized table path and the file
@@ -490,9 +482,6 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
    * `DataFrameReader/Writer`
    */
   private type DeltaLogCacheKey = (Path, Map[String, String])
-
-  /** The name of the subdirectory that holds Delta metadata files */
-  private val LOG_PATH = "_delta_log"
 
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
@@ -515,38 +504,69 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
   }
 
 
-  /** Creates a DeltaLog from a path string */
+  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
-    apply(spark, logPathFor(dataPath))
+    apply(spark, new Path(dataPath, "_delta_log"), Map.empty, new SystemClock)
   }
 
-  /** Creates a DeltaLog for a given path */
-  def forTable(
-    spark: SparkSession,
-    dataPath: Path): DeltaLog = {
-    apply(spark, logPathFor(dataPath))
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
   }
 
-  /** Creates a DeltaLog for a given path and file options */
-  def forTable(
-      spark: SparkSession,
-      dataPath: Path,
-      options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options = options)
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
+    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), new SystemClock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), clock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
+    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), clock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), clock)
   }
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, tableName: TableIdentifier): DeltaLog = {
-    if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
-      forTable(spark, tableName.table)
-    } else {
-      forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName))
-    }
+    forTable(spark, tableName, new SystemClock)
   }
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable): DeltaLog = {
-    apply(spark, logPathFor(new Path(table.location)))
+    forTable(spark, table, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
+    if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+      forTable(spark, new Path(tableName.table))
+    } else {
+      forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
+    }
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
+    val log = apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+    log
   }
 
   /** Helper for creating a log for the table. */
@@ -558,15 +578,15 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
     }
   }
 
+  private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
+    apply(spark, rawPath, Map.empty, clock)
 
-  private[delta] def logPathFor(dataPath: Path): Path = new Path(dataPath, LOG_PATH)
-  private[delta] def logPathFor(dataPath: String): Path = new Path(dataPath, LOG_PATH)
 
-  private[delta] def apply(
+  private def apply(
       spark: SparkSession,
       rawPath: Path,
-      options: Map[String, String] = Map.empty,
-      clock: Option[Clock] = None
+      options: Map[String, String],
+      clock: Clock
   ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
       if (spark.sessionState.conf.getConf(
@@ -594,7 +614,7 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
             logPath = path,
             dataPath = path.getParent,
             options = fileSystemOptions,
-            clock = clock.getOrElse(new SystemClock)
+            clock = clock
           )
         }
     }
@@ -626,7 +646,7 @@ object DeltaLog extends DeltaLogObjectBase with DeltaLogging {
   /** Invalidate the cached DeltaLog object for the given `dataPath`. */
   def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
     try {
-      val rawPath = logPathFor(dataPath)
+      val rawPath = new Path(dataPath, "_delta_log")
       // scalastyle:off deltahadoopconfiguration
       // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
       // has set the correct file system configurations in the session configs.
