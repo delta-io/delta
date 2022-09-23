@@ -87,11 +87,6 @@ object MimaExcludes {
 
       // Changes in 2.13.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.executeDelete"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.executeUpdate"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.delete"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.update"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.updateExpr"),
 
       // scalastyle:on line.size.limit
   )

@@ -87,7 +87,7 @@ class DeltaTable(object):
         self._jdt.generate(mode)
 
     @since(0.4)  # type: ignore[arg-type]
-    def delete(self, condition: OptionalExpressionOrColumn = None) -> DataFrame:
+    def delete(self, condition: OptionalExpressionOrColumn = None) -> None:
         """
         Delete data from the table that match the given ``condition``.
 
@@ -99,35 +99,27 @@ class DeltaTable(object):
 
         :param condition: condition of the update
         :type condition: str or pyspark.sql.Column
-        :return: DataFrame containing the delete execution metrics
-        :rtype: pyspark.sql.DataFrame
         """
         if condition is None:
-            return DataFrame(
-                self._jdt.delete(),
-                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
-            )
+            self._jdt.delete()
         else:
-            return DataFrame(
-                self._jdt.delete(DeltaTable._condition_to_jcolumn(condition)),
-                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
-            )
+            self._jdt.delete(DeltaTable._condition_to_jcolumn(condition))
 
     @overload
     def update(
         self, condition: ExpressionOrColumn, set: ColumnMapping
-    ) -> DataFrame:
+    ) -> None:
         ...
 
     @overload
-    def update(self, *, set: ColumnMapping) -> DataFrame:
+    def update(self, *, set: ColumnMapping) -> None:
         ...
 
     def update(
         self,
         condition: OptionalExpressionOrColumn = None,
         set: OptionalColumnMapping = None
-    ) -> DataFrame:
+    ) -> None:
         """
         Update data from the table on the rows that match the given ``condition``,
         which performs the rules defined by ``set``.
@@ -150,23 +142,15 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
-        :return: DataFrame containing the update execution metrics
-        :rtype: pyspark.sql.DataFrame
 
         .. versionadded:: 0.4
         """
         jmap = DeltaTable._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = DeltaTable._condition_to_jcolumn(condition)
         if condition is None:
-            return DataFrame(
-                self._jdt.update(jmap),
-                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
-            )
+            self._jdt.update(jmap)
         else:
-            return DataFrame(
-                self._jdt.update(jcolumn, jmap),
-                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
-            )
+            self._jdt.update(jcolumn, jmap)
 
     @since(0.4)  # type: ignore[arg-type]
     def merge(
@@ -950,8 +934,6 @@ class DeltaMergeBuilder(object):
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
-        :return: DataFrame containing the merge execution metrics
-        :rtype: pyspark.sql.DataFrame
         """
         return DataFrame(
             self._jbuilder.execute(),
