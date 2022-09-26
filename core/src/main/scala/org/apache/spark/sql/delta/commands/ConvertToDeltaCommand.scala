@@ -253,7 +253,8 @@ abstract class ConvertToDeltaCommandBase(
   private def isParquetCatalogTable(target: ConvertTarget): Boolean = {
     target.catalogTable match {
       case Some(ct) =>
-        isHiveStyleParquetTable(ct) || target.provider.get.toLowerCase(Locale.ROOT) == "parquet"
+        ConvertToDeltaCommand.isHiveStyleParquetTable(ct) ||
+          target.provider.get.toLowerCase(Locale.ROOT) == "parquet"
       case None => false
     }
   }
@@ -279,19 +280,11 @@ abstract class ConvertToDeltaCommandBase(
   protected def getTargetTable(
       spark: SparkSession,
       target: ConvertTarget): ConvertTargetTable = {
-    val targetPath = new Path(target.targetDir)
-    // scalastyle:off deltahadoopconfiguration
-    val sessionHadoopConf = spark.sessionState.newHadoopConf()
-    // scalastyle:on deltahadoopconfiguration
-    val fs = targetPath.getFileSystem(sessionHadoopConf)
-    val qualifiedPath = fs.makeQualified(targetPath)
-    val qualifiedDir = qualifiedPath.toString
-    if (!fs.exists(qualifiedPath)) {
-      throw DeltaErrors.directoryNotFoundException(qualifiedDir)
-    }
+    val qualifiedDir =
+      ConvertToDeltaCommand.getQualifiedPath(spark, new Path(target.targetDir)).toString
     target.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
-        case _ if target.catalogTable.exists(isHiveStyleParquetTable) =>
+        case _ if target.catalogTable.exists(ConvertToDeltaCommand.isHiveStyleParquetTable) =>
           new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
         case checkProvider if checkProvider.equalsIgnoreCase("parquet") =>
           new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
@@ -387,11 +380,6 @@ abstract class ConvertToDeltaCommandBase(
       provider: Option[String],
       targetDir: String,
       properties: Map[String, String])
-
-  protected def isHiveStyleParquetTable(catalogTable: CatalogTable): Boolean = {
-    catalogTable.provider.contains("hive") && catalogTable.storage.serde.contains(
-      "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
-  }
 
   private def checkColumnMapping(
       txnMetadata: Metadata,
@@ -678,7 +666,7 @@ class CatalogFileManifest(
   override val basePath: String,
   catalogTable: CatalogTable,
   serializableConf: SerializableConfiguration)
-  extends ManualListingFileManifest(spark, basePath, serializableConf) {
+  extends ConvertTargetFileManifest {
 
   private lazy val partitionList = {
     if (catalogTable.partitionSchema.isEmpty) {
@@ -697,19 +685,22 @@ class CatalogFileManifest(
     }
   }
 
-  override def doList(): Dataset[SerializableFileStatus] = {
+  override lazy val allFiles: Dataset[ConvertTargetFile] = {
     import org.apache.spark.sql.delta.implicits._
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-    val allFiles = spark.sparkContext.parallelize(partitionList)
+    val rdd = spark.sparkContext.parallelize(partitionList)
       .repartition(math.min(parallelism, partitionList.length))
       .mapPartitions { dirs =>
         DeltaFileOperations
           .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
+          .map(ConvertTargetFile(_))
     }
-    spark.createDataset(allFiles)
+    spark.createDataset(rdd).cache()
   }
+
+  override def close(): Unit = allFiles.unpersist()
 }
 
 /** A file manifest generated from pre-existing parquet MetadataLog. */
@@ -726,10 +717,11 @@ class MetadataLogFileManifest(
         .map(SerializableFileStatus.fromStatus)
         .map(ConvertTargetFile(_))
     }
-    spark.createDataset(rdd)
+    val ds = spark.createDataset(rdd)
+    ds.cache()
   }
 
-  override def close(): Unit = {}
+  override def close(): Unit = allFiles.unpersist()
 }
 
 object ConvertToDeltaCommand {
@@ -816,6 +808,23 @@ object ConvertToDeltaCommand {
     }
 
     AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
+  }
+
+  def isHiveStyleParquetTable(catalogTable: CatalogTable): Boolean = {
+    catalogTable.provider.contains("hive") && catalogTable.storage.serde.contains(
+      "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
+  }
+
+  def getQualifiedPath(spark: SparkSession, path: Path): Path = {
+    // scalastyle:off deltahadoopconfiguration
+    val sessionHadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+    val fs = path.getFileSystem(sessionHadoopConf)
+    val qualifiedPath = fs.makeQualified(path)
+    if (!fs.exists(qualifiedPath)) {
+      throw DeltaErrors.directoryNotFoundException(qualifiedPath.toString)
+    }
+    qualifiedPath
   }
 
   def hiddenDirNameFilter(fileName: String): Boolean = {

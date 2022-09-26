@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -48,7 +48,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * does special handling for this column, dispatching the main data to its normal location while the
  * CDC data is sent to [[AddCDCFile]] entries.
  */
-object CDCReader extends DeltaLogging {
+object CDCReader extends CDCReaderImpl
+{
   // Definitions for the CDC type column. Delta writers will write data with a non-null value for
   // this column into [[AddCDCFile]] actions separate from the main table, and the CDC reader will
   // read this column to determine what type of change it was.
@@ -83,6 +84,39 @@ object CDCReader extends DeltaLogging {
 
   // CDC specific columns in data written by operations
   val CDC_COLUMNS_IN_DATA = Seq(CDC_PARTITION_COL, CDC_TYPE_COLUMN_NAME)
+
+  /**
+   * A special BaseRelation wrapper for CDF reads.
+   */
+  case class DeltaCDFRelation(
+      schema: StructType,
+      sqlContext: SQLContext,
+      deltaLog: DeltaLog,
+      startingVersion: Option[Long],
+      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
+
+    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
+      val df = changesToBatchDF(
+        deltaLog,
+        startingVersion.get,
+        endingVersion.getOrElse {
+          // If no ending version was specified, use the latest version as of scan building time.
+          // Note that this line won't be invoked (and thus we won't incur the update() cost)
+          // when endingVersion is present.
+          deltaLog.update().version
+        },
+        sqlContext.sparkSession)
+
+      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+    }
+  }
+
+  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
+}
+
+trait CDCReaderImpl extends DeltaLogging {
+
+  import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
   /**
    * Given timestamp or version this method returns the corresponding version for that timestamp
@@ -196,32 +230,6 @@ object CDCReader extends DeltaLogging {
       startingVersion,
       endingVersion
     )
-  }
-
-  /**
-   * A special BaseRelation wrapper for CDF reads.
-   */
-  case class DeltaCDFRelation(
-      schema: StructType,
-      sqlContext: SQLContext,
-      deltaLog: DeltaLog,
-      startingVersion: Option[Long],
-      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
-
-    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
-      val df = changesToBatchDF(
-        deltaLog,
-        startingVersion.get,
-        endingVersion.getOrElse {
-          // If no ending version was specified, use the latest version as of scan building time.
-          // Note that this line won't be invoked (and thus we won't incur the update() cost)
-          // when endingVersion is present.
-          deltaLog.update().version
-        },
-        sqlContext.sparkSession)
-
-      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
-    }
   }
 
   /**
@@ -339,18 +347,16 @@ object CDCReader extends DeltaLogging {
 
         // Check all intermediary metadata schema changes as well
         if (shouldCheckToBlockBatchReadOnColumnMappingTable) {
-           actions.collect { case a: Metadata => a }.foreach { metadata =>
-             if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
-               throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
-                 snapshot.metadata.schema, metadata.schema)
-             }
-           }
+          actions.collect { case a: Metadata => a }.foreach { metadata =>
+            if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
+              throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
+                snapshot.metadata.schema, metadata.schema)
+            }
+          }
         }
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
-        val addActions = ListBuffer[AddFile]()
-        val removeActions = ListBuffer[RemoveFile]()
         val ts = timestampsByVersion.get(v).orNull
 
         // Note that the CommitInfo is *not* guaranteed to be generated in 100% of cases.
@@ -363,11 +369,9 @@ object CDCReader extends DeltaLogging {
             totalFiles += 1L
             totalBytes += c.size
           case a: AddFile =>
-            addActions.append(a)
             totalFiles += 1L
             totalBytes += a.size
           case r: RemoveFile =>
-            removeActions.append(r)
             totalFiles += 1L
             totalBytes += r.size.getOrElse(0L)
           case i: CommitInfo => commitInfo = Some(i)
@@ -399,28 +403,54 @@ object CDCReader extends DeltaLogging {
     if (changeFiles.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new TahoeChangeFileIndex(spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new TahoeChangeFileIndex(
+          spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath,
+          snapshot.version, snapshot.metadata),
         snapshot.metadata,
         isStreaming))
     }
 
-    if (addFiles.nonEmpty) {
+    val deletedAndAddedRows = getDeletedAndAddedRows(addFiles.toSeq, removeFiles.toSeq, deltaLog,
+      snapshot, isStreaming, spark)
+    dfs.append(deletedAndAddedRows: _*)
+
+    // build an empty DS. This DS retains the table schema
+    val emptyDf = spark.createDataFrame(
+      spark.sparkContext.emptyRDD[Row],
+      cdcReadSchema(snapshot.metadata.schema))
+    CDCVersionDiffInfo(
+      dfs.reduceOption((df1, df2) => df1.union(df2)).getOrElse(emptyDf),
+      totalFiles,
+      totalBytes)
+  }
+
+  protected def getDeletedAndAddedRows(
+      addFileSpecs: Seq[CDCDataSpec[AddFile]],
+      removeFileSpecs: Seq[CDCDataSpec[RemoveFile]],
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      isStreaming: Boolean,
+      spark: SparkSession): Seq[DataFrame] = {
+    val dfs = ListBuffer[DataFrame]()
+
+    if (addFileSpecs.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new CdcAddFileIndex(spark, addFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
         snapshot.metadata,
         isStreaming))
     }
-
-    if (removeFiles.nonEmpty) {
+    if (removeFileSpecs.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new TahoeRemoveFileIndex(spark, removeFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new TahoeRemoveFileIndex(
+          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath,
+          snapshot.version, snapshot.metadata),
         snapshot.metadata,
         isStreaming))
     }
 
-    CDCVersionDiffInfo(dfs.reduce((df1, df2) => df1.unionAll(df2)), totalFiles, totalBytes)
+    dfs.toSeq
   }
 
   /**
@@ -470,7 +500,7 @@ object CDCReader extends DeltaLogging {
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
    */
-  private def scanIndex(
+  protected def scanIndex(
       spark: SparkSession,
       index: TahoeFileIndex,
       metadata: Metadata,
@@ -515,8 +545,6 @@ object CDCReader extends DeltaLogging {
   def isCDCEnabledOnTable(metadata: Metadata): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
   }
-
-  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
 
   /**
    * Represents the changes between some start and end version of a Delta table

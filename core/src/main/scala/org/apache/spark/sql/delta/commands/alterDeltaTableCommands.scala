@@ -120,7 +120,9 @@ case class AlterTableSetPropertiesDeltaCommand(
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
+
       txn.updateMetadata(newMetadata)
+
       txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
 
       Seq.empty[Row]

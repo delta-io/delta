@@ -639,6 +639,7 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     ident.namespace().length == 1 && DeltaSourceUtils.isDeltaDataSourceName(ident.namespace().head)
   }
 
+
   protected def isPathIdentifier(ident: Identifier): Boolean = {
     // Should be a simple check of a special PathIdentifier class in the future
     try {

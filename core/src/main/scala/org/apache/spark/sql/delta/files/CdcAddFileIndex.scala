@@ -37,8 +37,8 @@ class CdcAddFileIndex(
     filesByVersion: Seq[CDCDataSpec[AddFile]],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot)
-  extends TahoeBatchFileIndex(
+    snapshot: Snapshot
+  ) extends TahoeBatchFileIndex(
     spark, "cdcRead", filesByVersion.flatMap(_.actions), deltaLog, path, snapshot) {
 
   override def matchingFiles(
