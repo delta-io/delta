@@ -281,7 +281,9 @@ class DeltaSuite extends QueryTest
         }.getMessage
         if (enabled) {
           assert(e3.contains(
-            "Data written out does not match replaceWhere 'not_a_column = true'"))
+            "A column or function parameter with name `not_a_column` cannot be resolved") ||
+            e3.contains("Column 'not_a_column' does not exist. Did you mean one of " +
+              "the following? [value, is_odd]"))
         } else {
           assert(e3.contains(
             "Predicate references non-partition column 'not_a_column'. Only the " +
@@ -445,10 +447,18 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("valid replaceWhere with cdf enabled") {
-    Seq(true, false).foreach { enabled =>
+    Seq(false, true).foreach { replaceWhereInDataColumn =>
+      test(s"valid replaceWhere with cdf enabled, " +
+        s"replaceWhereInDataColumn = $replaceWhereInDataColumn") {
+        testReplaceWhereWithCdf(
+          replaceWhereInDataColumn)
+      }
+    }
+
+  def testReplaceWhereWithCdf(
+    replaceWhereInDataColumn: Boolean): Unit = {
       withSQLConf(
-        DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString,
+        DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> replaceWhereInDataColumn.toString,
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
         withTempDir { dir =>
           Seq(1, 2, 3, 4).map(i => (i, i + 2)).toDF("key", "value.1")
@@ -488,7 +498,7 @@ class DeltaSuite extends QueryTest
             Row(1, 3, true, false, "delete", 1) :: Row(3, 5, true, false, "delete", 1) ::
               Row(5, 7, true, false, "insert", 1) :: Row(7, 9, true, false, "insert", 1) :: Nil)
 
-          if (enabled) {
+          if (replaceWhereInDataColumn) {
             // replaceWhere on non-partitioning columns if enabled.
             Seq((4, 8)).toDF("key", "value.1")
               .withColumn("is_odd", $"`value.1`" % 2 =!= 0)
@@ -510,7 +520,6 @@ class DeltaSuite extends QueryTest
               Row(4, 6, false, true, "delete", 2) :: Row(4, 8, false, true, "insert", 2) :: Nil)
           }
         }
-      }
     }
   }
 
