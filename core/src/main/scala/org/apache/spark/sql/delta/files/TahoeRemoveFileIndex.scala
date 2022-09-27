@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.implicits._
@@ -36,9 +36,10 @@ class TahoeRemoveFileIndex(
     val filesByVersion: Seq[CDCDataSpec[RemoveFile]],
     deltaLog: DeltaLog,
     path: Path,
-    override val tableVersion: Long,
-    override val metadata: Metadata
+    snapshot: Snapshot
   ) extends TahoeFileIndex(spark, deltaLog, path) {
+
+  override def tableVersion: Long = snapshot.version
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -74,7 +75,7 @@ class TahoeRemoveFileIndex(
   }
 
   override def partitionSchema: StructType =
-    CDCReader.cdcReadSchema(metadata.partitionSchema)
+    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
   override def refresh(): Unit = {}
 
