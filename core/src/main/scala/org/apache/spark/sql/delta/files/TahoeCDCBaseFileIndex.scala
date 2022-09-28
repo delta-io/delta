@@ -34,14 +34,7 @@ abstract class TahoeCDCBaseFileIndex[T <: FileAction](
     deltaLog: DeltaLog,
     path: Path,
     snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
-
-  case class ActionParameters(
-      partitionValues: Map[String, String],
-      size: Long,
-      modificationTime: Long,
-      dataChange: Boolean,
-      tags: Map[String, String])
-
+  
   override def tableVersion: Long = snapshot.version
 
   override def matchingFiles(
