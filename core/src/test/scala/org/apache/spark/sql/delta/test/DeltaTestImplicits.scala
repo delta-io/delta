@@ -16,22 +16,35 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.OptimisticTransaction
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+
+import org.apache.spark.sql.SaveMode
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
  */
 object DeltaTestImplicits {
   implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
-    /** Ensures that the initial commit of a Delta table always contains a Metadata action */
-    def commitManually(actions: Action*): Long = {
-      if (txn.readVersion == -1 && !actions.exists(_.isInstanceOf[Metadata])) {
-        txn.commit(Metadata() +: actions, ManualUpdate)
+
+    /** Ensure that the initial commit of a Delta table always contains a Metadata action */
+    def commitActions(op: Operation, actions: Action*): Long = {
+      if (txn.readVersion == -1) {
+        val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
+        val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) Some(Protocol()) else None
+        txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
       } else {
-        txn.commit(actions, ManualUpdate)
+        txn.commit(actions, op)
       }
+    }
+
+    def commitManually(actions: Action*): Long = {
+      commitActions(ManualUpdate, actions: _*)
+    }
+
+    def commitWriteAppend(actions: Action*): Long = {
+      commitActions(Write(SaveMode.Append), actions: _*)
     }
   }
 }
