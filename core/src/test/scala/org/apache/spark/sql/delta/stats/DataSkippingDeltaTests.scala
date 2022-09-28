@@ -1204,6 +1204,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+
   test("data skipping with generated column") {
     withTable("table") {
       // OSS does not support the generated column syntax in SQL so we have to use table builder
