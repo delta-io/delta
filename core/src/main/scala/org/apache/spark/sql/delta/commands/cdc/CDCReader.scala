@@ -404,7 +404,7 @@ trait CDCReaderImpl extends DeltaLogging {
       dfs.append(scanIndex(
         spark,
         new TahoeChangeFileIndex(
-          spark, changeFiles, deltaLog, deltaLog.dataPath,
+          spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath,
           snapshot),
         snapshot.metadata,
         isStreaming))
