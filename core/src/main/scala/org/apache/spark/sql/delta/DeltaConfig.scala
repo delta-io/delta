@@ -27,6 +27,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.util.Utils
 
 case class DeltaConfig[T](
     key: String,
