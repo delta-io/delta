@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata}
-import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
-import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDCDataSpec, CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION}
+import org.apache.spark.sql.delta.implicits._
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
 
 /**
@@ -32,11 +32,11 @@ import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
  */
 class TahoeChangeFileIndex(
     spark: SparkSession,
-    val filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
+    filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
     deltaLog: DeltaLog,
     path: Path,
-    override val tableVersion: Long,
-    override val metadata: Metadata) extends TahoeFileIndex(spark, deltaLog, path) {
+    snapshot: Snapshot)
+  extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -58,15 +58,11 @@ class TahoeChangeFileIndex(
       .collect()
   }
 
-  override def inputFiles: Array[String] = {
-    filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
-  }
-
-  override val partitionSchema: StructType = metadata.partitionSchema
+  override val partitionSchema: StructType = snapshot.metadata.partitionSchema
     .add(CDC_COMMIT_VERSION, LongType)
     .add(CDC_COMMIT_TIMESTAMP, TimestampType)
 
-  override def refresh(): Unit = {}
+  // Data already has cdc partition values
+  override def cdcPartitionValues(): Map[String, String] = Map.empty
 
-  override val sizeInBytes: Long = filesByVersion.flatMap(_.actions).map(_.size).sum
 }

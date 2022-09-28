@@ -16,15 +16,15 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.implicits._
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -33,12 +33,19 @@ import org.apache.spark.sql.types.StructType
  */
 class TahoeRemoveFileIndex(
     spark: SparkSession,
-    val filesByVersion: Seq[CDCDataSpec[RemoveFile]],
+    filesByVersion: Seq[CDCDataSpec[RemoveFile]],
     deltaLog: DeltaLog,
     path: Path,
-    override val tableVersion: Long,
-    override val metadata: Metadata
-  ) extends TahoeFileIndex(spark, deltaLog, path) {
+    snapshot: Snapshot)
+  extends TahoeCDCBaseFileIndex(spark, filesByVersion, deltaLog, path, snapshot) {
+
+  // We add the metadata as faked partition columns in order to attach it on a per-file
+  // basis.
+  override def cdcPartitionValues(): Map[String, String] =
+    Map(CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
+
+  override def partitionSchema: StructType =
+    CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -60,8 +67,7 @@ class TahoeRemoveFileIndex(
             (CDC_COMMIT_VERSION -> version.toString) +
             (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
             (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
-          AddFile(r.path, newPartitionVals, r.size.getOrElse(0L), 0, r.dataChange, tags = r.tags
-          )
+          AddFile(r.path, newPartitionVals, r.size.getOrElse(0L), 0, r.dataChange, tags = r.tags)
         }
     }
     DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
@@ -69,14 +75,4 @@ class TahoeRemoveFileIndex(
       .collect()
   }
 
-  override def inputFiles: Array[String] = {
-    filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
-  }
-
-  override def partitionSchema: StructType =
-    CDCReader.cdcReadSchema(metadata.partitionSchema)
-
-  override def refresh(): Unit = {}
-
-  override val sizeInBytes: Long = filesByVersion.flatMap(_.actions).map(_.size.getOrElse(0L)).sum
 }

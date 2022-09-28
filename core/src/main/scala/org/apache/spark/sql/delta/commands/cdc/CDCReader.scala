@@ -21,8 +21,8 @@ import java.sql.Timestamp
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.files.{TahoeCDCAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
@@ -405,7 +405,7 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeChangeFileIndex(
           spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath,
-          snapshot.version, snapshot.metadata),
+          snapshot),
         snapshot.metadata,
         isStreaming))
     }
@@ -436,16 +436,19 @@ trait CDCReaderImpl extends DeltaLogging {
     if (addFileSpecs.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        snapshot.metadata,
-        isStreaming))
+        new TahoeCDCAddFileIndex(
+          spark = spark,
+          filesByVersion = addFileSpecs,
+          deltaLog = deltaLog,
+          path = deltaLog.dataPath,
+          snapshot = snapshot), snapshot.metadata))
     }
     if (removeFileSpecs.nonEmpty) {
       dfs.append(scanIndex(
         spark,
         new TahoeRemoveFileIndex(
-          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath,
-          snapshot.version, snapshot.metadata),
+          spark, removeFileSpecs, deltaLog, deltaLog.dataPath,
+          snapshot),
         snapshot.metadata,
         isStreaming))
     }

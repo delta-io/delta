@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.SQLExecution
@@ -133,6 +134,27 @@ class CDCReaderSuite
             .withColumn(CDC_COMMIT_VERSION, lit(1)))
           .unionAll(cdcData.withColumn(CDC_COMMIT_VERSION, lit(2)))
       )
+    }
+  }
+
+  test("execute sizeInBytes for TahoeCDCBaseFileIndex") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      import io.delta.implicits._
+      spark.range(10).write.delta(tempDir.toString)
+      writeCdcData(
+        log,
+        spark.range(1, 2).toDF.withColumn(CDC_TYPE_COLUMN_NAME, lit("update_pre")))
+      sql(s"DELETE FROM delta.`${tempDir.toString}`")
+      // The main purpose of the test is to execute `sizeInBytes`,
+      // which is called by the following expression.
+      val changesStats = CDCReader.changesToBatchDF(log, 0, 2, spark)
+        .queryExecution.analyzed.stats
+      // 3169 is the fixed size of analyzed stats sizeInBytes found every
+      // time for this specific query (changesStats DF)
+      val expectedSizeInBytes = 3169
+      val expectedStats = Statistics(sizeInBytes = expectedSizeInBytes)
+      assert(expectedStats == changesStats)
     }
   }
 
