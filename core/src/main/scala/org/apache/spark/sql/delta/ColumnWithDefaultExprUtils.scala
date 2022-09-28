@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
@@ -202,6 +202,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       incrementalExecution.offsetSeqMetadata
     )
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
+
+
     // Use reflection to call the private constructor.
     val constructor =
       classOf[Dataset[_]].getConstructor(classOf[QueryExecution], classOf[Encoder[_]])

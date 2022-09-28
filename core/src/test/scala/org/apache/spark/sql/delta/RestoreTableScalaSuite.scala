@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, Row}
 
 /** Restore tests using the Scala APIs. */
 class RestoreTableScalaSuite extends RestoreTableSuiteBase {
@@ -51,3 +53,4 @@ class RestoreTableScalaSuite extends RestoreTableSuiteBase {
     deltaTable.restoreToTimestamp(timestamp)
   }
 }
+

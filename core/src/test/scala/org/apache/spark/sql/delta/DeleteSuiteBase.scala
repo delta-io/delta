@@ -206,11 +206,12 @@ abstract class DeleteSuiteBase extends QueryTest
   test("Negative case - non-Delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
       .write.format("parquet").mode("append").save(tempPath)
-    val e = intercept[AnalysisException] {
+    val e = intercept[DeltaAnalysisException] {
       executeDelete(target = s"delta.`$tempPath`")
     }.getMessage
     assert(e.contains("DELETE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
+      e.contains("Incompatible format"))
   }
 
   test("Negative case - non-deterministic condition") {
@@ -435,7 +436,7 @@ abstract class DeleteSuiteBase extends QueryTest
     where = "key = (select explode(value) from deltaTable)",
     expectException = true, // generate more than one row. Exception expected.
     customErrorRegex =
-      Some(".*more than one row returned by a subquery used as an expression(?s).*")
+      Some(".*More than one row returned by a subquery used as an expression(?s).*")
   )
 
   Seq(true, false).foreach { isPartitioned =>

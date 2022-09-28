@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -1610,10 +1611,12 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
     withDeltaTable(df) { identifier =>
       withTempDir { dir =>
         val path = dir.getCanonicalPath
-        val e = intercept[AnalysisException] {
+        val e = intercept[DeltaAnalysisException] {
           sql(s"alter table $identifier set location '$path'")
         }
-        assert(e.getMessage.contains("Cannot change the location of a path based table"))
+        assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
+        assert(e.getSqlState == "42000")
+        assert(e.getMessage == "Cannot change the location of a path based table.")
       }
     }
   }

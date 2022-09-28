@@ -33,7 +33,6 @@ import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
-import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
@@ -282,7 +281,6 @@ case class AddFile(
     size: Long,
     modificationTime: Long,
     override val dataChange: Boolean,
-    @JsonRawValue
     stats: String = null,
     override val tags: Map[String, String] = null
 ) extends FileAction {

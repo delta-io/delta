@@ -18,7 +18,7 @@ import java.nio.file.Files
 import TestParallelization._
 
 val sparkVersion = "3.3.0"
-val scala212 = "2.12.14"
+val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
@@ -55,10 +55,6 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
-
-      // spark-sql 3.2.0's parquet-hadoop 1.12.1 dependency no longer includes org.codehaus.jackson
-      // as a dependency, so we include it here instead.
-      "org.codehaus.jackson" % "jackson-core-asl" % "1.9.13",
 
       // Test deps
       "org.scalatest" %% "scalatest" % "3.2.9" % "test",

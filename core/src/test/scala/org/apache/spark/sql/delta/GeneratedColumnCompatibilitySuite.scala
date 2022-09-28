@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.AnalysisException

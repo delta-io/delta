@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Dataset
@@ -38,7 +39,7 @@ class DeleteCDCSuite extends DeleteSQLSuite {
       partitionColumns: Seq[String] = Seq.empty,
       deleteCondition: String,
       expectedData: => Dataset[_],
-      expectedChangeData: => Dataset[_]
+      expectedChangeDataWithoutVersion: => Dataset[_]
     ): Unit = {
     test(s"CDC - $name") {
       withSQLConf(
@@ -54,14 +55,18 @@ class DeleteCDCSuite extends DeleteSQLSuite {
           }
 
           val log = DeltaLog.forTable(spark, dir)
+          val version = log.snapshot.version
 
           checkAnswer(
             spark.read.format("delta").load(path),
             expectedData.toDF())
+
+          val expectedChangeData = expectedChangeDataWithoutVersion
+            .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(version))
           // The timestamp is nondeterministic so we drop it when comparing results.
           checkAnswer(
-            CDCReader.changesToBatchDF(log, 1, 1, spark).drop(CDC_COMMIT_TIMESTAMP),
-            expectedChangeData.toDF())
+            CDCReader.changesToBatchDF(log, version, version, spark).drop(CDC_COMMIT_TIMESTAMP),
+            expectedChangeData)
         }
       }
     }
@@ -71,27 +76,24 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     initialData = spark.range(10),
     deleteCondition = "",
     expectedData = spark.range(0),
-    expectedChangeData = spark.range(10)
+    expectedChangeDataWithoutVersion = spark.range(10)
       .withColumn(CDC_TYPE_COLUMN_NAME, lit("delete"))
-      .withColumn(CDC_COMMIT_VERSION, lit(1))
   )
 
   testCDCDelete("conditional covering all rows")(
     initialData = spark.range(10),
     deleteCondition = "id < 100",
     expectedData = spark.range(0),
-    expectedChangeData = spark.range(10)
+    expectedChangeDataWithoutVersion = spark.range(10)
       .withColumn(CDC_TYPE_COLUMN_NAME, lit("delete"))
-      .withColumn(CDC_COMMIT_VERSION, lit(1))
   )
 
   testCDCDelete("two random rows")(
     initialData = spark.range(10),
     deleteCondition = "id = 2 OR id = 8",
     expectedData = Seq(0, 1, 3, 4, 5, 6, 7, 9).toDF(),
-    expectedChangeData = Seq(2, 8).toDF()
+    expectedChangeDataWithoutVersion = Seq(2, 8).toDF()
       .withColumn(CDC_TYPE_COLUMN_NAME, lit("delete"))
-      .withColumn(CDC_COMMIT_VERSION, lit(1))
   )
 
   testCDCDelete("delete unconditionally - partitioned table")(
@@ -99,9 +101,9 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     partitionColumns = Seq("part"),
     deleteCondition = "",
     expectedData = Seq.empty[(Long, Long)].toDF("part", "id"),
-    expectedChangeData =
+    expectedChangeDataWithoutVersion =
       spark.range(100)
-        .selectExpr("id % 10 as part", "id", "'delete' as _change_type", "1 as _commit_version")
+        .selectExpr("id % 10 as part", "id", "'delete' as _change_type")
   )
 
   testCDCDelete("delete all rows by condition - partitioned table")(
@@ -109,9 +111,9 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     partitionColumns = Seq("part"),
     deleteCondition = "id < 1000",
     expectedData = Seq.empty[(Long, Long)].toDF("part", "id"),
-    expectedChangeData =
+    expectedChangeDataWithoutVersion =
       spark.range(100)
-        .selectExpr("id % 10 as part", "id", "'delete' as _change_type", "1 as _commit_version")
+        .selectExpr("id % 10 as part", "id", "'delete' as _change_type")
   )
 
 
@@ -121,9 +123,9 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     deleteCondition = "part = 3",
     expectedData =
       spark.range(100).selectExpr("id % 10 as part", "id").where("part != 3"),
-    expectedChangeData =
+    expectedChangeDataWithoutVersion =
       Range(0, 10).map(x => x * 10 + 3).toDF("id")
-        .selectExpr("3 as part", "id", "'delete' as _change_type", "1 as _commit_version"))
+        .selectExpr("3 as part", "id", "'delete' as _change_type"))
 
 }
 

@@ -54,6 +54,7 @@ def delete_if_exists(path):
 
 
 def prepare(root_dir):
+    print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
@@ -99,6 +100,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=T
 
 
 def run_python_style_checks(root_dir):
+    print("##### Running python style tests #####")
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
 
@@ -168,6 +170,7 @@ def run_pypi_packaging_tests(root_dir):
 
 
 if __name__ == "__main__":
+    print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 

@@ -54,13 +54,12 @@ case class DeltaSourceOffset(
   override def json: String = JsonUtils.toJson(this)
 
   /**
-   * Compare two DeltaSourceOffsets which are on the same table and source version.
+   * Compare two DeltaSourceOffsets which are on the same table.
    * @return 0 for equivalent offsets. negative if this offset is less than `otherOffset`. Positive
    *         if this offset is greater than `otherOffset`
    */
   def compare(otherOffset: DeltaSourceOffset): Int = {
-    assert(reservoirId == otherOffset.reservoirId &&
-      sourceVersion == otherOffset.sourceVersion, "Comparing offsets that do not refer to the" +
+    assert(reservoirId == otherOffset.reservoirId, "Comparing offsets that do not refer to the" +
       " same table is disallowed.")
     implicitly[Ordering[(Long, Long)]].compare((reservoirVersion, index),
       (otherOffset.reservoirVersion, otherOffset.index))
@@ -95,7 +94,7 @@ object DeltaSourceOffset {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw DeltaErrors.nonExistentDeltaTable(o.reservoirId)
+          throw DeltaErrors.nonExistentDeltaTableStreaming(o.reservoirId)
         }
         o
     }

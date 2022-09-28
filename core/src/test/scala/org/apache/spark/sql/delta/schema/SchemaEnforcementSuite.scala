@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
@@ -897,6 +898,7 @@ class SchemaEnforcementWithTableSuite
 
 class SchemaEnforcementStreamingSuite
   extends AppendOutputModeTests
-  with CompleteOutputModeTests {
+  with CompleteOutputModeTests
+  with DeltaSQLCommandTest {
 }
 

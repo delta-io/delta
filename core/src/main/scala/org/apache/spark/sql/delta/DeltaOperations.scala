@@ -303,16 +303,18 @@ object DeltaOperations {
   }
 
   /** Recorded when columns are dropped. */
+  val OP_DROP_COLUMN = "DROP COLUMNS"
   case class DropColumns(
-    colsToDrop: Seq[Seq[String]]) extends Operation("DROP COLUMNS") {
+    colsToDrop: Seq[Seq[String]]) extends Operation(OP_DROP_COLUMN) {
 
     override val parameters: Map[String, Any] = Map(
       "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
   }
 
   /** Recorded when column is renamed */
+  val OP_RENAME_COLUMN = "RENAME COLUMN"
   case class RenameColumn(oldColumnPath: Seq[String], newColumnPath: Seq[String])
-    extends Operation("RENAME COLUMN") {
+    extends Operation(OP_RENAME_COLUMN) {
     override val parameters: Map[String, Any] = Map(
       "oldColumnPath" -> UnresolvedAttribute(oldColumnPath).name,
       "newColumnPath" -> UnresolvedAttribute(newColumnPath).name

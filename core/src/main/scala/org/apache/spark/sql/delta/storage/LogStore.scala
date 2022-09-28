@@ -76,8 +76,14 @@ trait LogStore {
    *
    * Note: Using a stale `FileStatus` may get an incorrect result.
    */
-  def read(fileStatus: FileStatus, hadoopConf: Configuration): Seq[String] =
-    read(fileStatus.getPath, hadoopConf)
+  final def read(fileStatus: FileStatus, hadoopConf: Configuration): Seq[String] = {
+    val iter = readAsIterator(fileStatus, hadoopConf)
+    try {
+      iter.toIndexedSeq
+    } finally {
+      iter.close()
+    }
+  }
 
   /**
    * Load the given file and return an iterator of lines. The line break will be removed from each
