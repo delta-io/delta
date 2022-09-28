@@ -682,12 +682,12 @@ object Checkpoints extends DeltaLogging {
   private[delta] def buildCheckpoint(state: DataFrame, snapshot: Snapshot): DataFrame = {
     val additionalCols = new mutable.ArrayBuffer[Column]()
     val sessionConf = state.sparkSession.sessionState.conf
-    if (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)) {
+    if (Checkpoints.shouldWriteStatsAsJson(snapshot)) {
       additionalCols += col("add.stats").as("stats")
     }
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
-    val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)
+    val includeStructColumns = shouldWriteStatsAsStruct(sessionConf, snapshot)
     if (includeStructColumns) {
       val partitionValues = CheckpointV2.extractPartitionValues(
         snapshot.metadata.partitionSchema, "add.partitionValues")
@@ -706,10 +706,14 @@ object Checkpoints extends DeltaLogging {
     )
   }
 
-  def getWriteStatsAsStructConf(conf: SQLConf, snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
       .fromMetaData(snapshot.metadata)
       .getOrElse(conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+  }
+
+  def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)
   }
 }
 

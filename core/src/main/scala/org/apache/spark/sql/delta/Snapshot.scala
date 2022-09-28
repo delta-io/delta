@@ -274,7 +274,9 @@ class Snapshot(
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
-  def allFiles: Dataset[AddFile] = {
+  def allFiles: Dataset[AddFile] = allFilesViaStateReconstruction
+
+  private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
     stateDS.where("add IS NOT NULL").select(col("add").as[AddFile])
   }
 

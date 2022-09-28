@@ -134,7 +134,11 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
-private[stats] object DataSkippingReader {
+private[delta] object DataSkippingReader {
+
+  /** Default number of cols for which we should collect stats */
+  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
+
   private[this] def col(e: Expression): Column = new Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
 
@@ -790,10 +794,11 @@ trait DataSkippingReaderBase
     // NOTE: If any stats are missing, the value of `dataFilters` is untrustworthy -- it could be
     // NULL or even just plain incorrect. We rely on `verifyStatsForFilter` to be FALSE in that
     // case, forcing the overall OR to evaluate as TRUE no matter what value `dataFilters` takes.
-    val filteredFiles = withStats
-      .where(totalFilter(trueLiteral))
-      .where(partitionFilter(partitionFilters))
-      .where(scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats)))
+    val filteredFiles = withStats.where(
+        totalFilter(trueLiteral) &&
+          partitionFilter(partitionFilters) &&
+          scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats))
+      )
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
