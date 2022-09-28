@@ -3,7 +3,7 @@
   local-preloaded-ivy: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext]
   local-preloaded: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}
   gcs-maven-central-mirror: https://maven-central.storage-download.googleapis.com/repos/central/data/
-  spark-3.3.1-rc1: https://repository.apache.org/content/repositories/orgapachespark-1418/
+  spark-3.3.1-rc2: https://repository.apache.org/content/repositories/orgapachespark-1421/
   maven-central
   typesafe-ivy-releases: https://repo.typesafe.com/typesafe/ivy-releases/, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext], bootOnly
   sbt-ivy-snapshots: https://repo.scala-sbt.org/scalasbt/ivy-snapshots/, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext], bootOnly
