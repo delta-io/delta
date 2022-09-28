@@ -134,9 +134,6 @@ def run_pypi_packaging_tests(root_dir):
     # uninstall packages if they exist
     run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
 
-    # install helper pip packages
-    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
-
     wheel_dist_dir = path.join(root_dir, "dist")
 
     print("### Deleting `dist` directory if it exists")
@@ -174,7 +171,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    run_python_style_checks(root_dir)
-    run_mypy_tests(root_dir)
+    # run_python_style_checks(root_dir)
+    # run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
     test(root_dir, package)
