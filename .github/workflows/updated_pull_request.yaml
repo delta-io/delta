@@ -15,8 +15,7 @@ on:
 jobs:
   automate-updated-pull-requests:
     if: ${{ (github.event.issue.pull_request || github.event.pull_request) &&
-            !contains(env.eng_usernames, github.event.sender.login) &&
-            !contains(env.devrel_usernames, github.event.sender.login) &&
+            !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) &&
             (github.event.pull_request.state == 'open' || github.event.issue.state == 'open') }}
     runs-on: ubuntu-latest
     steps:

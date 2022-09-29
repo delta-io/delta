@@ -14,8 +14,7 @@ on:
 jobs:
   automate-new-updated-issues:
     if: ${{ !github.event.issue.pull_request &&
-      !contains(env.eng_usernames, github.event.sender.login) &&
-      !contains(env.devrel_usernames, github.event.sender.login) }}
+            !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) }}
     runs-on: ubuntu-latest
     steps:
       - name: Move to Needs Review (ENG)
