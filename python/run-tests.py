@@ -115,13 +115,13 @@ def run_mypy_tests(root_dir):
 
 def run_pypi_packaging_tests(root_dir):
     """
-    We want to test that the PyPi artifact for this delta version can be generated,
+    We want to test that the delta-spark PyPi artifact for this delta version can be generated,
     locally installed, and used in python tests.
 
-    We will uninstall any existing local delta PyPi artifact.
-    We will generate a new local delta PyPi artifact.
+    We will uninstall any existing local delta-spark PyPi artifact.
+    We will generate a new local delta-spark PyPi artifact.
     We will install it into the local PyPi repository.
-    And then we will run relevant python tests to ensure everything works as exepcted.
+    And then we will run relevant python tests to ensure everything works as expected.
     """
     print("##### Running PyPi Packaging tests #####")
 
@@ -130,10 +130,7 @@ def run_pypi_packaging_tests(root_dir):
         version = fd.readline().split('"')[1]
 
     # uninstall packages if they exist
-    run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
-
-    # install helper pip packages
-    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
+    run_cmd(["pip3", "uninstall", "--yes", "delta-spark"], stream_output=True)
 
     wheel_dist_dir = path.join(root_dir, "dist")
 
@@ -152,7 +149,7 @@ def run_pypi_packaging_tests(root_dir):
     version_formatted = version.replace("-", "_")
     delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
 
-    # this will install delta-spark-$version and pyspark
+    # this will install delta-spark-$version
     install_whl_cmd = ["pip3", "install", path.join(wheel_dist_dir, delta_whl_name)]
     run_cmd(install_whl_cmd, stream_output=True)
 
