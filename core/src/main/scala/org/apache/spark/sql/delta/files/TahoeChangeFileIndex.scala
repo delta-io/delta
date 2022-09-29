@@ -39,6 +39,8 @@ class TahoeChangeFileIndex(
 
   override def tableVersion: Long = snapshot.version
 
+  override lazy val getSnapshot: Snapshot = deltaLog.getSnapshotAt(tableVersion)
+
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {

@@ -328,6 +328,8 @@ case class PreparedDeltaFileIndex(
 
   override def tableVersion: Long = preparedScan.version
 
+  override def getSnapshot: Snapshot = preparedScan.scannedSnapshot
+
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`
    */

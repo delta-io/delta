@@ -41,6 +41,8 @@ class TahoeRemoveFileIndex(
 
   override def tableVersion: Long = snapshot.version
 
+  override def getSnapshot: Snapshot = snapshot
+
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {

@@ -46,6 +46,12 @@ abstract class TahoeFileIndex(
 
   override def rootPaths: Seq[Path] = path :: Nil
 
+  def getSnapshot: Snapshot = {
+    // TODO(Lars): This is temporary while I'm updating a universe implementation to override this
+    //  new API.
+    throw new RuntimeException("Not yet implemented")
+  }
+
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
    * Implementations may avoid evaluating data filters when doing so would be expensive, but
@@ -162,7 +168,7 @@ case class TahoeLogFileIndex(
   /** Provides the version that's being used as part of the scan if this is a time travel query. */
   def versionToUse: Option[Long] = if (isTimeTravelQuery) Some(snapshotAtAnalysis.version) else None
 
-  def getSnapshot: Snapshot = {
+  override def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
     if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
@@ -192,7 +198,10 @@ case class TahoeLogFileIndex(
   }
 
   override def inputFiles: Array[String] = {
-    getSnapshot.filesForScan(partitionFilters).files.map(f => absolutePath(f.path).toString).toArray
+    getSnapshot
+      .filesForScan(partitionFilters).files
+      .map(f => absolutePath(f.path).toString)
+      .toArray
   }
 
   override def refresh(): Unit = {}
@@ -250,4 +259,6 @@ class TahoeBatchFileIndex(
 
   override def refresh(): Unit = {}
   override val sizeInBytes: Long = addFiles.map(_.size).sum
+
+  override def getSnapshot: Snapshot = snapshot
 }
