@@ -231,7 +231,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           .asInstanceOf[Map[String, String]]
 
         // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-        val numRemovedFiles = 37
+        val numRemovedFiles = 39
         val expMetrics =
           s"""{
             |  "numRemovedFiles" : "$numRemovedFiles",
