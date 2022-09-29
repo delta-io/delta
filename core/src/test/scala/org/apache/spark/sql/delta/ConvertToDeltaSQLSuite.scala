@@ -22,12 +22,13 @@ trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
   with DeltaSQLCommandTest {
   override protected def convertToDelta(
       identifier: String,
-      partitionSchema: Option[String] = None): Unit = {
+      partitionSchema: Option[String] = None, collectStats: Boolean = false): Unit = {
     if (partitionSchema.isEmpty) {
-      sql(s"convert to delta $identifier")
+      sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)}")
     } else {
       val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema) ")
+      sql(s"convert to delta $identifier partitioned by ($stringSchema)" +
+        s" ${collectStatisticsStringOption(collectStats)} ")
     }
   }
 }

@@ -28,8 +28,10 @@ trait DeltaConvertBase {
       spark: SparkSession,
       tableIdentifier: TableIdentifier,
       partitionSchema: Option[StructType],
-      deltaPath: Option[String]): DeltaTable = {
-    val cvt = ConvertToDeltaCommand(tableIdentifier, partitionSchema, deltaPath)
+      deltaPath: Option[String],
+      collectStatsOnConvert: Boolean): DeltaTable = {
+    val cvt = ConvertToDeltaCommand(tableIdentifier, partitionSchema, deltaPath,
+      collectStatsOnConvert)
     cvt.run(spark)
     if (cvt.isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
       DeltaTable.forName(spark, tableIdentifier.toString)

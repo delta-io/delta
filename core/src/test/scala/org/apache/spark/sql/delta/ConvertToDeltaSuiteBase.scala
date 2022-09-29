@@ -41,11 +41,15 @@ import org.apache.spark.util.Utils
  */
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
+  protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
+    .filter(identity).map(_ => "STATS").getOrElse("")
+
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
     .withColumn("key2", col("id") % 3 cast "String")
 
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None,
+      collectStats: Boolean = false): Unit
 
   protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
@@ -97,6 +101,47 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       }
     }
   }
+
+  test("convert with statistics") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF)
+        convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val history = io.delta.tables.DeltaTable.forPath(tempDir)
+          .history()
+      checkAnswer(
+        spark.read.format("delta").load(tempDir),
+        simpleDF
+      )
+      assert(history.count == 2)
+      assert(history.as[DeltaHistory].collect.exists(_.operation == "COMPUTE STATS"))
+      val statsDf = deltaLog.snapshot.allFiles
+        .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
+      assert(statsDf.filter($"numRecords".isNull).count == 0)
+    }
+  }
+
+  test("convert without statistics") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF)
+      convertToDelta(s"parquet.`$tempDir`", collectStats = false)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val history = io.delta.tables.DeltaTable.forPath(tempDir)
+        .history()
+      checkAnswer(
+        spark.read.format("delta").load(tempDir),
+        simpleDF
+      )
+      assert(history.count == 1)
+      assert(!history.as[DeltaHistory].collect.exists(_.operation == "COMPUTE STATS"))
+      val statsDf = deltaLog.snapshot.allFiles
+        .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
+      assert(statsDf.filter($"numRecords".isNotNull).count == 0)
+    }
+  }
+
 
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>

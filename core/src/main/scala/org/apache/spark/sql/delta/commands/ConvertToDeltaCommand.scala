@@ -19,25 +19,23 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
 import java.util.Locale
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
@@ -70,7 +68,8 @@ import org.apache.spark.util.SerializableConfiguration
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
+    deltaPath: Option[String],
+    collectStats: Boolean) extends LeafRunnableCommand with DeltaCommand {
 
   protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
     lowerCaseProvider == "parquet"
@@ -356,6 +355,7 @@ abstract class ConvertToDeltaCommandBase(
         spark.sessionState.catalog
       )
     }
+    if (collectStats) { StatisticsCollection.recompute(spark, txn.deltaLog) }
 
     Seq.empty[Row]
   }
@@ -394,8 +394,9 @@ abstract class ConvertToDeltaCommandBase(
 case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String])
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
+    deltaPath: Option[String],
+    collectStats: Boolean = false)
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath, collectStats)
 
 /**
  * An interface for the file to be included during conversion.

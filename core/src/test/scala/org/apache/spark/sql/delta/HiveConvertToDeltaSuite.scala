@@ -17,9 +17,9 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaHiveTest
-
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.test.SQLTestUtils
 
@@ -29,12 +29,13 @@ abstract class HiveConvertToDeltaSuiteBase
 
   override protected def convertToDelta(
       identifier: String,
-      partitionSchema: Option[String] = None): Unit = {
+      partitionSchema: Option[String] = None, collectStats: Boolean = false): Unit = {
     if (partitionSchema.isEmpty) {
-      sql(s"convert to delta $identifier")
+      sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)} ")
     } else {
       val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema) ")
+      sql(s"convert to delta $identifier partitioned by ($stringSchema)" +
+        s" ${collectStatisticsStringOption(collectStats)} ")
     }
   }
 
@@ -45,6 +46,62 @@ abstract class HiveConvertToDeltaSuiteBase
     // We can't alter the schema in the catalog at the moment :(
     assert(cleanProps.isEmpty,
       s"Table properties weren't empty for table $tableName: $cleanProps")
+  }
+
+  test("convert with statistics") {
+    val tbl = "hive_parquet"
+    withTable(tbl) {
+      sql(
+        s"""
+           |CREATE TABLE $tbl (id int, str string)
+           |PARTITIONED BY (part string)
+           |STORED AS PARQUET
+         """.stripMargin)
+
+      sql(s"insert into $tbl VALUES (1, 'a', 1)")
+
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
+      convertToDelta(tbl, Some("part string"), true)
+      val deltaLog = DeltaLog.forTable(spark, catalogTable)
+      val statsDf = deltaLog.snapshot.allFiles
+        .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
+        .select("stats.*")
+      assert(statsDf.filter(col("numRecords").isNull).count == 0)
+      val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath)
+        .history()
+      assert(history.count == 2)
+      assert(history.filter(col("operation") === "COMPUTE STATS").count == 1)
+
+    }
+
+  }
+
+  test("convert without statistics") {
+
+    val tbl = "hive_parquet"
+    withTable(tbl) {
+      sql(
+        s"""
+           |CREATE TABLE $tbl (id int, str string)
+           |PARTITIONED BY (part string)
+           |STORED AS PARQUET
+         """.stripMargin)
+
+      sql(s"insert into $tbl VALUES (1, 'a', 1)")
+
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
+      convertToDelta(tbl, Some("part string"), false)
+      val deltaLog = DeltaLog.forTable(spark, catalogTable)
+      val statsDf = deltaLog.snapshot.allFiles
+        .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
+        .select("stats.*")
+      assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
+            val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath)
+              .history()
+      assert(history.count == 1)
+      assert(history.select("operation").first().getString(0) != "COMPUTE STATS")
+
+    }
   }
 
   test("convert a Hive based parquet table") {
