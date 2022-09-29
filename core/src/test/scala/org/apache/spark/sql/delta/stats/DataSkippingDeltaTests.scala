@@ -1723,6 +1723,22 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
   }
 }
 
+/**
+ * Used to disable the tests with the old stats collection behavior on long-running suites to
+ * avoid time-out
+ * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
+ */
+trait DataSkippingDisableOldStatsSchemaTests extends DataSkippingDeltaTests {
+
+  protected override def test(testName: String, testTags: org.scalatest.Tag*)
+                             (testFun: => Any)
+                             (implicit pos: org.scalactic.source.Position): Unit = {
+    // Adding the null check in case tableSchemaOnlyTag has not been initialized in base traits
+    val newTestTags = if (tableSchemaOnlyTag == null) testTags else tableSchemaOnlyTag +: testTags
+    super.test(testName, newTestTags: _*)(testFun)(pos)
+  }
+}
+
 /** DataSkipping tests under id column mapping */
 trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
   with DeltaColumnMappingTestUtils {
