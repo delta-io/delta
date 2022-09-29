@@ -18,6 +18,8 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentException, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -232,7 +234,10 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
  *    ...
  *
  *    where
- *    <matched_action> = DELETE | UPDATE SET column1 = value1 [, column2 = value2 ...]
+ *    <matched_action> =
+ *      DELETE |
+ *      UPDATE SET column1 = value1 [, column2 = value2 ...] |
+ *      UPDATE SET * [EXCEPT (column1, ...)]
  *    <not_matched_action> = INSERT (column1 [, column2 ...]) VALUES (expr1 [, expr2 ...])
  * }}}
  *
@@ -314,7 +319,7 @@ object DeltaMergeInto {
 
   def resolveReferencesAndSchema(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _, _) = merge
+    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClauses, _, _) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -347,6 +352,33 @@ object DeltaMergeInto {
      * returns the resolved clause.
      */
     def resolveClause[T <: DeltaMergeIntoClause](clause: T, planToResolveAction: LogicalPlan): T = {
+
+      /*
+       * Returns the sequence of [[DeltaMergeActions]] corresponding to
+       * [ `columnName = sourceColumnBySameName` ] for every column name in the schema. Nested
+       * columns are unfolded to create an assignment for each leaf.
+       *
+       * @param currSchema: schema to generate DeltaMergeAction for every 'leaf'
+       * @param qualifier: used to recurse to leaves; represents the qualifier of the current schema
+       * @return seq of DeltaMergeActions corresponding to columnName = sourceColumnName updates
+       */
+      def getActions(currSchema: StructType, qualifier: Seq[String] = Nil): Seq[DeltaMergeAction] =
+        currSchema.flatMap {
+          case StructField(name, struct: StructType, _, _) =>
+            getActions(struct, qualifier :+ name)
+          case StructField(name, _, _, _) =>
+            val nameParts = qualifier :+ name
+            val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
+              // if we use getActions to expand target columns, this will fail on target columns not
+              // present in the source
+              throw new DeltaIllegalArgumentException(
+                errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+                messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
+              )
+            }
+            Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
+        }
+
       val typ = clause.clauseType.toUpperCase(Locale.ROOT)
 
       val resolvedActions: Seq[DeltaMergeAction] = clause.actions.flatMap { action =>
@@ -380,25 +412,9 @@ object DeltaMergeInto {
                 // subset of the nested columns in the target. If a source struct (a, b) is writing
                 // into a target (a, b, c), the final struct after filling in the no-op actions will
                 // be (s.a, s.b, t.c).
-                def getActions(
-                    currSchema: StructType, qualifier: Seq[String]): Seq[DeltaMergeAction] = {
-                  currSchema.flatMap {
-                    case StructField(name, struct: StructType, _, _) =>
-                      getActions(struct, qualifier :+ name)
-                    case StructField(name, _, _, _) =>
-                      val nameParts = qualifier :+ name
-                      val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
-                        // This shouldn't be able to happen - we're coming from within the source
-                        throw new DeltaIllegalArgumentException(
-                          errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
-                          messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
-                        )
-                      }
-                      Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
-                  }
-                }
                 getActions(source.schema, Seq.empty)
             }
+
 
           // For actions like `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
           case d @ DeltaMergeAction(colNameParts, expr, _) if !d.resolved =>
@@ -443,27 +459,29 @@ object DeltaMergeInto {
     val resolvedMatchedClauses = matchedClauses.map {
       resolveClause(_, merge)
     }
-    val resolvedNotMatchedClause = notMatchedClause.map {
+    val resolvedNotMatchedClauses = notMatchedClauses.map {
       resolveClause(_, fakeSourcePlan)
     }
-    val containsStarAction =
-      (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
+    val actions = (matchedClauses ++ notMatchedClauses).flatMap(_.actions)
+    val containsStarAction = actions.exists(_.isInstanceOf[UnresolvedStar])
 
-    var migrateSchema = canAutoMigrate && containsStarAction
+    val migrateSchema = canAutoMigrate && containsStarAction
 
     val finalSchema = if (migrateSchema) {
+      var sourceSchema = source.schema
+
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
       // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
       // into a LONG target.
-      SchemaMergingUtils.mergeSchemas(target.schema, source.schema, allowImplicitConversions = true)
+      SchemaMergingUtils.mergeSchemas(target.schema, sourceSchema, allowImplicitConversions = true)
     } else {
       target.schema
     }
 
     val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
-      resolvedMatchedClauses, resolvedNotMatchedClause,
+      resolvedMatchedClauses, resolvedNotMatchedClauses,
       migrateSchema = migrateSchema,
       finalSchema = Some(finalSchema))
 
