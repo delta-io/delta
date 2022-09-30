@@ -620,6 +620,24 @@ trait DeltaSQLConfBase {
       .longConf
       .createWithDefault(128L * 1024 * 1024) // 128MB
 
+  val STREAMING_OFFSET_VALIDATION =
+    buildConf("streaming.offsetValidation.enabled")
+      .internal()
+      .doc("Whether to validate whether delta streaming source generates a smaller offset and " +
+        "moves backward.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX =
+    buildConf("streaming.availableNow.offsetInitializationFix.enabled")
+      .internal()
+      .doc(
+        """Whether to enable the offset initializaion fix for AvailableNow.
+          |This is just a flag to provide the mitigation option if the fix introduces
+          |any bugs.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()

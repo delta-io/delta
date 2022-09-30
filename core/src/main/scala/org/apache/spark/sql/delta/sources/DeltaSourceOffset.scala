@@ -125,4 +125,27 @@ object DeltaSourceOffset {
       case value: JValue => Some(value)
     }
   }
+
+  /**
+   * Validate offsets to make sure we always move forward. Moving backward may make the query
+   * re-process data and cause data duplication.
+   */
+  def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
+    if (previousOffset.isStartingVersion == false && currentOffset.isStartingVersion == true) {
+      throw new IllegalStateException(
+        s"Found invalid offsets: 'isStartingVersion' fliped incorrectly. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
+    }
+    if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {
+      throw new IllegalStateException(
+        s"Found invalid offsets: 'reservoirVersion' moved back. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
+    }
+    if (previousOffset.reservoirVersion == currentOffset.reservoirVersion &&
+      previousOffset.index > currentOffset.index) {
+      throw new IllegalStateException(
+        s"Found invalid offsets. 'index' moved back. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
+    }
+  }
 }
