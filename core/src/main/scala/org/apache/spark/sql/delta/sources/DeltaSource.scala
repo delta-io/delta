@@ -106,14 +106,47 @@ trait DeltaSourceBase extends Source
     }
   }
 
-  protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
+  private val enableAvailableNowOffsetInitializationFix =
+    spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX)
+
+  /**
+   * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
+   * will process up. We may run multiple micro batches, but the query will stop itself when it
+   * reaches this offset.
+   */
+  protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = null
+
+  private var isLastOffsetForTriggerAvailableNowInitialized = false
+
+  private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    val offset = latestOffset(null, ReadLimit.allAvailable())
-    if (offset != null) {
-      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+    isTriggerAvailableNow = true
+    if (!enableAvailableNowOffsetInitializationFix) {
+      val offset = latestOffsetInternal(ReadLimit.allAvailable())
+      if (offset != null) {
+        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+      }
     }
   }
+
+  /**
+   * initialize the internal states for AvailableNow if this method is called first time after
+   * `prepareForTriggerAvailableNow`.
+   */
+  protected def initForTriggerAvailableNowIfNeeded(): Unit = {
+    if (enableAvailableNowOffsetInitializationFix && isTriggerAvailableNow &&
+        !isLastOffsetForTriggerAvailableNowInitialized) {
+      isLastOffsetForTriggerAvailableNowInitialized = true
+      val offset = latestOffsetInternal(ReadLimit.allAvailable())
+      if (offset != null) {
+        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+      }
+    }
+  }
+
+  /** An internal `latestOffsetInternal` to get the latest offset. */
+  protected def latestOffsetInternal(limit: ReadLimit): streaming.Offset
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
@@ -312,6 +345,9 @@ case class DeltaSource(
   extends DeltaSourceBase
   with DeltaSourceCDCSupport {
 
+  private val shouldValidateOffsets =
+    spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION)
+
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
   private val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
@@ -477,7 +513,16 @@ case class DeltaSource(
     new AdmissionLimits().toReadLimit
   }
 
+  /**
+   * This should only be called by the engine. Call `latestOffsetInternal` instead if you need to
+   * get the latest offset.
+   */
   override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
+    initForTriggerAvailableNowIfNeeded()
+    latestOffsetInternal(limit)
+  }
+
+  override protected def latestOffsetInternal(limit: ReadLimit): streaming.Offset = {
     val limits = AdmissionLimits(limit)
 
     val currentOffset = if (previousOffset == null) {
@@ -486,6 +531,11 @@ case class DeltaSource(
       getNextOffsetFromPreviousOffset(previousOffset, limits)
     }
     logDebug(s"previousOffset -> currentOffset: $previousOffset -> $currentOffset")
+    if (shouldValidateOffsets && previousOffset != null) {
+      currentOffset.foreach { current =>
+        DeltaSourceOffset.validateOffsets(previousOffset, DeltaSourceOffset(tableId, current))
+      }
+    }
     currentOffset.orNull
   }
 
@@ -571,6 +621,10 @@ case class DeltaSource(
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
     val endOffset = DeltaSourceOffset(tableId, end)
     previousOffset = endOffset // For recovery
+    // We need to initialize after `previousOffset` is set so that we can use `previousOffset` to
+    // know whether we are going to process files in a snapshot or a commit after restart. Even for
+    // the same table table, the indexes of a file in a snpshot and a commit are different.
+    initForTriggerAvailableNowIfNeeded()
 
     val (startVersion,
         startIndex,
