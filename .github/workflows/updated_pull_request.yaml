@@ -1,9 +1,5 @@
 name: Move updated pull requests to Needs Review
 
-env:
-  eng_usernames: allisonport-db scottsand-db tdas vkorukanti zsxwing
-  devrel_usernames: dennyglee MrPowers nkarpov vinijaiswal
-
 on:
   issue_comment:
     types: [created]
