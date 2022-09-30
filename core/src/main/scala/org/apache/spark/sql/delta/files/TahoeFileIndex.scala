@@ -21,7 +21,7 @@ import java.net.URI
 import java.util.Objects
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -43,6 +43,7 @@ abstract class TahoeFileIndex(
     val path: Path) extends FileIndex {
 
   def tableVersion: Long = deltaLog.snapshot.version
+  def metadata: Metadata = deltaLog.snapshot.metadata
 
   override def rootPaths: Seq[Path] = path :: Nil
 
@@ -102,7 +103,7 @@ abstract class TahoeFileIndex(
     }
   }
 
-  override def partitionSchema: StructType = deltaLog.snapshot.metadata.partitionSchema
+  override def partitionSchema: StructType = metadata.partitionSchema
 
   protected def absolutePath(child: String): Path = {
     val p = new Path(new URI(child))
@@ -155,6 +156,10 @@ case class TahoeLogFileIndex(
 
   override def tableVersion: Long = {
     if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.snapshot.version
+  }
+
+  override def metadata: Metadata = {
+    if (isTimeTravelQuery) snapshotAtAnalysis.metadata else deltaLog.snapshot.metadata
   }
 
   private def checkSchemaOnRead: Boolean = {
@@ -240,13 +245,14 @@ class TahoeBatchFileIndex(
     val partitionFiltersGenerated: Boolean = false)
   extends TahoeFileIndex(spark, deltaLog, path) {
 
-  override def tableVersion: Long = snapshot.version
+  override val tableVersion: Long = snapshot.version
+  override val metadata: Metadata = snapshot.metadata
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     DeltaLog.filterFileList(
-      snapshot.metadata.partitionSchema, addFiles.toDF(spark), partitionFilters)
+      metadata.partitionSchema, addFiles.toDF(spark), partitionFilters)
       .as[AddFile]
       .collect()
   }
@@ -254,8 +260,6 @@ class TahoeBatchFileIndex(
   override def inputFiles: Array[String] = {
     addFiles.map(a => absolutePath(a.path).toString).toArray
   }
-
-  override def partitionSchema: StructType = snapshot.metadata.partitionSchema
 
   override def refresh(): Unit = {}
   override val sizeInBytes: Long = addFiles.map(_.size).sum
