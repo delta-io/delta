@@ -33,6 +33,7 @@ import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution}
+import org.apache.spark.sql.execution.datasources.v2.{BatchScanExec, FileScan}
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.util.ThreadUtils
 import org.apache.spark.util.Utils
@@ -45,7 +46,10 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
 
   private def getPushedPartitionFilters(queryExecution: QueryExecution): Seq[Expression] = {
     queryExecution.executedPlan.collectFirst {
-      case scan: FileSourceScanExec => scan.partitionFilters
+      case scan: FileSourceScanExec =>
+        scan.partitionFilters
+      case scan: BatchScanExec =>
+        scan.scan.asInstanceOf[FileScan].partitionFilters
     }.getOrElse(Nil)
   }
 

@@ -305,7 +305,7 @@ object PrepareDeltaScanBase {
    * Optional callback function that is called after `getDeltaScanGenerator` is called
    * by the PrepareDeltaScan rule. This is primarily used for testing purposes.
    */
-  @volatile private var onGetDeltaScanGeneratorCallback: DeltaScanGenerator => Unit = _
+  @volatile private[delta] var onGetDeltaScanGeneratorCallback: DeltaScanGenerator => Unit = _
 
   /**
    * Run a thunk of code with the given callback function injected into the PrepareDeltaScan rule.

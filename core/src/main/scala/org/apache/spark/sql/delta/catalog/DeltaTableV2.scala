@@ -167,10 +167,8 @@ case class DeltaTableV2(
     // The features v2 reading doesn't currently support
     val columnMappingEnabled = snapshot.metadata.columnMappingMode != NoMapping
     val cdcRead = !cdcOptions.isEmpty()
-    // If there are generated columns, we can't currently optimize them, so skip as well
-    val hasGeneratedColumns = GeneratedColumn.hasGeneratedColumns(snapshot.schema)
 
-    if (v2ReaderEnabled && !columnMappingEnabled && !cdcRead && !hasGeneratedColumns) {
+    if (v2ReaderEnabled && !columnMappingEnabled && !cdcRead) {
       baseCapabilities.add(BATCH_READ)
     }
     baseCapabilities.asJava

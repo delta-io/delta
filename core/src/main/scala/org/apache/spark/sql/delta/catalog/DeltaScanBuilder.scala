@@ -24,10 +24,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper}
 import org.apache.spark.sql.connector.read.{Scan, ScanBuilder}
-import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScanBuilder
+import org.apache.spark.sql.execution.datasources.{LogicalRelation, PartitioningAwareFileIndex}
+import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, ParquetScanBuilder}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
@@ -38,7 +38,6 @@ import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
 
 class DeltaScanBuilder(
     sparkSession: SparkSession,
@@ -46,6 +45,7 @@ class DeltaScanBuilder(
     tableSchema: StructType,
     options: CaseInsensitiveStringMap)
   extends ParquetScanBuilder(sparkSession, deltaFileIndex, tableSchema, tableSchema, options)
+  with PredicateHelper
   with DeltaLogging {
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
@@ -56,6 +56,9 @@ class DeltaScanBuilder(
         val snapshot = index.getSnapshot
         snapshot
       }
+    // Test compatibility with PrepareDeltaScan
+    import PrepareDeltaScanBase._
+    if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)
     scanGenerator
   }
 
@@ -84,8 +87,14 @@ class DeltaScanBuilder(
       val filters = partitionFilters ++ dataFilters
       val generatedPartitionFilters =
         if (GeneratedColumn.partitionFilterOptimizationEnabled(sparkSession)) {
-          GeneratedColumn.generatePartitionFilters(
-            sparkSession, scanGenerator.snapshotToScan, filters, null)
+          // Create a fake relation to resolve partition filters against, not sure
+          // why this is really needed
+          val relation = LogicalRelation(logFileIndex.deltaLog.createRelation(
+            snapshotToUseOpt = Some(scanGenerator.snapshotToScan)))
+          val generatedFilters = GeneratedColumn.generatePartitionFilters(
+            sparkSession, scanGenerator.snapshotToScan, filters, relation)
+          // Split predicates as this is what the tests are looking for to match V1 behavior
+          generatedFilters.flatMap(splitConjunctivePredicates)
         } else {
           Seq.empty
         }
