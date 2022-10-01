@@ -77,13 +77,23 @@ class DeltaScanBuilder(
   }
 
   override def build(): Scan = {
-    val parquetScan = super.build().asInstanceOf[ParquetScan]
+    var parquetScan = super.build().asInstanceOf[ParquetScan]
     if (deltaFileIndex.isInstanceOf[TahoeLogFileIndex]) {
       val logFileIndex = deltaFileIndex.asInstanceOf[TahoeLogFileIndex]
       val scanGenerator = getDeltaScanGenerator(logFileIndex)
-      val preparedScan = scanGenerator.filesForScan(partitionFilters ++ dataFilters)
+      val filters = partitionFilters ++ dataFilters
+      val generatedPartitionFilters =
+        if (GeneratedColumn.partitionFilterOptimizationEnabled(sparkSession)) {
+          GeneratedColumn.generatePartitionFilters(
+            sparkSession, scanGenerator.snapshotToScan, filters, null)
+        } else {
+          Seq.empty
+        }
+
+      val preparedScan = scanGenerator.filesForScan(filters ++ generatedPartitionFilters)
       val preparedIndex = getPreparedIndex(preparedScan, logFileIndex)
-      parquetScan.copy(fileIndex = preparedIndex)
+      parquetScan = parquetScan.copy(fileIndex = preparedIndex,
+        partitionFilters = partitionFilters ++ generatedPartitionFilters)
     }
     parquetScan
   }
