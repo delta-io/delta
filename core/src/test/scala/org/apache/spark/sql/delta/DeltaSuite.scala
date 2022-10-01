@@ -115,15 +115,10 @@ class DeltaSuite extends QueryTest
       val query = spark.read.format("delta").load(testPath).where("part = 1")
       val fileScans = query.queryExecution.executedPlan.collect {
         case f: FileSourceScanExec =>
-          val numFiles = f.metrics.get("numFiles")
-          assert(numFiles.nonEmpty)
-          numFiles.get
+          f.relation.inputFiles.length
         case b: BatchScanExec =>
-          b.inputPartitions.map(_.asInstanceOf[FilePartition].files.length).sum
+          b.inputPartitions.map(_.asInstanceOf[FilePartition].files.length).sum.toLong
       }
-
-      // Force the query to read files and generate metrics
-      query.queryExecution.executedPlan.execute().count()
 
       // Verify only one file was read
       assert(fileScans.size == 1)

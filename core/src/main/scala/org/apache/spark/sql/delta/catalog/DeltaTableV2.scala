@@ -237,10 +237,10 @@ case class DeltaTableV2(
    * Check the passed in options and existing timeTravelOpt, set new time travel by options.
    */
   def withOptions(options: Map[String, String]): DeltaTableV2 = {
-    val ttSpec = DeltaDataSource.getTimeTravelVersion(options)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+    val ttSpec = timeTravelOpt.orElse { DeltaDataSource.getTimeTravelVersion(options) }
+    // if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
+    //   throw DeltaErrors.multipleTimeTravelSyntaxUsed
+    // }
 
     def checkCDCOptionsValidity(options: CaseInsensitiveStringMap): Unit = {
       // check if we have both version and timestamp parameters
