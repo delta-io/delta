@@ -34,8 +34,8 @@ abstract class HiveConvertToDeltaSuiteBase
       sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)} ")
     } else {
       val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema)" +
-        s" ${collectStatisticsStringOption(collectStats)} ")
+      sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)}" +
+        s" partitioned by ($stringSchema) ")
     }
   }
 
@@ -67,8 +67,7 @@ abstract class HiveConvertToDeltaSuiteBase
         .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
         .select("stats.*")
       assert(statsDf.filter(col("numRecords").isNull).count == 0)
-      val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath)
-        .history()
+      val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
       assert(history.count == 2)
       assert(history.filter(col("operation") === "COMPUTE STATS").count == 1)
 
@@ -96,8 +95,7 @@ abstract class HiveConvertToDeltaSuiteBase
         .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
         .select("stats.*")
       assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
-            val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath)
-              .history()
+      val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
       assert(history.count == 1)
       assert(history.select("operation").first().getString(0) != "COMPUTE STATS")
 

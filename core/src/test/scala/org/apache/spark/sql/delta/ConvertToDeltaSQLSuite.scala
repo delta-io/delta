@@ -27,8 +27,8 @@ trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
       sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)}")
     } else {
       val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema)" +
-        s" ${collectStatisticsStringOption(collectStats)} ")
+      sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)}" +
+        s" partitioned by ($stringSchema)")
     }
   }
 }
