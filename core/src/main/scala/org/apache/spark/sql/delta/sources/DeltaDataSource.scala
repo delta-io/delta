@@ -66,7 +66,7 @@ class DeltaDataSource
     val options = new CaseInsensitiveStringMap(properties)
     val path = options.get("path")
     if (path == null) throw DeltaErrors.pathNotSpecifiedException
-    DeltaTableV2(SparkSession.active, new Path(path))
+    DeltaTableV2(SparkSession.active, new Path(path), options = properties.asScala.toMap)
   }
 
   override def sourceSchema(

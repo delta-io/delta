@@ -258,13 +258,25 @@ case class DeltaTableV2(
       }
     }
 
+    val fileSystemOptions: Map[String, String] =
+      if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        // We pick up only file system options so that we don't pass any parquet or json options to
+        // the code that reads Delta transaction logs.
+        options.filterKeys { k =>
+          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+        }.toMap
+      } else {
+        Map.empty
+      }
+
     val caseInsensitiveStringMap = new CaseInsensitiveStringMap(options.asJava)
 
     if (timeTravelOpt.isEmpty && ttSpec.nonEmpty) {
-      copy(timeTravelOpt = ttSpec)
+      copy(timeTravelOpt = ttSpec, options = fileSystemOptions)
     } else if (CDCReader.isCDCRead(caseInsensitiveStringMap)) {
       checkCDCOptionsValidity(caseInsensitiveStringMap)
-      copy(cdcOptions = caseInsensitiveStringMap)
+      copy(cdcOptions = caseInsensitiveStringMap, options = fileSystemOptions)
     } else {
       this
     }

@@ -159,11 +159,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       transformSubqueries(plan) transform {
         case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
-          // scalastyle:off println
-          println()
-          println("Found delta table scan")
-          println(plan)
-          // scalastyle:on println
           val scanGenerator = getDeltaScanGenerator(fileIndex)
           val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
               filesForScan(scanGenerator, limit, filters, delta))
