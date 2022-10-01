@@ -61,6 +61,8 @@ abstract class DeleteSuiteBase extends QueryTest
     }
   }
 
+  protected def loadTable(path: String): DataFrame
+
   protected def executeDelete(target: String, where: String = null): Unit
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
@@ -248,10 +250,10 @@ abstract class DeleteSuiteBase extends QueryTest
   test("delete cached table by path") {
     Seq((2, 2), (1, 4)).toDF("key", "value")
       .write.mode("overwrite").format("delta").save(tempPath)
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
+    loadTable(tempPath).cache()
+    loadTable(tempPath).collect()
     executeDelete(s"delta.`$tempPath`", where = "key = 2")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
+    checkAnswer(loadTable(tempPath), Row(1, 4) :: Nil)
   }
 
   Seq(true, false).foreach { isPartitioned =>

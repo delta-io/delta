@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
@@ -48,6 +48,10 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
        |WHEN MATCHED THEN UPDATE SET $update
        |WHEN NOT MATCHED THEN INSERT $insert
       """.stripMargin
+  }
+
+  override protected def loadTable(path: String): DataFrame = {
+    spark.read.table(s"delta.`$path`")
   }
 
   override def executeMerge(

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 
 class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -94,6 +94,10 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
         }
       }
     }
+  }
+
+  override protected def loadTable(path: String): DataFrame = {
+    spark.read.table(s"delta.`$path`")
   }
 
   override protected def executeUpdate(

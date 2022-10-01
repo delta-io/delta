@@ -575,6 +575,10 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
+  override protected def loadTable(path: String): DataFrame = {
+    spark.read.format("delta").load(path)
+  }
+
   override protected def executeMerge(
       target: String,
       source: String,

@@ -71,6 +71,8 @@ abstract class UpdateSuiteBase
     }
   }
 
+  protected def loadTable(path: String): DataFrame
+
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
     executeUpdate(target, set.mkString(", "), where)
   }
@@ -310,11 +312,11 @@ abstract class UpdateSuiteBase
     Seq((2, 2), (1, 4)).toDF("key", "value")
       .write.mode("overwrite").format("delta").save(tempPath)
 
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
+    loadTable(tempPath).cache()
+    loadTable(tempPath).collect()
 
     executeUpdate(s"delta.`$tempPath`", set = "key = 3")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
+    checkAnswer(loadTable(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
   }
 
   test("different variations of column references") {

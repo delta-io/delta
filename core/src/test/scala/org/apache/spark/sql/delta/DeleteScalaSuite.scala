@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableTestUtils
 
-import org.apache.spark.sql.{functions, Row}
+import org.apache.spark.sql.{DataFrame, functions, Row}
 
 class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
 
@@ -44,6 +44,10 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.delete(functions.expr("key = 1 or key = 2"))
     checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
+  }
+
+  override protected def loadTable(path: String): DataFrame = {
+    spark.read.format("delta").load(path)
   }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {

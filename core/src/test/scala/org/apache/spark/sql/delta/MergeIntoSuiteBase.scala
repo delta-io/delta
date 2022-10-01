@@ -62,6 +62,8 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  protected def loadTable(path: String): DataFrame
+
   protected def executeMerge(
       target: String,
       source: String,
@@ -928,12 +930,12 @@ abstract class MergeIntoSuiteBase
     withTable("source") {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
       Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-      spark.table(s"delta.`$tempPath`").cache()
-      spark.table(s"delta.`$tempPath`").collect()
+      loadTable(tempPath).cache()
+      loadTable(tempPath).collect()
 
       append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
       // cache is in effect, as the above change is not reflected
-      checkAnswer(spark.table(s"delta.`$tempPath`"), Row(2, 2) :: Row(1, 4) :: Nil)
+      checkAnswer(loadTable(tempPath), Row(2, 2) :: Row(1, 4) :: Nil)
 
       executeMerge(
         target = s"delta.`$tempPath` as trgNew",
@@ -942,7 +944,7 @@ abstract class MergeIntoSuiteBase
         update = "value = trgNew.value + 3",
         insert = "(key2, value) VALUES (key1, src.value + 10)")
 
-      checkAnswer(spark.table(s"delta.`$tempPath`"),
+      checkAnswer(loadTable(tempPath),
         Row(100, 100) :: // No change (newly inserted record)
           Row(2, 2) :: // No change
           Row(1, 7) :: // Update

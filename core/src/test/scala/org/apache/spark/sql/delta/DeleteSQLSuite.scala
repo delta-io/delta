@@ -18,11 +18,15 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{DataFrame, Row}
 
 class DeleteSQLSuite extends DeleteSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
+
+  override protected def loadTable(path: String): DataFrame = {
+    spark.read.table(s"delta.`$path`")
+  }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
     val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
