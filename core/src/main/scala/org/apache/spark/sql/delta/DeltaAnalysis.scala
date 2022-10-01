@@ -153,12 +153,13 @@ class DeltaAnalysis(session: SparkSession)
       }
 
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
-      if (!d.capabilities().contains(BATCH_READ)) {
+      val tableWithOptions = d.withOptions(options.asScala.toMap)
+      if (!tableWithOptions.capabilities().contains(BATCH_READ)) {
         // Table doesn't support V2 reads, fall back to V1 relation
         DeltaRelation.fromV2Relation(d, dsv2, options)
       } else {
         // Apply options from the V2Relation and return the updated table
-        dsv2.copy(table = d.withOptions(options.asScala.toMap))
+        dsv2.copy(table = tableWithOptions)
       }
 
 
