@@ -79,7 +79,7 @@ statement
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | CONVERT TO DELTA table=qualifiedName
-        (PARTITIONED BY '(' colTypeList ')')? (STATS)?                          #convert
+        (NO_STATISTICS)? (PARTITIONED BY '(' colTypeList ')')?          #convert
     | RESTORE TABLE? table=qualifiedName TO?
             clause=temporalClause                                       #restore
     | ALTER TABLE table=qualifiedName ADD CONSTRAINT name=identifier
@@ -166,7 +166,7 @@ nonReserved
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
-    | SHOW | COLUMNS | IN | FROM | STATS
+    | SHOW | COLUMNS | IN | FROM | NO_STATISTICS
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -216,7 +216,7 @@ VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';
 ZORDER: 'ZORDER';
-STATS: 'STATS';
+NO_STATISTICS: 'NO_STATISTICS';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and

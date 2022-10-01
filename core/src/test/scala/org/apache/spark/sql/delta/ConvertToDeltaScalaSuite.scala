@@ -37,5 +37,4 @@ class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteBase {
       )
     }
   }
-
 }

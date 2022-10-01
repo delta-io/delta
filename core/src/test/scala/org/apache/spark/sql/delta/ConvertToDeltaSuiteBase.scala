@@ -42,7 +42,7 @@ import org.apache.spark.util.Utils
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
-    .filter(identity).map(_ => "STATS").getOrElse("")
+    .filterNot(identity).map(_ => "NO_STATISTICS").getOrElse("")
 
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
@@ -106,10 +106,9 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir, simpleDF)
-        convertToDelta(s"parquet.`$tempDir`", collectStats = true)
-        val deltaLog = DeltaLog.forTable(spark, tempDir)
-        val history = io.delta.tables.DeltaTable.forPath(tempDir)
-          .history()
+      convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
       checkAnswer(
         spark.read.format("delta").load(tempDir),
         simpleDF
@@ -128,8 +127,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       writeFiles(tempDir, simpleDF)
       convertToDelta(s"parquet.`$tempDir`", collectStats = false)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val history = io.delta.tables.DeltaTable.forPath(tempDir)
-        .history()
+      val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
       checkAnswer(
         spark.read.format("delta").load(tempDir),
         simpleDF

@@ -230,7 +230,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ConvertToDeltaCommand(
       visitTableIdentifier(ctx.table),
       Option(ctx.colTypeList).map(colTypeList => StructType(visitColTypeList(colTypeList))),
-      None, ctx.STATS() != null)
+      None, ctx.NO_STATISTICS() == null)
   }
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {

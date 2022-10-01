@@ -390,7 +390,8 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.convertToDelta(
             self.spark,
             "parquet.`%s`" % tempFile3,
-            "value int")
+            "value int",
+            True)
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])

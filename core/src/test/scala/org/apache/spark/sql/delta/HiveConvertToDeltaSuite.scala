@@ -61,7 +61,7 @@ abstract class HiveConvertToDeltaSuiteBase
       sql(s"insert into $tbl VALUES (1, 'a', 1)")
 
       val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
-      convertToDelta(tbl, Some("part string"), true)
+      convertToDelta(tbl, Some("part string"), collectStats = true)
       val deltaLog = DeltaLog.forTable(spark, catalogTable)
       val statsDf = deltaLog.snapshot.allFiles
         .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
@@ -90,7 +90,7 @@ abstract class HiveConvertToDeltaSuiteBase
       sql(s"insert into $tbl VALUES (1, 'a', 1)")
 
       val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
-      convertToDelta(tbl, Some("part string"), false)
+      convertToDelta(tbl, Some("part string"), collectStats = false)
       val deltaLog = DeltaLog.forTable(spark, catalogTable)
       val statsDf = deltaLog.snapshot.allFiles
         .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))

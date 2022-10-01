@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
 import java.util.Locale
+
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -63,13 +65,14 @@ import org.apache.spark.util.SerializableConfiguration
  *
  * @param tableIdentifier the target parquet table.
  * @param partitionSchema the partition schema of the table, required when table is partitioned.
+ * @param collectStats Should collect column stats per file on convert.
  * @param deltaPath if provided, the delta log will be written to this location.
  */
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
     deltaPath: Option[String],
-    collectStats: Boolean) extends LeafRunnableCommand with DeltaCommand {
+    collectStats: Boolean = true) extends LeafRunnableCommand with DeltaCommand {
 
   protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
     lowerCaseProvider == "parquet"
@@ -395,7 +398,7 @@ case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
     deltaPath: Option[String],
-    collectStats: Boolean = false)
+    collectStats: Boolean)
   extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath, collectStats)
 
 /**
