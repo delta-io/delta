@@ -898,6 +898,12 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val V2_READER_ENABLED =
+    buildConf("v2.reader.enabled")
+      .doc("Whether to use the Data Source V2 batch read API.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

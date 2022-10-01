@@ -26,6 +26,8 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
+import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
 
 /**
  * A helper trait used by test classes that want to collect the scans (i.e. [[FileSourceScanExec]])
@@ -40,9 +42,10 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
   /**
    * Collect the scan leaves in the given SparkPlan.
    */
-  private def collectScans(plan: SparkPlan): Seq[FileSourceScanExec] = {
+  private def collectScans(plan: SparkPlan): Seq[SparkPlan] = {
     collectWithSubqueries(plan)({
       case fs: FileSourceScanExec => Seq(fs)
+      case bs: BatchScanExec => Seq(bs)
       case cached: InMemoryTableScanExec => collectScans(cached.relation.cacheBuilder.cachedPlan)
     }).flatten
   }
@@ -64,10 +67,13 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
             return
         }
 
-        val fileScans = collectScans(qe.executedPlan)
+        val fileScans = collectScans(qe.executedPlan).map {
+          case f: FileSourceScanExec => (f.relation.location, f.metrics)
+          case b: BatchScanExec => (b.scan.asInstanceOf[ParquetScan].fileIndex, b.metrics)
+        }
 
-        for (scanExec <- fileScans) {
-          scanExec.relation.location match {
+        for ((index, metrics) <- fileScans) {
+          index match {
             case deltaTable: PreparedDeltaFileIndex =>
               val preparedScan = deltaTable.preparedScan
               // The names of the partition columns that were used as filters in this scan.
@@ -87,7 +93,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                   "total" -> preparedScan.total,
                   "partition" -> preparedScan.partition,
                   "scanned" -> preparedScan.scanned),
-                metrics = scanExec.metrics.mapValues(_.value).toMap +
+                metrics = metrics.mapValues(_.value).toMap +
                   ("scanDurationMs" -> preparedScan.scanDurationMs),
                 annotations = Map.empty,
                 versionScanned = deltaTable.versionScanned,
@@ -112,7 +118,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                   "total" -> DataSize(
                     bytesCompressed = Some(deltaTable.deltaLog.unsafeVolatileSnapshot.sizeInBytes))
                 ),
-                metrics = scanExec.metrics.mapValues(_.value).toMap,
+                metrics = metrics.mapValues(_.value).toMap,
                 versionScanned = None,
                 annotations = Map.empty
               )

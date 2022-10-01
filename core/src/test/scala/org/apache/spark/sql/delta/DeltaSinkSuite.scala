@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
-import org.apache.spark.SparkConf
+// import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
@@ -36,6 +36,8 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2ScanRelation, FileScan}
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 
 class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with DeltaSQLCommandTest {
 
@@ -229,16 +231,19 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
           .add(StructField("id", IntegerType))
           .add(StructField("value", IntegerType))
         assert(outputDf.schema === expectedSchema)
-
         // Verify the correct partitioning schema has been inferred
-        val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
+        val schemas = outputDf.queryExecution.optimizedPlan.collect {
           case LogicalRelation(baseRelation, _, _, _) if
               baseRelation.isInstanceOf[HadoopFsRelation] =>
-            baseRelation.asInstanceOf[HadoopFsRelation]
+            val relation = baseRelation.asInstanceOf[HadoopFsRelation]
+            (relation.partitionSchema, relation.dataSchema)
+          case r: DataSourceV2ScanRelation =>
+            val scan = r.scan.asInstanceOf[FileScan]
+            (scan.readPartitionSchema, scan.readDataSchema)
         }
-        assert(hadoopFsRelations.size === 1)
-        assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "id"))
-        assert(hadoopFsRelations.head.dataSchema.exists(_.name == "value"))
+        assert(schemas.size === 1)
+        assert(schemas.head._1.exists(_.name == "id"))
+        assert(schemas.head._2.exists(_.name == "value"))
 
         // Verify the data is correctly read
         checkDatasetUnorderly(
@@ -250,6 +255,7 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
           val filePartitions = df.queryExecution.executedPlan.collect {
             case scan: DataSourceScanExec if scan.inputRDDs().head.isInstanceOf[FileScanRDD] =>
               scan.inputRDDs().head.asInstanceOf[FileScanRDD].filePartitions
+            case scan: BatchScanExec => scan.inputPartitions.asInstanceOf[Seq[FilePartition]]
           }.flatten
           if (filePartitions.isEmpty) {
             fail(s"No FileScan in query\n${df.queryExecution}")

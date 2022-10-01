@@ -35,6 +35,9 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 
 /**
  * Before query planning, we prepare any scans over delta tables by pushing
@@ -114,7 +117,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       scanGenerator: DeltaScanGenerator,
       limitOpt: Option[Int],
       filters: Seq[Expression],
-      delta: LogicalRelation): DeltaScan = {
+      delta: LogicalPlan): DeltaScan = {
     withStatusCode("DELTA", "Filtering files for query") {
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
@@ -152,10 +155,15 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       }
     }
 
-    def transform(plan: LogicalPlan): LogicalPlan =
+    def transform(plan: LogicalPlan): LogicalPlan = {
       transformSubqueries(plan) transform {
         case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
+          // scalastyle:off println
+          println()
+          println("Found delta table scan")
+          println(plan)
+          // scalastyle:on println
           val scanGenerator = getDeltaScanGenerator(fileIndex)
           val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
               filesForScan(scanGenerator, limit, filters, delta))
@@ -163,6 +171,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
           optimizeGeneratedColumns(
             preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
       }
+    }
 
     transform(plan)
   }
@@ -173,7 +182,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       preparedIndex: PreparedDeltaFileIndex,
       filters: Seq[Expression],
       limit: Option[Int],
-      delta: LogicalRelation): LogicalPlan = {
+      delta: LogicalPlan): LogicalPlan = {
     if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
       DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
     } else {
@@ -194,6 +203,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
   override def apply(_plan: LogicalPlan): LogicalPlan = {
     var plan = _plan
+    // scalastyle:off println
+      // println("applying plan")
+      // println(plan)
+      // println()
+      // scalastyle:on println
 
     val shouldPrepareDeltaScan = (
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
@@ -214,6 +228,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.
       OptimisticTransaction.getActive.foreach { txn =>
+        // scalastyle:off println
+        // println("Transaction during read")
+        // println(plan)
+        // scalastyle:on println
         val logsInPlan = plan.collect { case DeltaTable(fileIndex) => fileIndex.deltaLog }
         if (logsInPlan.exists(_.isSameLogAs(txn.deltaLog))) {
           txn.readWholeTable()
@@ -241,7 +259,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
      * - matched `DeltaTable`
      */
     private type DeltaTableScanType =
-      (LogicalPlan, Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalRelation)
+      (LogicalPlan, Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalPlan)
 
     /**
      * This is an extractor method (basically, the opposite of a constructor) which takes in an
@@ -263,7 +281,8 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         case PhysicalOperation(
             _,
             filters,
-            delta @ DeltaTable(fileIndex: TahoeLogFileIndex)) =>
+            delta @ LogicalRelation(HadoopFsRelation(
+              fileIndex: TahoeLogFileIndex, _, _, _, _, _), _, _, _)) =>
           val allFilters = fileIndex.partitionFilters ++ filters
           Some((canonicalizePlanForDeltaFileListing(plan), allFilters, fileIndex, None, delta))
 

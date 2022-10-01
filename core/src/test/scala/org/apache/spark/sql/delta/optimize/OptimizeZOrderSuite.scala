@@ -93,14 +93,14 @@ trait OptimizeZOrderSuiteBase extends QueryTest
       var df = spark.read.format("delta").load(tempDir.getAbsolutePath)
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       val part = "part".phy(deltaLog)
-      var preOptInputFiles = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      var preOptInputFiles = groupInputFilesByPartition(DeltaTestUtils.getInputFiles(df), deltaLog)
       assert(preOptInputFiles.forall(_._2.length > 1))
       assert(preOptInputFiles.keys.exists(_ == (part, nullPartitionValue)))
 
       executeOptimizePath(tempDir.getAbsolutePath, Seq("value"))
 
       df = spark.read.format("delta").load(tempDir.getAbsolutePath)
-      preOptInputFiles = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      preOptInputFiles = groupInputFilesByPartition(DeltaTestUtils.getInputFiles(df), deltaLog)
       assert(preOptInputFiles.forall(_._2.length == 1))
       assert(preOptInputFiles.keys.exists(_ == (part, nullPartitionValue)))
 

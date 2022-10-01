@@ -22,20 +22,23 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, NoMapping, GeneratedColumn, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
-import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.{SupportsRead, SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
+import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -56,8 +59,10 @@ case class DeltaTableV2(
     tableIdentifier: Option[String] = None,
     timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
     options: Map[String, String] = Map.empty,
-    cdcOptions: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty())
+    cdcOptions: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty(),
+    pinnedFileIndex: Option[TahoeFileIndex] = None)
   extends Table
+  with SupportsRead
   with SupportsWrite
   with V2TableWithV1Fallback
   with DeltaLogging {
@@ -99,6 +104,10 @@ case class DeltaTableV2(
     timeTravelOpt.orElse(timeTravelByPath)
   }
 
+  def isCDCRead(): Boolean = {
+    !cdcOptions.isEmpty()
+  }
+
   lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
       val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
@@ -120,7 +129,7 @@ case class DeltaTableV2(
     DeltaColumnMapping.dropColumnMappingMetadata(
       ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema))
 
-  override def schema(): StructType = tableSchema
+  override def schema(): StructType = SchemaUtils.dropNullTypeColumns(tableSchema)
 
   override def partitioning(): Array[Transform] = {
     snapshot.metadata.partitionColumns.map { col =>
@@ -147,11 +156,53 @@ case class DeltaTableV2(
     base.asJava
   }
 
-  override def capabilities(): ju.Set[TableCapability] = Set(
-    ACCEPT_ANY_SCHEMA, BATCH_READ,
-    V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
-  ).asJava
 
+
+  override def capabilities(): ju.Set[TableCapability] = {
+    val baseCapabilities = mutable.Set(
+      ACCEPT_ANY_SCHEMA, V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
+    )
+
+    val v2ReaderEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.V2_READER_ENABLED)
+    // The features v2 reading doesn't currently support
+    val columnMappingEnabled = snapshot.metadata.columnMappingMode != NoMapping
+    val cdcRead = !cdcOptions.isEmpty()
+    // If there are generated columns, we can't currently optimize them, so skip as well
+    val hasGeneratedColumns = GeneratedColumn.hasGeneratedColumns(snapshot.schema)
+
+    if (v2ReaderEnabled && !columnMappingEnabled && !cdcRead && !hasGeneratedColumns) {
+      baseCapabilities.add(BATCH_READ)
+    }
+    baseCapabilities.asJava
+  }
+
+  def withFileIndex(fileIndex: TahoeFileIndex): DeltaTableV2 = {
+    copy(pinnedFileIndex = Some(fileIndex))
+  }
+
+  override def newScanBuilder(scanBuilderOptions: CaseInsensitiveStringMap): ScanBuilder = {
+    if (!deltaLog.tableExists) {
+      // special error handling for path based tables
+      if (catalogTable.isEmpty
+        && !rootPath.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(rootPath)) {
+        throw QueryCompilationErrors.dataPathNotExistError(rootPath.toString)
+      }
+
+      val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
+          .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
+        throw DeltaErrors.notADeltaTableException(id)
+    }
+
+    val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
+      path.toString, snapshot, partitionFilters)
+
+    val fileIndex = pinnedFileIndex.getOrElse {
+      TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, snapshot,
+        partitionPredicates, timeTravelSpec.isDefined)
+    }
+
+    new DeltaScanBuilder(spark, fileIndex, schema, scanBuilderOptions)
+  }
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(deltaLog, info.options)

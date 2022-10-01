@@ -28,7 +28,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -673,6 +673,7 @@ abstract class UpdateSuiteBase
 
     val scans = executedPlans.flatMap(_.collect {
       case f: FileSourceScanExec => f
+      case b: BatchScanExec => b
     })
     // The first scan is for finding files to update. We only are matching against the key
     // so that should be the only field in the schema.

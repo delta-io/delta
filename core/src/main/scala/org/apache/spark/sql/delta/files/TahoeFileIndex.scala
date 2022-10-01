@@ -33,14 +33,16 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
+import scala.collection.mutable.LinkedHashMap
 
 /**
- * A [[FileIndex]] that generates the list of files managed by the Tahoe protocol.
+ * A [[FileIndex]] that generates the list of files managed by the Tahoe protocol. Extends
+ * PartitioningAwareFileIndex to integrate with Parquet V2 table.
  */
 abstract class TahoeFileIndex(
     val spark: SparkSession,
     val deltaLog: DeltaLog,
-    val path: Path) extends FileIndex {
+    val path: Path) extends PartitioningAwareFileIndex(spark, Map.empty, None) {
 
   def tableVersion: Long = deltaLog.unsafeVolatileSnapshot.version
   def metadata: Metadata = deltaLog.unsafeVolatileSnapshot.metadata
@@ -134,6 +136,17 @@ abstract class TahoeFileIndex(
    * all the partition directories stripped off).
    */
   def getBasePath(filePath: Path): Option[Path] = Some(path)
+
+  /**
+   * These methods are from PartioningAwareFileIndex so that this can be used with the Parquet V2
+   * table. They aren't actually used, can probably see if the FileTable can just use a FileIndex
+   * directly.
+   */
+  def partitionSpec(): PartitionSpec = PartitionSpec.emptySpec
+
+  protected def leafDirToChildrenFiles: Map[Path, Array[FileStatus]] = Map.empty
+
+  protected def leafFiles: LinkedHashMap[Path, FileStatus] = LinkedHashMap.empty
 
 }
 

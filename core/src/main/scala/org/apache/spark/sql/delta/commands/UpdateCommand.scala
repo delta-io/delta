@@ -248,7 +248,8 @@ case class UpdateCommand(
     // Containing the map from the relative file path to AddFile
     val baseRelation = buildBaseRelation(
       spark, txn, "update", rootPath, inputLeafFiles, nameToAddFileMap)
-    val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
+    val newTarget = DeltaTableUtils.replaceFileIndex(target,
+      baseRelation.location.asInstanceOf[TahoeFileIndex])
     val targetDf = Dataset.ofRows(spark, newTarget)
 
     // Number of total rows that we have seen, i.e. are either copying or updating (sum of both).

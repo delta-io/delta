@@ -34,6 +34,9 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.datasources.v2.FileScan
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -769,20 +772,19 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   test("Test file pruning metrics with data skipping") {
     withTempDir { tempDir =>
-      withTempView("t1", "t2") {
-        val data = spark.range(10).toDF("col1")
-          .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
-        data.write.format("delta").partitionBy("col1")
-          .save(tempDir.getCanonicalPath)
-        spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
-        val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
+      val data = spark.range(10).toDF("col1")
+        .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
+      data.write.format("delta").partitionBy("col1")
+        .save(tempDir.getCanonicalPath)
+      spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
+      val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
 
-        val query = "SELECT * from t1 where col1 > 5"
-        val Seq(r1) = getScanReport {
-          assert(sql(query).collect().length == 4)
-        }
-        val inputFiles = spark.sql(query).inputFiles
-        assert(deltaLog.snapshot.numOfFiles - inputFiles.length == 6)
+      val query = "SELECT * from t1 where col1 > 5"
+      val Seq(r1) = getScanReport {
+        assert(sql(query).collect().length == 4)
+      }
+      assert(r1.size.get("scanned").isDefined)
+      assert(r1.size.get("scanned").get.files.get == 4)
 
         val allQuery = "SELECT * from t1"
         val Seq(r2) = getScanReport {
@@ -1538,11 +1540,17 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     if (predicate == "True") return Seq(Literal.TrueLiteral)
 
     val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
+
+    // For V2 scans, partition filters get pushed during the optimization phase, whereas
+    // with V1, they don't get pushed until creating the physical plan, so it will still
+    // be in the filter.
     filtered
       .queryExecution
       .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates)
+      .collect {
+        case f: Filter => splitConjunctivePredicates(f.condition)
+        case DataSourceV2ScanRelation(_, scan: FileScan, _, _) => scan.partitionFilters
+      }.flatten
   }
 
   /**

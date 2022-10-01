@@ -33,15 +33,21 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaScanBuilder}
+import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScanBuilder
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
  * or a partial scan.
  */
 object DeltaTable {
-  def unapply(a: LogicalRelation): Option[TahoeFileIndex] = a match {
+  def unapply(a: LogicalPlan): Option[TahoeFileIndex] = a match {
     case LogicalRelation(HadoopFsRelation(index: TahoeFileIndex, _, _, _, _, _), _, _, _) =>
       Some(index)
+    case DataSourceV2Relation(table: DeltaTableV2, _, _, _, options) =>
+      Some(table.newScanBuilder(options).asInstanceOf[ParquetScanBuilder].fileIndex
+        .asInstanceOf[TahoeFileIndex])
     case _ =>
       None
   }
@@ -325,10 +331,12 @@ object DeltaTableUtils extends PredicateHelper
    */
   def replaceFileIndex(
       target: LogicalPlan,
-      fileIndex: FileIndex): LogicalPlan = {
+      fileIndex: TahoeFileIndex): LogicalPlan = {
     target transform {
       case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
+      case r @ DataSourceV2Relation(table: DeltaTableV2, _, _, _, _) =>
+        r.copy(table = table.withFileIndex(fileIndex))
     }
   }
 

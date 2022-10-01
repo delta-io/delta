@@ -432,7 +432,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       val part = "part".phy(deltaLog)
-      val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      val files = groupInputFilesByPartition(DeltaTestUtils.getInputFiles(df), deltaLog)
       assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
         "part 3 should have been optimized and have least amount of files")
     }
@@ -460,7 +460,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       val part = "part".phy(deltaLog)
-      val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      val files = groupInputFilesByPartition(DeltaTestUtils.getInputFiles(df), deltaLog)
       assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
         "part 3 should have been optimized and have least amount of files")
     }
@@ -534,7 +534,7 @@ class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
 
       sql(s"optimize '${tempDir.getAbsolutePath}'")
       val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
-      assert(df.inputFiles.length === 2, "2 files for 2 partitions")
+      assert(DeltaTestUtils.getInputFiles(df).length === 2, "2 files for 2 partitions")
       checkAnswer(
         df,
         baseDf.union(baseDf))
