@@ -247,7 +247,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
     testTableCreation { dir =>
       spark.range(10).write.mode("append").parquet(dir)
-      sql(s"CONVERT TO DELTA parquet.`$dir`")
+      sql(s"CONVERT TO DELTA parquet.`$dir` NO_STATISTICS")
     }
   }
 
@@ -300,7 +300,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       testTableCreation { dir =>
         spark.range(10).write.mode("append").parquet(dir)
-        sql(s"CONVERT TO DELTA parquet.`$dir`")
+        sql(s"CONVERT TO DELTA parquet.`$dir` NO_STATISTICS")
       }
     }
   }
