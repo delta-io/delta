@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{SupportsRead, SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -289,6 +290,54 @@ case class DeltaTableV2(
     } else {
       catalogTable.get
     }
+  }
+}
+
+object DeltaTableV2 {
+  def apply(spark: SparkSession, options: Map[String, String]): DeltaTableV2 = {
+    val maybePath = options.getOrElse("path", {
+      throw DeltaErrors.pathNotSpecifiedException
+    })
+
+    // Log any invalid options that are being passed in
+    DeltaOptions.verifyOptions(CaseInsensitiveMap(options))
+
+    val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(options)
+    var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
+    val caseInsensitiveParams = new CaseInsensitiveStringMap(options.asJava)
+    if (CDCReader.isCDCRead(caseInsensitiveParams)) {
+      cdcOptions = mutable.Map[String, String](DeltaDataSource.CDC_ENABLED_KEY -> "true")
+      if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_START_VERSION_KEY)) {
+        cdcOptions(DeltaDataSource.CDC_START_VERSION_KEY) = caseInsensitiveParams.get(
+          DeltaDataSource.CDC_START_VERSION_KEY)
+      }
+      if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_START_TIMESTAMP_KEY)) {
+        cdcOptions(DeltaDataSource.CDC_START_TIMESTAMP_KEY) = caseInsensitiveParams.get(
+          DeltaDataSource.CDC_START_TIMESTAMP_KEY)
+      }
+      if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_END_VERSION_KEY)) {
+        cdcOptions(DeltaDataSource.CDC_END_VERSION_KEY) = caseInsensitiveParams.get(
+          DeltaDataSource.CDC_END_VERSION_KEY)
+      }
+      if (caseInsensitiveParams.containsKey(DeltaDataSource.CDC_END_TIMESTAMP_KEY)) {
+        cdcOptions(DeltaDataSource.CDC_END_TIMESTAMP_KEY) = caseInsensitiveParams.get(
+          DeltaDataSource.CDC_END_TIMESTAMP_KEY)
+      }
+    }
+    val dfOptions: Map[String, String] =
+      if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        options
+      } else {
+        Map.empty
+      }
+    DeltaTableV2(
+      spark,
+      new Path(maybePath),
+      timeTravelOpt = timeTravelByParams,
+      options = dfOptions,
+      cdcOptions = new CaseInsensitiveStringMap(cdcOptions.asJava)
+    )
   }
 }
 
