@@ -336,6 +336,9 @@ object DeltaFileOperations extends DeltaLogging {
   def tryDeleteNonRecursive(fs: FileSystem, path: Path, tries: Int = 3): Boolean = {
     try fs.delete(path, false) catch {
       case _: FileNotFoundException => true
+      case e: IOException if tries == 1 =>
+        logError(s"Vacuum failed to delete ${path.toString}", e)
+        false
       case _: IOException => false
       case NonFatal(e) if isThrottlingError(e) && tries > 0 =>
         randomBackoff("deletes", e)
