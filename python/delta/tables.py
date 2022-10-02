@@ -339,7 +339,7 @@ class DeltaTable(object):
 
         if partitionSchema is None:
             jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
-                jsparkSession, identifier
+                jsparkSession, identifier, collectStats
             )
         else:
             if not isinstance(partitionSchema, str):
@@ -347,7 +347,7 @@ class DeltaTable(object):
             jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
                 jsparkSession, identifier,
                 partitionSchema,
-                collectStats=collectStats)
+                collectStats)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
