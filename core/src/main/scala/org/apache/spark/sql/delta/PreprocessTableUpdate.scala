@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -57,7 +58,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
     }
 
     val generatedColumns = GeneratedColumn.getGeneratedColumns(index.snapshotAtAnalysis)
-    if (generatedColumns.nonEmpty && !deltaLogicalNode.isInstanceOf[LogicalRelation]) {
+    val isTempView = !deltaLogicalNode.isInstanceOf[LogicalRelation] &&
+      !deltaLogicalNode.isInstanceOf[DataSourceV2Relation]
+    if (generatedColumns.nonEmpty && isTempView) {
       // Disallow temp views referring to a Delta table that contains generated columns. When the
       // user doesn't provide expressions for generated columns, we need to create update
       // expressions for them automatically. Currently, we assume `update.child.output` is the same

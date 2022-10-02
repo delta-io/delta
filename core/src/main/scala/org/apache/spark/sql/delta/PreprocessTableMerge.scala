@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{instantToMicros, localDateTimeToMicros}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DateType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
@@ -87,7 +88,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
     val generatedColumns = GeneratedColumn.getGeneratedColumns(
       tahoeFileIndex.snapshotAtAnalysis)
-    if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
+    val isTempView = !deltaLogicalPlan.isInstanceOf[LogicalRelation] &&
+      !deltaLogicalPlan.isInstanceOf[DataSourceV2Relation]
+    if (generatedColumns.nonEmpty && isTempView) {
       throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
     }
     // Additional columns with default expressions.
