@@ -416,9 +416,7 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /** Used to compute the LogSegment after a commit */
-  protected[delta] def getLogSegmentAfterCommit(
-      preCommitLogSegment: LogSegment,
-      committedVersion: Long): LogSegment = {
+  protected[delta] def getLogSegmentAfterCommit(preCommitLogSegment: LogSegment): LogSegment = {
     /**
      * We can't specify `versionToLoad = committedVersion` for the call below.
      * If there are a lot of concurrent commits to the table on the same cluster, each
@@ -664,7 +662,8 @@ trait SnapshotManagement { self: DeltaLog =>
       val previousSnapshot = currentSnapshot.snapshot
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
-      val segment = getLogSegmentAfterCommit(preCommitLogSegment, committedVersion)
+      val segment = getLogSegmentAfterCommit(
+        preCommitLogSegment)
 
       // This likely implies a list-after-write inconsistency
       if (segment.version < committedVersion) {
