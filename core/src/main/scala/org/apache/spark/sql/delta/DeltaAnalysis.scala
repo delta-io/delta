@@ -162,13 +162,6 @@ class DeltaAnalysis(session: SparkSession)
         dsv2.copy(table = tableWithOptions)
       }
 
-
-    // Normalize differences between DataFrameReader and SQL reads. Options have already been
-    // pushed to DeltaTableV2 so are no longer needed.
-    // case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, output, _, _, _)
-    //     if d.capabilities().contains(BATCH_READ) =>
-    //   dsv2.copy(catalog = None, identifier = None, options = CaseInsensitiveStringMap.empty())
-
     // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly
 
     case d @ DeleteFromTable(table, condition) if d.childrenResolved =>

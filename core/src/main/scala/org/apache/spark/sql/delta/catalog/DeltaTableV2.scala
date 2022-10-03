@@ -127,10 +127,11 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    DeltaColumnMapping.dropColumnMappingMetadata(
-      ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema))
+    SchemaUtils.dropNullTypeColumns(
+      DeltaColumnMapping.dropColumnMappingMetadata(
+        ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema)))
 
-  override def schema(): StructType = SchemaUtils.dropNullTypeColumns(tableSchema)
+  override def schema(): StructType = tableSchema
 
   override def partitioning(): Array[Transform] = {
     snapshot.metadata.partitionColumns.map { col =>
@@ -166,10 +167,9 @@ case class DeltaTableV2(
 
     val v2ReaderEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.V2_READER_ENABLED)
     // The features v2 reading doesn't currently support
-    val columnMappingEnabled = snapshot.metadata.columnMappingMode != NoMapping
     val cdcRead = !cdcOptions.isEmpty()
 
-    if (v2ReaderEnabled && !columnMappingEnabled && !cdcRead) {
+    if (v2ReaderEnabled && !cdcRead) {
       baseCapabilities.add(BATCH_READ)
     }
     baseCapabilities.asJava
@@ -200,7 +200,8 @@ case class DeltaTableV2(
         partitionPredicates, timeTravelSpec.isDefined)
     }
 
-    new DeltaScanBuilder(spark, fileIndex, schema, scanBuilderOptions)
+    new DeltaScanBuilder(spark, fileIndex, snapshot.metadata, snapshot.schema, schema,
+      scanBuilderOptions)
   }
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {

@@ -198,11 +198,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
   override def apply(_plan: LogicalPlan): LogicalPlan = {
     var plan = _plan
-    // scalastyle:off println
-      // println("applying plan")
-      // println(plan)
-      // println()
-      // scalastyle:on println
 
     val shouldPrepareDeltaScan = (
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
