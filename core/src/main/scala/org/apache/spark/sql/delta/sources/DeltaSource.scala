@@ -447,7 +447,7 @@ case class DeltaSource(
 
     iter = iter.withClose { it =>
       it.filter { case IndexedFile(version, index, _, _, _, _) =>
-        version > fromVersion || (index == -1 || index > fromIndex)
+        version > fromVersion || index > fromIndex
       }
     }
 
