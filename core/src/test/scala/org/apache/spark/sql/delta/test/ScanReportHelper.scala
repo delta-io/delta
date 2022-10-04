@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.test
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.catalog.DeltaTableScan
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.stats.{DataSize, PreparedDeltaFileIndex}
@@ -27,7 +28,6 @@ import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
 
 /**
  * A helper trait used by test classes that want to collect the scans (i.e. [[FileSourceScanExec]])
@@ -69,7 +69,8 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
 
         val fileScans = collectScans(qe.executedPlan).map {
           case f: FileSourceScanExec => (f.relation.location, f.metrics)
-          case b: BatchScanExec => (b.scan.asInstanceOf[ParquetScan].fileIndex, b.metrics)
+          case b: BatchScanExec =>
+            (b.scan.asInstanceOf[DeltaTableScan].delegatedScan.fileIndex, b.metrics)
         }
 
         for ((index, metrics) <- fileScans) {
