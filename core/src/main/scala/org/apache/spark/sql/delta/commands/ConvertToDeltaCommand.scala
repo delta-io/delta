@@ -397,9 +397,8 @@ abstract class ConvertToDeltaCommandBase(
 case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String],
-    collectStats: Boolean)
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath, collectStats)
+    deltaPath: Option[String])
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
 
 /**
  * An interface for the file to be included during conversion.

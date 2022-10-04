@@ -42,7 +42,7 @@ import org.apache.spark.util.Utils
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
-    .filterNot(identity).map(_ => "NO_STATISTICS").getOrElse("")
+    .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
 
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
@@ -120,26 +120,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       assert(statsDf.filter($"numRecords".isNull).count == 0)
     }
   }
-
-  test("convert without statistics") {
-    withTempDir { dir =>
-      val tempDir = dir.getCanonicalPath
-      writeFiles(tempDir, simpleDF)
-      convertToDelta(s"parquet.`$tempDir`", collectStats = false)
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
-      checkAnswer(
-        spark.read.format("delta").load(tempDir),
-        simpleDF
-      )
-      assert(history.count == 1)
-      assert(!history.as[DeltaHistory].collect.exists(_.operation == "COMPUTE STATS"))
-      val statsDf = deltaLog.snapshot.allFiles
-        .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
-      assert(statsDf.filter($"numRecords".isNotNull).count == 0)
-    }
-  }
-
 
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>
