@@ -191,7 +191,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           fn(dir.getCanonicalPath)
 
           val deltaLog = DeltaLog.forTable(spark, dir)
-          assert(deltaLog.snapshot.version === 0, "did not create a Delta table")
+          // TODO: Change to == 0 once statsCollection is disabled in DeltaTable API
+          assert(deltaLog.snapshot.version >= 0, "did not create a Delta table")
           assert(deltaLog.snapshot.protocol.minWriterVersion === writerVersion)
           assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
         }
@@ -247,7 +248,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
     testTableCreation { dir =>
       spark.range(10).write.mode("append").parquet(dir)
-      sql(s"CONVERT TO DELTA parquet.`$dir` NO_STATISTICS")
+      sql(s"CONVERT TO DELTA parquet.`$dir` NO STATISTICS")
     }
   }
 
@@ -300,7 +301,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       testTableCreation { dir =>
         spark.range(10).write.mode("append").parquet(dir)
-        sql(s"CONVERT TO DELTA parquet.`$dir` NO_STATISTICS")
+        sql(s"CONVERT TO DELTA parquet.`$dir` NO STATISTICS")
       }
     }
   }

@@ -26,15 +26,11 @@ class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteBase {
       io.delta.tables.DeltaTable.convertToDelta(
         spark,
         identifier,
-        StructType.fromDDL(partitionSchema.get),
-        collectStats
-      )
+        StructType.fromDDL(partitionSchema.get))
     } else {
       io.delta.tables.DeltaTable.convertToDelta(
         spark,
-        identifier,
-        collectStats
-      )
+        identifier)
     }
   }
 }
