@@ -577,9 +577,30 @@ object DeltaTable {
       spark: SparkSession,
       identifier: String,
       partitionSchema: StructType): DeltaTable = {
-    convertToDelta(spark, identifier, partitionSchema, false)
+    convertToDelta(spark, identifier, partitionSchema, true)
   }
 
+  /**
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   * By default, Delta will compute state for each file in the log during convert.
+   * This can be disabled by collectStats = false.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`",
+   *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
+   * }}}
+   *
+   * @since 0.4.0
+   */
   def convertToDelta(
       spark: SparkSession,
       identifier: String,
@@ -612,9 +633,30 @@ object DeltaTable {
       spark: SparkSession,
       identifier: String,
       partitionSchema: String): DeltaTable = {
-    convertToDelta(spark, identifier, partitionSchema, collectStats = false)
+    convertToDelta(spark, identifier, partitionSchema, collectStats = true)
   }
 
+  /**
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   * By default, Delta will compute state for each file in the log during convert.
+   * This can be disabled by collectStats = false.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`",
+   *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
+   * }}}
+   *
+   * @since 0.4.0
+   */
   def convertToDelta(
       spark: SparkSession,
       identifier: String,
@@ -622,7 +664,7 @@ object DeltaTable {
       collectStats: Boolean): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)), None,
-      collectStatsOnConvert = collectStats)
+      collectStats = collectStats)
   }
 
   /**
@@ -645,16 +687,37 @@ object DeltaTable {
   def convertToDelta(
       spark: SparkSession,
       identifier: String): DeltaTable = {
-    convertToDelta(spark, identifier, false)
+    convertToDelta(spark, identifier, true)
   }
 
+  /**
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   * By default, Delta will compute state for each file in the log during convert.
+   * This can be disabled by collectStats = false.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`",
+   *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
+   * }}}
+   *
+   * @since 0.4.0
+   */
   def convertToDelta(
       spark: SparkSession,
       identifier: String,
-      collectStatsOnConvert: Boolean): DeltaTable = {
+      collectStats: Boolean): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, None, None,
-      collectStatsOnConvert = collectStatsOnConvert)
+      collectStats = collectStats)
   }
 
   /**
