@@ -18,19 +18,25 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.internal.SQLConf
 
 class DeltaRestartSessionSuite extends SparkFunSuite {
 
   test("restart Spark session should work") {
     withTempDir { dir =>
-      var spark = SparkSession.builder().master("local[2]").getOrCreate()
+      var spark = SparkSession.builder().master("local[2]")
+        .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
+        .getOrCreate()
       try {
         val path = dir.getCanonicalPath
         spark.range(10).write.format("delta").mode("overwrite").save(path)
         spark.read.format("delta").load(path).count()
 
         spark.stop()
-        spark = SparkSession.builder().master("local[2]").getOrCreate()
+        spark = SparkSession.builder().master("local[2]")
+          .config(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
+          .getOrCreate()
         spark.range(10).write.format("delta").mode("overwrite").save(path)
         spark.read.format("delta").load(path).count()
       }

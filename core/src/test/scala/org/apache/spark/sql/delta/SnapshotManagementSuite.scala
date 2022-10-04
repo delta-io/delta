@@ -20,6 +20,8 @@ import java.io.{File, FileNotFoundException, RandomAccessFile}
 import java.util.concurrent.ExecutionException
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -28,7 +30,8 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.storage.StorageLevel
 
-class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSparkSession {
+class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+  with DeltaSQLCommandTest {
 
 
   /**
@@ -63,6 +66,13 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
   private def deleteLogVersion(path: String, version: Long): Unit = {
     val deltaFile = new File(FileNames.deltaFile(new Path(path, "_delta_log"), version).toString)
+    assert(deltaFile.exists(), s"Could not find $deltaFile")
+    assert(deltaFile.delete(), s"Failed to delete $deltaFile")
+  }
+
+  private def deleteCheckpointVersion(path: String, version: Long): Unit = {
+    val deltaFile = new File(
+      FileNames.checkpointFileSingular(new Path(path, "_delta_log"), version).toString)
     assert(deltaFile.exists(), s"Could not find $deltaFile")
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }
@@ -429,15 +439,28 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val newLogSegment = log.snapshot.logSegment
       assert(log.getLogSegmentAfterCommit(oldLogSegment, 0) == newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
-      intercept[IllegalArgumentException] {
-        // Version exists, but not contiguous with old logSegment
-        log.getLogSegmentAfterCommit(oldLogSegment, 1)
-      }
-      intercept[IllegalArgumentException] {
-        // Version exists, but newLogSegment already contains it
-        log.getLogSegmentAfterCommit(newLogSegment, 0)
-      }
       assert(log.getLogSegmentAfterCommit(newLogSegment, 1) == log.snapshot.logSegment)
+    }
+  }
+
+  testQuietly("checkpoint/json not found when executor restart " +
+    "after expired checkpoints in the snapshot cache are cleaned up") {
+    withTempDir { tempDir =>
+      // Create checkpoint 1 and 3
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      deltaLog.checkpoint()
+      // simulate checkpoint 1 expires and is cleaned up
+      deleteCheckpointVersion(path, 1)
+      // simulate executor hangs and restart, cache invalidation
+      deltaLog.snapshot.uncache()
+
+      spark.read.format("delta").load(path).collect()
     }
   }
 }

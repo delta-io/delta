@@ -28,6 +28,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -354,11 +355,12 @@ abstract class UpdateSuiteBase
   test("Negative case - non-delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
       .write.mode("overwrite").format("parquet").save(tempPath)
-    val e = intercept[AnalysisException] {
+    val e = intercept[DeltaAnalysisException] {
       executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
+      e.contains("Incompatible format"))
   }
 
   test("Negative case - check target columns during analysis") {
@@ -673,8 +675,12 @@ abstract class UpdateSuiteBase
       case f: FileSourceScanExec => f
     })
     // The first scan is for finding files to update. We only are matching against the key
-    // so that should be the only field in the schema
-    assert(scans.head.schema == StructType(Seq(StructField("key", IntegerType))))
+    // so that should be the only field in the schema.
+    assert(scans.head.schema == StructType(
+      Seq(
+        StructField("key", IntegerType)
+      )
+    ))
   }
 
   test("nested schema pruning on finding files to update") {
@@ -801,7 +807,7 @@ abstract class UpdateSuiteBase
     where = "b = (select explode(c) from deltaTable)",
     expectException = true, // more than one generated, expect exception.
     customErrorRegex =
-      Some(".*more than one row returned by a subquery used as an expression(?s).*")
+      Some(".*ore than one row returned by a subquery used as an expression(?s).*")
   )
 
   protected def checkUpdateJson(

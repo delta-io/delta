@@ -586,7 +586,6 @@ trait DeltaSQLConfBase {
           |tables and tables with no stats.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
   val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
     buildConf("replaceWhere.constraintCheck.enabled")
       .doc(
@@ -793,6 +792,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+      .doc(
+        "Streaming read on Delta table with column mapping schema operations " +
+          "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
+        "schema confusion. However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -839,6 +849,25 @@ trait DeltaSQLConfBase {
           | Please note that if you set this to true, the lower case of the
           | key will be used for non delta prefix table properties.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_REQUIRED_SPARK_CONFS_CHECK =
+    buildConf("requiredSparkConfsCheck.enabled")
+      .doc("Whether to verify SparkSession is initialized with required configurations.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  // TODO(SC-109291): Force wipe history, too.
+  val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
+    buildConf("restore.protocolDowngradeAllowed")
+      .doc("Whether a table may be restored to a lower protocol version than the current." +
+        " This setting also affects CLONE TABLE." +
+        " Note that allowing protocol downgrades may make the history unreadable. It is strongly" +
+        " recommended to wipe the table history with VACUUM RETAIN 0 HOURS after running a" +
+        " RESTORE or CLONE with this setting enabled. This command should also be run without any" +
+        " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
 }

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.hadoop.fs.Path
@@ -35,9 +35,8 @@ class TahoeChangeFileIndex(
     val filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
-
-  override def tableVersion: Long = snapshot.version
+    override val tableVersion: Long,
+    override val metadata: Metadata) extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -63,7 +62,7 @@ class TahoeChangeFileIndex(
     filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
   }
 
-  override val partitionSchema: StructType = snapshot.metadata.partitionSchema
+  override val partitionSchema: StructType = metadata.partitionSchema
     .add(CDC_COMMIT_VERSION, LongType)
     .add(CDC_COMMIT_TIMESTAMP, TimestampType)
 

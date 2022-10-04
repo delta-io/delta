@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}

@@ -29,7 +29,7 @@ import org.apache.spark.sql.types.StructType
  * @param fileCounts - an array of Int representing total number of files in different bins
  * @param totalBytes - an array of Long representing total number of bytes in different bins
  */
-private[delta] case class FileSizeHistogram(
+case class FileSizeHistogram(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sortedBinBoundaries: IndexedSeq[Long],
     fileCounts: Array[Long],

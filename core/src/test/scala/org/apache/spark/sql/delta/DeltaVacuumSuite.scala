@@ -22,11 +22,11 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
-import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path

@@ -21,6 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
@@ -87,15 +88,26 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
 
       // Set a custom timestamp for the commit
       val desiredTime = "1996-01-12"
-      val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-      val time = format.parse(desiredTime).getTime
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
-      file.setLastModified(time)
+      setTimestampToCommitFileAtVersion(deltaLog, version = 0, time = desiredTime)
 
       // restore by timestamp to version 0
       restoreTableToTimestamp(path, desiredTime, false)
       checkAnswer(spark.read.format("delta").load(path), df1)
     }
+  }
+
+  protected def timeStringToTimestamp(time: String): Long = {
+    val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+    format.parse(time).getTime
+  }
+
+  protected def setTimestampToCommitFileAtVersion(
+      deltaLog: DeltaLog,
+      version: Int,
+      time: String): Unit = {
+    val timestamp = timeStringToTimestamp(time)
+    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    file.setLastModified(timestamp)
   }
 
   test("metastore based table") {
@@ -178,6 +190,35 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       restoreTableToVersion(tempDir.getAbsolutePath, 2, false)
       checkAnswer(spark.read.format("delta").load(tempDir.getAbsolutePath), df1)
       assert(deltaLog.update().version == 4)
+    }
+  }
+
+  for (downgradeAllowed <- DeltaTestUtils.BOOLEAN_DOMAIN)
+  test(s"restore downgrade protocol (allowed=$downgradeAllowed)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(5).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val oldProtocolVersion = deltaLog.snapshot.protocol
+      // Update table to latest version.
+      deltaLog.upgradeProtocol()
+      val newProtocolVersion = deltaLog.snapshot.protocol
+      assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
+        newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
+        s"newProtocolVersion=$newProtocolVersion is not strictly greater than" +
+          s" oldProtocolVersion=$oldProtocolVersion")
+
+      withSQLConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key ->
+          downgradeAllowed.toString) {
+        // Restore to before the upgrade.
+        restoreTableToVersion(path, version = 0, isMetastoreTable = false)
+      }
+      val restoredProtocolVersion = deltaLog.snapshot.protocol
+      if (downgradeAllowed) {
+        assert(restoredProtocolVersion === oldProtocolVersion)
+      } else {
+        assert(restoredProtocolVersion === newProtocolVersion)
+      }
     }
   }
 

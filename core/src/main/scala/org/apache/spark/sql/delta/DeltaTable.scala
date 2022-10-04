@@ -17,8 +17,6 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.util.Locale
-
 import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -212,15 +210,6 @@ object DeltaTableUtils extends PredicateHelper
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
-  }
-
-  /**
-   * Enrich the metadata received from the catalog on Delta tables with the Delta table metadata.
-   */
-  def combineWithCatalogMetadata(sparkSession: SparkSession, table: CatalogTable): CatalogTable = {
-    val deltaLog = DeltaLog.forTable(sparkSession, new Path(table.location))
-    val metadata = deltaLog.snapshot.metadata
-    table.copy(schema = metadata.schema, partitionColumnNames = metadata.partitionColumns)
   }
 
   /**

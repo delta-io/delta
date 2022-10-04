@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.exc.MismatchedInputException
@@ -28,7 +30,8 @@ import org.apache.commons.io.IOUtils
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
 
-class CheckpointMetadataSuite extends SharedSparkSession {
+class CheckpointMetadataSuite extends SharedSparkSession
+  with DeltaSQLCommandTest {
 
   // same checkpoint schema for tests
   private val checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false))

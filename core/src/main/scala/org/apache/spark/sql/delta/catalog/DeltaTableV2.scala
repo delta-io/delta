@@ -172,7 +172,7 @@ case class DeltaTableV2(
 
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
-      throw DeltaErrors.notADeltaTableException(id)
+      throw DeltaErrors.nonExistentDeltaTable(id)
     }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
       path.toString, snapshot, partitionFilters)

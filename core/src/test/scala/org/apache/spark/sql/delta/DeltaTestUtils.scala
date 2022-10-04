@@ -20,8 +20,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
@@ -35,19 +33,6 @@ import org.apache.spark.sql.util.QueryExecutionListener
 trait DeltaTestUtilsBase {
 
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
-
-  /**
-   * Helper class for to ensure initial commits contain a Metadata action.
-   */
-  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
-    def commitManually(actions: Action*): Long = {
-      if (txn.readVersion == -1 && !actions.exists(_.isInstanceOf[Metadata])) {
-        txn.commit(Metadata() +: actions, ManualUpdate)
-      } else {
-        txn.commit(actions, ManualUpdate)
-      }
-    }
-  }
 
   class LogicalPlanCapturingListener(optimized: Boolean) extends QueryExecutionListener {
     val plans = new ArrayBuffer[LogicalPlan]
