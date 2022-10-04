@@ -109,7 +109,8 @@ trait DeltaSourceBase extends Source
    *
    * Visible for testing.
    */
-  protected[delta] val snapshotAtSourceInit: Snapshot = deltaLog.snapshot
+  // TODO: Should this be pinned to the latest snapshot via deltaLog.update()?
+  protected[delta] val snapshotAtSourceInit: Snapshot = deltaLog.unsafeVolatileSnapshot
 
   /**
    * Flag that allows user to force enable unsafe streaming read on Delta table with
@@ -1000,7 +1001,7 @@ object DeltaSource {
       //
       // Note2: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
       // timestamp, caller doesn't expect exception, and can handle the non-existent version.
-      if (commit.version + 1 <= deltaLog.snapshot.version || canExceedLatest) {
+      if (commit.version + 1 <= deltaLog.unsafeVolatileSnapshot.version || canExceedLatest) {
         commit.version + 1
       } else {
         val commitTs = new Timestamp(commit.timestamp)

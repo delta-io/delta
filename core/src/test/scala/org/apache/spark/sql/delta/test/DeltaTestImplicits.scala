@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.test
 
+import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 
 import org.apache.spark.sql.SaveMode
@@ -45,6 +45,19 @@ object DeltaTestImplicits {
 
     def commitWriteAppend(actions: Action*): Long = {
       commitActions(Write(SaveMode.Append), actions: _*)
+    }
+  }
+
+  /**
+   * Helper class for working with the most recent snapshot in the deltaLog
+   */
+  implicit class DeltaLogTestHelper(deltaLog: DeltaLog) {
+    def snapshot: Snapshot = {
+      deltaLog.unsafeVolatileSnapshot
+    }
+
+    def checkpoint(): Unit = {
+      deltaLog.checkpoint(snapshot)
     }
   }
 }

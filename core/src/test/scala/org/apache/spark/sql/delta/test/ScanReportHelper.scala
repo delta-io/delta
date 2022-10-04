@@ -70,6 +70,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
           scanExec.relation.location match {
             case deltaTable: PreparedDeltaFileIndex =>
               val preparedScan = deltaTable.preparedScan
+              // TODO: Use preparedScan.scannedSnapshot instead of the volatile one from deltaLog.
               // The names of the partition columns that were used as filters in this scan.
               // Convert this to a set first to avoid double-counting partition columns that might
               // appear multiple times.
@@ -94,8 +95,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 usedPartitionColumns = usedPartitionColumns,
                 numUsedPartitionColumns = usedPartitionColumns.size,
                 allPartitionColumns = deltaTable.metadata.partitionColumns,
-                numAllPartitionColumns =
-                  deltaTable.metadata.partitionColumns.size,
+                numAllPartitionColumns = deltaTable.metadata.partitionColumns.size,
                 parentFilterOutputRows = None
               )
 
@@ -111,7 +111,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 unusedFilters = Nil,
                 size = Map(
                   "total" -> DataSize(
-                    bytesCompressed = Some(deltaTable.deltaLog.snapshot.sizeInBytes))
+                    bytesCompressed = Some(deltaTable.deltaLog.unsafeVolatileSnapshot.sizeInBytes))
                 ),
                 metrics = scanExec.metrics.mapValues(_.value).toMap,
                 versionScanned = None,

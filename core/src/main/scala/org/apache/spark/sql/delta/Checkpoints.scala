@@ -286,7 +286,6 @@ trait Checkpoints extends DeltaLogging {
 
   def logPath: Path
   def dataPath: Path
-  def snapshot: Snapshot
   protected def store: LogStore
   protected def metadata: Metadata
 
@@ -298,11 +297,6 @@ trait Checkpoints extends DeltaLogging {
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)
-
-  /**
-   * Creates a checkpoint using the default snapshot.
-   */
-  def checkpoint(): Unit = checkpoint(snapshot)
 
   /**
    * Catch non-fatal exceptions related to checkpointing, since the checkpoint is written
@@ -327,6 +321,15 @@ trait Checkpoints extends DeltaLogging {
         if (throwError) throw e
     }
   }
+
+  /**
+   * Creates a checkpoint using the default snapshot.
+   *
+   * WARNING: This API is being deprecated, and will be removed in future versions.
+   * Please use the checkpoint(Snapshot) function below to write checkpoints to the delta log.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions.", "12.0")
+  def checkpoint(): Unit = checkpoint(unsafeVolatileSnapshot)
 
   /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.

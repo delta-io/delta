@@ -284,8 +284,27 @@ trait SnapshotManagement { self: DeltaLog =>
     CapturedSnapshot(snapshot, timestamp)
   }
 
-  /** Returns the current snapshot. Note this does not automatically `update()`. */
-  def snapshot: Snapshot = Option(currentSnapshot).map(_.snapshot).orNull
+  /**
+   * Returns the current snapshot. This does not automatically `update()`.
+   *
+   * WARNING: This is not guaranteed to give you the latest snapshot of the log, nor stay
+   * consistent across multiple accesses. If you need the latest snapshot, it is recommended
+   * to fetch it using `deltaLog.update()`; and save the returned snapshot so it does not
+   * unexpectedly change from under you. See how [[OptimisticTransaction]] and [[DeltaScan]]
+   * use the snapshot as examples for write/read paths respectively.
+   * This API should only be used in scenarios where any recent snapshot will suffice and an
+   * update is undesired, or by internal code that holds the DeltaLog lock to prevent races.
+   */
+  def unsafeVolatileSnapshot: Snapshot = Option(currentSnapshot).map(_.snapshot).orNull
+
+  /**
+   * WARNING: This API is unsafe and deprecated. It will be removed in future versions.
+   * Use the above unsafeVolatileSnapshot to get the most recently cached snapshot on
+   * the cluster.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions. " +
+    "Use unsafeVolatileSnapshot instead", "12.0")
+  def snapshot: Snapshot = unsafeVolatileSnapshot
 
   protected def createSnapshot(
       initSegment: LogSegment,
@@ -589,7 +608,7 @@ trait SnapshotManagement { self: DeltaLog =>
         val newSnapshot = createSnapshot(
           initSegment = segment,
           minFileRetentionTimestamp = minFileRetentionTimestamp,
-          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt,
+          checkpointMetadataOptHint = previousSnapshot.getCheckpointMetadataOpt,
           checksumOpt = None)
         logMetadataTableIdChange(previousSnapshot, newSnapshot)
         logInfo(s"Updated snapshot to $newSnapshot")
@@ -691,7 +710,8 @@ trait SnapshotManagement { self: DeltaLog =>
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
-    val current = snapshot
+    // See if the version currently cached on the cluster satisfies the requirement
+    val current = unsafeVolatileSnapshot
     if (current.version == version) {
       return current
     }

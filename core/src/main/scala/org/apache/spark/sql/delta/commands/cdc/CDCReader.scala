@@ -293,7 +293,7 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.endBeforeStartVersionInCDC(start, end)
     }
 
-    val snapshot = deltaLog.snapshot
+    val snapshot = deltaLog.unsafeVolatileSnapshot
 
     // A map from change version to associated commit timestamp.
     val timestampsByVersion: Map[Long, Timestamp] =
