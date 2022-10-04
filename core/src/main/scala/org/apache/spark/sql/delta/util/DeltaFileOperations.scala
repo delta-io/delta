@@ -138,17 +138,19 @@ object DeltaFileOperations extends DeltaLogging {
       hadoopConf: Configuration,
       subDirs: Iterator[String],
       recurse: Boolean,
+      hiddenDirNameFilter: String => Boolean,
       hiddenFileNameFilter: String => Boolean,
       listAsDirectories: Boolean = true): Iterator[SerializableFileStatus] = {
 
     def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
       logInfo(s"Listing $dir")
       try {
-
         val path = if (listAsDirectories) new Path(dir, "\u0000") else new Path(dir + "\u0000")
         logStore.listFrom(path, hadoopConf)
-          .filterNot(f => hiddenFileNameFilter(f.getPath.getName))
-          .map(SerializableFileStatus.fromStatus)
+          .filterNot{ f =>
+            val name = f.getPath.getName
+            if (f.isDirectory) hiddenDirNameFilter(name) else hiddenFileNameFilter(name)
+          }.map(SerializableFileStatus.fromStatus)
       } catch {
         case NonFatal(e) if isThrottlingError(e) && tries > 0 =>
           randomBackoff("listing", e)
@@ -164,7 +166,8 @@ object DeltaFileOperations extends DeltaLogging {
     }
 
     if (recurse) {
-      recurseDirectories(logStore, hadoopConf, filesAndDirs, hiddenFileNameFilter)
+      recurseDirectories(
+        logStore, hadoopConf, filesAndDirs, hiddenDirNameFilter, hiddenFileNameFilter)
     } else {
       filesAndDirs
     }
@@ -175,11 +178,18 @@ object DeltaFileOperations extends DeltaLogging {
       logStore: LogStore,
       hadoopConf: Configuration,
       filesAndDirs: Iterator[SerializableFileStatus],
+      hiddenDirNameFilter: String => Boolean,
       hiddenFileNameFilter: String => Boolean): Iterator[SerializableFileStatus] = {
     filesAndDirs.flatMap {
       case dir: SerializableFileStatus if dir.isDir =>
-        Iterator.single(dir) ++ listUsingLogStore(
-          logStore, hadoopConf, Iterator.single(dir.path), recurse = true, hiddenFileNameFilter)
+        Iterator.single(dir) ++
+          listUsingLogStore(
+            logStore,
+            hadoopConf,
+            Iterator.single(dir.path),
+            recurse = true,
+            hiddenDirNameFilter,
+            hiddenFileNameFilter)
       case file =>
         Iterator.single(file)
     }
@@ -200,6 +210,9 @@ object DeltaFileOperations extends DeltaLogging {
    * @param spark The SparkSession
    * @param subDirs Absolute path of the subdirectories to list
    * @param hadoopConf The Hadoop Configuration to get a FileSystem instance
+   * @param hiddenDirNameFilter A function that returns true when the directory should be considered
+   *                            hidden and excluded from results. Defaults to checking for prefixes
+   *                            of "." or "_".
    * @param hiddenFileNameFilter A function that returns true when the file should be considered
    *                             hidden and excluded from results. Defaults to checking for prefixes
    *                             of "." or "_".
@@ -212,6 +225,7 @@ object DeltaFileOperations extends DeltaLogging {
       spark: SparkSession,
       subDirs: Seq[String],
       hadoopConf: Broadcast[SerializableConfiguration],
+      hiddenDirNameFilter: String => Boolean = defaultHiddenFileFilter,
       hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
       fileListingParallelism: Option[Int] = None,
       listAsDirectories: Boolean = true): Dataset[SerializableFileStatus] = {
@@ -225,7 +239,7 @@ object DeltaFileOperations extends DeltaLogging {
         hadoopConf.value.value,
         dirs,
         recurse = false,
-        hiddenFileNameFilter, listAsDirectories)
+        hiddenDirNameFilter, hiddenFileNameFilter, listAsDirectories)
     }.repartition(listParallelism) // Initial list of subDirs may be small
 
     val allDirsAndFiles = dirsAndFiles.mapPartitions { firstLevelDirsAndFiles =>
@@ -234,6 +248,7 @@ object DeltaFileOperations extends DeltaLogging {
         logStore,
         hadoopConf.value.value,
         firstLevelDirsAndFiles,
+        hiddenDirNameFilter,
         hiddenFileNameFilter)
     }
     spark.createDataset(allDirsAndFiles)
@@ -250,6 +265,9 @@ object DeltaFileOperations extends DeltaLogging {
    * @param listFilename Absolute path to a filename from which new files are listed (exclusive)
    * @param topDir Absolute path to the original starting directory
    * @param hadoopConf The Hadoop Configuration to get a FileSystem instance
+   * @param hiddenDirNameFilter A function that returns true when the directory should be considered
+   *                            hidden and excluded from results. Defaults to checking for prefixes
+   *                            of "." or "_".
    * @param hiddenFileNameFilter A function that returns true when the file should be considered
    *                             hidden and excluded from results. Defaults to checking for prefixes
    *                             of "." or "_".
@@ -259,6 +277,7 @@ object DeltaFileOperations extends DeltaLogging {
     listFilename: String,
     topDir: String,
     hadoopConf: Broadcast[SerializableConfiguration],
+    hiddenDirNameFilter: String => Boolean = defaultHiddenFileFilter,
     hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
     fileListingParallelism: Option[Int] = None): Dataset[SerializableFileStatus] = {
 
@@ -267,7 +286,7 @@ object DeltaFileOperations extends DeltaLogging {
     // If there are no new files, listing from parent directories are expected to be constant time.
     val subDirs = getAllTopComponents(new Path(listFilename), new Path(topDir))
 
-    recursiveListDirs(spark, subDirs, hadoopConf, hiddenFileNameFilter,
+    recursiveListDirs(spark, subDirs, hadoopConf, hiddenDirNameFilter, hiddenFileNameFilter,
       fileListingParallelism, listAsDirectories = false)
   }
 
@@ -279,9 +298,11 @@ object DeltaFileOperations extends DeltaLogging {
       hadoopConf: Configuration,
       dirs: Seq[String],
       recursive: Boolean = true,
+      dirFilter: String => Boolean = defaultHiddenFileFilter,
       fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
     val logStore = LogStore(SparkEnv.get.conf, hadoopConf)
-    listUsingLogStore(logStore, hadoopConf, dirs.toIterator, recurse = recursive, fileFilter)
+    listUsingLogStore(
+      logStore, hadoopConf, dirs.toIterator, recurse = recursive, dirFilter, fileFilter)
   }
 
   /**
@@ -294,11 +315,12 @@ object DeltaFileOperations extends DeltaLogging {
     listFilename: String,
     topDir: String,
     recursive: Boolean = true,
+    dirFilter: String => Boolean = defaultHiddenFileFilter,
     fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
     val logStore = LogStore(SparkEnv.get.conf, hadoopConf)
     val listDirs = getAllTopComponents(new Path(listFilename), new Path(topDir))
-    listUsingLogStore(logStore, hadoopConf, listDirs.toIterator, recurse = recursive, fileFilter,
-      listAsDirectories = false)
+    listUsingLogStore(logStore, hadoopConf, listDirs.toIterator, recurse = recursive,
+      dirFilter, fileFilter, listAsDirectories = false)
   }
 
   /**

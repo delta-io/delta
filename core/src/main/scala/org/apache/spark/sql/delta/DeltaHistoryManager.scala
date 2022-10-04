@@ -116,7 +116,7 @@ class DeltaHistoryManager(
       canReturnEarliestCommit: Boolean = false): Commit = {
     val time = timestamp.getTime
     val earliest = if (mustBeRecreatable) {
-      getEarliestReproducibleCommit
+      getEarliestRecreatableCommit
     } else {
       getEarliestDeltaFile(deltaLog)
     }
@@ -163,7 +163,7 @@ class DeltaHistoryManager(
       mustBeRecreatable: Boolean = true,
       allowOutOfRange: Boolean = false): Unit = {
     val earliest = if (mustBeRecreatable) {
-      getEarliestReproducibleCommit
+      getEarliestRecreatableCommit
     } else {
       getEarliestDeltaFile(deltaLog)
     }
@@ -200,7 +200,7 @@ class DeltaHistoryManager(
    * that way we can reconstruct the entire history of the table. This method assumes that the
    * commits are contiguous.
    */
-  private[delta] def getEarliestReproducibleCommit: Long = {
+  private[delta] def getEarliestRecreatableCommit: Long = {
     val files = deltaLog.store.listFrom(
         FileNames.deltaFile(deltaLog.logPath, 0),
         deltaLog.newDeltaHadoopConf())
@@ -246,7 +246,7 @@ class DeltaHistoryManager(
     if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion)) {
       return lastCompleteCheckpoint.get
     } else if (smallestDeltaVersion < Long.MaxValue) {
-      throw DeltaErrors.noReproducibleHistoryFound(deltaLog.logPath)
+      throw DeltaErrors.noRecreatableHistoryFound(deltaLog.logPath)
     } else {
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)
     }

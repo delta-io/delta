@@ -157,6 +157,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           spark,
           Seq(basePath),
           hadoopConf,
+          hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           fileListingParallelism = Option(parallelism)
         )

@@ -21,6 +21,7 @@ import java.io.{File, FileNotFoundException}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -243,7 +244,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       }
       assert(realCause.getMessage.contains("Failed to merge"))
       assert(exception.isInstanceOf[AnalysisException] ||
-        realCause.getCause.getMessage.contains("/part="),
+        realCause.getMessage.contains("/part="),
         "Error message should contain the file name")
     }
   }
@@ -680,6 +681,21 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       checkAnswer(
         spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
         simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  test("partition column name starting with underscore and dot") {
+    withTempDir { dir =>
+      val df = spark.range(100)
+        .withColumn("_key1", col("id") % 2)
+        .withColumn(".key2", col("id") % 7 cast "String")
+
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, df, partCols = Seq("_key1", ".key2"))
+
+      convertToDelta(s"parquet.`$tempDir`", Some("_key1 long, `.key2` string"))
+
+      checkAnswer(sql(s"SELECT * FROM delta.`$tempDir`"), df)
     }
   }
 }

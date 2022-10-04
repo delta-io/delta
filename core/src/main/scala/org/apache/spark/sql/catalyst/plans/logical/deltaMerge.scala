@@ -123,7 +123,9 @@ sealed trait DeltaMergeIntoClause extends Expression with DeltaUnevaluable {
   protected[logical] def verifyActions(): Unit = actions.foreach {
     case _: UnresolvedStar =>
     case _: DeltaMergeAction =>
-    case a => throw new IllegalArgumentException(s"Unexpected action expression $a in $this")
+    case a => throw new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNEXPECTED_ACTION_EXPRESSION",
+      messageParameters = Array(s"$a"))
   }
 }
 

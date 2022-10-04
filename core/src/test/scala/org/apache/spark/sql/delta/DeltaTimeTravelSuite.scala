@@ -25,9 +25,9 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
-import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -162,7 +162,7 @@ class DeltaTimeTravelSuite extends QueryTest
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
-    assert(e.getMessage.contains("reproducible"))
+    assert(e.getMessage.contains("recreatable"))
   }
 
   historyTest("resolving commits should return commit before timestamp") { deltaLog =>
@@ -536,7 +536,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
-      assert(e2.getMessage.contains("reproducible"))
+      assert(e2.getMessage.contains("recreatable"))
     }
   }
 

@@ -20,12 +20,15 @@ import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
-class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with SharedSparkSession {
+class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+    with DeltaSQLCommandTest {
 
   protected override def sparkConf =
     super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)

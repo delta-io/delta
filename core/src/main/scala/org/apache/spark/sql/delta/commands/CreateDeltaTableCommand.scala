@@ -26,7 +26,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -104,6 +103,7 @@ case class CreateDeltaTableCommand(
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
+      val opStartTs = System.currentTimeMillis()
       if (query.isDefined) {
         // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
         // earlier. And the data should not exist either, to match the behavior of
@@ -215,7 +215,11 @@ case class CreateDeltaTableCommand(
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot, txn)
+      updateCatalog(
+        sparkSession,
+        tableWithLocation,
+        deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs)),
+        txn)
 
       result
     }
@@ -382,7 +386,7 @@ case class CreateDeltaTableCommand(
         spark.sessionState.catalog.alterTable(table)
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-        throw new CannotReplaceMissingTableException(ident)
+        throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
         spark.sessionState.catalog.createTable(
           cleaned,

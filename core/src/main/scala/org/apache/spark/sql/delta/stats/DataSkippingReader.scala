@@ -515,6 +515,7 @@ trait DataSkippingReaderBase
         // At this point the subquery has been materialized so it is safe to call get on the Option.
         constructLiteralInListDataFilters(in.child, in.values().get.toSeq)
 
+
       // Remove redundant pairs of NOT
       case Not(Not(e)) =>
         constructDataFilters(e)
@@ -844,8 +845,11 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // for data skipping, avoid using the filters that involve subqueries
-    val (subqueryFilters, flatFilters) = filters.partition(containsSubquery(_))
+    // For data skipping, avoid using the filters that involve subqueries.
+
+    val (subqueryFilters, flatFilters) = filters.partition {
+      case f => containsSubquery(f)
+    }
 
     val (partitionFilters, dataFilters) = flatFilters
         .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))

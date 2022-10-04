@@ -905,7 +905,7 @@ case class MergeIntoCommand(
       case newAttrib: AttributeReference =>
         val existingTargetAttrib = targetOutputColsMap.get(newAttrib.name)
           .getOrElse {
-            throw DeltaErrors.failedFindAttributeInOutputCollumns(
+            throw DeltaErrors.failedFindAttributeInOutputColumns(
               newAttrib.name, targetOutputCols.mkString(","))
           }.asInstanceOf[AttributeReference]
 

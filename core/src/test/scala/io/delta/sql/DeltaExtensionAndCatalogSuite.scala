@@ -18,9 +18,12 @@ package io.delta.sql
 
 import java.nio.file.Files
 
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.network.util.JavaUtils
@@ -51,6 +54,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       .appName("DeltaSparkSessionExtensionSuiteUsingSQLConf")
       .master("local[2]")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
     try {
       verifyDeltaSQLParserIsActivated(spark)
@@ -64,6 +68,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       .appName("DeltaSparkSessionExtensionSuiteUsingWithExtensions")
       .master("local[2]")
       .withExtensions(new io.delta.sql.DeltaSparkSessionExtension)
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
     try {
       verifyDeltaSQLParserIsActivated(spark)
@@ -79,6 +84,44 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     ) { spark =>
       val v2Catalog = spark.sessionState.analyzer.catalogManager.catalog("spark_catalog")
       assert(v2Catalog.isInstanceOf[org.apache.spark.sql.delta.catalog.DeltaCatalog])
+    }
+  }
+
+  test("DeltaLog should not throw exception if spark.sql.catalog.spark_catalog is set") {
+    withTempDir { dir =>
+      withSparkSession(
+        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key ->
+          classOf[org.apache.spark.sql.delta.catalog.DeltaCatalog].getName
+      ) { spark =>
+        val path = new Path(dir.getCanonicalPath)
+        assert(DeltaLog.forTable(spark, path).tableExists == false)
+      }
+    }
+  }
+
+  test("DeltaLog should throw exception if spark.sql.catalog.spark_catalog " +
+    "config is not found") {
+    withTempDir { dir =>
+      withSparkSession("" -> "") { spark =>
+        val path = new Path(dir.getCanonicalPath)
+        val e = intercept[java.util.concurrent.ExecutionException] {
+          DeltaLog.forTable(spark, path)
+        }
+        assert(e.getCause.isInstanceOf[DeltaAnalysisException])
+        assert(e.getCause.asInstanceOf[DeltaAnalysisException].getErrorClass() ==
+          "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+      }
+    }
+  }
+
+  test("DeltaLog should not throw exception if spark.sql.catalog.spark_catalog " +
+    "config is not found and the check is disabled") {
+    withTempDir { dir =>
+      withSparkSession(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK.key -> "false") { spark =>
+        val path = new Path(dir.getCanonicalPath)
+          DeltaLog.forTable(spark, path)
+        assert(DeltaLog.forTable(spark, path).tableExists == false)
+      }
     }
   }
 
@@ -107,104 +150,5 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
       s"${classOf[DeltaCatalog].getName}"
     )
     expectedStrs.foreach { m => assert(e.getMessage().contains(m), "full exception: " + e) }
-  }
-
-  test("behavior without Delta extension - scala API on path-based tables") {
-    withSparkSession(
-      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
-    ) { spark =>
-      // scalastyle:off sparkimplicits
-      import spark.implicits._
-      // scalastyle:on sparkimplicits
-
-      val tablePath = createTempDir()
-      spark.range(1, 10).toDF("key")
-        .withColumn("value", col("key")).write.format("delta").save(tablePath)
-
-      val deltaTable = DeltaTable.forPath(spark, tablePath)
-
-      checkErrorMessage {
-        deltaTable.delete("key = 0")
-      }
-
-      checkErrorMessage {
-        deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-      }
-
-      // No error expected
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
-  }
-
-  test("behavior without Delta extension - scala API on name-based tables") {
-    withSparkSession(
-      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key -> classOf[DeltaCatalog].getName
-    ) { spark =>
-      // scalastyle:off sparkimplicits
-      import spark.implicits._
-      // scalastyle:on sparkimplicits
-
-      spark.range(1, 10).toDF("key")
-        .withColumn("value", col("key")).write.format("delta").saveAsTable("tbl")
-
-      val deltaTable = DeltaTable.forName(spark, "tbl")
-
-      checkErrorMessage {
-        deltaTable.delete("key = 0")
-      }
-
-      checkErrorMessage {
-        deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-      }
-
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
-  }
-
-  test("behavior without DeltaCatalog configuration - scala API on path-based tables") {
-    withSparkSession(
-      "spark.sql.extensions" -> classOf[DeltaSparkSessionExtension].getName
-    ) { spark =>
-      // scalastyle:off sparkimplicits
-      import spark.implicits._
-      // scalastyle:on sparkimplicits
-      val tablePath = createTempDir()
-
-      spark.range(1, 10).toDF("key").withColumn("value", col("key"))
-        .write.format("delta").save(tablePath)
-
-      val deltaTable = DeltaTable.forPath(spark, tablePath).as("t")
-
-      // No errors expected
-      deltaTable.delete("key = 0")
-
-      deltaTable.updateExpr("key = 0", Map("key" -> "0"))
-
-      deltaTable.merge(Seq((0, 0)).toDF("key", "value").as("s"), "s.key = t.key")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
-
-      deltaTable.history()
-
-      deltaTable.vacuum()
-
-      deltaTable.generate("symlink_format_manifest")
-    }
   }
 }

@@ -14,19 +14,25 @@
  * limitations under the License.
  */
 
-name := "benchmarks"
-scalaVersion := "2.12.15"
+package org.apache.spark.sql.delta.util
 
-lazy val root = (project in file("."))
-  .settings(
-    name := "benchmarks",
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.1.2" % "provided",
-    libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
-    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
+import scala.util.Random
 
-    assemblyMergeStrategy in assembly := {
-      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
-      case x => MergeStrategy.first
-    }
-  )
-  
+/**
+ * Various utility methods used by Delta.
+ */
+object Utils {
+
+  /** Measures the time taken by function `f` */
+  def timedMs[T](f: => T): (T, Long) = {
+    val start = System.currentTimeMillis()
+    val res = f
+    val duration = System.currentTimeMillis() - start
+    (res, duration)
+  }
+
+  /** Generates a string created of `randomPrefixLength` alphanumeric characters. */
+  def getRandomPrefix(numChars: Int): String = {
+    Random.alphanumeric.take(numChars).mkString
+  }
+}

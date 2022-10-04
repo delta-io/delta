@@ -31,7 +31,7 @@ class DeltaParquetFileFormat(
     val referenceSchema: StructType)
   extends ParquetFileFormat {
 
-  private def prepareSchema(inputSchema: StructType): StructType = {
+  def prepareSchema(inputSchema: StructType): StructType = {
     DeltaColumnMapping.createPhysicalSchema(inputSchema, referenceSchema, columnMappingMode)
   }
 
@@ -47,7 +47,7 @@ class DeltaParquetFileFormat(
     }
   }
 
-  override def hashCode(): Int = getClass.hashCode()
+  override def hashCode(): Int = getClass.getCanonicalName.hashCode()
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
