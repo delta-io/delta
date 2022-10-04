@@ -247,7 +247,9 @@ private[delta] class ConflictChecker(
           winningCommitSummary.commitInfo, s"$filePath")
       }
 
+      // scalastyle:off sparkimplicits
       import spark.implicits._
+      // scalastyle:on sparkimplicits
       val predicatesMatchingRemovedFiles = ExpressionSet(
         currentTransactionInfo.readPredicates).iterator.flatMap { p =>
         // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
