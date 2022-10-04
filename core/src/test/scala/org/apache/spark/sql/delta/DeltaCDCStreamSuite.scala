@@ -905,4 +905,5 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
 
 
 class DeltaCDCStreamNameColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode
+  with DeltaColumnMappingEnableNameMode {
+}
