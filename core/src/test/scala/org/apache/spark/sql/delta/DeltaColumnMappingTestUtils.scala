@@ -350,7 +350,7 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    * @param tableOrPath String
    */
   protected def convertToDelta(tableOrPath: String): Unit = {
-    sql(s"CONVERT TO DELTA $tableOrPath NO_STATISTICS")
+    sql(s"CONVERT TO DELTA $tableOrPath NO STATISTICS")
   }
 
   /**
