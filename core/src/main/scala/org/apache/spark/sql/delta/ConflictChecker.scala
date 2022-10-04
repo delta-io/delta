@@ -246,6 +246,23 @@ private[delta] class ConflictChecker(
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo, s"$filePath")
       }
+
+      import spark.implicits._
+      val predicatesMatchingRemovedFiles = ExpressionSet(
+        currentTransactionInfo.readPredicates).iterator.flatMap { p =>
+        // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
+        // beginning.
+        val conflictingFile = DeltaLog.filterFileList(
+          partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
+          winningCommitSummary.changedDataRemovedFiles.toDF(), p :: Nil).as[RemoveFile].take(1)
+        conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
+      }.take(1).toArray
+
+      if (predicatesMatchingRemovedFiles.nonEmpty) {
+        throw DeltaErrors.concurrentDeleteReadException(
+          winningCommitSummary.commitInfo,
+          predicatesMatchingRemovedFiles.head)
+      }
     }
   }
 

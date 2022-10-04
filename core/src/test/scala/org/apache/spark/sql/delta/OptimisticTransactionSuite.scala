@@ -70,6 +70,24 @@ class OptimisticTransactionSuite
     actions = Seq(
       AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)))
 
+  check("append / delete / optimize",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("ad", Map("x" -> "2"), 1, 1, dataChange = false)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      RemoveFile("ad", None, partitionValues = Map("x" -> "2"), dataChange = true)
+    ),
+    actions = Seq(AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)))
+
   check("optimize / append",
     conflicts = false,
     setup = Seq(
