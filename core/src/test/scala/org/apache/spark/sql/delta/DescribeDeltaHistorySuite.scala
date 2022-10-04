@@ -924,7 +924,8 @@ trait DescribeDeltaHistorySuiteBase
         val expectedMetrics = Map(
           "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
         )
-        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        // TODO: Remove filter once Delta API is ready with collectStats in Convert
+        val operationMetrics = getOperationMetrics(deltaTable.history().filter($"operation" === "CONVERT"))
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.CONVERT)
       }
     }
