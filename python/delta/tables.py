@@ -345,8 +345,7 @@ class DeltaTable(object):
                 partitionSchema = jsparkSession.parseDataType(partitionSchema.json())
             jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
                 jsparkSession, identifier,
-                partitionSchema,
-                collectStats)
+                partitionSchema)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
