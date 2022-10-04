@@ -919,14 +919,12 @@ trait DescribeDeltaHistorySuiteBase
 
         // convert to delta
         val deltaTable = io.delta.tables.DeltaTable.convertToDelta(spark, s"parquet.`$dir`",
-          "col2 long")
+          "col2 long", collectStats = false)
         val deltaLog = DeltaLog.forTable(spark, dir)
         val expectedMetrics = Map(
           "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
         )
-        // TODO: Remove filter once Delta API is ready with collectStats in Convert
-        val operationMetrics = getOperationMetrics(deltaTable.history()
-          .filter($"operation" === "CONVERT"))
+        val operationMetrics = getOperationMetrics(deltaTable.history())
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.CONVERT)
       }
     }
