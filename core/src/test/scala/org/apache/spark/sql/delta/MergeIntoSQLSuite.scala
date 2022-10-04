@@ -50,7 +50,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       """.stripMargin
   }
 
-  override protected def executeMerge(
+  override def executeMerge(
       target: String,
       source: String,
       condition: String,
@@ -59,7 +59,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     sql(basicMergeStmt(target, source, condition, update, insert))
   }
 
-  override protected def executeMerge(
+  override def executeMerge(
       tgt: String,
       src: String,
       cond: String,

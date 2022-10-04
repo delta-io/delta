@@ -16,73 +16,35 @@
 
 package org.apache.spark.sql.delta.test
 
-import java.io.File
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
+import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaLogObjectBase, DeltaTableIdentifier, OptimisticTransaction}
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.util.Clock
+import org.apache.spark.sql.SaveMode
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
  */
 object DeltaTestImplicits {
   implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
-    /** Ensures that the initial commit of a Delta table always contains a Metadata action */
+
+    /** Ensure that the initial commit of a Delta table always contains a Metadata action */
+    def commitActions(op: Operation, actions: Action*): Long = {
+      if (txn.readVersion == -1) {
+        val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
+        val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) Some(Protocol()) else None
+        txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
+      } else {
+        txn.commit(actions, op)
+      }
+    }
+
     def commitManually(actions: Action*): Long = {
-      if (txn.readVersion == -1 && !actions.exists(_.isInstanceOf[Metadata])) {
-        txn.commit(Metadata() +: actions, ManualUpdate)
-      } else {
-        txn.commit(actions, ManualUpdate)
-      }
-    }
-  }
-
-  implicit class DeltaLogForTableOverloads(self: DeltaLogObjectBase) {
-    import DeltaLog.{apply, logPathFor}
-
-    /** Creates a DeltaLog from a path string, with options */
-    def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-      apply(spark, logPathFor(dataPath), options = options)
+      commitActions(ManualUpdate, actions: _*)
     }
 
-    /** Creates a DeltaLog from [[File]] */
-    def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
-      apply(spark, logPathFor(dataPath.getAbsolutePath))
-    }
-
-    /** Creates a DeltaLog from [[File]], with a custom clock */
-    def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
-      apply(spark, logPathFor(dataPath.getAbsolutePath), clock = Some(clock))
-    }
-
-    /** Creates a DeltaLog from a string path, with a custom clock */
-    def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
-      apply(spark, logPathFor(dataPath), clock = Some(clock))
-    }
-
-    /** Creates a DeltaLog with a custom clock */
-    def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
-      apply(spark, logPathFor(dataPath), clock = Some(clock))
-    }
-
-    /** Creates a DeltaLog from a [[TableIdentifier]], with a custom clock */
-    def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
-      if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
-        forTable(spark, tableName.table, clock)
-      } else {
-        forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
-      }
-    }
-
-    /** Creates a DeltaLog from a [[CatalogTable]], with a custom clock */
-    def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-      apply(spark, logPathFor(new Path(table.location)), clock = Some(clock))
+    def commitWriteAppend(actions: Action*): Long = {
+      commitActions(Write(SaveMode.Append), actions: _*)
     }
   }
 }

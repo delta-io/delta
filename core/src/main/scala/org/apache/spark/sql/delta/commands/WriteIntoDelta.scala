@@ -276,11 +276,17 @@ case class WriteIntoDelta(
       case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
         val constraints = extractConstraints(sparkSession, condition)
 
-        // If replaceWhere contains data Filters and CDC is enabled, cdc data should be
-        // written too to produce CDC properly because DeleteCommand rewrites files to delete.
+        val removedFileActions = removeFiles(sparkSession, txn, condition)
+        val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
+
+        // The above REMOVE will not produce explicit CDF data when persistent DV is enabled.
+        // Therefore here we need to decide whether to produce explicit CDF for INSERTs, because
+        // the CDF protocol requires either (i) all CDF data are generated explicitly as AddCDCFile,
+        // or (ii) all CDF data can be deduced from [[AddFile]] and [[RemoveFile]].
         val dataToWrite =
           if (containsDataFilters && CDCReader.isCDCEnabledOnTable(txn.metadata) &&
-              sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED)) {
+              sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED) &&
+              cdcExistsInRemoveOp) {
             var dataWithDefaultExprs = data
 
             // pack new data and cdc data into an array of structs and unpack them into rows
@@ -313,7 +319,7 @@ case class WriteIntoDelta(
         }
         (newFiles,
           newFiles.collect { case a: AddFile => a },
-          removeFiles(sparkSession, txn, condition))
+          removedFileActions)
       case (SaveMode.Overwrite, None) =>
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }

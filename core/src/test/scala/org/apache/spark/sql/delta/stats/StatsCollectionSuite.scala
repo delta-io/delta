@@ -54,6 +54,7 @@ class StatsCollectionSuite
 
       val skipping = new StatisticsCollection {
         override val spark = StatsCollectionSuite.this.spark
+        override def tableDataSchema = dataRenamed.schema
         override def dataSchema = dataRenamed.schema
         override val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
           DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)

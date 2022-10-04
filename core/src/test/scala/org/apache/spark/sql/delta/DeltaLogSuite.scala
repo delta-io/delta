@@ -484,9 +484,7 @@ class DeltaLogSuite extends QueryTest
       )
 
       // Now let's delete that commit as well, and write a new first version
-      deltaLog.store
-        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0), deltaLog.newDeltaHadoopConf())
-        .foreach(f => fs.delete(f.getPath, false))
+      deltaLog.listFrom(0).foreach(f => fs.delete(f.getPath, false))
 
       assert(deltaLog.snapshot.version === 0)
 

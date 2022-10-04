@@ -67,4 +67,6 @@ class CdcAddFileIndex(
 
   override val partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
+
+  override def getSnapshot: Snapshot = snapshot
 }

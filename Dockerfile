@@ -26,6 +26,14 @@ RUN pip install importlib_metadata==3.10.0
 
 RUN pip install cryptography==37.0.4
 
+# We must install cryptography before twine. Else, twine will pull a newer version of
+# cryptography that requires a newer version of Rust and may break tests.
+RUN pip install twine==4.0.1
+
+RUN pip install wheel==0.33.4
+
+RUN pip install setuptools==41.0.1
+
 # Do not add any non-deterministic changes (e.g., copy from files 
 # from repo) in this Dockerfile, so that the  docker image 
 # generated from this can be reused across builds.

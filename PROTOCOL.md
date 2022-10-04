@@ -6,6 +6,7 @@
 - [Delta Table Specification](#delta-table-specification)
   - [File Types](#file-types)
     - [Data Files](#data-files)
+    - [Change Data Files](#change-data-files)
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
     - [Last Checkpoint File](#last-checkpoint-file)
@@ -15,6 +16,7 @@
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
     - [Add File and Remove File](#add-file-and-remove-file)
+    - [Add CDC File](#add-cdc-file)
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
@@ -82,7 +84,7 @@ The state of a table at a given version is called a _snapshot_ and is defined by
  - **Set of applications-specific transactions** that have been successfully committed to the table
 
 ## File Types
-A Delta table is stored within a directory and is composed of four different types of files.
+A Delta table is stored within a directory and is composed of the following different types of files.
 
 Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
 ```
@@ -91,6 +93,7 @@ Here is an example of a Delta table with three entries in the commit log, stored
 /mytable/_delta_log/00000000000000000003.json
 /mytable/_delta_log/00000000000000000003.checkpoint.parquet
 /mytable/_delta_log/_last_checkpoint
+/mytable/_change_data/cdc-00000-924d9ac7-21a9-4121-b067-a0a6517aa8ed.c000.snappy.parquet
 /mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
 ```
 
@@ -99,6 +102,17 @@ Data files can be stored in the root directory of the table or in any non-hidden
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
+
+### Change Data Files
+Change data files are stored in a directory at the root of the table named `_change_data`, and represent the changes for the table version they are in. For data with partition values, it is recommended that the change data files are stored within the `_change_data` directory in their respective partitions (i.e. `_change_data/part1=value1/...`). Writers can _optionally_ produce these change data files as a consequence of operations that change underlying data, like `UPDATE`, `DELETE`, and `MERGE` operations to a Delta Lake table. If an operation only adds new data or removes existing data without updating any existing rows, a writer can write only data files and commit them in `add` or `remove` actions without duplicating the data into change data files. When available, change data readers should use the change data files instead of computing changes from the underlying data files.
+
+In addition to the data columns, change data files contain additional columns that identify the type of change event:
+
+Field Name | Data Type | Description
+-|-|-
+_change_type|`String`| `insert`, `update_preimage` , `update_postimage`, `delete` __(1)__
+
+__(1)__ `preimage` is the value before the update, `postimage` is the value after the update.
 
 ### Delta Log Entries
 Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
@@ -330,6 +344,49 @@ The following is an example `remove` action.
   }
 }
 ```
+
+### Add CDC File
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
+
+The schema of the `cdc` action is as follows:
+
+Field Name | Data Type | Description
+-|-|-
+path| String | A relative path to a change data file from the root of the table or an absolute path to a change data file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+dataChange | Boolean | Should always be set to `false` for `cdc` actions because they _do not_ change the underlying data of the table
+tags | Map[String, String] | Map containing metadata about this file
+
+The following is an example of `cdc` action.
+
+```
+{
+  "cdc": {
+    "path": "_change_data/cdc-00001-c…..snappy.parquet",
+    "partitionValues": {},
+    "size": 1213,
+    "dataChange": false
+  }
+}
+```
+
+#### Writer Requirements for AddCDCFile
+
+As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files)
+
+#### Reader Requirements for AddCDCFile
+
+When available, change data readers should use the `cdc` actions in a given table version instead of computing changes from the underlying data files referenced by the `add` and `remove` actions.
+Specifically, to read the row-level changes made in a version, the following strategy should be used:
+1. If there are `cdc` actions in this version, then read only those to get the row-level changes, and skip the remaining `add` and `remove` actions in this version.
+2. Otherwise, if there are no `cdc` actions in this version, read and treat all the rows in the `add` and `remove` actions as inserted and deleted rows, respectively.
+3. The following extra columns should also be generated:
+
+Field Name | Data Type | Description
+-|-|-
+_commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
+_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -589,7 +646,7 @@ The requirements of the writers according to the protocol versions are summarize
 -|-
 Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
 Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
-Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
+Writer Version 4 | - Support [Change Data Feed](#add-cdc-file)<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
 Writer Version 6 | Support [Identity Columns](#identity-columns)
 

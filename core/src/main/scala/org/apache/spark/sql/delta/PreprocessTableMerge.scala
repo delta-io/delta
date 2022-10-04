@@ -23,10 +23,11 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, CurrentDate, CurrentTimestamp, CurrentTimeZone, Expression, Literal, LocalTimestamp, Now, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime
 import org.apache.spark.sql.catalyst.plans.logical._

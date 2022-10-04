@@ -21,7 +21,7 @@ import java.net.URI
 import java.util.Objects
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -42,15 +42,16 @@ abstract class TahoeFileIndex(
     val deltaLog: DeltaLog,
     val path: Path) extends FileIndex {
 
-  def tableVersion: Long
-
-  // scalastyle:off throwerror
-  protected def metadata: Metadata = throw new NotImplementedError()
-  // scalastyle:on throwerror
-
-  override def partitionSchema: StructType = metadata.partitionSchema
+  def tableVersion: Long = deltaLog.snapshot.version
+  def metadata: Metadata = deltaLog.snapshot.metadata
 
   override def rootPaths: Seq[Path] = path :: Nil
+
+  def getSnapshot: Snapshot = {
+    // TODO(Lars): This is temporary while I'm updating a universe implementation to override this
+    //  new API.
+    throw new RuntimeException("Not yet implemented")
+  }
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
@@ -102,6 +103,8 @@ abstract class TahoeFileIndex(
     }
   }
 
+  override def partitionSchema: StructType = metadata.partitionSchema
+
   protected def absolutePath(child: String): Path = {
     val p = new Path(new URI(child))
     if (p.isAbsolute) {
@@ -151,28 +154,26 @@ case class TahoeLogFileIndex(
     isTimeTravelQuery: Boolean = false)
   extends TahoeFileIndex(spark, deltaLog, path) {
 
-  var latestSnapshot = snapshotAtAnalysis
+  override def tableVersion: Long = {
+    if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.snapshot.version
+  }
 
-  override def tableVersion: Long = latestSnapshot.version
-
-  override def metadata: Metadata = latestSnapshot.metadata
+  override def metadata: Metadata = {
+    if (isTimeTravelQuery) snapshotAtAnalysis.metadata else deltaLog.snapshot.metadata
+  }
 
   private def checkSchemaOnRead: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
   }
 
   protected def getSnapshotToScan: Snapshot = {
-    if (isTimeTravelQuery) snapshotAtAnalysis else {
-      val snapshot = deltaLog.update(stalenessAcceptable = true)
-      latestSnapshot = snapshot
-      snapshot
-    }
+    if (isTimeTravelQuery) snapshotAtAnalysis else deltaLog.update(stalenessAcceptable = true)
   }
 
   /** Provides the version that's being used as part of the scan if this is a time travel query. */
   def versionToUse: Option[Long] = if (isTimeTravelQuery) Some(snapshotAtAnalysis.version) else None
 
-  def getSnapshot: Snapshot = {
+  override def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
     if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
@@ -202,11 +203,14 @@ case class TahoeLogFileIndex(
   }
 
   override def inputFiles: Array[String] = {
-    getSnapshot.filesForScan(partitionFilters).files.map(f => absolutePath(f.path).toString).toArray
+    getSnapshot
+      .filesForScan(partitionFilters).files
+      .map(f => absolutePath(f.path).toString)
+      .toArray
   }
 
   override def refresh(): Unit = {}
-  override val sizeInBytes: Long = snapshotAtAnalysis.sizeInBytes
+  override val sizeInBytes: Long = deltaLog.snapshot.sizeInBytes
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
@@ -242,7 +246,6 @@ class TahoeBatchFileIndex(
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   override val tableVersion: Long = snapshot.version
-
   override val metadata: Metadata = snapshot.metadata
 
   override def matchingFiles(
@@ -260,4 +263,6 @@ class TahoeBatchFileIndex(
 
   override def refresh(): Unit = {}
   override val sizeInBytes: Long = addFiles.map(_.size).sum
+
+  override def getSnapshot: Snapshot = snapshot
 }
