@@ -303,7 +303,8 @@ class DeltaTable(object):
         cls,
         sparkSession: SparkSession,
         identifier: str,
-        partitionSchema: Optional[Union[str, StructType]] = None
+        partitionSchema: Optional[Union[str, StructType]] = None,
+        collectStats: bool = True,
     ) -> "DeltaTable":
         """
         Create a DeltaTable from the given parquet table. Takes an existing parquet table and
@@ -338,7 +339,9 @@ class DeltaTable(object):
 
         if partitionSchema is None:
             jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
-                jsparkSession, identifier
+                jsparkSession,
+                identifier,
+                collectStats
             )
         else:
             if not isinstance(partitionSchema, str):
