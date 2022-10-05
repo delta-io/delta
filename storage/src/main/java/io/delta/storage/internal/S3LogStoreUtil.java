@@ -81,7 +81,11 @@ public final class S3LogStoreUtil {
      * TODO: Remove this method when iterators are used everywhere.
      */
     public static FileStatus[] s3ListFromArray(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
-        return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath), new HashSet<>());
+        try {
+            return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath), new HashSet<>());
+        } catch (ClassCastException | NoClassDefFoundError e) {
+            throw new FastS3ListFromUnavailableException(e);
+        }
     }
 
     /**
@@ -98,6 +102,18 @@ public final class S3LogStoreUtil {
             return new String(bytes, StandardCharsets.UTF_8);
         } else {
             return new String(bytes, 0, bytes.length - 1, StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * Wrapper exception with more diagnostics if the fast s3 list from feature is enabled, but we are unable to use it.
+     */
+    public static class FastS3ListFromUnavailableException extends RuntimeException {
+        private FastS3ListFromUnavailableException(Throwable e) {
+            super("The Hadoop file system used for the S3LogStore must be castable" +
+                    " to org.apache.hadoop.fs.s3a.S3AFileSystem. Please ensure that" +
+                    " org.apache.hadoop:hadoop-aws is available at runtime and that S3AFileSystem" +
+                    " is used as the Hadoop file system for the S3LogStore", e);
         }
     }
 }
