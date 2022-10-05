@@ -774,27 +774,23 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `identifier` string represents a Delta table.
-   * Identifier strings can be either a path, table or view name.
-   * In the case of a file path, it checks if it is the root of a Delta
-   * table using the given SparkSession.
+   * Check if the provided `path` string is the root of a Delta table
+   * using the given SparkSession.
    *
    * Examples are as follows:
    * {{{
    *   DeltaTable.isDeltaTable(spark, "path/to/table")
-   *   DeltaTable.isDeltaTable(spark, "MyDeltaTable")
    * }}}
    *
    * @since 0.4.0
-   * @deprecated("Use isDeltaTableByPath(sparkSession: SparkSession, identifier: String)")
+   * @deprecated("Use isDeltaTableByPath(sparkSession: SparkSession, path: String)")
    */
-  def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
-    isDeltaTableByPath(sparkSession, identifier)
+  def isDeltaTable(sparkSession: SparkSession, path: String): Boolean = {
+    isDeltaTableByPath(sparkSession, path)
   }
 
   /**
-   * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table.
+   * Check if the provided `path` string is the root of a Delta table
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -806,14 +802,15 @@ object DeltaTable {
    * }}}
    *
    * @since 0.4.0
-   * @deprecated("Use isDeltaTableByPath(identifier: String)")
+   * @deprecated("Use isDeltaTableByPath(path: String)")
    */
-  def isDeltaTable(identifier: String): Boolean = {
-    isDeltaTableByPath(identifier)
+  def isDeltaTable(path: String): Boolean = {
+    isDeltaTableByPath(path)
   }
 
   /**
-   * Check if the provided `path` string is the root of a Delta table using the given SparkSession.
+   * Check if the provided `path` string is the root of a Delta table
+   * using the given SparkSession.
    *
    * An example would be
    * {{{
@@ -830,12 +827,10 @@ object DeltaTable {
     } else {
       DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
     }
-
-    isDeltaTableByName || isDeltaTableByPath
   }
 
   /**
-   * Check if the provided `path` string is the root of a Delta table using the given SparkSession.
+   * Check if the provided `path` string is the root of a Delta table.
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -856,7 +851,8 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `tableOrViewName` string represents a Delta table.
+   * Check if the provided `tableOrViewName` string represents a Delta table
+   * using the given SparkSession.
    *
    * Example:
    * {{{
@@ -873,6 +869,10 @@ object DeltaTable {
 
   /**
    * Check if the provided `tableOrViewName` string represents a Delta table.
+   *
+   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
    *
    * Example:
    * {{{
