@@ -783,10 +783,10 @@ object DeltaTable {
    * }}}
    *
    * @since 0.4.0
-   * @deprecated("Use isDeltaTableForPath(sparkSession: SparkSession, identifier: String)")
+   * @deprecated("Use isDeltaTableByPath(sparkSession: SparkSession, identifier: String)")
    */
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
-    isDeltaTableForPath(sparkSession, identifier)
+    isDeltaTableByPath(sparkSession, identifier)
   }
 
   /**
@@ -803,10 +803,10 @@ object DeltaTable {
    * }}}
    *
    * @since 0.4.0
-   * @deprecated("Use isDeltaTableForPath(identifier: String)")
+   * @deprecated("Use isDeltaTableByPath(identifier: String)")
    */
   def isDeltaTable(identifier: String): Boolean = {
-    isDeltaTableForPath(identifier)
+    isDeltaTableByPath(identifier)
   }
 
   /**
@@ -814,12 +814,12 @@ object DeltaTable {
    *
    * An example would be
    * {{{
-   *   DeltaTable.isDeltaTableForPath(spark, "path/to/table")
+   *   DeltaTable.isDeltaTableByPath(spark, "path/to/table")
    * }}}
    *
-   * @since 2.1.1
+   * @since 2.2.0
    */
-  def isDeltaTableForPath(sparkSession: SparkSession, path: String): Boolean = {
+  def isDeltaTableByPath(sparkSession: SparkSession, path: String): Boolean = {
     val identifierPath = new Path(path)
     if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
       val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
@@ -838,16 +838,16 @@ object DeltaTable {
    *
    * An example would be
    * {{{
-   *   DeltaTable.isDeltaTableForPath("/path/to/table")
+   *   DeltaTable.isDeltaTableByPath("/path/to/table")
    * }}}
    *
-   * @since 2.1.1
+   * @since 2.2.0
    */
-  def isDeltaTableForPath(path: String): Boolean = {
+  def isDeltaTableByPath(path: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw DeltaErrors.activeSparkSessionNotFound()
     }
-    isDeltaTable(sparkSession, path)
+    isDeltaTableByPath(sparkSession, path)
   }
 
   /**
@@ -855,12 +855,12 @@ object DeltaTable {
    *
    * Example:
    * {{{
-   *   DeltaTable.isDeltaTableForName(spark, "MyDeltaTable")
+   *   DeltaTable.isDeltaTableByName(spark, "MyDeltaTable")
    * }}}
    *
-   * @since 2.1.1
+   * @since 2.2.0
    */
-  def isDeltaTableForName(sparkSession: SparkSession, tableOrViewName: String): Boolean = {
+  def isDeltaTableByName(sparkSession: SparkSession, tableOrViewName: String): Boolean = {
     val tableId: Try[TableIdentifier] =
       Try(sparkSession.sessionState.sqlParser.parseTableIdentifier(tableOrViewName))
     tableId.isSuccess && DeltaTableUtils.isDeltaTable(sparkSession, tableId.get)
@@ -871,16 +871,16 @@ object DeltaTable {
    *
    * Example:
    * {{{
-   *   DeltaTable.isDeltaTableForName("MyDeltaTable")
+   *   DeltaTable.isDeltaTableByName("MyDeltaTable")
    * }}}
    *
-   * @since 2.1.1
+   * @since 2.2.0
    */
-  def isDeltaTableForName(tableOrViewName: String): Boolean = {
+  def isDeltaTableByName(tableOrViewName: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw DeltaErrors.activeSparkSessionNotFound()
     }
-    isDeltaTableForName(sparkSession, tableOrViewName)
+    isDeltaTableByName(sparkSession, tableOrViewName)
   }
 
   /**

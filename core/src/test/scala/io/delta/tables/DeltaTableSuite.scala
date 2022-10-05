@@ -168,71 +168,71 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("isDeltaTableForPath - with _delta_log dir") {
+  test("isDeltaTableByPath - with _delta_log dir") {
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
-      assert(DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+      assert(DeltaTable.isDeltaTableByPath(dir.getAbsolutePath))
     }
   }
 
-  test("isDeltaTableForPath - with empty _delta_log dir") {
+  test("isDeltaTableByPath - with empty _delta_log dir") {
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
-      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+      assert(!DeltaTable.isDeltaTableByPath(dir.getAbsolutePath))
     }
   }
 
-  test("isDeltaTableForPath - with no _delta_log dir") {
+  test("isDeltaTableByPath - with no _delta_log dir") {
     withTempDir { dir =>
-      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+      assert(!DeltaTable.isDeltaTableByPath(dir.getAbsolutePath))
     }
   }
 
-  test("isDeltaTableForPath - with non-existent dir") {
+  test("isDeltaTableByPath - with non-existent dir") {
     withTempDir { dir =>
       JavaUtils.deleteRecursively(dir)
-      assert(!DeltaTable.isDeltaTableForPath(dir.getAbsolutePath))
+      assert(!DeltaTable.isDeltaTableByPath(dir.getAbsolutePath))
     }
   }
 
-  test("isDeltaTableForPath - with non-Delta table path") {
+  test("isDeltaTableByPath - with non-Delta table path") {
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
     }
   }
 
-  test("isDeltaTableForPath - with table name in current path") {
+  test("isDeltaTableByPath - with table name in current path") {
     val currDir = System.getProperty("user.dir")
     try {
       testData.write.format("delta").save(currDir + "/deltaTableName")
-      assert(DeltaTable.isDeltaTableForPath("deltaTableName"))
+      assert(DeltaTable.isDeltaTableByPath("deltaTableName"))
     } finally {
       JavaUtils.deleteRecursively(new File(currDir, "deltaTableName"))
     }
   }
 
-  test("isDeltaTableForName - with table name") {
+  test("isDeltaTableByName - with table name") {
     val tblName = "anotherDeltaTable"
     withTable(tblName) {
       testData.write.format("delta").saveAsTable(tblName)
-      assert(DeltaTable.isDeltaTableForName(tblName))
+      assert(DeltaTable.isDeltaTableByName(tblName))
     }
   }
 
-  test("isDeltaTableForName - with fully qualified table name") {
+  test("isDeltaTableByName - with fully qualified table name") {
     withDatabase("delta") {
         sql("CREATE DATABASE delta")
         withTable("deltatablename") {
           testData.write.format("delta").saveAsTable("delta.deltatablename")
-          assert(DeltaTable.isDeltaTableForName("delta.deltatablename"))
+          assert(DeltaTable.isDeltaTableByName("delta.deltatablename"))
       }
     }
   }
 
-  test("isDeltaTableForName - with view name") {
+  test("isDeltaTableByName - with view name") {
     withView("vwDeltaName") {
-      assert(!DeltaTable.isDeltaTableForName("vwDeltaName"))
+      assert(!DeltaTable.isDeltaTableByName("vwDeltaName"))
     }
   }
 
