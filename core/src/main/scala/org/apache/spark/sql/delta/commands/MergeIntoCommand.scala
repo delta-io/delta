@@ -546,7 +546,7 @@ case class MergeIntoCommand(
         // This is hard to catch before the write without collecting the DF ahead of time. Instead,
         // we can just accept only the AddFiles that actually add rows or
         // when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.getOrElse(1L) > 0
+        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
         case _ => true
       }
 
@@ -832,7 +832,7 @@ case class MergeIntoCommand(
         // we can write out an empty outputDF. This is hard to catch before the write without
         // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
         // actually add rows or when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.getOrElse(1L) > 0
+        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
         case _ => true
       }
 
