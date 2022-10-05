@@ -211,7 +211,7 @@ class DeltaSuite extends QueryTest
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
       case LogicalRelation(baseRelation, _, _, _) if
-      baseRelation.isInstanceOf[HadoopFsRelation] =>
+        baseRelation.isInstanceOf[HadoopFsRelation] =>
         baseRelation.asInstanceOf[HadoopFsRelation]
     }
     assert(hadoopFsRelations.size === 1)
@@ -1578,10 +1578,10 @@ class DeltaSuite extends QueryTest
       spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
       Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
       spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
-                       |USING inbound
-                       |ON base.key = inbound.key
-                       |WHEN MATCHED THEN UPDATE SET base.value =
-                       |base.value+inbound.value""".stripMargin)
+                    |USING inbound
+                    |ON base.key = inbound.key
+                    |WHEN MATCHED THEN UPDATE SET base.value =
+                    |base.value+inbound.value""".stripMargin)
       spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
       spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
       checkAnswer(
