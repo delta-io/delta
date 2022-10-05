@@ -155,7 +155,14 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             false, // not complete
             null // commitTime
         );
+
+        // Step 2.1: write commit to temp path in filesystem
         writeActions(fs, entry.absoluteTempPath(), actions);
+        // Step 2.2: Ensure that N.json does not exist in delta log (for cases where it's already deleted from external log-store)
+        if(fs.exists(resolvedPath)) {
+            throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toString());
+        }
+        // Step 2.3: lock commit in external log-store
         putExternalEntry(entry, false); // overwrite=false
 
         try {

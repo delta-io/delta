@@ -95,6 +95,23 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
+  test("write N fails if N doesn't exist in external store but does exist in FileSystem") {
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1 = getDeltaVersionPath(tempLogDir, 1)
+
+      store.write(delta0, Iterator("one"), overwrite = false, sessionHadoopConf)
+      delta1.getFileSystem(sessionHadoopConf).create(delta1, true).close()
+
+      val e = intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+      }
+      assert(e.getMessage == s"${delta1.toString}")
+    }
+  }
+
   // scalastyle:off line.size.limit
   test("write N+1 fails if N is marked as complete in external store but doesn't exist in FileSystem") {
     // scalastyle:on line.size.limit
