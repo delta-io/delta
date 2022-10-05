@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
 import org.apache.spark.sql.connector.read.Scan
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -74,6 +75,14 @@ class DeltaScanBuilder(
       preparedScan,
       fileIndex.partitionSchema,
       fileIndex.versionToUse)
+  }
+
+  override def pushFilters(filters: Seq[Expression]): Seq[Expression] = {
+    // V2 scans don't filter out non-determinstic expressions like V1 scans, so filter those out
+    // ourselves right now to allow metrics to be collected in non-determinstic filter UDFs
+    val (deterministicFilters, nonDeterministicFilters) = filters.partition((_.deterministic))
+    val filtersToEvaluate = super.pushFilters(deterministicFilters)
+    filtersToEvaluate ++ nonDeterministicFilters
   }
 
   override def build(): Scan = {
