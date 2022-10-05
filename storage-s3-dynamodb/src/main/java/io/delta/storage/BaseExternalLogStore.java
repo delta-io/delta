@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -46,6 +47,39 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(BaseExternalLogStore.class);
+
+    /**
+     * The delay, in seconds, after an external entry has been committed to the delta log at which
+     * point it is safe to be deleted from the external store.
+     *
+     * We want a delay long enough such that, after the external entry has been deleted, another
+     * write attempt for the SAME delta log commit can FAIL using ONLY the FileSystem's existence
+     * check (e.g. `fs.exists(path)`). Recall we assume that the FileSystem does not provide mutual
+     * exclusion.
+     *
+     * We use a value of 1 hour.
+     *
+     * If we choose too small of a value, like 0 seconds, then the following scenario is possible:
+     * - t0:  Writers W1 and W2 start writing data files
+     * - t1:  W1 begins to try and write into the _delta_log.
+     * - t2:  W1 checks if N.json exists in FileSystem. It doesn't.
+     * - t3:  W1 writes actions into temp file T1(N)
+     * - t4:  W1 writes to external store entry E1(N, complete=false)
+     * - t5:  W1 copies (with overwrite=false) T1(N) into N.json.
+     * - t6:  W1 overwrites entry in external store E1(N, complete=true, expireTime=now+0)
+     * - t7:  E1 is safe to be deleted, and some external store TTL mechanism deletes E1
+     * - t8:  W2 begins to try and write into the _delta_log.
+     * - t9:  W1 checks if N.json exists in FileSystem, but too little time has transpired between
+     *        t5 and t9 that the FileSystem check (fs.exists(path)) returns FALSE
+     * - t10: W2 writes actions into temp file T2(N)
+     * - t11: W2 writes to external store entry E2(N, complete=false)
+     * - t12: W2 successfully copies (with overwrite=false) T2(N) into N.json. FileSystem didn't
+     *        provide the necessary mutual exclusion, so the copy succeeded. Thus, DATA LOSS HAS
+     *        OCCURRED.
+     *
+     * By using an expiration delay of 1 hour, we ensure one of the steps at t9 or t12 will fail.
+     */
+    public static final long EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS = 3600;
 
     ////////////////////////
     // Public API Methods //
@@ -82,6 +116,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * If overwrite=true, then write normally without any interaction with external store.
      * Else, to commit for delta version N:
+     * - Step 0: Fail if N.json already exists in FileSystem.
      * - Step 1: Ensure that N-1.json exists. If not, perform a recovery.
      * - Step 2: PREPARE the commit.
      *      - Write `actions` into temp file T(N)
@@ -103,9 +138,12 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         if (overwrite) {
             writeActions(fs, path, actions);
             return;
+        } else if (fs.exists(path)) {
+            // Step 0: Fail if N.json already exists in FileSystem and overwrite=false.
+            throw new FileAlreadyExistsException(path.toString());
         }
 
-        // Step 0: Ensure that N-1.json exists
+        // Step 1: Ensure that N-1.json exists
         final Path tablePath = getTablePath(resolvedPath);
         if (FileNameUtils.isDeltaFile(path)) {
             final long version = FileNameUtils.deltaVersion(path);
@@ -153,13 +191,18 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             resolvedPath.getName(),
             tempPath,
             false, // not complete
-            null // commitTime
+            null // no expireTime
         );
+
+        // Step 2.1: Create temp file T(N)
         writeActions(fs, entry.absoluteTempPath(), actions);
+
+        // Step 2.2: Create externals store entry E(N, T(N), complete=false)
         putExternalEntry(entry, false); // overwrite=false
 
         try {
-            // Step 3: COMMIT the commit to the delta log
+            // Step 3: COMMIT the commit to the delta log.
+            //         Copy T(N) -> N.json with overwrite=false
             writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath);
 
             // Step 4: ACKNOWLEDGE the commit
@@ -188,9 +231,11 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         Path path,
         Iterator<String> actions
     ) throws IOException {
-        LOG.debug("writeActions to: {}", path);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("writeActions to: {}", path);
+        }
         FSDataOutputStream stream = fs.create(path, true);
-        while(actions.hasNext()) {
+        while (actions.hasNext()) {
             byte[] line = String.format("%s\n", actions.next()).getBytes(StandardCharsets.UTF_8);
             stream.write(line);
         }
@@ -234,8 +279,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Return the latest external store entry corresponding to the delta log for given `tablePath`,
      * or `Optional.empty()` if it doesn't exist.
-     *
-     * @param tablePath TODO
      */
     abstract protected Optional<ExternalCommitEntry> getLatestExternalEntry(
         Path tablePath) throws IOException;
@@ -257,7 +300,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      */
     @VisibleForTesting
     protected void writePutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
-        putExternalEntry(entry.asComplete(), true);
+        putExternalEntry(entry.asComplete(), true); // overwrite=true
     }
 
     /**
@@ -273,7 +316,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      */
     @VisibleForTesting
     protected void fixDeltaLogPutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
-        putExternalEntry(entry.asComplete(), true);
+        putExternalEntry(entry.asComplete(), true); // overwrite=true
     }
 
     ////////////////////
@@ -291,7 +334,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         int retry = 0;
         boolean copied = false;
         while (true) {
-            LOG.debug("trying to fix: {}", entry.fileName);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("trying to fix: {}", entry.fileName);
+            }
             try {
                 if (!copied && !fs.exists(entry.absoluteFilePath())) {
                     fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteFilePath());
@@ -311,15 +356,18 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     }
 
    /**
-    * Copies file within filesystem
+    * Copies file within filesystem.
+    *
     * @param fs reference to [[FileSystem]]
     * @param src path to source file
     * @param dst path to destination file
     */
     private void copyFile(FileSystem fs, Path src, Path dst) throws IOException {
-        LOG.debug("copy file: {} -> {}", src, dst);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("copy file: {} -> {}", src, dst);
+        }
         FSDataInputStream input_stream = fs.open(src);
-        FSDataOutputStream output_stream = fs.create(dst, true);
+        FSDataOutputStream output_stream = fs.create(dst, false); // overwrite=false
         try {
             IOUtils.copy(input_stream, output_stream);
             output_stream.close();

@@ -93,7 +93,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private static final String ATTR_FILE_NAME = "fileName";
     private static final String ATTR_TEMP_PATH = "tempPath";
     private static final String ATTR_COMPLETE = "complete";
-    private static final String ATTR_COMMIT_TIME = "commitTime";
+    private static final String ATTR_EXPIRE_TIME = "expireTime";
 
     /**
      * Member fields
@@ -180,13 +180,13 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
      * Map a DBB query result item to an {@link ExternalCommitEntry}.
      */
     private ExternalCommitEntry dbResultToCommitEntry(Map<String, AttributeValue> item) {
-        final AttributeValue commitTimeAttr = item.get(ATTR_COMMIT_TIME);
+        final AttributeValue expireTimeAttr = item.get(ATTR_EXPIRE_TIME);
         return new ExternalCommitEntry(
             new Path(item.get(ATTR_TABLE_PATH).getS()),
             item.get(ATTR_FILE_NAME).getS(),
             item.get(ATTR_TEMP_PATH).getS(),
             item.get(ATTR_COMPLETE).getS().equals("true"),
-            commitTimeAttr != null ? Long.parseLong(commitTimeAttr.getN()) : null
+            expireTimeAttr != null ? Long.parseLong(expireTimeAttr.getN()) : null
         );
     }
 
@@ -200,10 +200,10 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             new AttributeValue().withS(Boolean.toString(entry.complete))
         );
 
-        if (entry.complete) {
+        if (entry.expireTime != null) {
             attributes.put(
-                ATTR_COMMIT_TIME,
-                new AttributeValue().withN(entry.commitTime.toString())
+                ATTR_EXPIRE_TIME,
+                new AttributeValue().withN(entry.expireTime.toString())
             );
         }
 
