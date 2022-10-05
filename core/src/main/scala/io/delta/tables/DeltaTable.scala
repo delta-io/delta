@@ -777,7 +777,7 @@ object DeltaTable {
    * Check if the provided `path` string is the root of a Delta table
    * using the given SparkSession.
    *
-   * Examples are as follows:
+   * An example would be
    * {{{
    *   DeltaTable.isDeltaTable(spark, "path/to/table")
    * }}}
@@ -836,7 +836,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * Examples are as follows:
+   * An example would be
    * {{{
    *   DeltaTable.isDeltaTableByPath("/path/to/table")
    * }}}
@@ -854,7 +854,7 @@ object DeltaTable {
    * Check if the provided `tableOrViewName` string represents a Delta table
    * using the given SparkSession.
    *
-   * Example:
+   * An example would be
    * {{{
    *   DeltaTable.isDeltaTableByName(spark, "MyDeltaTable")
    * }}}
@@ -874,7 +874,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * Example:
+   * An example would be
    * {{{
    *   DeltaTable.isDeltaTableByName("MyDeltaTable")
    * }}}
