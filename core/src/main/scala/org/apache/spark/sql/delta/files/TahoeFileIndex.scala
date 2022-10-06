@@ -47,11 +47,7 @@ abstract class TahoeFileIndex(
 
   override def rootPaths: Seq[Path] = path :: Nil
 
-  def getSnapshot: Snapshot = {
-    // TODO(Lars): This is temporary while I'm updating a universe implementation to override this
-    //  new API.
-    throw new RuntimeException("Not yet implemented")
-  }
+  def getSnapshot: Snapshot
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
