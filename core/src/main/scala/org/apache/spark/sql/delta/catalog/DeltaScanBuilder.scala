@@ -16,13 +16,11 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import org.apache.spark.sql.delta.{GeneratedColumn, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
-import org.apache.spark.sql.delta.stats.DeltaScanGenerator
-import org.apache.spark.sql.delta.stats.DeltaScan
-import org.apache.spark.sql.delta.GeneratedColumn
-import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, PreparedDeltaFileIndex, PrepareDeltaScanBase}
+
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
@@ -48,7 +46,10 @@ class DeltaScanBuilder(
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     // The first case means that we've fixed the table snapshot for time travel
     if (index.isTimeTravelQuery) return index.getSnapshot
-    val scanGenerator = index.getSnapshot
+    val scanGenerator = OptimisticTransaction.getActive().map(_.getDeltaScanGenerator(index))
+      .getOrElse {
+        index.getSnapshot
+      }
     // Test compatibility with PrepareDeltaScan
     import PrepareDeltaScanBase._
     if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)
@@ -82,9 +83,14 @@ class DeltaScanBuilder(
 
   override def build(): Scan = {
     var parquetScan = super.build().asInstanceOf[ParquetScan]
+    var transaction: Option[OptimisticTransaction] = None
     if (deltaFileIndex.isInstanceOf[TahoeLogFileIndex]) {
       val logFileIndex = deltaFileIndex.asInstanceOf[TahoeLogFileIndex]
       val scanGenerator = getDeltaScanGenerator(logFileIndex)
+      if (scanGenerator.isInstanceOf[OptimisticTransaction]) {
+        transaction = Some(scanGenerator.asInstanceOf[OptimisticTransaction])
+      }
+
       val filters = partitionFilters ++ dataFilters
       val generatedPartitionFilters =
         if (GeneratedColumn.partitionFilterOptimizationEnabled(sparkSession)) {
@@ -105,6 +111,6 @@ class DeltaScanBuilder(
       parquetScan = parquetScan.copy(fileIndex = preparedIndex,
         partitionFilters = partitionFilters ++ generatedPartitionFilters)
     }
-    DeltaTableScan(sparkSession, metadata, tableSchema, parquetScan)
+    DeltaTableScan(sparkSession, metadata, tableSchema, parquetScan, transaction)
   }
 }

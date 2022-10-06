@@ -16,45 +16,28 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import scala.collection.JavaConverters._
-
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
-import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, OptimisticTransaction, NoMapping}
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper}
-import org.apache.spark.sql.connector.read.{Scan, ScanBuilder}
-import org.apache.spark.sql.execution.datasources.{LogicalRelation, PartitioningAwareFileIndex}
-import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, ParquetScanBuilder}
-import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
-import org.apache.spark.sql.delta.OptimisticTransaction
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.DeltaScanGenerator
-import org.apache.spark.sql.delta.stats.DeltaScan
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.delta.GeneratedColumn
-import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
-import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.connector.expressions.aggregate.Aggregation
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.connector.read.PartitionReaderFactory
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetPartitionReaderFactory
-import org.apache.spark.sql.execution.datasources.v2.FileScan
-import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.NoMapping
+import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupport
+import org.apache.spark.sql.execution.datasources.v2.FileScan
+import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, ParquetPartitionReaderFactory}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
+
+import org.apache.hadoop.fs.Path
 
 case class DeltaTableScan(
     sparkSession: SparkSession,
     metadata: Metadata,
     referenceSchema: StructType,
-    delegatedScan: ParquetScan)
+    delegatedScan: ParquetScan,
+    transaction: Option[OptimisticTransaction])
     extends FileScan
     with DeltaLogging {
 

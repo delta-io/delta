@@ -509,12 +509,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /**
    * Pulls out read predicates and files for V2 reads, because we can't prevent the
-   * Prepared index from being created before the transaction starts.
+   * Prepared index from being created before the transaction starts. If the scan has a transaction
+   * in it, we know it has already been registered.
    */
   def registerScans(data: DataFrame): Unit = {
     data.queryExecution.optimizedPlan.collect {
       case DataSourceV2ScanRelation(_, scan: DeltaTableScan, _, _)
-        if scan.delegatedScan.fileIndex.isInstanceOf[PreparedDeltaFileIndex] =>
+        if scan.delegatedScan.fileIndex.isInstanceOf[PreparedDeltaFileIndex] &&
+        scan.transaction.isEmpty =>
       val index = scan.delegatedScan.fileIndex.asInstanceOf[PreparedDeltaFileIndex]
       if (index.deltaLog.isSameLogAs(deltaLog)) {
         readPredicates += index.preparedScan.partitionFilters.reduceLeftOption(And)
