@@ -362,9 +362,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     */
     private void copyFile(FileSystem fs, Path src, Path dst) throws IOException {
         LOG.debug("copy file: {} -> {}", src, dst);
-        FSDataInputStream inputStream = fs.open(src);
-        FSDataOutputStream outputStream = fs.create(dst, false); // overwrite=false
+        final FSDataInputStream inputStream = fs.open(src);
         try {
+            final FSDataOutputStream outputStream = fs.create(dst, false); // overwrite=false
             IOUtils.copy(inputStream, outputStream);
             outputStream.close();
         } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
