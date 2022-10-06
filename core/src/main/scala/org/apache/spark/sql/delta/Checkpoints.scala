@@ -106,7 +106,16 @@ object CheckpointMetaData {
    * used by readers to validate consistency of the [[CheckpointMetadata]].
    * It is calculated using rules mentioned in "JSON checksum" section in PROTOCOL.md.
    */
-  def serializeToJson(chkMetadata: CheckpointMetaData, addChecksum: Boolean): String = {
+  def serializeToJson(
+      chkMetadata: CheckpointMetaData,
+      addChecksum: Boolean,
+      suppressOptionalFields: Boolean = false): String = {
+    if (suppressOptionalFields) {
+      return JsonUtils.toJson(
+          CheckpointMetaData(
+            chkMetadata.version, chkMetadata.size, chkMetadata.parts, None, None, None))
+    }
+
     val jsonStr: String = JsonUtils.toJson(chkMetadata.copy(checksum = None))
     if (!addChecksum) return jsonStr
     val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[ObjectNode])
@@ -359,7 +368,10 @@ trait Checkpoints extends DeltaLogging {
       checkpointMetaData: CheckpointMetaData,
       addChecksum: Boolean): Unit = {
     withCheckpointExceptionHandling(deltaLog, "delta.lastCheckpoint.write.error") {
-      val json = CheckpointMetaData.serializeToJson(checkpointMetaData, addChecksum)
+      val suppressOptionalFields = spark.sessionState.conf.getConf(
+        DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS)
+      val json = CheckpointMetaData.serializeToJson(
+        checkpointMetaData, addChecksum, suppressOptionalFields)
       store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
     }
   }

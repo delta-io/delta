@@ -484,6 +484,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS =
+      buildConf("lastCheckpoint.suppressOptionalFields")
+      .internal()
+      .doc("If set, the LAST_CHECKPOINT file will contain only version, size, and parts fields. " +
+          "For compatibility with broken third-party connectors that choke on unrecognized fields.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CHECKPOINT_PART_SIZE =
     buildConf("checkpoint.partSize")
         .internal()
