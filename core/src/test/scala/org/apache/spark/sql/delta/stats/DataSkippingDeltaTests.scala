@@ -776,19 +776,21 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
       data.write.format("delta").partitionBy("col1")
         .save(tempDir.getCanonicalPath)
-      spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
-      val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
+      withTempView("t1") {
+        spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
+        val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
 
-      val query = "SELECT * from t1 where col1 > 5"
-      val Seq(r1) = getScanReport {
-        assert(sql(query).collect().length == 4)
-      }
-      assert(r1.size.get("scanned").isDefined)
-      assert(r1.size.get("scanned").get.files.get == 4)
+        val query = "SELECT * from t1 where col1 > 5"
+        val Seq(r1) = getScanReport {
+          assert(sql(query).collect().length == 4)
+        }
+        assert(r1.size.get("scanned").isDefined)
+        assert(r1.size.get("scanned").get.files.get == 4)
 
-      val allQuery = "SELECT * from t1"
-      val Seq(r2) = getScanReport {
-        assert(sql(allQuery).collect().length == 10)
+        val allQuery = "SELECT * from t1"
+        val Seq(r2) = getScanReport {
+          assert(sql(allQuery).collect().length == 10)
+        }
       }
     }
   }

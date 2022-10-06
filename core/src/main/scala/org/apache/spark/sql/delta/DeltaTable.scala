@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.{Failure, Success, Try}
 
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaScanBuilder, DeltaTableScan}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -31,11 +32,9 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaScanBuilder}
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScanBuilder
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2ScanRelation}
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -46,8 +45,10 @@ object DeltaTable {
     case LogicalRelation(HadoopFsRelation(index: TahoeFileIndex, _, _, _, _, _), _, _, _) =>
       Some(index)
     case DataSourceV2Relation(table: DeltaTableV2, _, _, _, options) =>
-      Some(table.newScanBuilder(options).asInstanceOf[ParquetScanBuilder].fileIndex
+      Some(table.newScanBuilder(options).asInstanceOf[DeltaScanBuilder].fileIndex
         .asInstanceOf[TahoeFileIndex])
+    case DataSourceV2ScanRelation(_, scan: DeltaTableScan, _, _) =>
+      Some(scan.delegatedScan.fileIndex.asInstanceOf[TahoeFileIndex])
     case _ =>
       None
   }
