@@ -93,7 +93,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       store.write(delta0, Iterator("zero"), overwrite = false, sessionHadoopConf)
       store.write(delta1_a, Iterator("one_a"), overwrite = false, sessionHadoopConf)
 
-      // Pretend that BaseExternalLogStore.EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS seconds have
+      // Pretend that BaseExternalLogStore.getExpirationDelaySeconds() seconds have
       // transpired and that the external store has run TTL cleanup.
       MemoryLogStore.hashMap.clear();
 

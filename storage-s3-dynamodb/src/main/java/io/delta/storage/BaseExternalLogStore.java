@@ -23,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.storage.internal.FileNameUtils;
@@ -57,7 +56,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      * check (e.g. `fs.exists(path)`). Recall we assume that the FileSystem does not provide mutual
      * exclusion.
      *
-     * We use a value of 1 hour.
+     * We use a value of 1 day.
      *
      * If we choose too small of a value, like 0 seconds, then the following scenario is possible:
      * - t0:  Writers W1 and W2 start writing data files
@@ -77,9 +76,13 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      *        provide the necessary mutual exclusion, so the copy succeeded. Thus, DATA LOSS HAS
      *        OCCURRED.
      *
-     * By using an expiration delay of 1 hour, we ensure one of the steps at t9 or t12 will fail.
+     * By using an expiration delay of 1 day, we ensure one of the steps at t9 or t12 will fail.
      */
-    public static final long EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS = 3600;
+    public static final long DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS = 86400;
+
+    protected long getExpirationDelaySeconds() {
+        return DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS;
+    }
 
     ////////////////////////
     // Public API Methods //
@@ -231,9 +234,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         Path path,
         Iterator<String> actions
     ) throws IOException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("writeActions to: {}", path);
-        }
+        LOG.debug("writeActions to: {}", path);
         FSDataOutputStream stream = fs.create(path, true);
         while (actions.hasNext()) {
             byte[] line = String.format("%s\n", actions.next()).getBytes(StandardCharsets.UTF_8);
@@ -300,7 +301,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      */
     @VisibleForTesting
     protected void writePutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
-        putExternalEntry(entry.asComplete(), true); // overwrite=true
+        putExternalEntry(entry.asComplete(getExpirationDelaySeconds()), true); // overwrite=true
     }
 
     /**
@@ -316,7 +317,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      */
     @VisibleForTesting
     protected void fixDeltaLogPutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
-        putExternalEntry(entry.asComplete(), true); // overwrite=true
+        putExternalEntry(entry.asComplete(getExpirationDelaySeconds()), true); // overwrite=true
     }
 
     ////////////////////
@@ -334,9 +335,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         int retry = 0;
         boolean copied = false;
         while (true) {
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("trying to fix: {}", entry.fileName);
-            }
+            LOG.debug("trying to fix: {}", entry.fileName);
             try {
                 if (!copied && !fs.exists(entry.absoluteFilePath())) {
                     fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteFilePath());
@@ -363,16 +362,14 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     * @param dst path to destination file
     */
     private void copyFile(FileSystem fs, Path src, Path dst) throws IOException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("copy file: {} -> {}", src, dst);
-        }
-        FSDataInputStream input_stream = fs.open(src);
-        FSDataOutputStream output_stream = fs.create(dst, false); // overwrite=false
+        LOG.debug("copy file: {} -> {}", src, dst);
+        FSDataInputStream inputStream = fs.open(src);
+        FSDataOutputStream outputStream = fs.create(dst, false); // overwrite=false
         try {
-            IOUtils.copy(input_stream, output_stream);
-            output_stream.close();
+            IOUtils.copy(inputStream, outputStream);
+            outputStream.close();
         } finally {
-            input_stream.close();
+            inputStream.close();
         }
     }
 

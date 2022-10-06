@@ -85,6 +85,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
     public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
     public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+    public static final String TTL_SECONDS = "ddb.ttl";
 
     /**
      * DynamoDB table attribute keys
@@ -119,6 +120,15 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
         client = getClient();
         tryEnsureTableExists(hadoopConf);
+    }
+
+    @Override
+    protected long getExpirationDelaySeconds() {
+        final String ttl = getParam(initHadoopConf(), TTL_SECONDS, null);
+
+        return ttl == null ?
+            BaseExternalLogStore.DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS :
+            Long.parseLong(ttl);
     }
 
     @Override

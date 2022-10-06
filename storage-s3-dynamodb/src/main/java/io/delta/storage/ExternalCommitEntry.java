@@ -67,15 +67,13 @@ public final class ExternalCommitEntry {
     /**
      * @return this entry with `complete=true` and a valid `expireTime`
      */
-    public ExternalCommitEntry asComplete() {
-        final long nowEpochSeconds = System.currentTimeMillis() / 1000L;
-
+    public ExternalCommitEntry asComplete(long expirationDelaySeconds) {
         return new ExternalCommitEntry(
             this.tablePath,
             this.fileName,
             this.tempPath,
             true,
-            nowEpochSeconds + BaseExternalLogStore.EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS
+            System.currentTimeMillis() / 1000L + expirationDelaySeconds
         );
     }
 
