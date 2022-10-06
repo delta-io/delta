@@ -59,6 +59,10 @@ trait StateCache extends DeltaLogging {
         }
         rdd.setName(name)
         rdd.persist(storageLevel)
+        if (!storageLevel.equals(StorageLevel.NONE)) {
+          // Cache rdd now to avoid OOM of snapshot aggregation query.
+          rdd.count()
+        }
         cached += rdd
         val dsCache = new DatasetRefCache(() => {
           Dataset.ofRows(
