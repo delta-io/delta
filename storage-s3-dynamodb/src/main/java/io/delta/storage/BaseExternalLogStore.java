@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
 import java.util.Optional;
 
@@ -143,7 +142,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             return;
         } else if (fs.exists(path)) {
             // Step 0: Fail if N.json already exists in FileSystem and overwrite=false.
-            throw new FileAlreadyExistsException(path.toString());
+            throw new java.nio.file.FileAlreadyExistsException(path.toString());
         }
 
         // Step 1: Ensure that N-1.json exists
@@ -368,6 +367,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         try {
             IOUtils.copy(inputStream, outputStream);
             outputStream.close();
+        } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+            throw new java.nio.file.FileAlreadyExistsException(dst.toString());
         } finally {
             inputStream.close();
         }
