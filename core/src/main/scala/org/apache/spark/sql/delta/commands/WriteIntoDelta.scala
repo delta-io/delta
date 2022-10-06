@@ -35,7 +35,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -95,6 +95,8 @@ case class WriteIntoDelta(
         return Seq.empty
       }
 
+      // Register any V2 scans of the table we are writing to
+      txn.registerScans(data)
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata)

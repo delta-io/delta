@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.catalog
 
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
-import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.GeneratedColumn
@@ -49,11 +48,7 @@ class DeltaScanBuilder(
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     // The first case means that we've fixed the table snapshot for time travel
     if (index.isTimeTravelQuery) return index.getSnapshot
-    val scanGenerator = OptimisticTransaction.getActive().map(_.getDeltaScanGenerator(index))
-      .getOrElse {
-        val snapshot = index.getSnapshot
-        snapshot
-      }
+    val scanGenerator = index.getSnapshot
     // Test compatibility with PrepareDeltaScan
     import PrepareDeltaScanBase._
     if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)

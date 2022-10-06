@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableScan
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
@@ -40,6 +41,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, Utils}
 
@@ -501,6 +503,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         })
       } else {
         index.getSnapshot
+      }
+    }
+  }
+
+  /**
+   * Pulls out read predicates and files for V2 reads, because we can't prevent the
+   * Prepared index from being created before the transaction starts.
+   */
+  def registerScans(data: DataFrame): Unit = {
+    data.queryExecution.optimizedPlan.collect {
+      case DataSourceV2ScanRelation(_, scan: DeltaTableScan, _, _)
+        if scan.delegatedScan.fileIndex.isInstanceOf[PreparedDeltaFileIndex] =>
+      val index = scan.delegatedScan.fileIndex.asInstanceOf[PreparedDeltaFileIndex]
+      if (index.deltaLog.isSameLogAs(deltaLog)) {
+        readPredicates += index.preparedScan.partitionFilters.reduceLeftOption(And)
+          .getOrElse(Literal(true))
+        readFiles ++= index.preparedScan.files
       }
     }
   }
