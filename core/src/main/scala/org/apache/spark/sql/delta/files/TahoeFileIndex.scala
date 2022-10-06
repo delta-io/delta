@@ -261,4 +261,5 @@ class TahoeBatchFileIndex(
   override val sizeInBytes: Long = addFiles.map(_.size).sum
 
   override def getSnapshot: Snapshot = snapshot
+
 }
