@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.collection.mutable.ArrayBuffer
-
+import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
@@ -34,20 +33,18 @@ trait DeltaTestUtilsBase {
 
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
 
-  class LogicalPlanCapturingListener(optimized: Boolean) extends QueryExecutionListener {
-    val plans = new ArrayBuffer[LogicalPlan]
-    override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
-      if (optimized) plans.append(qe.optimizedPlan) else plans.append(qe.analyzed)
-    }
+  class PlanCapturingListener() extends QueryExecutionListener {
 
-    override def onFailure(
-      funcName: String, qe: QueryExecution, error: Exception): Unit = {}
-  }
+    private[this] var capturedPlans = List.empty[Plans]
 
-  class PhysicalPlanCapturingListener() extends QueryExecutionListener {
-    val plans = new ArrayBuffer[SparkPlan]
+    def plans: Seq[Plans] = capturedPlans.reverse
+
     override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
-      plans.append(qe.sparkPlan)
+      capturedPlans ::= Plans(
+          qe.analyzed,
+          qe.optimizedPlan,
+          qe.sparkPlan,
+          qe.executedPlan)
     }
 
     override def onFailure(
@@ -60,15 +57,17 @@ trait DeltaTestUtilsBase {
   def withLogicalPlansCaptured[T](
       spark: SparkSession,
       optimizedPlan: Boolean)(
-      thunk: => Unit): ArrayBuffer[LogicalPlan] = {
-    val planCapturingListener = new LogicalPlanCapturingListener(optimizedPlan)
+      thunk: => Unit): Seq[LogicalPlan] = {
+    val planCapturingListener = new PlanCapturingListener
 
     spark.sparkContext.listenerBus.waitUntilEmpty(15000)
     spark.listenerManager.register(planCapturingListener)
     try {
       thunk
       spark.sparkContext.listenerBus.waitUntilEmpty(15000)
-      planCapturingListener.plans
+      planCapturingListener.plans.map { plans =>
+        if (optimizedPlan) plans.optimized else plans.analyzed
+      }
     } finally {
       spark.listenerManager.unregister(planCapturingListener)
     }
@@ -79,8 +78,28 @@ trait DeltaTestUtilsBase {
    */
   def withPhysicalPlansCaptured[T](
       spark: SparkSession)(
-      thunk: => Unit): ArrayBuffer[SparkPlan] = {
-    val planCapturingListener = new PhysicalPlanCapturingListener()
+      thunk: => Unit): Seq[SparkPlan] = {
+    val planCapturingListener = new PlanCapturingListener
+
+    spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+    spark.listenerManager.register(planCapturingListener)
+    try {
+      thunk
+      spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+      planCapturingListener.plans.map(_.sparkPlan)
+    } finally {
+      spark.listenerManager.unregister(planCapturingListener)
+    }
+  }
+
+  /**
+   * Run a thunk with logical and physical plans for all queries captured and passed
+   * into a provided buffer.
+   */
+  def withAllPlansCaptured[T](
+      spark: SparkSession)(
+      thunk: => Unit): Seq[Plans] = {
+    val planCapturingListener = new PlanCapturingListener
 
     spark.sparkContext.listenerBus.waitUntilEmpty(15000)
     spark.listenerManager.register(planCapturingListener)
@@ -116,7 +135,14 @@ trait DeltaTestUtilsBase {
   }
 }
 
-object DeltaTestUtils extends DeltaTestUtilsBase
+object DeltaTestUtils extends DeltaTestUtilsBase {
+  case class Plans(
+      analyzed: LogicalPlan,
+      optimized: LogicalPlan,
+      sparkPlan: SparkPlan,
+      executedPlan: SparkPlan)
+}
+
 trait DeltaTestUtilsForTempViews
   extends SharedSparkSession
 {
