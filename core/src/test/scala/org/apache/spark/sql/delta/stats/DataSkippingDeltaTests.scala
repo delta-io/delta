@@ -786,10 +786,9 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       assert(r1.size.get("scanned").isDefined)
       assert(r1.size.get("scanned").get.files.get == 4)
 
-        val allQuery = "SELECT * from t1"
-        val Seq(r2) = getScanReport {
-          assert(sql(allQuery).collect().length == 10)
-        }
+      val allQuery = "SELECT * from t1"
+      val Seq(r2) = getScanReport {
+        assert(sql(allQuery).collect().length == 10)
       }
     }
   }
