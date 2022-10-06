@@ -79,6 +79,10 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      */
     public static final long DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS = 86400;
 
+    /**
+     * Completed external commit entries will be created with a value of
+     * NOW_EPOCH_SECONDS + getExpirationDelaySeconds().
+     */
     protected long getExpirationDelaySeconds() {
         return DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS;
     }

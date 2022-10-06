@@ -103,6 +103,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
+    private final long expirationDelaySeconds;
 
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
@@ -114,9 +115,21 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
         regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
+
+        final String ttl = getParam(initHadoopConf(), TTL_SECONDS, null);
+        expirationDelaySeconds = ttl == null ?
+            BaseExternalLogStore.DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS :
+            Long.parseLong(ttl);
+        if (expirationDelaySeconds < 0) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Can't use negative `%s` value of %s", TTL_SECONDS, expirationDelaySeconds));
+        }
+
         LOG.info("using tableName {}", tableName);
         LOG.info("using credentialsProviderName {}", credentialsProviderName);
         LOG.info("using regionName {}", regionName);
+        LOG.info("using ttl (seconds) {}", expirationDelaySeconds);
 
         client = getClient();
         tryEnsureTableExists(hadoopConf);
@@ -124,11 +137,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
     @Override
     protected long getExpirationDelaySeconds() {
-        final String ttl = getParam(initHadoopConf(), TTL_SECONDS, null);
-
-        return ttl == null ?
-            BaseExternalLogStore.DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS :
-            Long.parseLong(ttl);
+        return expirationDelaySeconds;
     }
 
     @Override
