@@ -155,7 +155,9 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  @volatile private[delta] var stateReconstructionTriggered = false
   private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+    stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
 
