@@ -26,13 +26,20 @@ import time
 Create required dynamodb table with:
 
 $ aws dynamodb create-table \
-    --region us-west-2 \
-    --table-name delta_log_test \
+    --region <region> \
+    --table-name <table_name> \
     --attribute-definitions AttributeName=tablePath,AttributeType=S \
                             AttributeName=fileName,AttributeType=S \
     --key-schema AttributeName=tablePath,KeyType=HASH \
                 AttributeName=fileName,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+    
+Enable TTL with:
+
+$ aws dynamodb update-time-to-live \
+  --region <region> \
+  --table-name <table_name> \
+  --time-to-live-specification "Enabled=true, AttributeName=expireTime"
 
 Run this script in root dir of repository:
 
