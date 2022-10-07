@@ -116,7 +116,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         );
         regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
 
-        final String ttl = getParam(initHadoopConf(), TTL_SECONDS, null);
+        final String ttl = getParam(hadoopConf, TTL_SECONDS, null);
         expirationDelaySeconds = ttl == null ?
             BaseExternalLogStore.DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS :
             Long.parseLong(ttl);
