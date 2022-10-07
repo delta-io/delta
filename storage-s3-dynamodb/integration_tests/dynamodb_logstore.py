@@ -41,6 +41,7 @@ export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
 export DELTA_DYNAMO_REGION=us-west-2
+export DELTA_DYNAMO_TTL=100
 export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
 export DELTA_NUM_ROWS=16
 
@@ -60,6 +61,7 @@ num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.S3DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
+dynamo_ttl = os.environ.get("DELTA_DYNAMO_TTL", "100")
 # used only by FailingS3DynamoDBLogStore
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
@@ -69,15 +71,16 @@ if delta_table_path is None:
     sys.exit(0)
 
 test_log = f"""
---- LOG ---\n
+========================================== 
 delta table path: {delta_table_path}
 concurrent writers: {concurrent_writers}
 concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
 delta storage: {delta_storage}
 dynamo table name: {dynamo_table_name}
+dynamo tTTL: {dynamo_ttl}
 {"dynamo_error_rates: {}".format(dynamo_error_rates) if dynamo_error_rates else ""}
-=====================
+========================================== 
 """
 print(test_log)
 
@@ -86,17 +89,19 @@ spark = SparkSession \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .config("spark.delta.logStore.s3.impl", delta_storage) \
     .config("spark.delta.logStore.s3a.impl", delta_storage) \
     .config("spark.delta.logStore.s3n.impl", delta_storage) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.ttl", dynamo_ttl) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu", 12) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
     .getOrCreate()
 
-spark.sparkContext.setLogLevel("INFO")
+# spark.sparkContext.setLogLevel("INFO")
 
 data = spark.createDataFrame([], "id: int, a: int")
 print("writing:", data.collect())
@@ -126,8 +131,8 @@ def start_read_thread():
     return thread
 
 
+print("===================== Starting reads and writes =====================")
 read_threads = [start_read_thread() for i in range(concurrent_readers)]
-
 pool = ThreadPool(concurrent_writers)
 start_t = time.time()
 pool.map(write_tx, range(num_rows))
@@ -136,13 +141,16 @@ stop_reading.set()
 for thread in read_threads:
     thread.join()
 
+print("===================== Evaluating number of written rows =====================")
 actual = spark.read.format("delta").load(delta_table_path).distinct().count()
-print("Number of written rows:", actual)
+print("Actual number of written rows:", actual)
+print("Expected number of written rows:", num_rows)
 assert actual == num_rows
 
 t = time.time() - start_t
 print(f"{num_rows / t:.02f} tx / sec")
 
+print("===================== Evaluating DDB writes =====================")
 import boto3
 from botocore.config import Config
 my_config = Config(
