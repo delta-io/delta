@@ -339,20 +339,6 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
-  /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
-  protected def indexToRelation(
-      index: DeltaLogFileIndex,
-      schema: StructType = logSchema): LogicalRelation = {
-    val fsRelation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      schema,
-      None,
-      index.format,
-      deltaLog.options)(spark)
-    LogicalRelation(fsRelation)
-  }
-
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.
    *
@@ -363,7 +349,7 @@ class Snapshot(
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
-    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, deltaLog.indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
       .withColumn(ACTION_SORT_COL_NAME, input_file_name())
       .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))

@@ -48,6 +48,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -190,6 +191,36 @@ class DeltaLog private(
     } finally {
       deltaLogLock.unlock()
     }
+  }
+
+  /**
+   * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source
+   * options taken from the Delta Log. All reads of Delta metadata files should use this method.
+   */
+  def indexToRelation(
+      index: DeltaLogFileIndex,
+      schema: StructType = Action.logSchema): LogicalRelation = {
+    val formatSpecificOptions: Map[String, String] = index.format match {
+      case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
+        // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
+        Map("mode" -> FailFastMode.name)
+      case _ => Map.empty
+    }
+    // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
+    // entire table unusable. Hard-wire that into the file source options so the user can't override
+    // it by setting spark.sql.files.ignoreCorruptFiles or spark.sql.files.ignoreMissingFiles.
+    //
+    // NOTE: This should ideally be [[FileSourceOptions.IGNORE_CORRUPT_FILES]] etc., but those
+    // constants are only available since spark-3.4. By hard-coding the values here instead, we
+    // preserve backward compatibility when compiling Delta against older spark versions (tho
+    // obviously the desired protection would be missing in that case).
+    val allOptions = options ++ formatSpecificOptions ++ Map(
+      "ignoreCorruptFiles" -> "false",
+      "ignoreMissingFiles" -> "false"
+    )
+    val fsRelation = HadoopFsRelation(
+      index, index.partitionSchema, schema, None, index.format, allOptions)(spark)
+    LogicalRelation(fsRelation)
   }
 
   /* ------------------ *
