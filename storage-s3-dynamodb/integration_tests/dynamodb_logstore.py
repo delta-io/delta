@@ -25,7 +25,8 @@ import time
 """
 Create required dynamodb table with:
 
-$ aws --region us-west-2 dynamodb create-table \
+$ aws dynamodb create-table \
+    --region us-west-2
     --table-name delta_log_test \
     --attribute-definitions AttributeName=tablePath,AttributeType=S \
                             AttributeName=fileName,AttributeType=S \
@@ -75,11 +76,12 @@ dynamo_ttl = os.environ.get("DELTA_DYNAMO_TTL", "100")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
 # ===== Optional input from user (we calculate defaults using RUN_ID) =====
-relative_delta_table_path = os.environ.get("RELATIVE_DELTA_TABLE_PATH", "tables/table_" + run_id)
+relative_delta_table_path = os.environ.get("RELATIVE_DELTA_TABLE_PATH", "tables/table_" + run_id)\
+    .rstrip("/")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE_NAME", "ddb_table_" + run_id)
 
 delta_table_path = "s3a://" + s3_bucket + "/" + relative_delta_table_path
-relative_delta_log_path = relative_delta_table_path + "/_delta_log"
+relative_delta_log_path = relative_delta_table_path + "/_delta_log/"
 
 if delta_table_path is None:
     print(f"\nSkipping Python test {os.path.basename(__file__)} due to the missing env variable "
@@ -189,10 +191,15 @@ for item in items:
 
 print("===================== Evaluating _delta_log commits =====================")
 s3_client = boto3.client("s3")
+print(f"querying {s3_bucket}/{relative_delta_log_path}")
 response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=relative_delta_log_path)
-delta_log_commits = response['Contents']
-delta_log_commits = filter(lambda x: ".json" in x['Key'] and not ".tmp" in x['Key'],
-                           delta_log_commits)
+items = response['Contents']
+print("========== Raw _delta_log contents ========== ")
+for item in items:
+    print(item)
+
+delta_log_commits = filter(lambda x: ".json" in x['Key'] and ".tmp" not in x['Key'],
+                           items)
 delta_log_commits = sorted(delta_log_commits, key=lambda x: x['Key'])
 
 print("========== _delta_log commits in version order ==========")
