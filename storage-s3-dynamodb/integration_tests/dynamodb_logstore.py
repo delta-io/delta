@@ -26,7 +26,7 @@ import time
 Create required dynamodb table with:
 
 $ aws dynamodb create-table \
-    --region us-west-2
+    --region us-west-2 \
     --table-name delta_log_test \
     --attribute-definitions AttributeName=tablePath,AttributeType=S \
                             AttributeName=fileName,AttributeType=S \
