@@ -186,8 +186,6 @@ items = sorted(items, key=lambda x: x['fileName'])
 print("========== All DDB items ==========")
 for item in items:
     print(item)
-print("========== Latest DDB item ==========")
-print(items[-1])
 
 print("===================== Evaluating _delta_log commits =====================")
 s3_client = boto3.client("s3")
