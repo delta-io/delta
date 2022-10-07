@@ -269,6 +269,7 @@ trait DeltaSourceBase extends Source
       fromVersion: Long,
       isStartingVersion: Boolean,
       limits: Option[AdmissionLimits]): Option[Offset] = {
+
     val changes = getFileChangesWithRateLimit(
       fromVersion,
       fromIndex = -1L,
@@ -279,6 +280,9 @@ trait DeltaSourceBase extends Source
     if (lastFileChange.isEmpty) {
       None
     } else {
+      // Block latestOffset() from generating an invalid offset by proactively verifying
+      // incompatible schema changes under column mapping. See more details in the method doc.
+      checkColumnMappingSchemaChangesOnStreamStartOnce(fromVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, fromVersion, isStartingVersion)
     }
   }
@@ -299,6 +303,9 @@ trait DeltaSourceBase extends Source
     if (lastFileChange.isEmpty) {
       Some(previousOffset)
     } else {
+      // Similarly, block latestOffset() from generating an invalid offset by proactively verifying
+      // incompatible schema changes under column mapping. See more details in the method doc.
+      checkColumnMappingSchemaChangesOnStreamStartOnce(previousOffset.reservoirVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, previousOffset.reservoirVersion,
         previousOffset.isStartingVersion)
     }
@@ -357,13 +364,24 @@ trait DeltaSourceBase extends Source
   /**
    * Check column mapping changes during stream (re)start so we could fail fast.
    *
-   * Note that this won't block on serving the initial snapshot when isStartingVersion=true,
-   * because serving the initial snapshot of the table is considered same as serving a batch-load
-   * of the table's data, so if we have any drop/rename prior to that, we won't block.
+   * This only needs to be called ONCE in the life cycle of a stream, either at the very first
+   * latestOffset, or the very first getBatch to make sure we have detected an incompatible
+   * schema change.
+   * Typically, the verifyStreamHygiene that was called maybe good enough to detect these
+   * schema changes, there may be cases that wouldn't work, e.g. consider this sequence:
+   * 1. User starts a new stream @ startingVersion 1
+   * 2. latestOffset is called before getBatch() because there was no previous commits so
+   * getBatch won't be called as a recovery mechanism.
+   * Suppose there's a single rename/drop column change S during computing next offset, S
+   * would look exactly the same as the latest schema so verifyStreamHygiene would not work.
+   * 3. latestOffset would return this new offset cross the schema boundary.
    *
    * TODO: unblock this after we roll out the proper semantics.
    */
-  protected def checkColumnMappingSchemaChangesOnStreamStart(startVersion: Long): Unit = {
+  protected def checkColumnMappingSchemaChangesOnStreamStartOnce(startVersion: Long): Unit = {
+    if (hasCheckedColumnMappingChangesOnStreamStart) {
+      return
+    }
     if (snapshotAtSourceInit.metadata.columnMappingMode != NoMapping &&
         !forceEnableStreamingRead) {
 
@@ -387,6 +405,8 @@ trait DeltaSourceBase extends Source
         )
       }
     }
+    // Mark as checked
+    hasCheckedColumnMappingChangesOnStreamStart = true
   }
 
   /**
@@ -810,15 +830,10 @@ case class DeltaSource(
     }
     logDebug(s"start: $startOffsetOption end: $end")
 
-    // Block streaming read if we detected any column mapping schema changes during stream start
-    // This is necessary to detect cases when verifySchemaHygiene could not identify any violating
-    // metadata actions, such as when a table only had ONE rename/drop, which could results in a
-    // metadata action that looks exactly the same as the stream snapshot schema.
-    if (!hasCheckedColumnMappingChangesOnStreamStart) {
-      checkColumnMappingSchemaChangesOnStreamStart(startVersion)
-      // Turn on the flag so we don't do this for every single batch
-      hasCheckedColumnMappingChangesOnStreamStart = true
-    }
+    // Check for column mapping + streaming incompatible schema changes
+    // Note for initial snapshot, the startVersion should be the same as the latestOffset's version
+    // and therefore this check won't have any effect.
+    checkColumnMappingSchemaChangesOnStreamStartOnce(startVersion)
 
     val createdDf = createDataFrameBetweenOffsets(startVersion, startIndex, isStartingVersion,
       startSourceVersion, startOffsetOption, endOffset)

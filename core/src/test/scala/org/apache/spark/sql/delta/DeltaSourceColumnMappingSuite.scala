@@ -31,7 +31,8 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.streaming.StreamingExecutionRelation
 import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.util.Utils
 
 trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
   with DeltaColumnMappingTestUtils {
@@ -58,7 +59,7 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
       .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
   }
 
-  private val ProcessAllAvailableIgnoreError = Execute { q =>
+  protected val ProcessAllAvailableIgnoreError = Execute { q =>
     try {
       q.processAllAvailable()
     } catch {
@@ -80,21 +81,21 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
     case _ => false
   }
 
-  private val ExpectStreamStartInCompatibleSchemaFailure =
+  protected val ExpectStreamStartInCompatibleSchemaFailure =
     ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = false))
     }
 
-  private val ExpectInStreamSchemaChangeFailure =
+  protected val ExpectInStreamSchemaChangeFailure =
     ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = true))
     }
 
-  private val ExpectGenericColumnMappingFailure =
+  protected val ExpectGenericColumnMappingFailure =
     ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException]()
 
   // Failure thrown by the current DeltaSource schema change incompatible check
-  private val existingRetryableInStreamSchemaChangeFailure = Execute { q =>
+  protected val existingRetryableInStreamSchemaChangeFailure = Execute { q =>
     // Similar to ExpectFailure but allows more fine-grained checking of exceptions
     failAfter(streamingTimeout) {
       try {
@@ -123,7 +124,7 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
     )
   }
 
-  private def writeDeltaData(
+  protected def writeDeltaData(
       data: Seq[Int],
       deltaLog: DeltaLog,
       userSpecifiedSchema: Option[StructType] = None): Unit = {
@@ -507,4 +508,113 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
     "column mapping + streaming: blocking workflow - drop column",
     "column mapping + streaming: blocking workflow - rename column"
   )
+
+  import testImplicits._
+
+  test("column mapping + streaming: blocking workflow - " +
+    "should not generate latestOffset past schema change") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      writeDeltaData(0 until 5, deltaLog,
+        userSpecifiedSchema = Some(
+          new StructType()
+          .add("id", StringType, true)
+          .add("value", StringType, true)))
+      // rename column
+      sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` RENAME COLUMN value TO value2")
+      val renameVersion = deltaLog.update().version
+      // write more data
+      writeDeltaData(5 until 10, deltaLog)
+
+      // Case 1 - Stream start failure should not progress new latestOffset
+      // Since we had a rename, the data files prior to that should not be served with the renamed
+      // schema <id, value2>, but the original schema <id, value>. latestOffset() should not create
+      // a new offset moves past the schema change.
+      val df1 = spark.readStream
+        .format("delta")
+        .option("startingVersion", "1") // start from 1 to ignore the initial schema change
+        .load(inputDir.getCanonicalPath)
+      testStream(df1)(
+        StartStream(), // fresh checkpoint
+        ProcessAllAvailableIgnoreError,
+        AssertOnQuery { q =>
+          // This should come from the latestOffset checker
+          q.availableOffsets.isEmpty && q.latestOffsets.isEmpty &&
+            q.exception.get.cause.getStackTrace.exists(_.toString.contains("latestOffset"))
+        },
+        ExpectStreamStartInCompatibleSchemaFailure
+      )
+
+      // try drop column now
+      sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value2")
+      val dropVersion = deltaLog.update().version
+      // write more data
+      writeDeltaData(10 until 15, deltaLog)
+
+      val df2 = spark.readStream
+        .format("delta")
+        .option("startingVersion", renameVersion + 1) // so we could detect drop column
+        .load(inputDir.getCanonicalPath)
+      testStream(df2)(
+        StartStream(), // fresh checkpoint
+        ProcessAllAvailableIgnoreError,
+        AssertOnQuery { q =>
+          // This should come from the latestOffset stream start checker
+          q.availableOffsets.isEmpty && q.latestOffsets.isEmpty &&
+            q.exception.get.cause.getStackTrace.exists(_.toString.contains("latestOffset"))
+        },
+        ExpectStreamStartInCompatibleSchemaFailure
+      )
+
+      // Case 2 - in stream failure should not progress latest offset too
+      // This is the handle prior to SC-111607, which should cover the major cases.
+      val df3 = spark.readStream
+        .format("delta")
+        .option("startingVersion", dropVersion + 1) // so we could move on to in stream failure
+        .load(inputDir.getCanonicalPath)
+
+      val ckpt = Utils.createTempDir().getCanonicalPath
+      var latestAvailableOffsets: Seq[String] = null
+      testStream(df3)(
+        StartStream(checkpointLocation = ckpt), // fresh checkpoint
+        ProcessAllAvailable(),
+        CheckAnswer((10 until 15).map(i => (i.toString)): _*),
+        Execute { q =>
+          latestAvailableOffsets = q.availableOffsets.values.map(_.json()).toSeq
+        },
+        // add more data and rename column
+        Execute { _ =>
+          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` RENAME COLUMN id TO id2")
+          writeDeltaData(15 until 16, deltaLog)
+        },
+        ProcessAllAvailableIgnoreError,
+        CheckAnswer((10 until 15).map(i => (i.toString)): _*), // no data processed
+        AssertOnQuery { q =>
+          // Available offsets should not change
+          // This should come from the latestOffset in-stream checker
+          q.availableOffsets.values.map(_.json()) == latestAvailableOffsets &&
+            q.latestOffsets.isEmpty &&
+            q.exception.get.cause.getStackTrace.exists(_.toString.contains("latestOffset"))
+        },
+        ExpectInStreamSchemaChangeFailure
+      )
+
+      // Case 3 - resuming from existing checkpoint, note that getBatch's stream start check
+      // should be called instead of latestOffset for recovery.
+      // This is also the handle prior to SC-111607, which should cover the major cases.
+      testStream(df3)(
+        StartStream(checkpointLocation = ckpt), // existing checkpoint
+        ProcessAllAvailableIgnoreError,
+        CheckAnswer(Nil: _*),
+        AssertOnQuery { q =>
+          // This should come from the latestOffset in-stream checker
+          q.availableOffsets.values.map(_.json()) == latestAvailableOffsets &&
+            q.latestOffsets.isEmpty &&
+            q.exception.get.cause.getStackTrace.exists(_.toString.contains("getBatch"))
+        },
+        ExpectStreamStartInCompatibleSchemaFailure
+      )
+    }
+  }
+
 }
