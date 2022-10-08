@@ -52,6 +52,8 @@ case class DeltaTableScan(
 
   override def dataSchema: StructType = delegatedScan.dataSchema
 
+  override def readSchema(): StructType = delegatedScan.readSchema()
+
   override def readDataSchema: StructType = delegatedScan.readDataSchema
 
   override def readPartitionSchema: StructType = delegatedScan.readPartitionSchema

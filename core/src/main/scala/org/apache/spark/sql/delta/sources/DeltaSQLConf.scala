@@ -903,7 +903,7 @@ trait DeltaSQLConfBase {
     buildConf("v2.reader.enabled")
       .doc("Whether to use the Data Source V2 batch read API.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

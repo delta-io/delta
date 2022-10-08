@@ -16,16 +16,15 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import org.apache.spark.sql.delta.{GeneratedColumn, OptimisticTransaction}
+import org.apache.spark.sql.delta.{GeneratedColumn, OptimisticTransaction, NoMapping}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, PreparedDeltaFileIndex, PrepareDeltaScanBase}
 
-import org.apache.spark.sql.delta.metering.DeltaLogging
-
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.PredicateHelper
+import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper}
+import org.apache.spark.sql.connector.expressions.aggregate.Aggregation
 import org.apache.spark.sql.connector.read.Scan
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, ParquetScanBuilder}
@@ -79,6 +78,15 @@ class DeltaScanBuilder(
     val (deterministicFilters, nonDeterministicFilters) = filters.partition((_.deterministic))
     val filtersToEvaluate = super.pushFilters(deterministicFilters)
     filtersToEvaluate ++ nonDeterministicFilters
+  }
+
+  override def pushAggregation(aggregation: Aggregation): Boolean = {
+    // Pushed aggregations don't work with column mapping right now
+    if (metadata.columnMappingMode != NoMapping) {
+      return false
+    } else {
+      return super.pushAggregation(aggregation)
+    }
   }
 
   override def build(): Scan = {
