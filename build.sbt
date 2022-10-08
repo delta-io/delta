@@ -35,7 +35,7 @@ lazy val commonSettings = Seq(
   fork := true,
   scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused:imports"),
   javacOptions ++= Seq("-source", "1.8"),
-  resolvers += "Spark 3.3.1-rc2" at "https://repository.apache.org/content/repositories/orgapachespark-1421/",
+  resolvers += "Spark 3.3.1-rc2" at "https://repository.apache.org/content/repositories/orgapachespark-1429/",
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
   Compile / compile / javacOptions ++= Seq("-target", "1.8")
 )
