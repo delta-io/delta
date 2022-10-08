@@ -33,11 +33,8 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 
 /**
  * Before query planning, we prepare any scans over delta tables by pushing
@@ -155,7 +152,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       }
     }
 
-    def transform(plan: LogicalPlan): LogicalPlan = {
+    def transform(plan: LogicalPlan): LogicalPlan =
       transformSubqueries(plan) transform {
         case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
@@ -166,7 +163,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
           optimizeGeneratedColumns(
             preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
       }
-    }
 
     transform(plan)
   }
@@ -218,10 +214,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.
       OptimisticTransaction.getActive.foreach { txn =>
-        // scalastyle:off println
-        // println("Transaction during read")
-        // println(plan)
-        // scalastyle:on println
         val logsInPlan = plan.collect { case DeltaTable(fileIndex) => fileIndex.deltaLog }
         if (logsInPlan.exists(_.isSameLogAs(txn.deltaLog))) {
           txn.readWholeTable()

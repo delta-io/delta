@@ -25,9 +25,9 @@ import org.apache.spark.sql.delta.stats.{DataSize, PreparedDeltaFileIndex}
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
-import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 
 /**
  * A helper trait used by test classes that want to collect the scans (i.e. [[FileSourceScanExec]])

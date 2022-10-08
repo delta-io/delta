@@ -558,11 +558,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
     readFiles ++= scan.files
-    // scalastyle:off println
-    // println("filterFiles")
-    // println(scan.files.length)
-    // println()
-    // scalastyle:on println
     scan.files
   }
 
@@ -595,19 +590,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def readWholeTable(): Unit = {
     readPredicates += Literal.TrueLiteral
     readTheWholeTable = true
-    // scalastyle:off println
-    // println("readWholeTable")
-    // println()
-    // scalastyle:on println
   }
 
   /** Mark the given files as read within this transaction. */
   def withFilesRead(files: Seq[AddFile]): Unit = {
-    // scalastyle:off println
-    // println("withFilesRead")
-    // println(files.length)
-    // println()
-    // scalastyle:on println
     readFiles ++= files
   }
 

@@ -105,10 +105,6 @@ case class DeltaTableV2(
     timeTravelOpt.orElse(timeTravelByPath)
   }
 
-  def isCDCRead(): Boolean = {
-    !cdcOptions.isEmpty()
-  }
-
   lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
       val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
@@ -238,9 +234,6 @@ case class DeltaTableV2(
    */
   def withOptions(options: Map[String, String]): DeltaTableV2 = {
     val ttSpec = timeTravelOpt.orElse { DeltaDataSource.getTimeTravelVersion(options) }
-    // if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-    //   throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    // }
 
     def checkCDCOptionsValidity(options: CaseInsensitiveStringMap): Unit = {
       // check if we have both version and timestamp parameters

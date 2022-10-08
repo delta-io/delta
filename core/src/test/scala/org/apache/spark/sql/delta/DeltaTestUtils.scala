@@ -20,23 +20,19 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
+import org.apache.spark.sql.execution.{FileRelation, QueryExecution, SparkPlan}
+import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2ScanRelation, FileScan}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
-import org.apache.spark.sql.execution.FileRelation
-import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.execution.datasources.v2.FileScan
+import org.apache.spark.sql.delta.catalog.DeltaTableScan
+
 
 trait DeltaTestUtilsBase {
 
@@ -127,9 +123,8 @@ trait DeltaTestUtilsBase {
      df.queryExecution.optimizedPlan.collect {
       case LogicalRelation(fsBasedRelation: FileRelation, _, _, _) =>
         fsBasedRelation.inputFiles
-      case DataSourceV2ScanRelation(DataSourceV2Relation(_: DeltaTableV2, _, _, _, _),
-          scan: FileScan, _, _) =>
-        scan.fileIndex.inputFiles
+      case DataSourceV2ScanRelation(_, scan: DeltaTableScan, _, _) =>
+        scan.delegatedScan.fileIndex.inputFiles
      }.flatten.toSet.toArray
   }
 }
