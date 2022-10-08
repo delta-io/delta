@@ -1,0 +1,33 @@
+ARG BASE_CONTAINER=yikunkero/spark:latest
+
+FROM $BASE_CONTAINER as spark
+
+LABEL maintainer="Andrew Bauman"
+
+FROM spark as delta
+
+USER root
+
+ARG DELTA_CORE_VERSION="2.1.0"
+
+RUN pip install --no-cache-dir delta-spark==${DELTA_CORE_VERSION} \
+jupyterlab
+
+FROM delta as startup
+
+ARG NBuser=NBuser
+ARG GROUP=NBuser
+ARG WORKDIR=/opt/spark/work-dir
+ENV DELTA_PACKAGE_VERSION=delta-core_2.12:2.1.0
+
+RUN groupadd -r ${GROUP} && useradd -r -m -g ${GROUP} ${NBuser}
+
+
+COPY --chown=${NBuser} startup.sh "${HOME}"
+COPY --chown=${NBuser} quickstart.ipynb "${HOME}"
+RUN chown -R ${NBuser}:${GROUP} /home/${NBuser}/ \
+&& chown -R ${NBuser}:${GROUP} ${WORKDIR}
+
+USER ${NBuser}
+
+ENTRYPOINT ["bash", "startup.sh"]
