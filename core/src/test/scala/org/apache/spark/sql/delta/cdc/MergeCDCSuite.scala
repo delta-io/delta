@@ -20,18 +20,22 @@ package org.apache.spark.sql.delta.cdc
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.{DeltaTable => IODeltaTable}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.lit
+
+class MergeCDCSuite extends MergeCDCTests
 
 /**
  * Tests for MERGE INTO in CDC output mode. In addition to the ones explicitly defined here, we run
  * all the normal merge tests to verify that CDC writing mode doesn't break existing functionality.
  *
  */
-class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
+trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   import testImplicits._
 
   override protected def sparkConf: SparkConf = super.sparkConf
@@ -47,7 +51,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       update: String = null,
       insert: String = null,
       expectedTableData: => DataFrame = null,
-      expectedCdcData: => DataFrame = null,
+      expectedCdcDataWithoutVersion: => DataFrame = null,
       expectErrorContains: String = null,
       confs: Seq[(String, String)] = Seq()): Unit = {
     val updateClauses = Option(update).map(u => this.update(set = u)).toSeq
@@ -58,7 +62,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       source = source,
       clauses = deleteClauses ++ updateClauses ++ insertClauses,
       expectedTableData = expectedTableData,
-      expectedCdcData = expectedCdcData,
+      expectedCdcDataWithoutVersion = expectedCdcDataWithoutVersion,
       expectErrorContains = expectErrorContains,
       confs = confs)
   }
@@ -69,7 +73,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       mergeCondition: String = "s.key = t.key",
       clauses: Seq[MergeClause],
       expectedTableData: => DataFrame = null,
-      expectedCdcData: => DataFrame = null,
+      expectedCdcDataWithoutVersion: => DataFrame = null,
       expectErrorContains: String = null,
       confs: Seq[(String, String)] = Seq()): Unit = {
     test(s"merge CDC - $name") {
@@ -90,9 +94,16 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
             checkAnswer(
               spark.read.format("delta").load(tempPath),
               expectedTableData)
+
+            // Craft expected CDC data
+            val latestVersion = DeltaLog.forTable(spark, tempPath).snapshot.version
+            val expectedCdcData = expectedCdcDataWithoutVersion
+              .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(latestVersion))
+
             // The timestamp is nondeterministic so we drop it when comparing results.
             checkAnswer(
-              CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+              CDCReader.changesToBatchDF(
+                DeltaLog.forTable(spark, tempPath), latestVersion, latestVersion, spark)
                 .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
               expectedCdcData)
           }
@@ -106,7 +117,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     source = ((1, 1) :: (2, 2)  :: Nil).toDF("key", "n"),
     insert = "*",
     expectedTableData = ((0, 0) :: (1, 10) :: (2, 2) :: (3, 30) :: Nil).toDF(),
-    expectedCdcData = ((2, 2, "insert", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((2, 2, "insert") :: Nil).toDF()
   )
 
   testMergeCdc("update only")(
@@ -114,7 +125,8 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     source = ((1, 1) :: (2, 2)  :: Nil).toDF("key", "n"),
     update = "*",
     expectedTableData = ((0, 0) :: (1, 1) :: (3, 30) :: Nil).toDF(),
-    expectedCdcData = ((1, 10, "update_preimage", 1) :: (1, 1, "update_postimage", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = (
+      (1, 10, "update_preimage") :: (1, 1, "update_postimage") :: Nil).toDF()
   )
 
   testMergeCdc("delete only")(
@@ -122,7 +134,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     source = ((1, 1) :: (2, 2)  :: Nil).toDF("key", "n"),
     deleteWhen = "true",
     expectedTableData = ((0, 0) :: (3, 30) :: Nil).toDF(),
-    expectedCdcData = ((1, 10, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((1, 10, "delete") :: Nil).toDF()
   )
 
   testMergeCdc("delete only with duplicate matches")(
@@ -139,10 +151,10 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     update = "*",
     deleteWhen = "s.key = 3",
     expectedTableData = ((0, 0) :: (1, 1) :: (2, 2) :: Nil).toDF(),
-    expectedCdcData = (
-      (2, 2, "insert", 1) ::
-        (1, 10, "update_preimage", 1) :: (1, 1, "update_postimage", 1) ::
-        (3, 30, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = (
+      (2, 2, "insert") ::
+        (1, 10, "update_preimage") :: (1, 1, "update_postimage") ::
+        (3, 30, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unlimited clauses - conditional final branch")(
@@ -153,11 +165,11 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       delete("s.key = 3") :: delete("s.key = 6") ::
       insert("*", "s.key = 2") :: insert("(key, n) VALUES (50, 50)", "s.key = 5") :: Nil,
     expectedTableData = ((0, 0) :: (1, 1) :: (2, 2) :: (4, 400) :: (50, 50) :: Nil).toDF(),
-    expectedCdcData = (
-      (2, 2, "insert", 1) :: (50, 50, "insert", 1) ::
-        (1, 10, "update_preimage", 1) :: (1, 1, "update_postimage", 1) ::
-        (4, 40, "update_preimage", 1) :: (4, 400, "update_postimage", 1) ::
-        (3, 30, "delete", 1) :: (6, 60, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = (
+      (2, 2, "insert") :: (50, 50, "insert") ::
+        (1, 10, "update_preimage") :: (1, 1, "update_postimage") ::
+        (4, 40, "update_preimage") :: (4, 400, "update_postimage") ::
+        (3, 30, "delete") :: (6, 60, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unlimited clauses - unconditional final branch")(
@@ -168,11 +180,11 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
         delete("s.key = 3") :: delete(condition = null) ::
         insert("*", "s.key = 2") :: insert("(key, n) VALUES (50, 50)", condition = null) :: Nil,
     expectedTableData = ((0, 0) :: (1, 1) :: (2, 2) :: (4, 400) :: (50, 50) :: Nil).toDF(),
-    expectedCdcData = (
-      (2, 2, "insert", 1) :: (50, 50, "insert", 1) ::
-        (1, 10, "update_preimage", 1) :: (1, 1, "update_postimage", 1) ::
-        (4, 40, "update_preimage", 1) :: (4, 400, "update_postimage", 1) ::
-        (3, 30, "delete", 1) :: (6, 60, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = (
+      (2, 2, "insert") :: (50, 50, "insert") ::
+        (1, 10, "update_preimage") :: (1, 1, "update_postimage") ::
+        (4, 40, "update_preimage") :: (4, 400, "update_postimage") ::
+        (3, 30, "delete") :: (6, 60, "delete") :: Nil).toDF()
   )
 
   testMergeCdc("basic schema evolution")(
@@ -183,13 +195,13 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     deleteWhen = "s.key = 3",
     expectedTableData = ((0, 0, null) :: (1, 1, "a") :: (2, 2, "b") :: Nil)
       .asInstanceOf[Seq[(Int, Int, String)]].toDF(),
-    expectedCdcData = (
-        (1, 10, null, "update_preimage", 1) ::
-        (1, 1, "a", "update_postimage", 1) ::
-        (2, 2, "b", "insert", 1) ::
-        (3, 30, null, "delete", 1) :: Nil)
-      .asInstanceOf[List[(Integer, Integer, String, String, Integer)]]
-      .toDF("key", "targetVal", "srcVal", "_change_type", "_commit_version"),
+    expectedCdcDataWithoutVersion = (
+        (1, 10, null, "update_preimage") ::
+        (1, 1, "a", "update_postimage") ::
+        (2, 2, "b", "insert") ::
+        (3, 30, null, "delete") :: Nil)
+      .asInstanceOf[List[(Integer, Integer, String, String)]]
+      .toDF("key", "targetVal", "srcVal", "_change_type"),
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
 
@@ -199,7 +211,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     mergeCondition = "t.value = s.value",
     clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
     expectedTableData = Seq(0).toDF(),
-    expectedCdcData = ((1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses(
@@ -211,7 +223,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
         .toDF("value"),
-    expectedCdcData = ((0, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((0, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses(
@@ -221,7 +233,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     mergeCondition = "t.value = s.value",
     clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
     expectedTableData = Seq(0).toDF(),
-    expectedCdcData = ((1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((1, "delete") :: (1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unconditional delete only with target-only merge condition")(
@@ -230,7 +242,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     mergeCondition = "t.value > 0",
     clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
     expectedTableData = Seq(0).toDF(),
-    expectedCdcData = ((1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses(
@@ -240,7 +252,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     mergeCondition = "t.value > 0",
     clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
     expectedTableData = Seq(0).toDF(),
-    expectedCdcData = ((1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((1, "delete") :: (1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unconditional delete only with source-only merge condition")(
@@ -251,7 +263,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
       .toDF("value"),
-    expectedCdcData = ((0, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((0, "delete") :: (1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses(
@@ -263,7 +275,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
         .toDF("value"),
-    expectedCdcData = ((0, "delete", 1) :: (1, "delete", 1) :: (1, "delete", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion = ((0, "delete") :: (1, "delete") :: (1, "delete") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unconditional delete with duplicate matches + insert")(
@@ -273,8 +285,8 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     clauses = MergeClause(isMatched = true, null, "DELETE") ::
       insert(values = "(key, value) VALUES (s.key, s.value)") :: Nil,
     expectedTableData = ((2, 2) :: (3, 30) :: (3, 300) :: Nil).toDF("key", "value"),
-    expectedCdcData =
-      ((1, 1, "delete", 1) :: (3, 30, "insert", 1) :: (3, 300, "insert", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion =
+      ((1, 1, "delete") :: (3, 30, "insert") :: (3, 300, "insert") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses(
@@ -285,9 +297,9 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     clauses = MergeClause(isMatched = true, null, "DELETE") ::
       insert(values = "(key, value) VALUES (s.key, s.value)") :: Nil,
     expectedTableData = ((2, 2) :: (3, 30) :: (3, 300) :: (3, 300) :: Nil).toDF("key", "value"),
-    expectedCdcData =
-      ((1, 1, "delete", 1) :: (3, 30, "insert", 1) :: (3, 300, "insert", 1) ::
-        (3, 300, "insert", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion =
+      ((1, 1, "delete") :: (3, 30, "insert") :: (3, 300, "insert") ::
+        (3, 300, "insert") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("unconditional delete with duplicate matches " +
@@ -298,8 +310,8 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     clauses = MergeClause(isMatched = true, null, "DELETE") ::
       insert(values = "(value) VALUES (col2)") :: Nil,
     expectedTableData = Seq(2, 2).toDF(),
-    expectedCdcData =
-      ((1, "delete", 1) :: (2, "insert", 1) :: Nil).toDF()
+    expectedCdcDataWithoutVersion =
+      ((1, "delete") :: (2, "insert") :: Nil).toDF()
   )
 
   testMergeCdcUnlimitedClauses("all conditions failed for all rows")(
@@ -309,9 +321,9 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       update("t.val = s.val", "s.key = 10") :: insert("*", "s.key = 11") :: Nil,
     expectedTableData =
       Seq((1, "a"), (2, "b")).asInstanceOf[List[(Integer, String)]].toDF("key", "targetVal"),
-    expectedCdcData =
-      Nil.asInstanceOf[List[(Integer, String, String, Integer)]]
-      .toDF("key", "targetVal", "_change_type", "_commit_version")
+    expectedCdcDataWithoutVersion =
+      Nil.asInstanceOf[List[(Integer, String, String)]]
+      .toDF("key", "targetVal", "_change_type")
   )
 
   testMergeCdcUnlimitedClauses("unlimited clauses schema evolution")(
@@ -328,17 +340,17 @@ class MergeCDCSuite extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       ((1, "t", null) :: (2, "b", "u") :: (5, "e", null) ::
         (6, null, null) :: (7, null, "y") :: Nil)
         .asInstanceOf[List[(Integer, String, String)]].toDF("key", "targetVal", "srcVal"),
-    expectedCdcData = (
-        (1, "a", null, "update_preimage", 1) ::
-        (1, "t", null, "update_postimage", 1) ::
-        (2, "b", null, "update_preimage", 1) ::
-        (2, "b", "u", "update_postimage", 1) ::
-        (3, "c", null, "delete", 1) ::
-        (4, "d", null, "delete", 1) ::
-        (6, null, null, "insert", 1) ::
-        (7, null, "y", "insert", 1) :: Nil)
-      .asInstanceOf[List[(Integer, String, String, String, Integer)]]
-      .toDF("key", "targetVal", "srcVal", "_change_type", "_commit_version"),
+    expectedCdcDataWithoutVersion = (
+        (1, "a", null, "update_preimage") ::
+        (1, "t", null, "update_postimage") ::
+        (2, "b", null, "update_preimage") ::
+        (2, "b", "u", "update_postimage") ::
+        (3, "c", null, "delete") ::
+        (4, "d", null, "delete") ::
+        (6, null, null, "insert") ::
+        (7, null, "y", "insert") :: Nil)
+      .asInstanceOf[List[(Integer, String, String, String)]]
+      .toDF("key", "targetVal", "srcVal", "_change_type"),
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
 }

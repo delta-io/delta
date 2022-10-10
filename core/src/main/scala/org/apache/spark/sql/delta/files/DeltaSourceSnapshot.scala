@@ -62,6 +62,7 @@ class DeltaSourceSnapshot(
         .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
+        .withColumn("shouldSkip", lit(false))
         .as[IndexedFile],
       s"Delta Source Snapshot #$version - ${snapshot.redactedPath}").getDS
   }

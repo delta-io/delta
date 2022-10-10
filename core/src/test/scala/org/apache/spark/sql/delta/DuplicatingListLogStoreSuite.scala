@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{HDFSLogStore}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.io.Files
 import org.apache.hadoop.conf.Configuration
@@ -43,7 +44,7 @@ class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configura
   }
 }
 
-class DuplicatingListLogStoreSuite extends SharedSparkSession {
+class DuplicatingListLogStoreSuite extends SharedSparkSession with DeltaSQLCommandTest {
 
   override def sparkConf: SparkConf = {
     super.sparkConf.set("spark.databricks.tahoe.logStore.class",

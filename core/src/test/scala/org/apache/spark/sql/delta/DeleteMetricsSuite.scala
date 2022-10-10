@@ -354,7 +354,14 @@ class DeleteMetricsSuite extends QueryTest
           "numDeletedRows" -> numRemovedRows,
           "numAddedFiles" -> numAddedFiles,
           "numRemovedFiles" -> numRemovedFiles,
-          "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) 1 else 0 }
+          "numAddedChangeFiles" -> {
+            if (testConfig.cdfEnabled
+            ) {
+              1
+            } else {
+              0
+            }
+          }
         ),
         testConfig = testConfig
       )
@@ -374,7 +381,14 @@ class DeleteMetricsSuite extends QueryTest
         "numDeletedRows" -> numRemovedRows,
         "numAddedFiles" -> 0,
         "numRemovedFiles" -> numRemovedFiles,
-        "numAddedChangeFiles" -> { if (testConfig.cdfEnabled) 1 else 0 }
+        "numAddedChangeFiles" -> {
+          if (testConfig.cdfEnabled
+          ) {
+            1
+          } else {
+            0
+          }
+        }
       ),
       testConfig = testConfig
     )

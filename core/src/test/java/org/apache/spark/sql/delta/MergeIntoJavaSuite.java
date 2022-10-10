@@ -33,6 +33,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.apache.spark.sql.test.TestSparkSession;
+import org.apache.spark.sql.delta.catalog.DeltaCatalog;
+import org.apache.spark.sql.internal.SQLConf;
 
 public class MergeIntoJavaSuite implements Serializable {
     private transient TestSparkSession spark;
@@ -42,6 +44,7 @@ public class MergeIntoJavaSuite implements Serializable {
     public void setUp() {
         spark = new TestSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
+        spark.sqlContext().conf().setConfString(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION().key(), DeltaCatalog.class.getCanonicalName());
     }
 
     @After

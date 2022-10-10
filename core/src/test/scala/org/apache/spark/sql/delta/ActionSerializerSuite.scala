@@ -21,6 +21,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -29,7 +30,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 // scalastyle:off: removeFile
-class ActionSerializerSuite extends QueryTest with SharedSparkSession {
+class ActionSerializerSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   roundTripCompare("Add",
     AddFile("test", Map.empty, 1, 1, dataChange = true))
@@ -324,8 +325,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       name: String,
       action: => Action,
       expectedJson: String,
-    extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
-    test(name) {
+      extraSettings: Seq[(String, String)] = Seq.empty,
+      testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+    test(name, testTags: _*) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in

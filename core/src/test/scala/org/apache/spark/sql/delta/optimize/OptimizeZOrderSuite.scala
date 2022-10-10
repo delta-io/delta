@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
@@ -211,7 +212,9 @@ trait OptimizeZOrderSuiteBase extends QueryTest
         Row(25, Row(50, 25, 0), Row(74, 49, 24)),
         Row(25, Row(75, 0, 25), Row(99, 24, 49))))
 
-      withSQLConf(DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "1000000") {
+      withSQLConf(
+        DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "1000000"
+      ) {
         val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("c1", "c2", "c3"))
         val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
         assert(metrics.zOrderStats.get.mergedFiles.num == 4)

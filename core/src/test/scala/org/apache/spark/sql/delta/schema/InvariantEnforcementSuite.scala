@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier

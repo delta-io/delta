@@ -905,7 +905,7 @@ case class MergeIntoCommand(
       case newAttrib: AttributeReference =>
         val existingTargetAttrib = targetOutputColsMap.get(newAttrib.name)
           .getOrElse {
-            throw DeltaErrors.failedFindAttributeInOutputCollumns(
+            throw DeltaErrors.failedFindAttributeInOutputColumns(
               newAttrib.name, targetOutputCols.mkString(","))
           }.asInstanceOf[AttributeReference]
 
@@ -927,8 +927,6 @@ case class MergeIntoCommand(
     val metric = metrics(name)
     DeltaUDF.boolean { () => metric += 1; true }.asNondeterministic().apply().expr
   }
-
-  private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>

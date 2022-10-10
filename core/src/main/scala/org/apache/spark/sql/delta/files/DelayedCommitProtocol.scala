@@ -21,12 +21,11 @@ import java.net.URI
 import java.util.UUID
 
 import scala.collection.mutable.ArrayBuffer
-import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_LOCATION, CDC_PARTITION_COL}
-import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
+import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter, Utils => DeltaUtils}
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.{JobContext, TaskAttemptContext}
 
@@ -143,11 +142,6 @@ class DelayedCommitProtocol(
         .toMap
   }
 
-  /** Generates a string created of `randomPrefixLength` alphanumeric characters. */
-  protected def getRandomPrefix(numChars: Int): String = {
-    Random.alphanumeric.take(numChars).mkString
-  }
-
   /**
    * Notifies the commit protocol to add a new file, and gets back the full path that should be
    * used.
@@ -163,7 +157,7 @@ class DelayedCommitProtocol(
     val partitionValues = dir.map(parsePartitions).getOrElse(Map.empty[String, String])
     val filename = getFileName(taskContext, ext, partitionValues)
     val relativePath = randomPrefixLength.map { prefixLength =>
-      getRandomPrefix(prefixLength) // Generate a random prefix as a first choice
+      DeltaUtils.getRandomPrefix(prefixLength) // Generate a random prefix as a first choice
     }.orElse {
       dir // or else write into the partition directory if it is partitioned
     }.map { subDir =>

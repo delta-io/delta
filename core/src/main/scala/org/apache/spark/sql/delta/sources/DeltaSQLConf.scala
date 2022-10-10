@@ -58,6 +58,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
+    buildConf("stats.collect.using.tableSchema")
+      .internal()
+      .doc("When collecting stats while writing files into Delta table" +
+        s" (${DELTA_COLLECT_STATS.key} needs to be true), whether to use the table schema (true)" +
+        " or the DataFrame schema (false) as the stats collection schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
@@ -475,6 +484,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS =
+      buildConf("lastCheckpoint.suppressOptionalFields")
+      .internal()
+      .doc("If set, the LAST_CHECKPOINT file will contain only version, size, and parts fields. " +
+          "For compatibility with broken third-party connectors that choke on unrecognized fields.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CHECKPOINT_PART_SIZE =
     buildConf("checkpoint.partSize")
         .internal()
@@ -586,7 +603,6 @@ trait DeltaSQLConfBase {
           |tables and tables with no stats.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
   val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
     buildConf("replaceWhere.constraintCheck.enabled")
       .doc(
@@ -619,6 +635,24 @@ trait DeltaSQLConfBase {
           |the memory entirely.""".stripMargin)
       .longConf
       .createWithDefault(128L * 1024 * 1024) // 128MB
+
+  val STREAMING_OFFSET_VALIDATION =
+    buildConf("streaming.offsetValidation.enabled")
+      .internal()
+      .doc("Whether to validate whether delta streaming source generates a smaller offset and " +
+        "moves backward.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX =
+    buildConf("streaming.availableNow.offsetInitializationFix.enabled")
+      .internal()
+      .doc(
+        """Whether to enable the offset initializaion fix for AvailableNow.
+          |This is just a flag to provide the mitigation option if the fix introduces
+          |any bugs.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
@@ -793,6 +827,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+      .doc(
+        "Streaming read on Delta table with column mapping schema operations " +
+          "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
+        "schema confusion. However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -839,6 +884,25 @@ trait DeltaSQLConfBase {
           | Please note that if you set this to true, the lower case of the
           | key will be used for non delta prefix table properties.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_REQUIRED_SPARK_CONFS_CHECK =
+    buildConf("requiredSparkConfsCheck.enabled")
+      .doc("Whether to verify SparkSession is initialized with required configurations.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  // TODO(SC-109291): Force wipe history, too.
+  val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
+    buildConf("restore.protocolDowngradeAllowed")
+      .doc("Whether a table may be restored to a lower protocol version than the current." +
+        " This setting also affects CLONE TABLE." +
+        " Note that allowing protocol downgrades may make the history unreadable. It is strongly" +
+        " recommended to wipe the table history with VACUUM RETAIN 0 HOURS after running a" +
+        " RESTORE or CLONE with this setting enabled. This command should also be run without any" +
+        " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
 }

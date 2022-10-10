@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-name := "benchmarks"
-scalaVersion := "2.12.15"
+package org.apache.spark.sql.delta.stats
 
-lazy val root = (project in file("."))
-  .settings(
-    name := "benchmarks",
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.1.2" % "provided",
-    libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
-    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
+import org.apache.spark.sql.delta.DeltaTable
 
-    assemblyMergeStrategy in assembly := {
-      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
-      case x => MergeStrategy.first
+import org.apache.spark.sql.DataFrame
+
+trait StatsUtils {
+  protected def getStats(df: DataFrame): DeltaScan = {
+    val stats = df.queryExecution.optimizedPlan.collect {
+      case DeltaTable(prepared: PreparedDeltaFileIndex) =>
+        prepared.preparedScan
     }
-  )
-  
+    if (stats.size != 1) sys.error(s"Found ${stats.size} scans!")
+    stats.head
+  }
+}

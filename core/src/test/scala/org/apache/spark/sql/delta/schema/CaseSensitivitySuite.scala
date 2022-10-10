@@ -21,6 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._

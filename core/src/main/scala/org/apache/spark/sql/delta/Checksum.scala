@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
@@ -54,7 +55,8 @@ case class VersionChecksum(
     protocol: Protocol,
     metadata: Metadata,
     histogramOpt: Option[FileSizeHistogram],
-    txnId: Option[String])
+    txnId: Option[String],
+    allFiles: Option[Seq[AddFile]])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -73,28 +75,34 @@ trait RecordChecksum extends DeltaLogging {
 
     val version = snapshot.version
     val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
+    val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
+    eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
+    val startTimeMs = System.currentTimeMillis()
     try {
-      recordDeltaOperation(
-        deltaLog,
-        opType = "delta.checksum.write"
-      ) {
-        val stream = writer.createAtomic(
-          FileNames.checksumFile(deltaLog.logPath, version),
-          overwriteIfPossible = false)
-        try {
-          val toWrite = JsonUtils.toJson(checksum) + "\n"
-          stream.write(toWrite.getBytes(UTF_8))
-          stream.close()
-        } catch {
-          case NonFatal(e) =>
-            logWarning(s"Failed to write the checksum for version: $version", e)
-            stream.cancel()
-        }
+      val toWrite = JsonUtils.toJson(checksum) + "\n"
+      eventData("jsonSerializationTimeTakenMs") = System.currentTimeMillis() - startTimeMs
+      eventData("checksumLength") = toWrite.length
+      val stream = writer.createAtomic(
+        FileNames.checksumFile(deltaLog.logPath, version),
+        overwriteIfPossible = false)
+      try {
+        stream.write(toWrite.getBytes(UTF_8))
+        stream.close()
+        eventData("overallTimeTakenMs") = System.currentTimeMillis() - startTimeMs
+        eventData("operationSucceeded") = true
+      } catch {
+        case NonFatal(e) =>
+          logWarning(s"Failed to write the checksum for version: $version", e)
+          stream.cancel()
       }
     } catch {
       case NonFatal(e) =>
         logWarning(s"Failed to write the checksum for version: $version", e)
     }
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.checksum.write",
+      data = eventData)
   }
 }
 
@@ -155,48 +163,3 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   }
 }
 
-/**
- * Verify the state of the table using the checksum information.
- */
-trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
-
-  /**
-   * Validate checksum by performing state reconstruction and comparing that result to the checksum.
-   * @param contextInfo caller context that will be added to the logging if validation fails
-   */
-  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Unit =
-      checksumOpt.foreach { checksum =>
-    val mismatchStringOpt = checkMismatch(checksum)
-    if (mismatchStringOpt.isDefined) {
-      // Report the failure to usage logs.
-      recordDeltaEvent(
-        this.deltaLog,
-        "delta.checksum.invalid",
-        data = Map("error" -> mismatchStringOpt.get) ++ contextInfo)
-      // We get the active SparkSession, which may be different than the SparkSession of the
-      // Snapshot that was created, since we cache `DeltaLog`s.
-      val spark = SparkSession.getActiveSession.getOrElse {
-        throw DeltaErrors.sparkSessionNotSetException()
-      }
-      val conf = DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL
-      if (spark.sessionState.conf.getConf(conf)) {
-        throw DeltaErrors.logFailedIntegrityCheck(version, mismatchStringOpt.get)
-      }
-    }
-  }
-
-  private def checkMismatch(checksum: VersionChecksum): Option[String] = {
-    val result = new ArrayBuffer[String]()
-    def compare(expected: Long, found: Long, title: String): Unit = {
-      if (expected != found) {
-        result += s"$title - Expected: $expected Computed: $found"
-      }
-    }
-    compare(checksum.tableSizeBytes, computedState.sizeInBytes, "Table size (bytes)")
-    compare(checksum.numFiles, computedState.numOfFiles, "Number of files")
-    compare(checksum.numMetadata, computedState.numOfMetadata, "Metadata updates")
-    compare(checksum.numProtocol, computedState.numOfProtocol, "Protocol updates")
-
-    if (result.isEmpty) None else Some(result.mkString("\n"))
-  }
-}

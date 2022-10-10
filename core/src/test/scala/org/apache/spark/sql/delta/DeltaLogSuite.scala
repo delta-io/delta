@@ -21,9 +21,10 @@ import java.io.{File, FileNotFoundException}
 import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -34,7 +35,7 @@ import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with DeltaSQLCommandTest  with SQLTestUtils {
 
   protected val testOp = Truncate()
 
@@ -483,9 +484,7 @@ class DeltaLogSuite extends QueryTest
       )
 
       // Now let's delete that commit as well, and write a new first version
-      deltaLog.store
-        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0), deltaLog.newDeltaHadoopConf())
-        .foreach(f => fs.delete(f.getPath, false))
+      deltaLog.listFrom(0).foreach(f => fs.delete(f.getPath, false))
 
       assert(deltaLog.snapshot.version === 0)
 

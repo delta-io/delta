@@ -33,7 +33,6 @@ import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
-import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
@@ -282,7 +281,6 @@ case class AddFile(
     size: Long,
     modificationTime: Long,
     override val dataChange: Boolean,
-    @JsonRawValue
     stats: String = null,
     override val tags: Map[String, String] = null
 ) extends FileAction {
@@ -327,21 +325,32 @@ case class AddFile(
   @JsonIgnore
   override def getFileSize: Long = size
 
+  private case class ParsedStatsFields(
+      numLogicalRecords: Option[Long]
+  )
+
   @JsonIgnore
   @transient
-  override lazy val numLogicalRecords: Option[Long] = {
+  private lazy val parsedStatsFields: Option[ParsedStatsFields] = {
     if (stats == null || stats.isEmpty) {
       None
     } else {
       val node = new ObjectMapper().readTree(stats)
-      if (node.has("numRecords") && !node.get("numRecords").isNull) {
-        var numRecordsInFile = node.get("numRecords").asLong()
-        Some(numRecordsInFile)
-      } else {
-        None
-      }
+
+      val numLogicalRecords = if (node.has("numRecords")) {
+        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+      } else None
+
+      Some(ParsedStatsFields(
+        numLogicalRecords
+      ))
     }
   }
+
+  @JsonIgnore
+  @transient
+  override lazy val numLogicalRecords: Option[Long] =
+    parsedStatsFields.flatMap(_.numLogicalRecords)
 
 }
 

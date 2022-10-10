@@ -266,14 +266,17 @@ class Snapshot(
     protocol = protocol,
     metadata = metadata,
     histogramOpt = fileSizeHistogram,
-    txnId = None)
+    txnId = None,
+    allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
-  def allFiles: Dataset[AddFile] = {
+  def allFiles: Dataset[AddFile] = allFilesViaStateReconstruction
+
+  private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
     stateDS.where("add IS NOT NULL").select(col("add").as[AddFile])
   }
 
@@ -285,7 +288,10 @@ class Snapshot(
   /** Returns the schema of the table. */
   def schema: StructType = metadata.schema
 
-  /** Returns the data schema of the table, the schema of the columns written out to file. */
+  /** Returns the data schema of the table, used for reading stats */
+  def tableDataSchema: StructType = metadata.dataSchema
+
+  /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
@@ -326,20 +332,6 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
-  /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
-  protected def indexToRelation(
-      index: DeltaLogFileIndex,
-      schema: StructType = logSchema): LogicalRelation = {
-    val fsRelation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      schema,
-      None,
-      index.format,
-      deltaLog.options)(spark)
-    LogicalRelation(fsRelation)
-  }
-
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.
    *
@@ -350,7 +342,7 @@ class Snapshot(
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
-    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, deltaLog.indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
       .withColumn(ACTION_SORT_COL_NAME, input_file_name())
       .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
