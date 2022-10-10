@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -1588,6 +1588,75 @@ class DeltaSuite extends QueryTest
         spark.read.format("delta").load(directory.getCanonicalPath),
         Seq((1, 40), (3, 70)).toDF("key", "value")
       )
+    }
+  }
+
+
+  test("all operations with special characters in path") {
+    withTempDir { dir =>
+      val directory = new File(dir, "test with space")
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val writer = df.write.format("delta").mode("append")
+      writer.save(directory.getCanonicalPath)
+
+      // UPDATE and DELETE
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 99")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 99), (2, 99)).toDF("key", "value")
+      )
+
+      // INSERT
+      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
+      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 99), (2, 99), (5, 50), (5, 50)).toDF("key", "value")
+      )
+
+      // MERGE
+      Seq((1, 1), (3, 88), (5, 88)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                    |USING inbound
+                    |ON base.key = inbound.key
+                    |WHEN MATCHED THEN DELETE
+                    |WHEN NOT MATCHED THEN INSERT *
+                    |""".stripMargin)
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((2, 99), (3, 88)).toDF("key", "value")
+      )
+
+      // DELETE and INSERT again
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
+      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 99)")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((2, 99), (5, 99)).toDF("key", "value")
+      )
+
+      // VACUUM
+      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        spark.sql(s"VACUUM delta.`${directory.getCanonicalPath}` RETAIN 0 HOURS")
+      }
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v8`"),
+        Seq((2, 99), (5, 99)).toDF("key", "value")
+      )
+      // Version 0 should be lost, as version 1 rewrites the whole file
+      val ex = intercept[Exception] {
+        checkAnswer(
+          spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v0`"),
+          spark.emptyDataFrame
+        )
+      }
+      var cause = ex.getCause
+      while (cause.getCause != null) {
+        cause = cause.getCause
+      }
+      assert(cause.getMessage.contains(".parquet does not exist"))
     }
   }
 
