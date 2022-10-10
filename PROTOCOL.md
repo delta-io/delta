@@ -732,13 +732,11 @@ Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta
 Writer Version 4 | - Support [Change Data Feed](#add-cdc-file)<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
 Writer Version 6 | Support [Identity Columns](#identity-columns)
+Writer Version 7 | Respect [Deletion Vectors](#deletion-vectors)
 
 # Requirements for Readers
 
 This section documents additional requirements that readers must respect in order to produce correct scans of a Delta table.
-
-
-
 
 ## Reader Version Requirements
 
