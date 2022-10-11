@@ -217,9 +217,11 @@ case class DeleteCommand(
               } else {
                 data
                   .filter(new Column(cond))
+                  .select(new Column(InputFileName()))
                   .filter(deletedRowUdf())
-                  .select(new Column(InputFileName())).distinct()
-                  .as[String].collect()
+                  .distinct()
+                  .as[String]
+                  .collect()
               }
             }
 
