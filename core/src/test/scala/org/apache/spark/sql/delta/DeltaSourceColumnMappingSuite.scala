@@ -506,7 +506,9 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
     "column mapping + streaming - allowed workflows - column addition",
     "column mapping + streaming - allowed workflows - upgrade to name mode",
     "column mapping + streaming: blocking workflow - drop column",
-    "column mapping + streaming: blocking workflow - rename column"
+    "column mapping + streaming: blocking workflow - rename column",
+    "column mapping + streaming: blocking workflow - " +
+      "should not generate latestOffset past schema change"
   )
 
   import testImplicits._
