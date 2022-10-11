@@ -63,11 +63,17 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     private def noMatchesRegex(indexedFile: IndexedFile): Boolean = {
+      if (hasNoFileActionAndStartIndex(indexedFile)) return true
+
       excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
     }
 
     private def hasFileAction(indexedFile: IndexedFile): Boolean = {
       indexedFile.getFileAction != null
+    }
+
+    private def hasNoFileActionAndStartIndex(indexedFile: IndexedFile): Boolean = {
+      !indexedFile.hasFileAction && indexedFile.index == -1
     }
 
     private def hasAddsOrRemoves(indexedFile: IndexedFile): Boolean = {
@@ -79,7 +85,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         fromVersion: Long,
         fromIndex: Long,
         endOffset: Option[DeltaSourceOffset]): Boolean = {
-      !indexedFile.shouldSkip && hasFileAction(indexedFile) &&
+      !indexedFile.shouldSkip && (hasFileAction(indexedFile) ||
+        hasNoFileActionAndStartIndex(indexedFile)) &&
         moreThanFrom(indexedFile, fromVersion, fromIndex) &&
         lessThanEnd(indexedFile, endOffset) && noMatchesRegex(indexedFile) &&
         lessThanEnd(indexedFile, Option(lastOffsetForTriggerAvailableNow))
@@ -125,11 +132,15 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           }
         } else {
           // CDC is recorded as AddFile or RemoveFile
-          fileActions.filter(hasAddsOrRemoves(_))
+          // We also allow entries with no file actions and index as -1
+          // that are used primarily to update latest offset when no other
+          // file action based entries are present.
+          fileActions.filter(indexedFile => hasAddsOrRemoves(indexedFile) ||
+            hasNoFileActionAndStartIndex(indexedFile))
             .filter(
               isValidIndexedFile(_, fromVersion, fromIndex, endOffset)
             ).takeWhile { indexedFile =>
-            admissionControl.admit(Some(indexedFile.getFileAction))
+            admissionControl.admit(Option(indexedFile.getFileAction))
           }.toIterator
         }
       }
@@ -160,7 +171,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
 
     val groupedFileActions: Iterator[(Long, Seq[FileAction])] =
       changes.map { case (v, indexFiles) =>
-        (v, indexFiles.map { _.getFileAction }.toSeq)
+        (v, indexFiles.filter(_.hasFileAction).map { _.getFileAction }.toSeq)
       }
 
     val cdcInfo = CDCReader.changesToDF(

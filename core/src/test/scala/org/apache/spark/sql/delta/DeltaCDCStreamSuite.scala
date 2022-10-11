@@ -25,10 +25,10 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
@@ -413,6 +413,77 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         }
 
         assert(spark.table("testQuery").isEmpty)
+      }
+    }
+  }
+
+  Seq(true, false).foreach { readChangeFeed =>
+    test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
+      withTempDirs { (inputDir, checkpointDir, outputDir) =>
+        withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+
+          // save some rows to input table.
+          spark.range(10).withColumn("value", lit("a"))
+            .write.format("delta").mode("overwrite")
+            .option("enableChangeDataFeed", "true").save(inputDir.getAbsolutePath)
+
+          // process the input table in a CDC manner
+          val df = spark.readStream
+            .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query = df
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query.processAllAvailable()
+          query.stop()
+          query.awaitTermination()
+
+          // Create a temp view and write to input table as a no-op merge
+          spark.range(20, 30).withColumn("value", lit("b"))
+            .createOrReplaceTempView("source_table")
+
+          for (i <- 0 to 10) {
+            sql(s"MERGE INTO delta.`${inputDir.getAbsolutePath}` AS tgt " +
+              s"USING source_table src ON tgt.id = src.id " +
+              s"WHEN MATCHED THEN UPDATE SET * " +
+              s"WHEN NOT MATCHED AND src.id < 10 THEN INSERT *")
+          }
+
+          // Read again from input table and no new data should be generated
+          val df1 = spark.readStream
+            .option("readChangeFeed", readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query1 = df1
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query1.processAllAvailable()
+          query1.stop()
+          query1.awaitTermination()
+
+          // check that the last batch was committed and that the
+          // reservoirVersion for the table was updated to latest
+          // in both cdf and non-cdf cases.
+          assert(query1.lastProgress.batchId === 1)
+          val endOffset = JsonUtils.mapper.readValue[DeltaSourceOffset](
+            query1.lastProgress.sources.head.endOffset
+          )
+          assert(endOffset.reservoirVersion === 11)
+          assert(endOffset.index === -1)
+        }
       }
     }
   }

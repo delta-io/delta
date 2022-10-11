@@ -83,6 +83,10 @@ private[delta] case class IndexedFile(
     }
   }
 
+  def hasFileAction: Boolean = {
+    getFileAction != null
+  }
+
   def getFileSize: Long = {
     if (add != null) {
       add.size
@@ -889,8 +893,24 @@ case class DeltaSource(
         }
       }
 
-      if (fileAction.isEmpty) return true
       val shouldAdmit = filesToTake > 0 && bytesToTake > 0
+
+      /**
+       * If a fileAction is not present, accept it only if we have capacity to accept
+       * new files or bytes.
+       * For eg - if we get a AddFile at version 0 and maxFilesPerTrigger set to 1, we will
+       * allow that file. Now if we get another AddFile, we will not accept it. Further, if
+       * we get an entry for CommitInfo with no file action and a higher version, we would have
+       * allowed it earlier. Now, the endOffset can be incremented to version 2 and when we create
+       * the data frame for the batch, we call filterFiles which will only check for valid offset
+       * range, since we pass limits as None for that call. Hence, we need to ensure that the rate
+       * limiting happens here such that we accept an empty file action, only if our capacity
+       * is not exhausted.
+       */
+      if (fileAction.isEmpty) {
+        return shouldAdmit
+      }
+
       filesToTake -= 1
 
       bytesToTake -= getSize(fileAction.get)
