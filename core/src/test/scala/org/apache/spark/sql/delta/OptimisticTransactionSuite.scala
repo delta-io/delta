@@ -292,13 +292,6 @@ class OptimisticTransactionSuite
         assert(e.getMessage == DeltaErrors.addFilePartitioningMismatchException(
           Seq("col3"), Seq("col2")).getMessage)
       }
-      // Try with commit validation turned off
-      withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-        DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") {
-        log.startTransaction().commit(Seq(AddFile(
-          log.dataPath.toString, Map("col3" -> "1"), 12322, 0L, true, null, null)), ManualUpdate)
-        assert(log.update().version === 1)
-      }
     }
   }
 

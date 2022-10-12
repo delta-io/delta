@@ -171,16 +171,6 @@ class Snapshot(
     cachedState.getDF
   }
 
-  /** Helper method to log missing actions when state reconstruction checks are not enabled */
-  protected def logMissingActionWarning(action: String): Unit = {
-    logWarning(
-      s"""
-         |Found no $action in computed state, setting it to defaults. State reconstruction
-         |validation was turned off. To turn it back on set
-         |${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "true"
-        """.stripMargin)
-  }
-
   /**
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
@@ -213,17 +203,13 @@ class Snapshot(
         val _computedState = recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
           stateDF.select(aggregations: _*).as[State].first()
         }
-        val stateReconstructionCheck = spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
         if (_computedState.protocol == null) {
           recordDeltaEvent(
             deltaLog,
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("protocol", version)
-          }
+          throw DeltaErrors.actionNotFoundException("protocol", version)
         }
         if (_computedState.metadata == null) {
           recordDeltaEvent(
@@ -231,11 +217,7 @@ class Snapshot(
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("metadata", version)
-          }
-          logMissingActionWarning("metadata")
-          _computedState.copy(metadata = Metadata())
+          throw DeltaErrors.actionNotFoundException("metadata", version)
         } else {
           _computedState
         }

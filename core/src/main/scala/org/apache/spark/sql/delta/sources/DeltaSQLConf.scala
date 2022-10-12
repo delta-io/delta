@@ -153,13 +153,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
-    buildConf("stateReconstructionValidation.enabled")
-      .internal()
-      .doc("Whether to perform validation checks on the reconstructed state.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_COMMIT_VALIDATION_ENABLED =
     buildConf("commitValidation.enabled")
       .internal()

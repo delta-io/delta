@@ -912,8 +912,7 @@ trait DeltaErrorsBase
   def actionNotFoundException(action: String, version: Long): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_STATE_RECOVER_ERROR",
-      messageParameters = Array(action, version.toString,
-        DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key))
+      messageParameters = Array(action, version.toString))
   }
 
   def schemaChangedException(

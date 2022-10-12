@@ -334,12 +334,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         // all cases.
         val settings = Seq(
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
-          deltaLog.startTransaction().commit(Seq(), ManualUpdate)
+          deltaLog.startTransaction().commit(Seq(Protocol(1, 2), Metadata()), ManualUpdate)
 
           // Commit the actual action.
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
