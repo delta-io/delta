@@ -45,8 +45,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     private def moreThanFrom(
         indexedFile: IndexedFile, fromVersion: Long, fromIndex: Long): Boolean = {
       // we need to filter out files so that we get only files after the startingOffset
-      indexedFile.version > fromVersion ||
-        (indexedFile.index == -1 || indexedFile.index > fromIndex)
+      indexedFile.version > fromVersion || indexedFile.index > fromIndex
     }
 
     private def lessThanEnd(
