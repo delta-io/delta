@@ -264,14 +264,6 @@ class OptimisticTransactionSuite
         }
         assert(e.getMessage == DeltaErrors.metadataAbsentException().getMessage)
       }
-
-      // Try with commit validation turned off
-      withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "false") {
-        txn.commit(Nil, ManualUpdate)
-        assert(log.update().version === 0)
-      }
     }
   }
 

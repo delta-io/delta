@@ -344,16 +344,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_STATE_CORRUPTION_IS_FATAL =
-    buildConf("state.corruptionIsFatal")
-      .internal()
-      .doc(
-        """If true, throws a fatal error when the recreated Delta State doesn't
-          |match committed checksum file.
-        """)
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT =
     buildConf("stalenessLimit")
       .doc(
