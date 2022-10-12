@@ -22,6 +22,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.storage.internal.FileNameUtils;
@@ -68,7 +69,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      * - t7:  E1 is safe to be deleted, and some external store TTL mechanism deletes E1
      * - t8:  W2 begins to try and write into the _delta_log.
      * - t9:  W1 checks if N.json exists in FileSystem, but too little time has transpired between
-     *        t5 and t9 that the FileSystem check (fs.exists(path)) returns FALSE
+     *        t5 and t9 that the FileSystem check (fs.exists(path)) returns FALSE.
+     *        Note: This isn't possible on S3 (which provides strong consistency) but could be
+     *        possible on eventually-consistent systems.
      * - t10: W2 writes actions into temp file T2(N)
      * - t11: W2 writes to external store entry E2(N, complete=false)
      * - t12: W2 successfully copies (with overwrite=false) T2(N) into N.json. FileSystem didn't
@@ -77,7 +80,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      *
      * By using an expiration delay of 1 day, we ensure one of the steps at t9 or t12 will fail.
      */
-    public static final long DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS = 86400;
+    protected static final long DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS =
+        TimeUnit.DAYS.toSeconds(1);
 
     /**
      * Completed external commit entries will be created with a value of
@@ -370,6 +374,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         try {
             final FSDataOutputStream outputStream = fs.create(dst, false); // overwrite=false
             IOUtils.copy(inputStream, outputStream);
+
+            // We don't close `outputStream` if an exception happens because it may create a partial
+            // file.
             outputStream.close();
         } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
             throw new java.nio.file.FileAlreadyExistsException(dst.toString());
