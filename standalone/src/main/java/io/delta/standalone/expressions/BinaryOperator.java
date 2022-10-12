@@ -13,7 +13,7 @@ public abstract class BinaryOperator extends BinaryExpression {
         super(left, right);
         this.symbol = symbol;
 
-        if (!left.dataType().equals(right.dataType())) {
+        if (!left.dataType().equivalent(right.dataType())) {
             throw new IllegalArgumentException("BinaryOperator left and right DataTypes must be the"
                     + " same, found: " + left.dataType().getTypeName() + " " + symbol + " " +
                     right.dataType().getTypeName());

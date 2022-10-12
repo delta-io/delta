@@ -84,6 +84,11 @@ public final class DecimalType extends DataType {
     }
 
     @Override
+    public boolean equivalent(DataType dt) {
+        return dt instanceof DecimalType;
+    }
+
+    @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), precision, scale);
     }

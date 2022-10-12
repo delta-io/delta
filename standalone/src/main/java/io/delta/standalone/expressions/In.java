@@ -51,7 +51,7 @@ public final class In implements Predicate {
 
         boolean allSameDataType = elems
             .stream()
-            .allMatch(x -> x.dataType().equals(value.dataType()));
+            .allMatch(x -> x.dataType().equivalent(value.dataType()));
 
         if (!allSameDataType) {
             throw new IllegalArgumentException(

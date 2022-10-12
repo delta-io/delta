@@ -122,6 +122,10 @@ public abstract class DataType {
         return getTypeName().equals(that.getTypeName());
     }
 
+    public boolean equivalent(DataType dt) {
+        return this.equals(dt);
+    }
+
     @Override
     public int hashCode() {
         return Objects.hash(getTypeName());
