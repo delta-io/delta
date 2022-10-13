@@ -260,7 +260,10 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       filterAndIndexDeltaLogs(fromVersion)
     }
 
-    iter.map { case (version, indexItr) =>
+    // In this case, filterFiles will consume the available capacity. We use takeWhile
+    // to stop the iteration when we reach the limit which will save us from reading
+    // unnecessary log files.
+    iter.takeWhile(_ => limits.forall(_.hasCapacity)).map { case (version, indexItr) =>
       (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
     }
   }
