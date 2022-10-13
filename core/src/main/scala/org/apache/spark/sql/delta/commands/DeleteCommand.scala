@@ -26,14 +26,14 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, InputFileName, Literal, Not}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.{lit, typedLit, udf}
+import org.apache.spark.sql.functions.{input_file_name, lit, typedLit, udf}
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -216,11 +216,12 @@ case class DeleteCommand(
               if (candidateFiles.isEmpty) {
                 Array.empty[String]
               } else {
-                data
-                  .filter(new Column(cond))
+                data.filter(new Column(cond))
+                  .select(input_file_name())
                   .filter(deletedRowUdf())
-                  .select(new Column(InputFileName())).distinct()
-                  .as[String].collect()
+                  .distinct()
+                  .as[String]
+                  .collect()
               }
             }
 
