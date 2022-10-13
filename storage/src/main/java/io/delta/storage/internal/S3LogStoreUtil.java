@@ -54,8 +54,7 @@ public final class S3LogStoreUtil {
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
      */
-    public static RemoteIterator<S3AFileStatus> s3ListFrom(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
-        S3AFileSystem s3afs = (S3AFileSystem) fs;
+    private static RemoteIterator<S3AFileStatus> s3ListFrom(S3AFileSystem s3afs, Path resolvedPath, Path parentPath) throws IOException {
         int maxKeys = S3AUtils.intOption(s3afs.getConf(), MAX_PAGING_KEYS, DEFAULT_MAX_PAGING_KEYS, 1);
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
@@ -81,11 +80,15 @@ public final class S3LogStoreUtil {
      * TODO: Remove this method when iterators are used everywhere.
      */
     public static FileStatus[] s3ListFromArray(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
+        S3AFileSystem s3afs;
         try {
-            return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(fs, resolvedPath, parentPath), new HashSet<>());
-        } catch (ClassCastException | NoClassDefFoundError e) {
-            throw new FastS3ListFromUnavailableException(e);
+             s3afs = (S3AFileSystem) fs;
+        } catch (ClassCastException e) {
+            throw new UnsupportedOperationException(
+                    "The Hadoop file system used for the S3LogStore must be castable to " +
+                            "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
         }
+        return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath), new HashSet<>());
     }
 
     /**
@@ -102,18 +105,6 @@ public final class S3LogStoreUtil {
             return new String(bytes, StandardCharsets.UTF_8);
         } else {
             return new String(bytes, 0, bytes.length - 1, StandardCharsets.UTF_8);
-        }
-    }
-
-    /**
-     * Wrapper exception with more diagnostics if the fast s3 list from feature is enabled, but we are unable to use it.
-     */
-    public static class FastS3ListFromUnavailableException extends RuntimeException {
-        private FastS3ListFromUnavailableException(Throwable e) {
-            super("The Hadoop file system used for the S3LogStore must be castable" +
-                    " to org.apache.hadoop.fs.s3a.S3AFileSystem. Please ensure that" +
-                    " org.apache.hadoop:hadoop-aws is available at runtime and that S3AFileSystem" +
-                    " is used as the Hadoop file system for the S3LogStore", e);
         }
     }
 }
