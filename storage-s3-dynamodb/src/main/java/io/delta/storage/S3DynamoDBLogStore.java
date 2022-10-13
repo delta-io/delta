@@ -85,6 +85,8 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
     public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
     public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+
+    // WARNING: setting this value too low can cause data loss. Defaults to a duration of 1 day.
     public static final String TTL_SECONDS = "ddb.ttl";
 
     /**

@@ -53,7 +53,6 @@ export DELTA_CONCURRENT_READERS=2
 export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
 export DELTA_NUM_ROWS=200
 export DELTA_DYNAMO_REGION=us-west-2
-export DELTA_DYNAMO_TTL=100
 export DELTA_DYNAMO_ERROR_RATES=0.00
 
 # ===== Optional input from user (we calculate defaults using S3_BUCKET and RUN_ID) =====
@@ -78,7 +77,6 @@ concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.S3DynamoDBLogStore")
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
-dynamo_ttl = os.environ.get("DELTA_DYNAMO_TTL", "100")
 # used only by FailingS3DynamoDBLogStore
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
@@ -105,7 +103,6 @@ concurrent writers: {concurrent_writers}
 concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
 delta storage: {delta_storage}
-dynamo TTL (seconds): {dynamo_ttl}
 dynamo_error_rates: {dynamo_error_rates}
 
 relative_delta_table_path: {relative_delta_table_path}
@@ -125,7 +122,6 @@ spark = SparkSession \
     .config("spark.delta.logStore.s3n.impl", delta_storage) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
-    .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.ttl", dynamo_ttl) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu", 12) \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
