@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import org.apache.spark.sql.delta.{GeneratedColumn, OptimisticTransaction, NoMapping}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, GeneratedColumn, OptimisticTransaction, NoMapping}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -30,6 +30,7 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, ParquetScanBuilder}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
 
 
 /**
@@ -52,6 +53,11 @@ class DeltaScanBuilder(
   extends ParquetScanBuilder(sparkSession, deltaFileIndex, readSchema, readSchema, options)
   with PredicateHelper
   with DeltaLogging {
+
+  protected def prepareSchema(inputSchema: StructType): StructType = {
+    DeltaColumnMapping.createPhysicalSchema(inputSchema, tableSchema,
+      metadata.columnMappingMode)
+  }
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     // The first case means that we've fixed the table snapshot for time travel
@@ -103,15 +109,21 @@ class DeltaScanBuilder(
   override def build(): Scan = {
     var parquetScan = super.build().asInstanceOf[ParquetScan]
     var transaction: Option[OptimisticTransaction] = None
+    var generatedPartitionFilters = Seq.empty[Expression]
+    var preparedIndex: PartitioningAwareFileIndex = parquetScan.fileIndex
+
     if (deltaFileIndex.isInstanceOf[TahoeLogFileIndex]) {
       val logFileIndex = deltaFileIndex.asInstanceOf[TahoeLogFileIndex]
       val scanGenerator = getDeltaScanGenerator(logFileIndex)
+
+      // If we are already in a transaction, store the scan with the transaction so
+      // we don't double add the read files and predicates in WriteIntoDelta
       if (scanGenerator.isInstanceOf[OptimisticTransaction]) {
         transaction = Some(scanGenerator.asInstanceOf[OptimisticTransaction])
       }
 
       val filters = partitionFilters ++ dataFilters
-      val generatedPartitionFilters =
+      generatedPartitionFilters =
         if (GeneratedColumn.partitionFilterOptimizationEnabled(sparkSession)) {
           // Create a fake relation to resolve partition filters against, not sure
           // why this is really needed
@@ -126,10 +138,21 @@ class DeltaScanBuilder(
         }
 
       val preparedScan = scanGenerator.filesForScan(filters ++ generatedPartitionFilters)
-      val preparedIndex = getPreparedIndex(preparedScan, logFileIndex)
-      parquetScan = parquetScan.copy(fileIndex = preparedIndex,
-        partitionFilters = partitionFilters ++ generatedPartitionFilters)
+      preparedIndex = getPreparedIndex(preparedScan, logFileIndex)
     }
-    DeltaTableScan(sparkSession, metadata, tableSchema, parquetScan, transaction)
+
+    // Pull the pruned schemas from the parquet scan
+    val readDataSchema = parquetScan.readDataSchema
+    val readPartitionSchema = parquetScan.readPartitionSchema
+
+    // Update schemas with the prepared index and column mapping for the physical scan
+    parquetScan = parquetScan.copy(
+      fileIndex = preparedIndex,
+      partitionFilters = partitionFilters ++ generatedPartitionFilters,
+      dataSchema = prepareSchema(readSchema),
+      readDataSchema = prepareSchema(parquetScan.readDataSchema),
+      readPartitionSchema = prepareSchema(parquetScan.readPartitionSchema))
+
+    DeltaTableScan(sparkSession, parquetScan, readDataSchema, readPartitionSchema, transaction)
   }
 }
