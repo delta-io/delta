@@ -52,6 +52,10 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  *
  * @param path The path to the table
  * @param tableIdentifier The table identifier for this table
+ * @param timeTravelOpt Time travel options for the table
+ * @param options File system options for reading the table
+ * @param cdcOptions Change data capture options
+ * @param pinnedFileIndex Pin the table to a specific listing of files
  */
 case class DeltaTableV2(
     spark: SparkSession,

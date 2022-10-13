@@ -31,6 +31,17 @@ import org.apache.spark.sql.execution.datasources.v2.parquet.{ParquetScan, Parqu
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+
+/**
+ * The scan builder for V2 Delta table reads. Mostly serves the same purpose as the
+ * PrepareDeltaScan optimization rule. The scan building happens after the PreCBO rules.
+ *
+ * @param deltaFileIndex The file index for the read
+ * @param metadata Metadata for the table to check the column mapping mode
+ * @param tableSchema The schema of the table with all Delta metadata
+ * @param readSchema The schema of the table with Delta metadata removed
+ * @param options File system options for the scan
+ */
 class DeltaScanBuilder(
     sparkSession: SparkSession,
     deltaFileIndex: TahoeFileIndex,
