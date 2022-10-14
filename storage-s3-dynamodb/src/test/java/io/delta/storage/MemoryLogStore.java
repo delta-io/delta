@@ -44,7 +44,7 @@ public class MemoryLogStore extends BaseExternalLogStore {
             entry.fileName,
             entry.tempPath,
             entry.complete,
-            entry.commitTime
+            entry.expireTime
         );
 
         if (overwrite) {
