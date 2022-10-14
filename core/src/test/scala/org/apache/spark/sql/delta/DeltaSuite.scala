@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -43,7 +44,7 @@ import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -2300,6 +2301,7 @@ class DeltaSuite extends QueryTest
       runQuery(dataToAdd = 2, expectedTable1Count = 3, expectedTable2Count = 3)
     }
   }
+
 }
 
 
