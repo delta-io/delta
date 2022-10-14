@@ -616,7 +616,7 @@ abstract class UpdateSuiteBase
           {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 20}, "z": 20}""")
       }
 
-      assert(e.getMessage.contains("cannot cast struct"))
+      assert(e.getMessage.contains("cannot cast"))
     }
   }
 
