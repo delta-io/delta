@@ -137,7 +137,9 @@ class DeltaScanBuilder(
           Seq.empty
         }
 
-      val preparedScan = scanGenerator.filesForScan(filters ++ generatedPartitionFilters)
+      val preparedScan = withStatusCode("DELTA", "Filtering files for query") {
+        scanGenerator.filesForScan(filters ++ generatedPartitionFilters)
+      }
       preparedIndex = getPreparedIndex(preparedScan, logFileIndex)
     }
 
