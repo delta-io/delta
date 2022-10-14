@@ -265,16 +265,28 @@ abstract class ConvertToDeltaCommandBase(
    * Given the file manifest, create corresponding AddFile actions for the entire list of files.
    */
   protected def createDeltaActions(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
-      fs: FileSystem): Iterator[AddFile] = {
+      fs: FileSystem,
+      collectStats: Boolean): Iterator[AddFile] = {
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
         ConvertToDeltaCommand.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
-      adds.toIterator
+      if (collectStats &&
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
+        computeStats(deltaLog, deltaLog.snapshot, adds)
+      }
+      else if (collectStats) {
+        logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
+          s" is false. Skip statistics collection")
+        adds.toIterator
+      }
+      else adds.toIterator
     }
   }
 
@@ -337,7 +349,8 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, txn.deltaLog, manifest, partitionFields,
+        txn, fs, collectStats)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
@@ -358,9 +371,23 @@ abstract class ConvertToDeltaCommandBase(
         spark.sessionState.catalog
       )
     }
-    if (collectStats) { StatisticsCollection.recompute(spark, txn.deltaLog) }
 
     Seq.empty[Row]
+  }
+
+  private def computeStats(
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      addFiles: Seq[AddFile]): Iterator[AddFile] = {
+    import org.apache.spark.sql.functions._
+    val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
+      .groupBy(input_file_name).agg(to_json(snapshot.statsCollector))
+    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
+    filesWithStats
+      .collect().iterator.map{ row =>
+        val addFile = getTouchedFile(deltaLog.dataPath, row.getString(0), pathToAddFileMap)
+        addFile.copy(stats = row.getString(1))
+    }
   }
 
   protected def getContext: Map[String, String] = {

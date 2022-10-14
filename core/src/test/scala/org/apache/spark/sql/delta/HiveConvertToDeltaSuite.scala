@@ -68,8 +68,7 @@ abstract class HiveConvertToDeltaSuiteBase
         .select("stats.*")
       assert(statsDf.filter(col("numRecords").isNull).count == 0)
       val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
-      assert(history.count == 2)
-      assert(history.filter(col("operation") === "COMPUTE STATS").count == 1)
+      assert(history.count == 1)
 
     }
   }
@@ -96,7 +95,6 @@ abstract class HiveConvertToDeltaSuiteBase
       assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
       val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
       assert(history.count == 1)
-      assert(history.select("operation").first().getString(0) != "COMPUTE STATS")
 
     }
   }
