@@ -147,6 +147,17 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     sql(s"CREATE TABLE TestSnapshotIsolation (c1 int) USING DELTA")
     spark.sql("INSERT INTO TestSnapshotIsolation VALUES (1)")
 
+    val query = "SELECT (SELECT COUNT(*) FROM TestSnapshotIsolation), " +
+      "(SELECT COUNT(*) FROM TestSnapshotIsolation)"
+
+    checkResultsAndOptimizedPlan(
+      query,
+      Seq(Row(1, 1)),
+      "Project [scalar-subquery#0 [] AS #0L, scalar-subquery#0 [] AS #1L]\n" +
+        ":  :- LocalRelation [none#0L]\n" +
+        ":  +- LocalRelation [none#0L]\n" +
+        "+- OneRowRelation")
+
     Future {
       val deadline = 60.seconds.fromNow
 
@@ -161,8 +172,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     val deadline = 60.seconds.fromNow
 
     do {
-      val result = spark.sql(s"SELECT (SELECT COUNT(*) FROM TestSnapshotIsolation), " +
-        s"(SELECT COUNT(*) FROM TestSnapshotIsolation)").collect()(0)
+      val result = spark.sql(query).collect()(0)
       c1 = result.getLong(0)
       c2 = result.getLong(1)
       equal = c1 == c2

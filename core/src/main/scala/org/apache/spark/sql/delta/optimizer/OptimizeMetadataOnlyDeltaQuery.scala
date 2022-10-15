@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.optimizer
 
 import org.apache.spark.sql.{Column, Row, SparkSession, functions}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, PredicateHelper, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Count}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -33,10 +33,23 @@ trait OptimizeMetadataOnlyDeltaQuery {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY)) {
       plan
     } else {
-      plan transform {
-        case CountStarDeltaTable(aliasName, exprId, qualifier, countValue) =>
-          createLocalRelationPlan(aliasName, exprId, qualifier, countValue)
+
+      def transformSubqueries(plan: LogicalPlan): LogicalPlan = {
+        import org.apache.spark.sql.delta.implicits._
+
+        plan transformAllExpressionsUp {
+          case subquery: SubqueryExpression =>
+            subquery.withNewPlan(transform(subquery.plan))
+        }
       }
+
+      def transform(plan: LogicalPlan): LogicalPlan =
+        transformSubqueries(plan) transform {
+          case CountStarDeltaTable(aliasName, exprId, qualifier, countValue) =>
+            createLocalRelationPlan(aliasName, exprId, qualifier, countValue)
+        }
+
+      transform(plan)
     }
   }
 

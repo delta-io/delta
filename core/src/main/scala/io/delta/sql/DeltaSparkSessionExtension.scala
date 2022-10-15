@@ -16,7 +16,7 @@
 
 package io.delta.sql
 
-import org.apache.spark.sql.delta.optimizer.{RangePartitionIdRewrite, OptimizeMetadataOnlyDeltaQuery}
+import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
