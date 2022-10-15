@@ -92,9 +92,6 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectOptimizerRule { session =>
       new RangePartitionIdRewrite(session)
     }
-    extensions.injectOptimizerRule { session =>
-      new OptimizeMetadataOnlyDeltaQuery(session)
-    }
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableUpdate(session.sessionState.conf)
     }

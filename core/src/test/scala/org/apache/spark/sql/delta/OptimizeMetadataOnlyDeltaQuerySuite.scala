@@ -22,6 +22,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.time.SpanSugar.convertIntToGrainOfTime
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 
 class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
@@ -137,6 +141,36 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       s"SELECT COUNT(*) FROM $testTableName LIMIT 3",
       Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
+  }
+
+  test("Select Count: snapshot isolation") {
+    sql(s"CREATE TABLE TestSnapshotIsolation (c1 int) USING DELTA")
+    spark.sql("INSERT INTO TestSnapshotIsolation VALUES (1)")
+
+    Future {
+      val deadline = 60.seconds.fromNow
+
+      while (deadline.hasTimeLeft) {
+        spark.sql(s"INSERT INTO TestSnapshotIsolation VALUES (1)")
+      }
+    }
+
+    var c1: Long = 0
+    var c2: Long = 0
+    var equal: Boolean = false
+    val deadline = 60.seconds.fromNow
+
+    do {
+      val result = spark.sql(s"SELECT (SELECT COUNT(*) FROM TestSnapshotIsolation), " +
+        s"(SELECT COUNT(*) FROM TestSnapshotIsolation)").collect()(0)
+      c1 = result.getLong(0)
+      c2 = result.getLong(1)
+      equal = c1 == c2
+    } while (equal && deadline.hasTimeLeft)
+
+    sql(s"DROP TABLE TestSnapshotIsolation")
+
+    assertResult(c1, "Snapshot isolation should guarantee the results are always the same")(c2)
   }
 
   // Tests to validate the optimizer won't use missing or partial stats

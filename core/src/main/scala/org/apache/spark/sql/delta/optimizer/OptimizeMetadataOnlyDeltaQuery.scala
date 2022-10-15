@@ -24,13 +24,12 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.{DeltaTable, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions.count
 import org.apache.spark.sql.types.LongType
 
-class OptimizeMetadataOnlyDeltaQuery(protected val spark: SparkSession)
-  extends Rule[LogicalPlan] with PredicateHelper {
-
-  override def apply(plan: LogicalPlan): LogicalPlan = {
+trait OptimizeMetadataOnlyDeltaQuery {
+  def optimizeQueryWithMetadata(spark: SparkSession, plan: LogicalPlan): LogicalPlan = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY)) {
       plan
     } else {
@@ -40,6 +39,8 @@ class OptimizeMetadataOnlyDeltaQuery(protected val spark: SparkSession)
       }
     }
   }
+
+  protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
 
   private def createLocalRelationPlan(
     aliasName: String,
@@ -55,10 +56,6 @@ class OptimizeMetadataOnlyDeltaQuery(protected val spark: SparkSession)
 
   object CountStarDeltaTable {
 
-    /**
-     * This is an extractor method (basically, the opposite of a constructor) which takes in an
-     * object `plan` and tries to give back the arguments as a [[CountStarDeltaTable]].
-     */
     def unapply(plan: Aggregate): Option[(String, ExprId, Seq[String], Long)] = {
       plan match {
         case Aggregate(
@@ -71,46 +68,28 @@ class OptimizeMetadataOnlyDeltaQuery(protected val spark: SparkSession)
         case _ => None
       }
     }
-  }
 
-  def extractGlobalCount(tahoeFileIndex: TahoeLogFileIndex): Option[Long] = {
-    val row = getSnapshot(tahoeFileIndex).withStats
-      .agg(
-        functions.sum("stats.numRecords"),
-        count(new Column("stats.*")),
-        count(new Column("stats.numRecords")))
-      .first
+    private def extractGlobalCount(tahoeLogFileIndex: TahoeLogFileIndex): Option[Long] = {
+      val scanGenerator = getDeltaScanGenerator(tahoeLogFileIndex)
 
-    if (row.isNullAt(0) // It is Null if deltaLog.snapshot.allFiles is empty
-      // If COUNT(*) is greater than COUNT(numRecords) means not every AddFile records has stats
-      || row.getLong(1) != row.getLong(2)
-    ) {
-      None
-    } else {
-      if (!tahoeFileIndex.isTimeTravelQuery) {
-        val transaction = OptimisticTransaction.getActive()
-        if (transaction.isDefined) {
-          // When a transaction is committed it checks if any of the files read in that transaction
-          // has been changed and throws a DeltaConcurrentModificationException if it did.
-          // Mark the whole table as read to simulate the behavior of getting the row count.
-          transaction.get.readWholeTable()
-        }
-      }
-      Some(row.getLong(0))
-    }
-  }
+      val row = scanGenerator.snapshotToScan.withStats
+        .agg(
+          functions.sum("stats.numRecords"),
+          count(new Column("stats.*")),
+          count(new Column("stats.numRecords")))
+        .first
 
-  private def getSnapshot(fileIndex: TahoeLogFileIndex): Snapshot = {
-    if (fileIndex.isTimeTravelQuery) {
-      fileIndex.snapshotAtAnalysis
-    } else {
-      val transaction = OptimisticTransaction.getActive()
-      if (transaction.isDefined) {
-        // Inside a transaction we use the transaction snapshot instead of the most recent.
-        transaction.get.getDeltaScanGenerator(fileIndex).snapshotToScan
-      }
-      else {
-        fileIndex.getSnapshot
+      if (row.isNullAt(0) // It is Null if deltaLog.snapshot.allFiles is empty
+        // If COUNT(*) is greater than COUNT(numRecords) means not every AddFile records has stats
+        || row.getLong(1) != row.getLong(2)
+      ) {
+        None
+      } else {
+        // When a transaction is committed it checks if any of the files read in that transaction
+        // has been changed and throws a DeltaConcurrentModificationException if it did.
+        // Mark the whole table as read to simulate the behavior of getting the row count.
+        scanGenerator.filesWithStatsForScan(Nil)
+        Some(row.getLong(0))
       }
     }
   }

@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
+import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
@@ -49,7 +50,8 @@ import org.apache.spark.sql.types.StructType
  */
 trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
-  with DeltaLogging { self: PrepareDeltaScan =>
+  with DeltaLogging
+  with OptimizeMetadataOnlyDeltaQuery { self: PrepareDeltaScan =>
 
   private val snapshotIsolationEnabled = spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)
 
@@ -209,7 +211,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         return plan
       }
 
-      prepareDeltaScan(plan)
+      prepareDeltaScan(optimizeQueryWithMetadata(spark, plan))
     } else {
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.
