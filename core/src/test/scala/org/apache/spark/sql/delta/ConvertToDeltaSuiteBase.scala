@@ -134,7 +134,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
         assert(history.count == 1)
         val statsDf = deltaLog.snapshot.allFiles
           .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
-        assert(statsDf.filter($"numRecords".isNull).count == 0)
+        assert(statsDf.filter($"numRecords".isNotNull).count == 0)
       }
     }
   }
