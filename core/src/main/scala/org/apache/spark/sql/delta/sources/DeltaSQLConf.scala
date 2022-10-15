@@ -889,10 +889,11 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_STATS_RETURN_VALUE =
-    buildConf("stats.returnValues")
+  val DELTA_OPTIMIZE_METADATA_QUERY =
+    buildConf("optimizeMetadataQuery.enabled")
       .internal()
-      .doc("When true, statistics are used for returning results")
+      .doc("Whether we can use the metadata in the DeltaLog to" +
+        " optimize queries that can be run purely on metadata.")
       .booleanConf
       .createWithDefault(true)
 }

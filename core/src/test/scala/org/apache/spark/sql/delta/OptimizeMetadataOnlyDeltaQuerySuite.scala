@@ -23,7 +23,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 import org.scalatest.BeforeAndAfterAll
 
-class StatsBasedDataSkippingSuite
+class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
     with SharedSparkSession
     with BeforeAndAfterAll
@@ -225,7 +225,7 @@ class StatsBasedDataSkippingSuite
   private def checkResultsAndOptimizedPlan(generateQueryDf: () => DataFrame,
                                            expectedAnswer: scala.Seq[org.apache.spark.sql.Row],
                                            expectedOptimizedPlan: String): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "true") {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "true") {
       val queryDf = generateQueryDf()
       val optimizedPlan = queryDf.queryExecution.optimizedPlan.canonicalized.toString()
 
@@ -244,7 +244,7 @@ class StatsBasedDataSkippingSuite
     var optimizationEnabledQueryPlan: String = null
     var optimizationDisabledQueryPlan: String = null
 
-    withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "true") {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "true") {
 
       val queryDf = spark.sql(query)
       optimizationEnabledQueryPlan = queryDf.queryExecution.optimizedPlan
@@ -252,7 +252,7 @@ class StatsBasedDataSkippingSuite
       checkAnswer(queryDf, expectedAnswer)
     }
 
-    withSQLConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE.key -> "false") {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "false") {
 
       val countQuery = spark.sql(query)
       optimizationDisabledQueryPlan = countQuery.queryExecution.optimizedPlan

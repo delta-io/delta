@@ -27,11 +27,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.count
 import org.apache.spark.sql.types.LongType
 
-class StatsBasedDataSkipping(protected val spark: SparkSession)
+class OptimizeMetadataOnlyDeltaQuery(protected val spark: SparkSession)
   extends Rule[LogicalPlan] with PredicateHelper {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_RETURN_VALUE)) {
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY)) {
       plan
     } else {
       plan transform {
@@ -41,10 +41,11 @@ class StatsBasedDataSkipping(protected val spark: SparkSession)
     }
   }
 
-  private def createLocalRelationPlan(aliasName: String,
-                                      exprId: ExprId,
-                                      qualifier: Seq[String],
-                                      rowCount: Long): LogicalPlan = {
+  private def createLocalRelationPlan(
+    aliasName: String,
+    exprId: ExprId,
+    qualifier: Seq[String],
+    rowCount: Long): LogicalPlan = {
     val relation = LocalRelation.fromExternalRows(
       output = Seq(AttributeReference(aliasName, LongType)(exprId, qualifier)),
       data = Seq(Row(rowCount)))
@@ -52,9 +53,6 @@ class StatsBasedDataSkipping(protected val spark: SparkSession)
     relation
   }
 
-  /**
-   * This is an extractor object. See https://docs.scala-lang.org/tour/extractor-objects.html.
-   */
   object CountStarDeltaTable {
 
     /**
