@@ -17,11 +17,10 @@
 package org.apache.spark.sql.delta.optimizer
 
 import org.apache.spark.sql.{Column, Row, SparkSession, functions}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Count}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.delta.{DeltaTable, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
