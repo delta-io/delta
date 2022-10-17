@@ -33,6 +33,8 @@ object CheckpointHook extends PostCommitHook {
       committedActions: Seq[Action]): Unit = {
     if (!txn.needsCheckpoint) return
 
+    txn.deltaLog.ensureLogDirectoryExist()
+
     // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
     // explicitly checkpoint the snapshot at the committedVersion. However, we can speed that
     // up by providing the postCommitSnapshot's checkpoint as a hint.

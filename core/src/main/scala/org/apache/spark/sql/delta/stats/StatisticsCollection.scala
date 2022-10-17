@@ -24,12 +24,14 @@ import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types._
 
 /**
@@ -88,8 +90,12 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  */
 trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
   protected def spark: SparkSession
+  def tableDataSchema: StructType
   def dataSchema: StructType
   val numIndexedCols: Int
+
+  private lazy val explodedDataSchemaNames: Seq[String] =
+    SchemaMergingUtils.explodeNestedFieldNames(dataSchema)
 
   /**
    * statCollectionSchema is the schema that is composed of all the columns that have the stats
@@ -97,47 +103,53 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
    */
   lazy val statCollectionSchema: StructType = {
     if (numIndexedCols >= 0) {
-      truncateSchema(dataSchema, numIndexedCols)._1
+      truncateSchema(tableDataSchema, numIndexedCols)._1
     } else {
-      dataSchema
+      tableDataSchema
     }
   }
+
 
   /**
    * Returns a struct column that can be used to collect statistics for the current
    * schema of the table.
    * The types we keep stats on must be consistent with DataSkippingReader.SkippingEligibleLiteral.
+   * If a column is missing from dataSchema (which will be filled with nulls), we will only
+   * collect the NULL_COUNT stats for it as the number of rows.
    */
   lazy val statsCollector: Column = {
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
-    struct(
+
+    val statCols = Seq(
       count(new Column("*")) as NUM_RECORDS,
       collectStats(MIN, statCollectionSchema) {
         // Truncate string min values as necessary
-        case (c, SkippingEligibleDataType(StringType)) =>
+        case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
         // Collect all numeric min values
-        case (c, SkippingEligibleDataType(_)) =>
+        case (c, SkippingEligibleDataType(_), true) =>
           min(c)
       },
       collectStats(MAX, statCollectionSchema) {
         // Truncate and pad string max values as necessary
-        case (c, SkippingEligibleDataType(StringType)) =>
+        case (c, SkippingEligibleDataType(StringType), true) =>
           val udfTruncateMax =
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
         // Collect all numeric max values
-        case (c, SkippingEligibleDataType(_)) =>
+        case (c, SkippingEligibleDataType(_), true) =>
           max(c)
       },
       collectStats(NULL_COUNT, statCollectionSchema) {
-        case (c, f) => sum(when(c.isNull, 1).otherwise(0))
-      }
-    ) as 'stats
+        case (c, _, true) => sum(when(c.isNull, 1).otherwise(0))
+        case (_, _, false) => count(new Column("*"))
+      })
+
+    struct(statCols: _*).as('stats)
   }
 
   /** Returns schema of the statistics collected. */
@@ -176,10 +188,13 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionSchema)
     val nullCountSchemaOpt = getNullCountSchema(statCollectionSchema)
 
-    val fields = Array("numRecords" -> LongType) ++
-      minMaxStatsSchemaOpt.map("minValues" -> _) ++
-      minMaxStatsSchemaOpt.map("maxValues" -> _) ++
-      nullCountSchemaOpt.map("nullCount" -> _)
+
+    val fields =
+      Array(NUM_RECORDS -> LongType) ++
+      minMaxStatsSchemaOpt.map(MIN -> _) ++
+      minMaxStatsSchemaOpt.map(MAX -> _) ++
+      nullCountSchemaOpt.map(NULL_COUNT -> _)
+
     StructType(fields.map {
       case (name, dataType) => StructField(name, dataType)
     })
@@ -220,38 +235,48 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
    *
    * @param name     The name of the top level column for this statistic (i.e. minValues).
    * @param schema   The schema of the data to collect statistics from.
-   * @param function A partial function that is passed both a column and metadata about that
-   *                 column. Based on the metadata, it can decide if the given statistic
-   *                 should be collected by returning the correct aggregate expression.
+   * @param function A partial function that is passed a tuple of (column, metadata about that
+   *                 column, a flag that indicates whether the column is in the data schema). Based
+   *                 on the metadata and flag, the function can decide if the given statistic should
+   *                 be collected on the column by returning the correct aggregate expression.
    */
   private def collectStats(
       name: String,
       schema: StructType)(
-      function: PartialFunction[(Column, StructField), Column]): Column = {
+      function: PartialFunction[(Column, StructField, Boolean), Column]): Column = {
 
     def collectStats(
       schema: StructType,
       parent: Option[Column],
-      function: PartialFunction[(Column, StructField), Column]): Seq[Column] = {
+      parentFields: Seq[String],
+      function: PartialFunction[(Column, StructField, Boolean), Column]): Seq[Column] = {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
           val column = parent.map(_.getItem(name))
             .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
-          val stats = collectStats(s, Some(column), function)
+          val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
           } else {
             None
           }
         case f @ StructField(name, _, _, _) =>
+          val fieldPath = UnresolvedAttribute(parentFields :+ name).name
           val column = parent.map(_.getItem(name))
             .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
           // alias the column with its physical name
-          function.lift((column, f)).map(_.as(DeltaColumnMapping.getPhysicalName(f)))
+          // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
+          // from the table's metadata.dataSchema, which is the same as tableDataSchema. In the
+          // write path, dataSchema comes from the DataFrame schema. We then assume
+          // TransactionWrite.writeFiles has normalized dataSchema, and
+          // TransactionWrite.getStatsSchema has done the column mapping for tableDataSchema and
+          // dropped the partition columns for both dataSchema and tableDataSchema.
+          function.lift((column, f, explodedDataSchemaNames.contains(fieldPath))).
+            map(_.as(DeltaColumnMapping.getPhysicalName(f)))
       }
     }
 
-    val allStats = collectStats(schema, None, function)
+    val allStats = collectStats(schema, None, Nil, function)
     val stats = if (numIndexedCols > 0) {
       allStats.take(numIndexedCols)
     } else {

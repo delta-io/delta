@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.exc.MismatchedInputException
@@ -28,7 +30,8 @@ import org.apache.commons.io.IOUtils
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
 
-class CheckpointMetadataSuite extends SharedSparkSession {
+class CheckpointMetadataSuite extends SharedSparkSession
+  with DeltaSQLCommandTest {
 
   // same checkpoint schema for tests
   private val checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false))
@@ -266,6 +269,39 @@ class CheckpointMetadataSuite extends SharedSparkSession {
       withSQLConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED.key -> "false") {
         DeltaLog.forTable(spark, dir).checkpoint()
         assert(!readLastCheckpointFile().contains("checksum"))
+      }
+    }
+  }
+
+  test("Suppress optional fields in _last_checkpoint") {
+    val expectedStr = """{"version":1,"size":2,"parts":3}"""
+    val cm = CheckpointMetaData(
+      version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2),
+      checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false)))
+    val serializedJson = CheckpointMetaData.serializeToJson(
+      cm, addChecksum = true, suppressOptionalFields = true)
+    assert(serializedJson === expectedStr)
+
+    val expectedStrNoPart = """{"version":1,"size":2}"""
+    val serializedJsonNoPart = CheckpointMetaData.serializeToJson(
+      cm.copy(parts = None), addChecksum = true, suppressOptionalFields = true)
+    assert(serializedJsonNoPart === expectedStrNoPart)
+  }
+
+  test("read and write _last_checkpoint with optional fields suppressed") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS.key -> "true") {
+        // Create a Delta table with a checkpoint.
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        DeltaLog.forTable(spark, dir).checkpoint()
+        DeltaLog.clearCache()
+
+        val log = DeltaLog.forTable(spark, dir)
+        val metadata = log.unsafeVolatileSnapshot.getCheckpointMetadataOpt.get
+        val trimmed = metadata.productIterator.drop(3).forall {
+          case o: Option[_] => o.isEmpty
+        }
+        assert(trimmed, s"Unexpected fields in _last_checkpoint: $metadata")
       }
     }
   }

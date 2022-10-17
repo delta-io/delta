@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 
 import org.scalatest.concurrent.TimeLimits.failAfter
@@ -427,6 +428,34 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       writeData(100)
 
       executeOptimizePath(tempDir.getAbsolutePath, Some("date = '2017-10-10' and part = 3"))
+
+      val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      val part = "part".phy(deltaLog)
+      val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
+        "part 3 should have been optimized and have least amount of files")
+    }
+  }
+
+  test("optimize command with multiple partition predicates with multiple where") {
+    withTempDir { tempDir =>
+      def writeData(count: Int): Unit = {
+        spark.range(count).select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part)
+          .write
+          .partitionBy("date", "part")
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getAbsolutePath)
+      }
+
+      writeData(10)
+      writeData(100)
+
+      DeltaTable.forPath(tempDir.getAbsolutePath).optimize()
+        .where("part = 3")
+        .where("date = '2017-10-10'")
+        .executeCompaction()
 
       val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)

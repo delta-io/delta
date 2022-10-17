@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException

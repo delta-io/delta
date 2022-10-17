@@ -20,7 +20,8 @@ package org.apache.spark.sql.delta.stats
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.TestsStatistics
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
@@ -33,7 +34,8 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 class StatsCollectionSuite
   extends QueryTest
   with SharedSparkSession  with DeltaColumnMappingTestUtils
-  with TestsStatistics {
+  with TestsStatistics
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -52,6 +54,7 @@ class StatsCollectionSuite
 
       val skipping = new StatisticsCollection {
         override val spark = StatsCollectionSuite.this.spark
+        override def tableDataSchema = dataRenamed.schema
         override def dataSchema = dataRenamed.schema
         override val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
           DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)

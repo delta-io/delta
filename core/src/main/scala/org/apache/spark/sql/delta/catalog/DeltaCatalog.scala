@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
 
@@ -57,7 +58,7 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 class DeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
-  with Logging {
+  with DeltaLogging {
 
   val spark = SparkSession.active
 
@@ -81,7 +82,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       allTableProperties: util.Map[String, String],
       writeOptions: Map[String, String],
       sourceQuery: Option[DataFrame],
-      operation: TableCreationModes.CreationMode): Table = {
+      operation: TableCreationModes.CreationMode): Table = recordFrameProfile(
+        "DeltaCatalog", "createDeltaTable") {
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
@@ -164,7 +166,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     loadTable(ident)
   }
 
-  override def loadTable(ident: Identifier): Table = {
+  override def loadTable(ident: Identifier): Table = recordFrameProfile(
+      "DeltaCatalog", "loadTable") {
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
@@ -239,7 +242,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): Table = {
+      properties: util.Map[String, String]): Table = recordFrameProfile(
+        "DeltaCatalog", "createTable") {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
 
       val keepPrefixCatalogue = spark
@@ -269,7 +273,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = {
+      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
+        "DeltaCatalog", "stageReplace") {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
       new StagedDeltaTableV2(
         ident, schema, partitions, properties, TableCreationModes.Replace)
@@ -286,7 +291,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = {
+      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
+        "DeltaCatalog", "stageCreateOrReplace") {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
       new StagedDeltaTableV2(
         ident, schema, partitions, properties, TableCreationModes.CreateOrReplace)
@@ -306,7 +312,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = {
+      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
+        "DeltaCatalog", "stageCreate") {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
       new StagedDeltaTableV2(ident, schema, partitions, properties, TableCreationModes.Create)
     } else {
@@ -401,7 +408,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     private var asSelectQuery: Option[DataFrame] = None
     private var writeOptions: Map[String, String] = Map.empty
 
-    override def commitStagedChanges(): Unit = {
+    override def commitStagedChanges(): Unit = recordFrameProfile(
+        "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
       val props = new util.HashMap[String, String]()
       // Options passed in through the SQL API will show up both with an "option." prefix and
@@ -469,7 +477,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
+      "DeltaCatalog", "alterTable") {
     val table = loadTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
       case _ => return super.alterTable(ident, changes: _*)
@@ -650,6 +659,7 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     ident.namespace().length == 1 && DeltaSourceUtils.isDeltaDataSourceName(ident.namespace().head)
   }
 
+
   protected def isPathIdentifier(ident: Identifier): Boolean = {
     // Should be a simple check of a special PathIdentifier class in the future
     try {
@@ -667,7 +677,8 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     isPathIdentifier(Identifier.of(tableIdentifier.database.toArray, tableIdentifier.table))
   }
 
-  override def tableExists(ident: Identifier): Boolean = {
+  override def tableExists(ident: Identifier): Boolean = recordFrameProfile(
+      "DeltaCatalog", "tableExists") {
     if (isPathIdentifier(ident)) {
       val path = new Path(ident.name())
       // scalastyle:off deltahadoopconfiguration

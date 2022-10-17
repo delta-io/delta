@@ -25,12 +25,15 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -355,6 +358,133 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       checkAnswer(
         spark.read.format("delta").load(outputDir.getCanonicalPath),
         Seq(4, 4, 5, 5, 5, 5, 6, 6).map(_.toLong).toDF("id"))
+    }
+  }
+
+  test("cdc streams with noop merge") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
+    ) {
+      withTempDirs { (srcDir, targetDir, checkpointDir) =>
+        // write source table
+        Seq((1, "a"), (2, "b"))
+          .toDF("key1", "val1")
+          .write
+          .format("delta")
+          .save(srcDir.getCanonicalPath)
+
+        // write target table
+        Seq((1, "t"), (2, "u"))
+          .toDF("key2", "val2")
+          .write
+          .format("delta")
+          .save(targetDir.getCanonicalPath)
+
+        val srcDF = spark.read.format("delta").load(srcDir.getCanonicalPath)
+        val tgtTable = io.delta.tables.DeltaTable.forPath(targetDir.getCanonicalPath)
+
+        // Perform the merge where all matching and non-matching conditions fail for
+        // target rows.
+        tgtTable
+          .merge(srcDF,
+            "key1 = key2")
+          .whenMatched("key1 = 10")
+          .updateExpr(Map("key2" -> "key1", "val2" -> "val1"))
+          .whenNotMatched("key1 = 11")
+          .insertExpr(Map("key2" -> "key1", "val2" -> "val1"))
+          .execute()
+
+        // Read the target dir with cdc read option and ensure that
+        // data frame is empty.
+        val q = spark.readStream
+          .format("delta")
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .option("startingVersion", "1")
+          .load(targetDir.getCanonicalPath)
+          .writeStream
+          .format("memory")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .queryName("testQuery")
+          .start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+
+        assert(spark.table("testQuery").isEmpty)
+      }
+    }
+  }
+
+  Seq(true, false).foreach { readChangeFeed =>
+    test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
+      withTempDirs { (inputDir, checkpointDir, outputDir) =>
+        withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+
+          // save some rows to input table.
+          spark.range(10).withColumn("value", lit("a"))
+            .write.format("delta").mode("overwrite")
+            .option("enableChangeDataFeed", "true").save(inputDir.getAbsolutePath)
+
+          // process the input table in a CDC manner
+          val df = spark.readStream
+            .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query = df
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query.processAllAvailable()
+          query.stop()
+          query.awaitTermination()
+
+          // Create a temp view and write to input table as a no-op merge
+          spark.range(20, 30).withColumn("value", lit("b"))
+            .createOrReplaceTempView("source_table")
+
+          for (i <- 0 to 10) {
+            sql(s"MERGE INTO delta.`${inputDir.getAbsolutePath}` AS tgt " +
+              s"USING source_table src ON tgt.id = src.id " +
+              s"WHEN MATCHED THEN UPDATE SET * " +
+              s"WHEN NOT MATCHED AND src.id < 10 THEN INSERT *")
+          }
+
+          // Read again from input table and no new data should be generated
+          val df1 = spark.readStream
+            .option("readChangeFeed", readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query1 = df1
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query1.processAllAvailable()
+          query1.stop()
+          query1.awaitTermination()
+
+          // check that the last batch was committed and that the
+          // reservoirVersion for the table was updated to latest
+          // in both cdf and non-cdf cases.
+          assert(query1.lastProgress.batchId === 1)
+          val endOffset = JsonUtils.mapper.readValue[DeltaSourceOffset](
+            query1.lastProgress.sources.head.endOffset
+          )
+          assert(endOffset.reservoirVersion === 11)
+          assert(endOffset.index === -1)
+        }
+      }
     }
   }
 
@@ -761,7 +891,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           withMetadata(deltaLog, StructType.fromDDL("id int, value string"))
           true
         },
-        ExpectFailure[IllegalStateException](t =>
+        ExpectFailure[DeltaIllegalStateException](t =>
           assert(t.getMessage.contains("Detected schema change")))
       )
     }
@@ -820,69 +950,31 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       }
     }
   }
-
-  test("should block CDC reads when Column Mapping enabled - streaming") {
-    def assertError(f: => Any): Unit = {
-      val e = intercept[StreamingQueryException] {
-        f
-      }.getCause.getMessage
-      assert(e.contains("Change Data Feed (CDF) reads are not supported on tables with " +
-        "column mapping schema changes (e.g. rename or drop)"))
-    }
-
-    Seq(0, 1).foreach { startingVersion =>
-      withClue(s"using CDC starting version $startingVersion") {
-        withTable("t1") {
-          withTempDir { dir =>
-            val path = dir.getCanonicalPath
-            sql(
-              s"""
-                 |CREATE TABLE t1 (id LONG) USING DELTA
-                 |TBLPROPERTIES(
-                 |  '${DeltaConfigs.CHANGE_DATA_FEED.key}'='true',
-                 |  '${DeltaConfigs.MIN_READER_VERSION.key}'='2',
-                 |  '${DeltaConfigs.MIN_WRITER_VERSION.key}'='5'
-                 |)
-                 |LOCATION '$path'
-                 |""".stripMargin)
-
-            spark.range(10).write.format("delta").mode("append").save(path)
-            spark.range(10, 20).write.format("delta").mode("append").save(path)
-
-            val df = spark.readStream
-              .format("delta")
-              .option(DeltaOptions.CDC_READ_OPTION, "true")
-              .option("startingVersion", startingVersion)
-              .load(path)
-
-            // case 1: column-mapping is enabled mid-stream
-            testStream(df)(
-              ProcessAllAvailable(),
-              Execute { _ =>
-                sql(s"""
-                       |ALTER TABLE t1
-                       |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='name')
-                       |""".stripMargin)
-              },
-              AddToReservoir(dir, spark.range(10, 20).toDF()),
-              Execute { q =>
-                assertError {
-                  q.processAllAvailable()
-                }
-              }
-            )
-
-            // case 2: perform CDC stream read on table with column mapping already enabled
-            assertError {
-              val stream = df.writeStream.format("console").start()
-              stream.awaitTermination(2000)
-              stream.stop()
-            }
-          }
-        }
-      }
-    }
-  }
 }
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
+abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
+  with ColumnMappingStreamingWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {
+
+  override protected def isCdcTest: Boolean = true
+
+
+  override def runOnlyTests: Seq[String] = Seq(
+    "no startingVersion should result fetch the entire snapshot",
+    "user provided startingVersion",
+    "maxFilesPerTrigger - 2 successive AddCDCFile commits",
+
+    // streaming blocking semantics test
+    "deltaLog snapshot should not be updated outside of the stream",
+    "column mapping + streaming - allowed workflows - column addition",
+    "column mapping + streaming - allowed workflows - upgrade to name mode",
+    "column mapping + streaming: blocking workflow - drop column",
+    "column mapping + streaming: blocking workflow - rename column"
+  )
+
+}
+
+
+class DeltaCDCStreamNameColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
+  with DeltaColumnMappingEnableNameMode {
+}

@@ -544,8 +544,9 @@ case class MergeIntoCommand(
         // In some cases (e.g. insert-only when all rows are matched, insert-only with an empty
         // source, insert-only with an unsatisfied condition) we can write out an empty insertDf.
         // This is hard to catch before the write without collecting the DF ahead of time. Instead,
-        // we can just accept only the AddFiles that actually add rows.
-        case a: AddFile => a.getNumLogicalRecords > 0
+        // we can just accept only the AddFiles that actually add rows or
+        // when we don't know the number of records
+        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
         case _ => true
       }
 
@@ -830,8 +831,8 @@ case class MergeIntoCommand(
         // In some cases (e.g. delete with empty source, or empty target, or on disjoint tables)
         // we can write out an empty outputDF. This is hard to catch before the write without
         // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
-        // actually add rows.
-        case a: AddFile => a.getNumLogicalRecords > 0
+        // actually add rows or when we don't know the number of records
+        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
         case _ => true
       }
 
@@ -905,7 +906,7 @@ case class MergeIntoCommand(
       case newAttrib: AttributeReference =>
         val existingTargetAttrib = targetOutputColsMap.get(newAttrib.name)
           .getOrElse {
-            throw DeltaErrors.failedFindAttributeInOutputCollumns(
+            throw DeltaErrors.failedFindAttributeInOutputColumns(
               newAttrib.name, targetOutputCols.mkString(","))
           }.asInstanceOf[AttributeReference]
 
@@ -927,8 +928,6 @@ case class MergeIntoCommand(
     val metric = metrics(name)
     DeltaUDF.boolean { () => metric += 1; true }.asNondeterministic().apply().expr
   }
-
-  private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>

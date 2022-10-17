@@ -51,8 +51,13 @@ private[delta] class CurrentTransactionInfo(
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo]) {
 
-  /** Final actions to commit - including the [[CommitInfo]] */
-  lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
+  /**
+   * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
+   * extract it easily from a commit without having to parse an arbitrarily large file.
+   *
+   * TODO: We might want to cluster all non-file actions at the front, for similar reasons.
+   */
+  lazy val finalActionsToCommit: Seq[Action] = commitInfo ++: actions
 
   /** Whether this transaction wants to make any [[Metadata]] update */
   lazy val metadataChanged: Boolean = actions.exists {

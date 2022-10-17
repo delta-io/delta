@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -2648,8 +2649,7 @@ abstract class MergeIntoSuiteBase
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c")
       .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
-    expectErrorWithoutEvolutionContains =
-      "Cannot cast struct<a:int,c:int> to struct<a:int,b:int,c:int>. All nested columns must match"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -2677,7 +2677,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20 }, "b": 2, "c": null}, { "a": { "x": 20, "y": 30}, "b": 3, "c": null }, { "a": { "x": 20, "y": 30}, "b": 4, "c": null } ] }
            { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3, "c": null }, { "a": { "x": 40, "y": 30}, "b": 4, "c": null } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 }, { "a": { "x": 3, "y": 2 }, "b": 2, "c": 2 } ] }""",
@@ -2703,7 +2703,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20}, "b": 2, "c": null } ] }
            { "key": "B", "value": [ { "a": { "x": 40, "y": 30}, "b": 3, "c": null } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer source")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
@@ -2739,7 +2739,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30 }, { "c": 10, "d": 20 }, { "c": 10, "d": 20 } ] }, "b": 2, "c": null}] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 10, "d": 20 } ] }, "b": 3, "c": null } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3}, { "c": 2, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
@@ -2775,7 +2775,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30} ] }, "b": 2, "c": null}] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3, "c": null } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("new nested-nested column with update non-* and insert *")(
@@ -2788,8 +2788,7 @@ abstract class MergeIntoSuiteBase
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c")
       .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
-    expectErrorWithoutEvolutionContains =
-      "Cannot cast struct<a:int,c:int> to struct<a:int,b:int,c:int>. All nested columns must match"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -2817,7 +2816,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": null }, "b": 2 }, { "a": { "x": 30, "y": 20, "z": null }, "b": 3}, { "a": { "x": 30, "y": 20, "z": null }, "b": 4 } ] }
            { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested-nested column with update non-* and insert * - array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 }, { "a": { "x": 2, "y": 3, "z": 4 }, "b": 1 } ] }""",
@@ -2843,7 +2842,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [{ "a": { "x": 10, "y": 20, "z": null }, "b": 2 }] }
            { "key": "B", "value": [{ "a": { "x": 40, "y": 30, "z": null }, "b": 3 }] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer source")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 } ] }, "b": 1 } ] }""",
@@ -2879,7 +2878,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null }, { "c": 40, "d": 30, "e": null }, { "c": 50, "d": 30, "e": null } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 30, "d": 50, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 }, { "c": 2, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
@@ -2915,7 +2914,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("new column with update * and insert non-*")(
@@ -2957,7 +2956,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     expectErrorContains =
       "Failed to merge incompatible data types IntegerType and BinaryType",
-    expectErrorWithoutEvolutionContains = "cannot cast binary to int"
+    expectErrorWithoutEvolutionContains = "cannot cast"
   )
 
   testEvolution("incompatible types in insert *")(
@@ -2965,7 +2964,7 @@ abstract class MergeIntoSuiteBase
     sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
     clauses = insert("*") :: Nil,
     expectErrorContains = "Failed to merge incompatible data types IntegerType and BinaryType",
-    expectErrorWithoutEvolutionContains = "cannot cast binary to int"
+    expectErrorWithoutEvolutionContains = "cannot cast"
   )
 
   // All integral types other than long can be upcasted to integer.
@@ -3039,7 +3038,7 @@ abstract class MergeIntoSuiteBase
     clauses = insert("*") :: Nil,
     expected = ((1, (1, 10, null)) +: (2, (2, 20, 30)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   testEvolution("missing nested column in source - insert")(
@@ -3048,7 +3047,7 @@ abstract class MergeIntoSuiteBase
     clauses = insert("*") :: Nil,
     expected = ((1, (1, 2, 3)) +: (2, (2, 3, null)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   testEvolution("missing nested column resolved by name - insert")(
@@ -3060,7 +3059,7 @@ abstract class MergeIntoSuiteBase
     expected = ((1, (1, 2, 3)) +: (2, (2, null, 4)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -3090,7 +3089,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 1 }, "b": 1 } ] }
            { "key": "B", "value": [ { "a": { "x": 40, "y": null, "z": 30 }, "b": 3 }, { "a": { "x": 40, "y": null, "z": 30 }, "b": 4 }, { "a": { "x": 40, "y": null, "z": 30 }, "b": 5 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("missing nested column resolved by name - insert - nested array of struct")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 } ] }, "b": 1 } ] }""",
@@ -3126,7 +3125,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 } ] }, "b": 1 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": null, "e": 50 }, { "c": 20, "d": null, "e": 60 }, { "c": 20, "d": null, "e": 80 } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("additional nested column in source resolved by name - insert")(
@@ -3138,7 +3137,7 @@ abstract class MergeIntoSuiteBase
     expected = ((1, (10, null, 30)) +: ((2, (20, 30, 40)) +: Nil))
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -3175,7 +3174,7 @@ abstract class MergeIntoSuiteBase
             .add("z", IntegerType)
             .add("y", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("additional nested column in source resolved by name - insert - nested array of struct")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "e": 3 } ] }, "b": 1 } ] }""",
@@ -3224,7 +3223,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "e": 3, "d": null } ] }, "b": 1 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "e": 2, "d": "50" }, { "c": 20, "e": 3, "d": "50" } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("extra nested column in source - update")(
@@ -3236,7 +3235,7 @@ abstract class MergeIntoSuiteBase
     expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -3274,7 +3273,7 @@ abstract class MergeIntoSuiteBase
             .add("y", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("extra nested column in source - update - array of struct - longer target")(
     target =
@@ -3310,7 +3309,7 @@ abstract class MergeIntoSuiteBase
             .add("y", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer source")(
     target =
@@ -3360,7 +3359,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 }, { "c": 10, "d": 30, "e": 2 }, { "c": 10, "d": 30, "e": 3 } ] }, "b": 2}]}
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": "3"}]}""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer target")(
     target =
@@ -3410,7 +3409,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 20, "d": 40, "e": null }, { "c": 20, "d": 60, "e": null } ] }, "b": "3" } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("missing nested column in source - update")(
@@ -3421,7 +3420,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     expected = ((1, (0, 10, 0)) +: (2, (2, 20, 200)) +: Nil).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   // scalastyle:off line.size.limit
@@ -3458,7 +3457,7 @@ abstract class MergeIntoSuiteBase
             .add("y", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   // scalastyle:off line.size.limit
   testNestedStructsEvolution("missing nested column in source - update - array of struct - longer target")(
@@ -3494,7 +3493,7 @@ abstract class MergeIntoSuiteBase
             .add("y", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer source")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
@@ -3542,7 +3541,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 }, { "c": 10, "d": null, "e": 2 }, { "c": 10, "d": null, "e": 3} ] }, "b": 2 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 }, { "c": 1, "d": 3, "e": 5 } ] }, "b": 1 } ] }""",
@@ -3590,7 +3589,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 } ] }, "b": 2 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("nested columns resolved by name with same column count but different names")(
@@ -3643,7 +3642,7 @@ abstract class MergeIntoSuiteBase
             .add("o", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("nested columns resolved by name with same column count but different names - array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "o": 4 }, "b": 1 }, { "a": { "x": 1, "y": 2, "o": 4 }, "b": 2 } ] }""",
@@ -3680,7 +3679,7 @@ abstract class MergeIntoSuiteBase
             .add("o", IntegerType)
             .add("z", IntegerType))
           .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("nested columns resolved by name with same column count but different names - nested array of struct - longer source")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "f": 4 } ] }, "b": 1 } ] }""",
@@ -3731,7 +3730,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "f": null, "e": 1 }, { "c": 10, "d": 30, "f": null, "e": 2 }, { "c": 10, "d": 30, "f": null, "e": 3 } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "f": null, "e": 2 }, { "c": 20, "d": 50, "f": null, "e": 3 } ] }, "b": 3} ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("nested columns resolved by name with same column count but different names - nested array of struct - longer target")(
     target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "f": 4 }, { "c": 1, "d": 3, "f": 4 } ] }, "b": 1 } ] }""",
@@ -3782,7 +3781,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "f": null, "e": 1 } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "f": null, "e": 2 } ] }, "b": 3} ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("nested columns resolved by position with same column count but different names")(
@@ -3791,7 +3790,7 @@ abstract class MergeIntoSuiteBase
     sourceData = Seq((1, 10, 20, 30), (2, 20, 30, 40)).toDF("key", "a", "b", "d")
       .selectExpr("key", "struct(a, b, d) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "cannot cast struct",
+    expectErrorContains = "cannot cast",
     expectedWithoutEvolution = ((1, (10, 20, 30)) +: (2, (20, 30, 40)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]]
       .toDF("key", "x")
@@ -3825,7 +3824,7 @@ abstract class MergeIntoSuiteBase
     resultWithoutEvolution =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "o": 2 }, "b": 2 }, { "a": { "x": 10, "y": 20, "o": 3 }, "b": 2 }, { "a": { "x": 10, "y": 20, "o": 3 }, "b": 3 } ] }
            { "key": "B", "value": [ {"a": { "x": 40, "y": 30, "o": 3 }, "b": 3 }, {"a": { "x": 40, "y": 30, "o": 3 }, "b": 4 } ] }""",
-    expectErrorContains = "cannot cast struct",
+    expectErrorContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
   testNestedStructsEvolution("nested columns resolved by position with same column count but different names - array of struct - longer target")(
@@ -3853,7 +3852,7 @@ abstract class MergeIntoSuiteBase
     resultWithoutEvolution =
       """{ "key": "A", "value": [{ "a": { "x": 10, "y": 20, "o": 2}, "b": 2}] }
            { "key": "B", "value": [{"a": { "x": 40, "y": 30, "o": 3}, "b": 3}] }""",
-    expectErrorContains = "cannot cast struct",
+    expectErrorContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
   testNestedStructsEvolution("nested columns resolved by position with same column count but different names - nested array of struct - longer source")(
@@ -3891,7 +3890,7 @@ abstract class MergeIntoSuiteBase
     resultWithoutEvolution =
       """{ "key": "A", "value": [ { "a": {"y": 20, "x": [ { "c": 10, "d": 30, "f": 1 }, { "c": 10, "d": 30, "f": 2 }, { "c": 10, "d": 30, "f": 3 } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": {"y": 60, "x": [ { "c": 20, "d": 50, "f": 2 }, { "c": 20, "d": 50, "f": 3 } ] }, "b": 3}]}""",
-    expectErrorContains = "cannot cast struct",
+    expectErrorContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
   testNestedStructsEvolution("nested columns resolved by position with same column count but different names - nested array of struct - longer target")(
@@ -3929,7 +3928,7 @@ abstract class MergeIntoSuiteBase
     resultWithoutEvolution =
       """{ "key": "A", "value": [ { "a": {"y": 20, "x": [ { "c": 10, "d": 30, "f": 1 } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": {"y": 60, "x": [ { "c": 20, "d": 50, "f": 2 } ] }, "b": 3 } ] }""",
-    expectErrorContains = "cannot cast struct",
+    expectErrorContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
   // scalastyle:on line.size.limit
 
@@ -4077,7 +4076,7 @@ abstract class MergeIntoSuiteBase
     result =
       """{ "key": "A", "value": [ { "a": null, "b": null, "c": 4, "d": 3 } ] }
           { "key": "B", "value": [ { "a": null, "b": null, "c": 2, "d": 5 } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+    expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("array of struct with same column count but all different names" +
     " - by position")(
@@ -4100,7 +4099,7 @@ abstract class MergeIntoSuiteBase
     resultWithoutEvolution =
       """{ "key": "A", "value": [ { "a": 4, "b": 3 } ] }
           { "key": "B", "value": [ { "a": 2, "b": 5 } ] }""".stripMargin,
-    expectErrorContains = " cannot cast struct",
+    expectErrorContains = " cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
   testNestedStructsEvolution("array of struct with same columns but in different order" +
@@ -4140,8 +4139,8 @@ abstract class MergeIntoSuiteBase
           .add("b", IntegerType)
           .add("a", new StructType().add("c", IntegerType)))),
     clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = " cannot cast struct",
-    expectErrorWithoutEvolutionContains = " cannot cast struct",
+    expectErrorContains = " cannot cast",
+    expectErrorWithoutEvolutionContains = " cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
   testNestedStructsEvolution("array of struct with additional column in target - by name")(
@@ -4181,7 +4180,7 @@ abstract class MergeIntoSuiteBase
           .add("b", IntegerType)
           .add("a", IntegerType))),
     clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = " cannot cast struct",
+    expectErrorContains = " cannot cast",
     expectErrorWithoutEvolutionContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
@@ -4194,7 +4193,7 @@ abstract class MergeIntoSuiteBase
     expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+    expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
   testEvolution("multiple clauses")(

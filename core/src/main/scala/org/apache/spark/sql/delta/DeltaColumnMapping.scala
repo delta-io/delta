@@ -227,14 +227,34 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
+  def assignPhysicalName(field: StructField, physicalName: String): StructField = {
+    field.copy(metadata = new MetadataBuilder()
+      .withMetadata(field.metadata)
+      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+      .build())
+  }
+
   def assignPhysicalNames(schema: StructType): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      val existingName = if (hasPhysicalName(field)) Option(getPhysicalName(field)) else None
-      val metadata = new MetadataBuilder()
-        .withMetadata(field.metadata)
-        .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, existingName.getOrElse(generatePhysicalName))
-        .build()
-      field.copy(metadata = metadata)
+      if (hasPhysicalName(field)) field else assignPhysicalName(field, generatePhysicalName)
+    }
+  }
+
+  /** Set physical name based on field path, skip if field path not found in the map */
+  def setPhysicalNames(
+      schema: StructType,
+      fieldPathToPhysicalName: Map[Seq[String], String]): StructType = {
+    if (fieldPathToPhysicalName.isEmpty) {
+      schema
+    } else {
+      SchemaMergingUtils.transformColumns(schema) { (parent, field, _) =>
+        val path = parent :+ field.name
+        if (fieldPathToPhysicalName.contains(path)) {
+          assignPhysicalName(field, fieldPathToPhysicalName(path))
+        } else {
+          field
+        }
+      }
     }
   }
 
@@ -522,15 +542,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def isColumnMappingReadCompatible(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
+      require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
       !isRenameColumnOperation(newMetadata, oldMetadata) &&
-      !isDropColumnOperation(newMetadata, oldMetadata)
+        !isDropColumnOperation(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
       // So we manually construct a post-upgrade schema for the old metadata and compare that with
       // the new metadata, as the upgrade would use the logical name as the physical name, we could
-      // easily capture any difference in the schema using the same is{XXX}ColumnOperation utils.
+      // easily capture any difference in the schema using the same is{Drop,Rename}ColumnOperation
+      // utils.
       var upgradedMetadata = assignColumnIdAndPhysicalName(
         oldMetadata, oldMetadata, isChangingModeOnExistingTable = true
       )

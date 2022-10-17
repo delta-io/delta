@@ -66,7 +66,7 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
-  protected def listFrom(startVersion: Long): Iterator[FileStatus] = {
+  private[delta] def listFrom(startVersion: Long): Iterator[FileStatus] = {
     store.listFrom(checkpointPrefix(logPath, startVersion), newDeltaHadoopConf())
   }
 
@@ -284,8 +284,27 @@ trait SnapshotManagement { self: DeltaLog =>
     CapturedSnapshot(snapshot, timestamp)
   }
 
-  /** Returns the current snapshot. Note this does not automatically `update()`. */
-  def snapshot: Snapshot = Option(currentSnapshot).map(_.snapshot).orNull
+  /**
+   * Returns the current snapshot. This does not automatically `update()`.
+   *
+   * WARNING: This is not guaranteed to give you the latest snapshot of the log, nor stay
+   * consistent across multiple accesses. If you need the latest snapshot, it is recommended
+   * to fetch it using `deltaLog.update()`; and save the returned snapshot so it does not
+   * unexpectedly change from under you. See how [[OptimisticTransaction]] and [[DeltaScan]]
+   * use the snapshot as examples for write/read paths respectively.
+   * This API should only be used in scenarios where any recent snapshot will suffice and an
+   * update is undesired, or by internal code that holds the DeltaLog lock to prevent races.
+   */
+  def unsafeVolatileSnapshot: Snapshot = Option(currentSnapshot).map(_.snapshot).orNull
+
+  /**
+   * WARNING: This API is unsafe and deprecated. It will be removed in future versions.
+   * Use the above unsafeVolatileSnapshot to get the most recently cached snapshot on
+   * the cluster.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions. " +
+    "Use unsafeVolatileSnapshot instead", "12.0")
+  def snapshot: Snapshot = unsafeVolatileSnapshot
 
   protected def createSnapshot(
       initSegment: LogSegment,
@@ -415,17 +434,22 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /**
-   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
-   * version to the preCommitLogSegment (which must match the immediately preceding version).
-   */
-  private[delta] def getLogSegmentAfterCommit(
-      preCommitLogSegment: LogSegment,
-      committedVersion: Long): LogSegment = {
-    val committedDeltaPath = deltaFile(logPath, committedVersion)
-    val fileStatus =
-      committedDeltaPath.getFileSystem(newDeltaHadoopConf()).getFileStatus(committedDeltaPath)
-    SnapshotManagement.appendCommitToLogSegment(preCommitLogSegment, fileStatus, committedVersion)
+  /** Used to compute the LogSegment after a commit */
+  protected[delta] def getLogSegmentAfterCommit(preCommitLogSegment: LogSegment): LogSegment = {
+    /**
+     * We can't specify `versionToLoad = committedVersion` for the call below.
+     * If there are a lot of concurrent commits to the table on the same cluster, each
+     * would generate a different snapshot, and thus each would trigger a new state
+     * reconstruction. The last commit would get stuck waiting for each of the previous
+     * jobs to finish to grab the update lock.
+     * Instead, just do a general update to the latest available version. The racing commits
+     * can then use the version check short-circuit to avoid constructing a new snapshot.
+     */
+    getLogSegmentForVersion(preCommitLogSegment.checkpointVersionOpt).getOrElse {
+      // This shouldn't be possible right after a commit
+      logError(s"No delta log found for the Delta table at $logPath")
+      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+    }
   }
 
   /**
@@ -468,14 +492,13 @@ trait SnapshotManagement { self: DeltaLog =>
     throw new IllegalStateException("should not happen")
   }
 
-  /** Checks if the snapshot of the table has surpassed our allowed staleness. */
-  private def isSnapshotStale(lastUpdateTimestamp: Long): Boolean = {
-    val stalenessLimit = spark.sessionState.conf.getConf(
+  /** Checks if the given timestamp is outside the current staleness window */
+  protected def isCurrentlyStale: Long => Boolean = {
+    val limit = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
-    stalenessLimit == 0L || lastUpdateTimestamp < 0 ||
-      clock.getTimeMillis() - lastUpdateTimestamp >= stalenessLimit
+    val cutoffOpt = if (limit > 0) Some(math.max(0, clock.getTimeMillis() - limit)) else None
+    timestamp => cutoffOpt.forall(timestamp < _)
   }
-
 
   /**
    * Checks if the snapshot has already been updated since the specified timestamp.
@@ -518,7 +541,7 @@ trait SnapshotManagement { self: DeltaLog =>
     if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
       return capturedSnapshot.snapshot
     }
-    val doAsync = stalenessAcceptable && !isSnapshotStale(capturedSnapshot.updateTimestamp)
+    val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
@@ -585,7 +608,7 @@ trait SnapshotManagement { self: DeltaLog =>
         val newSnapshot = createSnapshot(
           initSegment = segment,
           minFileRetentionTimestamp = minFileRetentionTimestamp,
-          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt,
+          checkpointMetadataOptHint = previousSnapshot.getCheckpointMetadataOpt,
           checksumOpt = None)
         logMetadataTableIdChange(previousSnapshot, newSnapshot)
         logInfo(s"Updated snapshot to $newSnapshot")
@@ -658,12 +681,8 @@ trait SnapshotManagement { self: DeltaLog =>
       val previousSnapshot = currentSnapshot.snapshot
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
-      val segment = getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
-        .getOrElse {
-          // This shouldn't be possible right after a commit
-          logError(s"No delta log found for the Delta table at $logPath")
-          throw DeltaErrors.emptyDirectoryException(logPath.toString)
-        }
+      val segment = getLogSegmentAfterCommit(
+        preCommitLogSegment)
 
       // This likely implies a list-after-write inconsistency
       if (segment.version < committedVersion) {
@@ -691,7 +710,8 @@ trait SnapshotManagement { self: DeltaLog =>
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
-    val current = snapshot
+    // See if the version currently cached on the cluster satisfies the requirement
+    val current = unsafeVolatileSnapshot
     if (current.version == version) {
       return current
     }
@@ -827,7 +847,7 @@ case class LogSegment(
     obj match {
       case other: LogSegment =>
         version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
-          logPath == other.logPath
+          logPath == other.logPath && checkpointVersionOpt == other.checkpointVersionOpt
       case _ => false
     }
   }

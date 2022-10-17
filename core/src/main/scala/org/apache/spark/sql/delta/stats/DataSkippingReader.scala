@@ -134,7 +134,11 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
-private[stats] object DataSkippingReader {
+private[delta] object DataSkippingReader {
+
+  /** Default number of cols for which we should collect stats */
+  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
+
   private[this] def col(e: Expression): Column = new Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
 
@@ -512,8 +516,10 @@ trait DataSkippingReaderBase
 
       // Treat IN(... subquery ...) as a normal IN-list, since the subquery already ran before now.
       case in: InSubqueryExec =>
-        // At this point the subquery has been materialized so it is safe to call get on the Option.
-        constructLiteralInListDataFilters(in.child, in.values().get.toSeq)
+        // At this point the subquery has been materialized, but values() can return None if
+        // the subquery was bypassed at runtime.
+        in.values().flatMap(v => constructLiteralInListDataFilters(in.child, v.toSeq))
+
 
       // Remove redundant pairs of NOT
       case Not(Not(e)) =>
@@ -789,10 +795,11 @@ trait DataSkippingReaderBase
     // NOTE: If any stats are missing, the value of `dataFilters` is untrustworthy -- it could be
     // NULL or even just plain incorrect. We rely on `verifyStatsForFilter` to be FALSE in that
     // case, forcing the overall OR to evaluate as TRUE no matter what value `dataFilters` takes.
-    val filteredFiles = withStats
-      .where(totalFilter(trueLiteral))
-      .where(partitionFilter(partitionFilters))
-      .where(scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats)))
+    val filteredFiles = withStats.where(
+        totalFilter(trueLiteral) &&
+          partitionFilter(partitionFilters) &&
+          scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats))
+      )
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
@@ -844,8 +851,11 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // for data skipping, avoid using the filters that involve subqueries
-    val (subqueryFilters, flatFilters) = filters.partition(containsSubquery(_))
+    // For data skipping, avoid using the filters that involve subqueries.
+
+    val (subqueryFilters, flatFilters) = filters.partition {
+      case f => containsSubquery(f)
+    }
 
     val (partitionFilters, dataFilters) = flatFilters
         .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))

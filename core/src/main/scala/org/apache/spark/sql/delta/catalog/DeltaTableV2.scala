@@ -105,7 +105,8 @@ case class DeltaTableV2(
         spark.sessionState.conf, deltaLog, spec)
       val source = spec.creationSource.getOrElse("unknown")
       recordDeltaEvent(deltaLog, s"delta.timeTravel.$source", data = Map(
-        "tableVersion" -> deltaLog.snapshot.version,
+        // Log the cached version of the table on the cluster
+        "tableVersion" -> deltaLog.unsafeVolatileSnapshot.version,
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
@@ -172,7 +173,7 @@ case class DeltaTableV2(
 
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
-      throw DeltaErrors.notADeltaTableException(id)
+      throw DeltaErrors.nonExistentDeltaTable(id)
     }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
       path.toString, snapshot, partitionFilters)
@@ -268,12 +269,13 @@ private class WriteIntoDeltaBuilder(
         override def insert(data: DataFrame, overwrite: Boolean): Unit = {
           val session = data.sparkSession
 
+          // TODO: Get the config from WriteIntoDelta's txn.
           WriteIntoDelta(
             log,
             if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
             new DeltaOptions(options.toMap, session.sessionState.conf),
             Nil,
-            log.snapshot.metadata.configuration,
+            log.unsafeVolatileSnapshot.metadata.configuration,
             data).run(session)
 
           // TODO: Push this to Apache Spark

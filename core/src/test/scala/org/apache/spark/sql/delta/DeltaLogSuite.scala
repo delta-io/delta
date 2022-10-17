@@ -21,9 +21,10 @@ import java.io.{File, FileNotFoundException}
 import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -34,7 +35,7 @@ import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with DeltaSQLCommandTest  with SQLTestUtils {
 
   protected val testOp = Truncate()
 
@@ -351,16 +352,10 @@ class DeltaLogSuite extends QueryTest
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            log.update()
-          }
-          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+        val e = intercept[IllegalStateException] {
+          log.update()
         }
-        // Disable the validation check
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(log.update().version === 0L)
-        }
+        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
       }
     }
   }
@@ -420,18 +415,11 @@ class DeltaLogSuite extends QueryTest
         }
 
         // Verify if the state reconstruction from the checkpoint fails.
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            staleLog.update()
-          }
-          assert(e.getMessage ===
-            DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
+        val e = intercept[IllegalStateException] {
+          staleLog.update()
         }
-
-        // Disable state reconstruction validation and try again
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(staleLog.update().version === checkpointInterval)
-        }
+        assert(e.getMessage ===
+          DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
       }
     }
   }
@@ -483,9 +471,7 @@ class DeltaLogSuite extends QueryTest
       )
 
       // Now let's delete that commit as well, and write a new first version
-      deltaLog.store
-        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0), deltaLog.newDeltaHadoopConf())
-        .foreach(f => fs.delete(f.getPath, false))
+      deltaLog.listFrom(0).foreach(f => fs.delete(f.getPath, false))
 
       assert(deltaLog.snapshot.version === 0)
 

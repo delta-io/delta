@@ -25,16 +25,19 @@ import java.util.{Date, Locale}
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -42,7 +45,8 @@ import org.apache.spark.util.Utils
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
     with SharedSparkSession    with GivenWhenThen
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with StatsUtils {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -345,7 +349,166 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        assert(e2.getMessage.contains("No reproducible commits found at"))
+        assert(e2.getMessage.contains("No recreatable commits found at"))
+      }
+    }
+  }
+
+  test("as of exact timestamp after last commit should fail") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start)
+
+      // Simulate getting the timestamp directly from Spark SQL
+      val ts = Seq(new Timestamp(start + 10.minutes)).toDF("ts")
+        .select($"ts".cast("string")).as[String].collect()
+        .map(i => s"'$i'")
+
+      val e1 = intercept[AnalysisException] {
+        sql(s"select count(*) from ${timestampAsOf(tblName, ts(0))}").collect()
+      }
+      assert(e1.getMessage.contains("VERSION AS OF 0"))
+      assert(e1.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+
+      val e2 = intercept[AnalysisException] {
+        sql(s"select count(*) from ${timestampAsOf(tblName, start + 10.minutes)}").collect()
+      }
+      assert(e2.getMessage.contains("VERSION AS OF 0"))
+      assert(e2.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, "'2018-10-24 14:14:18'")}"),
+        Row(10)
+      )
+
+      verifyLogging(0L, 0L, "timestamp", "dfReader") {
+        checkAnswer(
+          spark.read.format("delta").option("timestampAsOf", "2018-10-24 14:14:18")
+            .load(getTableLocation(tblName)).groupBy().count(),
+          Row(10)
+        )
+      }
+    }
+  }
+
+  test("time travelling with adjusted timestamps") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start - 5.seconds, start + 3.minutes)
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start)}"),
+        Row(10L)
+      )
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start + 1.milli)}"),
+        Row(20L)
+      )
+
+      checkAnswer(
+        sql(s"select count(*) from ${timestampAsOf(tblName, start + 119.seconds)}"),
+        Row(20L)
+      )
+
+      val e = intercept[AnalysisException] {
+        sql(s"select count(*) from ${timestampAsOf(tblName, start - 3.seconds)}").collect()
+      }
+      assert(e.getMessage.contains("before the earliest version"))
+    }
+  }
+
+  test("Time travel with schema changes") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      spark.range(10).write.format("delta").mode("append").saveAsTable(tblName)
+      sql(s"ALTER TABLE $tblName ADD COLUMNS (part bigint)")
+      spark.range(10, 20).withColumn("part", 'id)
+        .write.format("delta").mode("append").saveAsTable(tblName)
+
+      val tableLoc = getTableLocation(tblName)
+      checkAnswer(
+        sql(s"select * from ${versionAsOf(tblName, 0)}"),
+        spark.range(10).toDF())
+
+      checkAnswer(
+        sql(s"select * from ${versionAsOf(s"delta.`$tableLoc`", 0)}"),
+        spark.range(10).toDF())
+
+      checkAnswer(
+        spark.read.option("versionAsOf", 0).format("delta").load(tableLoc),
+        spark.range(10).toDF())
+
+    }
+  }
+
+  test("data skipping still works with time travel") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes)
+
+      def testScan(df: DataFrame): Unit = {
+        val scan = getStats(df)
+        assert(scan.scanned.bytesCompressed.get < scan.total.bytesCompressed.get)
+      }
+
+      testScan(sql(s"select * from ${versionAsOf(tblName, 0)} where id = 2"))
+
+      testScan(spark.read.format("delta").option("versionAsOf", 0).load(getTableLocation(tblName))
+        .where("id = 2"))
+
+    }
+  }
+
+  test("fail to time travel a different relation than Delta") {
+    withTempDir { output =>
+      val dir = output.getCanonicalPath
+      spark.range(10).write.mode("append").parquet(dir)
+      spark.range(10).write.mode("append").parquet(dir)
+      def assertFormatFailure(f: => Unit): Unit = {
+        val e = intercept[AnalysisException] {
+          f
+        }
+        assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
+      }
+
+      assertFormatFailure {
+        sql(s"select * from ${versionAsOf(s"parquet.`$dir`", 0)}").collect()
+      }
+
+      assertFormatFailure {
+        sql(s"select * from ${versionAsOf(s"parquet.`$dir`", 0)}").collect()
+      }
+
+
+      checkAnswer(
+        spark.read.option("versionAsOf", 0).parquet(dir), // do not time travel other relations
+        spark.range(10).union(spark.range(10)).toDF()
+      )
+
+      checkAnswer(
+        // do not time travel other relations
+        spark.read.option("timestampAsOf", "2018-10-12 01:01:01").parquet(dir),
+        spark.range(10).union(spark.range(10)).toDF()
+      )
+
+      val tblName = "parq_table"
+      withTable(tblName) {
+        sql(s"create table $tblName using parquet as select * from parquet.`$dir`")
+        val e = intercept[UnsupportedOperationException] {
+          sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
+        }
+        var catalogPrefix = ""
+        assert(e.getMessage.contains(
+          s"Table ${catalogPrefix}default.parq_table does not support time travel"))
+      }
+
+      val viewName = "parq_view"
+      assertFormatFailure {
+        sql(s"create temp view $viewName as select * from ${versionAsOf(s"parquet.`$dir`", 0)}")
       }
     }
   }
@@ -353,6 +516,83 @@ trait DeltaTimeTravelTests extends QueryTest
 
 abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   {
+  test("cannot time travel target tables of insert/delete/update/merge") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes)
+
+      // These all actually fail parsing
+      intercept[AnalysisException] {
+        sql(s"insert into ${versionAsOf(tblName, 0)} values (11, 12, 13)")
+      }
+
+      intercept[AnalysisException] {
+        sql(s"update ${versionAsOf(tblName, 0)} set id = id - 1 where id < 10")
+      }
+
+      intercept[AnalysisException] {
+        sql(s"delete from ${versionAsOf(tblName, 0)} id < 10")
+      }
+
+      intercept[AnalysisException] {
+        sql(s"""merge into ${versionAsOf(tblName, 0)} old
+               |using $tblName new
+               |on old.id = new.id
+               |when not matched then insert *
+           """.stripMargin)
+      }
+    }
+  }
+
+  test("vacuumed version") {
+    quietly {
+      val tblName = "delta_table"
+      withTable(tblName) {
+        val start = 1540415658000L
+        generateCommits(tblName, start, start + 20.minutes)
+        sql(s"optimize $tblName")
+
+        withSQLConf(
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+
+          sql(s"vacuum $tblName retain 0 hours")
+          intercept[SparkException] {
+            sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
+          }
+          intercept[SparkException] {
+            sql(s"select count(*) from ${versionAsOf(tblName, 1)}").collect()
+          }
+        }
+      }
+    }
+  }
+
+
+  test("as of with table API") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
+
+      assert(spark.read.format("delta").option("versionAsOf", "0").table(tblName).count() == 10)
+      assert(spark.read.format("delta").option("versionAsOf", 1).table(tblName).count() == 20)
+      assert(spark.read.format("delta").option("versionAsOf", 2).table(tblName).count() == 30)
+      val e1 = intercept[AnalysisException] {
+        spark.read.format("delta").option("versionAsOf", 3).table(tblName).collect()
+      }
+      assert(e1.getMessage.contains("[0, 2]"))
+
+      val e2 = intercept[IllegalArgumentException] {
+        spark.read.format("delta")
+          .option("versionAsOf", 3)
+          .option("timestampAsOf", "2020-10-22 23:20:11")
+          .table(tblName).collect()
+      }
+      assert(e2.getMessage.contains("either provide 'timestampAsOf' or 'versionAsOf'"))
+
+    }
+  }
 
 }
 

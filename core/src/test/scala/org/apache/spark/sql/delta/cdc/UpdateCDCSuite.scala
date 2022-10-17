@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
@@ -76,6 +77,31 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) :: Nil)
+  }
+
+  test("CDC for repeated point update") {
+    append(Seq((1, 1), (2, 2), (3, 3), (4, 4)).toDF("key", "value"))
+
+    checkUpdate(
+      condition = Some("key = 1"),
+      setClauses = "value = -1",
+      expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
+
+    checkAnswer(
+      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) :: Nil)
+
+    checkUpdate(
+      condition = Some("key = 3"),
+      setClauses = "value = -3",
+      expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -3) :: Row(4, 4) :: Nil)
+
+    checkAnswer(
+      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 2, spark)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) ::
+          Row(3, 3, "update_preimage", 2) :: Row(3, -3, "update_postimage", 2) :: Nil)
   }
 
   test("CDC for partition-optimized update") {

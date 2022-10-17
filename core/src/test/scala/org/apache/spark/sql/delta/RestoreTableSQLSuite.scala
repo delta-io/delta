@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 
 /** Restore tests using the SQL. */
@@ -88,6 +89,7 @@ class RestoreTableSQLNameColumnMappingSuite extends RestoreTableSQLSuite
     "path based table",
     "metastore based table"
   )
+
 
   test("restore prior to column mapping upgrade should fail") {
     withTempDir { tempDir =>

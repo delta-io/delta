@@ -28,6 +28,8 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -91,13 +93,14 @@ abstract class UpdateSuiteBase
       condition: Option[String],
       setClauses: String,
       expectedResults: Seq[Row],
-      tableName: Option[String] = None): Unit = {
+      tableName: Option[String] = None,
+      prefix: String = ""): Unit = {
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(
       tableName
         .map(readDeltaTable(_))
         .getOrElse(readDeltaTableByPath(tempPath))
-        .select("key", "value"),
+        .select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
 
@@ -352,11 +355,12 @@ abstract class UpdateSuiteBase
   test("Negative case - non-delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
       .write.mode("overwrite").format("parquet").save(tempPath)
-    val e = intercept[AnalysisException] {
+    val e = intercept[DeltaAnalysisException] {
       executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
+      e.contains("Incompatible format"))
   }
 
   test("Negative case - check target columns during analysis") {
@@ -612,7 +616,7 @@ abstract class UpdateSuiteBase
           {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 20}, "z": 20}""")
       }
 
-      assert(e.getMessage.contains("cannot cast struct"))
+      assert(e.getMessage.contains("cannot cast"))
     }
   }
 
@@ -661,7 +665,7 @@ abstract class UpdateSuiteBase
 
   test("schema pruning on finding files to update") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
-    // spark.conf.set("spark.sql.adaptive.enabled", "false")
+
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkUpdate(condition = Some("key = 2"), setClauses = "key = 1, value = 3",
         expectedResults = Row(1, 3) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
@@ -671,8 +675,32 @@ abstract class UpdateSuiteBase
       case f: FileSourceScanExec => f
     })
     // The first scan is for finding files to update. We only are matching against the key
-    // so that should be the only field in the schema
-    assert(scans.head.schema == StructType(Seq(StructField("key", IntegerType))))
+    // so that should be the only field in the schema.
+    assert(scans.head.schema == StructType(
+      Seq(
+        StructField("key", IntegerType)
+      )
+    ))
+  }
+
+  test("nested schema pruning on finding files to update") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
+      .select(struct("key", "value").alias("nested")))
+
+    val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+      checkUpdate(condition = Some("nested.key = 2"),
+        setClauses = "nested.key = 1, nested.value = 3",
+        expectedResults = Row(1, 3) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil,
+        prefix = "nested.")
+    }
+
+    val scans = executedPlans.flatMap(_.collect {
+      case f: FileSourceScanExec => f
+    })
+    // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
+    // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
+    // after upgrading
+    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
   }
 
   /**
@@ -779,7 +807,7 @@ abstract class UpdateSuiteBase
     where = "b = (select explode(c) from deltaTable)",
     expectException = true, // more than one generated, expect exception.
     customErrorRegex =
-      Some(".*more than one row returned by a subquery used as an expression(?s).*")
+      Some(".*ore than one row returned by a subquery used as an expression(?s).*")
   )
 
   protected def checkUpdateJson(

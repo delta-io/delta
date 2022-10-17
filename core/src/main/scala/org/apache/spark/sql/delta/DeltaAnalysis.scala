@@ -37,7 +37,7 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, HiveTableRelation}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -133,7 +133,9 @@ class DeltaAnalysis(session: SparkSession)
                 tUnstable.commitTs.toString
               )
           }
-          if (sourceSnapshot.version == traveledTable.deltaLog.snapshot.version) {
+          // TODO: Fetch the table version from deltaLog.update().version to guarantee freshness.
+          //  This can also be used by RestoreTableCommand
+          if (sourceSnapshot.version == traveledTable.deltaLog.unsafeVolatileSnapshot.version) {
             return LocalRelation(restoreStatement.output)
           }
 
@@ -508,12 +510,14 @@ case class DeltaDynamicPartitionOverwriteCommand(
           DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC)),
       sparkSession.sessionState.conf)
 
+    // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
+    //  in the default snapshot's metadata config here.
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,
       deltaOptions,
       partitionColumns = Nil,
-      deltaTable.deltaLog.snapshot.metadata.configuration,
+      deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
       Dataset.ofRows(sparkSession, query)
     ).run(sparkSession)
   }

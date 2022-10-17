@@ -21,6 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 
@@ -350,6 +351,21 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    */
   protected def convertToDelta(tableOrPath: String): Unit = {
     sql(s"CONVERT TO DELTA $tableOrPath")
+  }
+
+  /**
+   * Force enable streaming read (with possible data loss) on column mapping enabled table with
+   * drop / rename schema changes.
+   */
+  protected def withStreamingReadOnColumnMappingTableEnabled(f: => Unit): Unit = {
+    if (columnMappingEnabled) {
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "true") {
+        f
+      }
+    } else {
+      f
+    }
   }
 
 }

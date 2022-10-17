@@ -25,43 +25,68 @@ import time
 """
 Create required dynamodb table with:
 
-$ aws --region us-west-2 dynamodb create-table \
-    --table-name delta_log_test \
+$ aws dynamodb create-table \
+    --region <region> \
+    --table-name <table_name> \
     --attribute-definitions AttributeName=tablePath,AttributeType=S \
                             AttributeName=fileName,AttributeType=S \
     --key-schema AttributeName=tablePath,KeyType=HASH \
                 AttributeName=fileName,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+    
+Enable TTL with:
+
+$ aws dynamodb update-time-to-live \
+  --region <region> \
+  --table-name <table_name> \
+  --time-to-live-specification "Enabled=true, AttributeName=expireTime"
 
 Run this script in root dir of repository:
 
-export VERSION=$(cat version.sbt|cut -d '"' -f 2)
-export DELTA_CONCURRENT_WRITERS=2
-export DELTA_CONCURRENT_READERS=2
-export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
-export DELTA_DYNAMO_TABLE=delta_log_test
-export DELTA_DYNAMO_REGION=us-west-2
-export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
-export DELTA_NUM_ROWS=16
+# ===== Mandatory input from user =====
+export RUN_ID=run001
+export S3_BUCKET=delta-lake-dynamodb-test-00
 
-./run-integration-tests.py --run-storage-s3-dynamodb-integration-tests \
+# ===== Optional input from user =====
+export DELTA_CONCURRENT_WRITERS=20
+export DELTA_CONCURRENT_READERS=2
+export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
+export DELTA_NUM_ROWS=200
+export DELTA_DYNAMO_REGION=us-west-2
+export DELTA_DYNAMO_ERROR_RATES=0.00
+
+# ===== Optional input from user (we calculate defaults using S3_BUCKET and RUN_ID) =====
+export RELATIVE_DELTA_TABLE_PATH=___
+export DELTA_DYNAMO_TABLE_NAME=___
+
+./run-integration-tests.py --use-local \
+    --run-storage-s3-dynamodb-integration-tests \
     --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1 \
-    --dbb-conf spark.jars.ivySettings=/workspace/ivy.settings \
-        spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties
+    --dbb-conf io.delta.storage.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider \
+               spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider
 """
 
-# conf
-delta_table_path = os.environ.get("DELTA_TABLE_PATH")
+# ===== Mandatory input from user =====
+run_id = os.environ.get("RUN_ID")
+s3_bucket = os.environ.get("S3_BUCKET")
+
+# ===== Optional input from user =====
 concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
-num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
-
 # className to instantiate. io.delta.storage.S3DynamoDBLogStore or .FailingS3DynamoDBLogStore
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.S3DynamoDBLogStore")
-dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
+num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 # used only by FailingS3DynamoDBLogStore
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
+
+# ===== Optional input from user (we calculate defaults using RUN_ID) =====
+relative_delta_table_path = os.environ.get("RELATIVE_DELTA_TABLE_PATH", "tables/table_" + run_id)\
+    .rstrip("/")
+dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE_NAME", "ddb_table_" + run_id)
+
+delta_table_path = "s3a://" + s3_bucket + "/" + relative_delta_table_path
+relative_delta_log_path = relative_delta_table_path + "/_delta_log/"
 
 if delta_table_path is None:
     print(f"\nSkipping Python test {os.path.basename(__file__)} due to the missing env variable "
@@ -69,15 +94,20 @@ if delta_table_path is None:
     sys.exit(0)
 
 test_log = f"""
---- LOG ---\n
+========================================== 
+run id: {run_id}
 delta table path: {delta_table_path}
+dynamo table name: {dynamo_table_name}
+
 concurrent writers: {concurrent_writers}
 concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
 delta storage: {delta_storage}
-dynamo table name: {dynamo_table_name}
-{"dynamo_error_rates: {}".format(dynamo_error_rates) if dynamo_error_rates else ""}
-=====================
+dynamo_error_rates: {dynamo_error_rates}
+
+relative_delta_table_path: {relative_delta_table_path}
+relative_delta_log_path: {relative_delta_log_path}
+========================================== 
 """
 print(test_log)
 
@@ -86,6 +116,7 @@ spark = SparkSession \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .config("spark.delta.logStore.s3.impl", delta_storage) \
     .config("spark.delta.logStore.s3a.impl", delta_storage) \
     .config("spark.delta.logStore.s3n.impl", delta_storage) \
@@ -96,7 +127,7 @@ spark = SparkSession \
     .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
     .getOrCreate()
 
-spark.sparkContext.setLogLevel("INFO")
+# spark.sparkContext.setLogLevel("INFO")
 
 data = spark.createDataFrame([], "id: int, a: int")
 print("writing:", data.collect())
@@ -126,8 +157,8 @@ def start_read_thread():
     return thread
 
 
+print("===================== Starting reads and writes =====================")
 read_threads = [start_read_thread() for i in range(concurrent_readers)]
-
 pool = ThreadPool(concurrent_writers)
 start_t = time.time()
 pool.map(write_tx, range(num_rows))
@@ -136,13 +167,16 @@ stop_reading.set()
 for thread in read_threads:
     thread.join()
 
+print("===================== Evaluating number of written rows =====================")
 actual = spark.read.format("delta").load(delta_table_path).distinct().count()
-print("Number of written rows:", actual)
+print("Actual number of written rows:", actual)
+print("Expected number of written rows:", num_rows)
 assert actual == num_rows
 
 t = time.time() - start_t
 print(f"{num_rows / t:.02f} tx / sec")
 
+print("===================== Evaluating DDB writes =====================")
 import boto3
 from botocore.config import Config
 my_config = Config(
@@ -152,4 +186,33 @@ dynamodb = boto3.resource('dynamodb',  config=my_config)
 table = dynamodb.Table(dynamo_table_name)  # this ensures we actually used/created the input table
 response = table.scan()
 items = response['Items']
-print(items[-1])  # print for manual validation
+items = sorted(items, key=lambda x: x['fileName'])
+
+print("========== All DDB items ==========")
+for item in items:
+    print(item)
+
+print("===================== Evaluating _delta_log commits =====================")
+s3_client = boto3.client("s3")
+print(f"querying {s3_bucket}/{relative_delta_log_path}")
+response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=relative_delta_log_path)
+items = response['Contents']
+print("========== Raw _delta_log contents ========== ")
+for item in items:
+    print(item)
+
+delta_log_commits = filter(lambda x: ".json" in x['Key'] and ".tmp" not in x['Key'],
+                           items)
+delta_log_commits = sorted(delta_log_commits, key=lambda x: x['Key'])
+
+print("========== _delta_log commits in version order ==========")
+for commit in delta_log_commits:
+    print(commit)
+
+print("========== _delta_log commits in timestamp order ==========")
+delta_log_commits_sorted_timestamp = sorted(delta_log_commits, key=lambda x: x['LastModified'])
+for commit in delta_log_commits_sorted_timestamp:
+    print(commit)
+
+print("========== ASSERT that these orders (version vs timestamp) are the same ==========")
+assert(delta_log_commits == delta_log_commits_sorted_timestamp)

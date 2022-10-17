@@ -54,13 +54,12 @@ case class DeltaSourceOffset(
   override def json: String = JsonUtils.toJson(this)
 
   /**
-   * Compare two DeltaSourceOffsets which are on the same table and source version.
+   * Compare two DeltaSourceOffsets which are on the same table.
    * @return 0 for equivalent offsets. negative if this offset is less than `otherOffset`. Positive
    *         if this offset is greater than `otherOffset`
    */
   def compare(otherOffset: DeltaSourceOffset): Int = {
-    assert(reservoirId == otherOffset.reservoirId &&
-      sourceVersion == otherOffset.sourceVersion, "Comparing offsets that do not refer to the" +
+    assert(reservoirId == otherOffset.reservoirId, "Comparing offsets that do not refer to the" +
       " same table is disallowed.")
     implicitly[Ordering[(Long, Long)]].compare((reservoirVersion, index),
       (otherOffset.reservoirVersion, otherOffset.index))
@@ -95,7 +94,7 @@ object DeltaSourceOffset {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw DeltaErrors.nonExistentDeltaTable(o.reservoirId)
+          throw DeltaErrors.nonExistentDeltaTableStreaming(o.reservoirId)
         }
         o
     }
@@ -123,6 +122,29 @@ object DeltaSourceOffset {
     json match {
       case JNothing => None
       case value: JValue => Some(value)
+    }
+  }
+
+  /**
+   * Validate offsets to make sure we always move forward. Moving backward may make the query
+   * re-process data and cause data duplication.
+   */
+  def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
+    if (previousOffset.isStartingVersion == false && currentOffset.isStartingVersion == true) {
+      throw new IllegalStateException(
+        s"Found invalid offsets: 'isStartingVersion' fliped incorrectly. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
+    }
+    if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {
+      throw new IllegalStateException(
+        s"Found invalid offsets: 'reservoirVersion' moved back. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
+    }
+    if (previousOffset.reservoirVersion == currentOffset.reservoirVersion &&
+      previousOffset.index > currentOffset.index) {
+      throw new IllegalStateException(
+        s"Found invalid offsets. 'index' moved back. " +
+          s"Previous: $previousOffset, Current: $currentOffset")
     }
   }
 }

@@ -68,15 +68,15 @@
     ],
     "sqlState" : "42000"
   },
-  "DELTA_BLOCK_CDF_COLUMN_MAPPING_READS" : {
-    "message" : [
-      "Change Data Feed (CDF) reads are not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <newSchema>. Incompatible schema: <oldSchema>. <hint>"
-    ],
-    "sqlState" : "0A000"
-  },
   "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION" : {
     "message" : [
       "Operation \"<opName>\" is not allowed when the table has enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME COLUMN."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" : {
+    "message" : [
+      "<opName> is not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <readSchema>. Incompatible schema: <incompatibleSchema>. You may force enable streaming read at your own risk by turning on <config>."
     ],
     "sqlState" : "0A000"
   },
@@ -212,6 +212,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER" : {
+    "message" : [
+      "Cannot change the location of a path based table."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
       "Cannot update %1$s field %2$s type: update the element by updating %2$s.element"
@@ -257,6 +263,12 @@
   "DELTA_CHANGE_TABLE_FEED_DISABLED" : {
     "message" : [
       "Cannot write to table with delta.enableChangeDataFeed set. Change data feed from Delta is not available."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CHECKPOINT_NON_EXIST_TABLE" : {
+    "message" : [
+      "Cannot checkpoint a non-existing table <path>. Did you manually delete files in the _delta_log directory?"
     ],
     "sqlState" : "42000"
   },
@@ -315,6 +327,9 @@
       "    .config(\"<catalogKey>\", \"<catalogClassName>\")",
       "    ...",
       "    .getOrCreate()",
+      "",
+      "If you are using spark-shell/pyspark/spark-submit, you can add the required configurations to the command as show below:",
+      "--conf spark.sql.extensions=<sparkSessionExtensionName> --conf <catalogKey>=<catalogClassName>",
       ""
     ],
     "sqlState" : "42000"
@@ -491,9 +506,15 @@
     ],
     "sqlState" : "22000"
   },
-  "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLLUMNS" : {
+  "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLUMNS" : {
     "message" : [
-      "Could not find <newAttributeName> among the existing target output <targetOutputCollumns>"
+      "Could not find <newAttributeName> among the existing target output <targetOutputColumns>"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_FAILED_FIND_PARTITION_COLUMN_IN_OUTPUT_PLAN" : {
+    "message" : [
+      "Could not find <partitionColumn> in output plan."
     ],
     "sqlState" : "22000"
   },
@@ -610,6 +631,12 @@
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"
     ]
+  },
+  "DELTA_ILLEGAL_OPTION" : {
+    "message" : [
+      "Invalid value '<input>' for option '<name>', <explain>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_ILLEGAL_USAGE" : {
     "message" : [
@@ -823,6 +850,12 @@
   "DELTA_LOG_ALREADY_EXISTS" : {
     "message" : [
       "A Delta log already exists at <path>"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE" : {
+    "message" : [
+      "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"
     ],
     "sqlState" : "42000"
   },
@@ -1054,6 +1087,12 @@
     ],
     "sqlState" : "2F000"
   },
+  "DELTA_NON_SINGLE_PART_NAMESPACE_FOR_CATALOG" : {
+    "message" : [
+      "Delta catalog requires a single-part namespace, but <identifier> is multi-part."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_NOT_A_DELTA_TABLE" : {
     "message" : [
       "<tableName> is not a Delta table. Please drop this table first if you would like to recreate it with Delta Lake."
@@ -1088,6 +1127,18 @@
   "DELTA_NO_NEW_ATTRIBUTE_ID" : {
     "message" : [
       "Could not find a new attribute ID for column <columnName>. This should have been checked earlier."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_NO_RECREATABLE_HISTORY_FOUND" : {
+    "message" : [
+      "No recreatable commits found at <logPath>"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NO_RELATION_TABLE" : {
+    "message" : [
+      "Table <tableIdent> not found"
     ],
     "sqlState" : "22000"
   },
@@ -1221,6 +1272,20 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_SCHEMA_CHANGED" : {
+    "message" : [
+      "Detected schema change:",
+      "old schema: <oldSchema>",
+      "",
+      "new schema: <newSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" : {
     "message" : [
       "The schema of your Delta table has changed in an incompatible way since your DataFrame",
@@ -1235,6 +1300,12 @@
       "The table schema <tableSchema> is not consistent with the target attributes: <targetAttrs>"
     ],
     "sqlState" : "42000"
+  },
+  "DELTA_SCHEMA_NOT_PROVIDED" : {
+    "message" : [
+      "Table schema is not provided. Please provide the schema (column definition) of the table when using REPLACE table and an AS SELECT query is not provided."
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_SCHEMA_NOT_SET" : {
     "message" : [
@@ -1256,6 +1327,12 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_COLUMN" : {
+    "message" : [
+      "Non-partitioning column(s) <badCols> are specified for SHOW PARTITIONS"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE" : {
     "message" : [
       "SHOW PARTITIONS is not allowed on a table that is not partitioned: <tableName>"
@@ -1264,13 +1341,13 @@
   },
   "DELTA_SOURCE_IGNORE_DELETE" : {
     "message" : [
-      "Detected deleted data (for example <removedFile>) from streaming source at version <version>. This is currently not supported. If you'd like to ignore deletes, set the option 'ignoreDeletes' to 'true'."
+      "Detected deleted data (for example <removedFile>) from streaming source at version <version>. This is currently not supported. If you'd like to ignore deletes, set the option 'ignoreDeletes' to 'true'. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory."
+      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "42000"
   },
@@ -1285,12 +1362,22 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_STARTING_VERSION_AND_TIMESTAMP_BOTH_SET" : {
+    "message" : [
+      "Please either provide '<version>' or '<timestamp>'"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_STATE_RECOVER_ERROR" : {
     "message" : [
       "The <operation> of your Delta table could not be recovered while Reconstructing",
-      "version: <version>. Did you manually delete files in the _delta_log directory?",
-      "Set <config> to \"false\"",
-      "to skip validation."
+      "version: <version>. Did you manually delete files in the _delta_log directory?"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
+    "message" : [
+      "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."
     ],
     "sqlState" : "22000"
   },
@@ -1330,6 +1417,12 @@
   },
   "DELTA_TABLE_NOT_FOUND" : {
     "message" : [
+      "Delta table <tableName> doesn't exist."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TABLE_NOT_FOUND_STREAMING" : {
+    "message" : [
       "Delta table <tableName> doesn't exist. Please delete your streaming query checkpoint and restart."
     ],
     "sqlState" : "42000"
@@ -1345,6 +1438,12 @@
       "<tableName> is not a Delta table. <operation> is only supported for Delta tables."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_TARGET_TABLE_FINAL_SCHEMA_EMPTY" : {
+    "message" : [
+      "Target table final schema is empty."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
@@ -1383,6 +1482,18 @@
       "<mismatchStringOpt>"
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_UDF_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "Found <udfExpr>. A generated column cannot use a user-defined function"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNEXPECTED_ACTION_EXPRESSION" : {
+    "message" : [
+      "Unexpected action expression <expression>."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_ALIAS" : {
     "message" : [
@@ -1541,12 +1652,6 @@
     ],
     "sqlState" : "0A000"
   },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_STREAMING_READS" : {
-    "message" : [
-      "Streaming reads from a Delta table with column mapping enabled are not supported."
-    ],
-    "sqlState" : "0A000"
-  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
     "message" : [
       "Writing data with column mapping mode is not supported."
@@ -1603,6 +1708,12 @@
   "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT" : {
     "message" : [
       "Invariants on nested fields other than StructTypes are not supported."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_IN_SUBQUERY" : {
+    "message" : [
+      "In subquery is not supported in the <operation> condition."
     ],
     "sqlState" : "0A000"
   },

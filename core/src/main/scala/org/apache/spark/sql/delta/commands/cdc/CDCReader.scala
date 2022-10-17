@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQ
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -48,7 +49,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * does special handling for this column, dispatching the main data to its normal location while the
  * CDC data is sent to [[AddCDCFile]] entries.
  */
-object CDCReader extends DeltaLogging {
+object CDCReader extends CDCReaderImpl
+{
   // Definitions for the CDC type column. Delta writers will write data with a non-null value for
   // this column into [[AddCDCFile]] actions separate from the main table, and the CDC reader will
   // read this column to determine what type of change it was.
@@ -83,6 +85,39 @@ object CDCReader extends DeltaLogging {
 
   // CDC specific columns in data written by operations
   val CDC_COLUMNS_IN_DATA = Seq(CDC_PARTITION_COL, CDC_TYPE_COLUMN_NAME)
+
+  /**
+   * A special BaseRelation wrapper for CDF reads.
+   */
+  case class DeltaCDFRelation(
+      schema: StructType,
+      sqlContext: SQLContext,
+      deltaLog: DeltaLog,
+      startingVersion: Option[Long],
+      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
+
+    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
+      val df = changesToBatchDF(
+        deltaLog,
+        startingVersion.get,
+        endingVersion.getOrElse {
+          // If no ending version was specified, use the latest version as of scan building time.
+          // Note that this line won't be invoked (and thus we won't incur the update() cost)
+          // when endingVersion is present.
+          deltaLog.update().version
+        },
+        sqlContext.sparkSession)
+
+      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+    }
+  }
+
+  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
+}
+
+trait CDCReaderImpl extends DeltaLogging {
+
+  import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
   /**
    * Given timestamp or version this method returns the corresponding version for that timestamp
@@ -199,30 +234,28 @@ object CDCReader extends DeltaLogging {
   }
 
   /**
-   * A special BaseRelation wrapper for CDF reads.
+   * Function to check if file actions should be skipped for no-op merges based on
+   * CommitInfo metrics.
+   * MERGE will sometimes rewrite files in a way which *could* have changed data
+   * (so dataChange = true) but did not actually do so (so no CDC will be produced).
+   * In this case the correct CDC output is empty - we shouldn't serve it from
+   * those files. This should be handled within the command, but as a hotfix-safe fix, we check
+   * the metrics. If the command reported 0 rows inserted, updated, or deleted, then CDC
+   * shouldn't be produced.
    */
-  case class DeltaCDFRelation(
-      schema: StructType,
-      sqlContext: SQLContext,
-      deltaLog: DeltaLog,
-      startingVersion: Option[Long],
-      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
-
-    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
-      val df = changesToBatchDF(
-        deltaLog,
-        startingVersion.get,
-        endingVersion.getOrElse {
-          // If no ending version was specified, use the latest version as of scan building time.
-          // Note that this line won't be invoked (and thus we won't incur the update() cost)
-          // when endingVersion is present.
-          deltaLog.update().version
-        },
-        sqlContext.sparkSession)
-
-      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+  def shouldSkipFileActionsInCommit(commitInfo: CommitInfo): Boolean = {
+    val isMerge = commitInfo.operation == DeltaOperations.Merge(None, Nil, Nil).name
+    val knownToHaveNoChangedRows = {
+      val metrics = commitInfo.operationMetrics.getOrElse(Map.empty)
+      // Note that if any metrics are missing, this condition will be false and we won't skip.
+      // Unfortunately there are no predefined constants for these metric values.
+      Seq("numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsDeleted").forall {
+        metrics.get(_).contains("0")
+      }
     }
+    isMerge && knownToHaveNoChangedRows
   }
+
 
   /**
    * For a sequence of changes(AddFile, RemoveFile, AddCDCFile) create a DataFrame that represents
@@ -261,15 +294,7 @@ object CDCReader extends DeltaLogging {
       throw DeltaErrors.endBeforeStartVersionInCDC(start, end)
     }
 
-    val snapshot = deltaLog.snapshot
-
-    // If the table has column mapping enabled, throw an error. With column mapping, certain schema
-    // changes are possible (rename a column or drop a column) which don't work well with CDF.
-    // TODO: remove this after the proper blocking semantics is rolled out
-    // This is only blocking streaming CDF, batch CDF will be blocked differently below.
-    if (isStreaming && snapshot.metadata.columnMappingMode != NoMapping) {
-      throw DeltaErrors.blockCdfAndColumnMappingReads(isStreaming)
-    }
+    val snapshot = deltaLog.unsafeVolatileSnapshot
 
     // A map from change version to associated commit timestamp.
     val timestampsByVersion: Map[Long, Timestamp] =
@@ -280,7 +305,7 @@ object CDCReader extends DeltaLogging {
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!isCDCEnabledOnTable(deltaLog.getSnapshotAt(start).metadata)) {
+    if (!isCDCEnabledOnTable(startVersionSnapshot.metadata)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -300,11 +325,8 @@ object CDCReader extends DeltaLogging {
     if (shouldCheckToBlockBatchReadOnColumnMappingTable &&
         !DeltaColumnMapping.isColumnMappingReadCompatible(
           snapshot.metadata, startVersionSnapshot.metadata)) {
-      throw DeltaErrors.blockCdfAndColumnMappingReads(
-        isStreaming,
-        Some(snapshot.metadata.schema),
-        Some(startVersionSnapshot.metadata.schema)
-      )
+      throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
+        snapshot.metadata.schema, startVersionSnapshot.metadata.schema)
     }
 
     var totalBytes = 0L
@@ -326,21 +348,16 @@ object CDCReader extends DeltaLogging {
 
         // Check all intermediary metadata schema changes as well
         if (shouldCheckToBlockBatchReadOnColumnMappingTable) {
-           actions.collect { case a: Metadata => a }.foreach { metadata =>
-             if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
-               throw DeltaErrors.blockCdfAndColumnMappingReads(
-                 isStreaming,
-                 Some(snapshot.metadata.schema),
-                 Some(metadata.schema)
-               )
-             }
-           }
+          actions.collect { case a: Metadata => a }.foreach { metadata =>
+            if (!DeltaColumnMapping.isColumnMappingReadCompatible(snapshot.metadata, metadata)) {
+              throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
+                snapshot.metadata.schema, metadata.schema)
+            }
+          }
         }
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
-        val addActions = ListBuffer[AddFile]()
-        val removeActions = ListBuffer[RemoveFile]()
         val ts = timestampsByVersion.get(v).orNull
 
         // Note that the CommitInfo is *not* guaranteed to be generated in 100% of cases.
@@ -353,11 +370,9 @@ object CDCReader extends DeltaLogging {
             totalFiles += 1L
             totalBytes += c.size
           case a: AddFile =>
-            addActions.append(a)
             totalFiles += 1L
             totalBytes += a.size
           case r: RemoveFile =>
-            removeActions.append(r)
             totalFiles += 1L
             totalBytes += r.size.getOrElse(0L)
           case i: CommitInfo => commitInfo = Some(i)
@@ -368,24 +383,8 @@ object CDCReader extends DeltaLogging {
         if (cdcActions.nonEmpty) {
           changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq))
         } else {
-          // MERGE will sometimes rewrite files in a way which *could* have changed data
-          // (so dataChange = true) but did not actually do so (so no CDC will be produced).
-          // In this case the correct CDC output is empty - we shouldn't serve it from
-          // those files.
-          // This should be handled within the command, but as a hotfix-safe fix, we check the
-          // metrics. If the command reported 0 rows inserted, updated, or deleted, then CDC
-          // shouldn't be produced.
-          val isMerge = commitInfo.isDefined &&
-            commitInfo.get.operation == DeltaOperations.Merge(None, Nil, Nil).name
-          val knownToHaveNoChangedRows = {
-            val metrics = commitInfo.flatMap(_.operationMetrics).getOrElse(Map.empty)
-            // Note that if any metrics are missing, this condition will be false and we won't skip.
-            // Unfortunately there are no predefined constants for these metric values.
-            Seq("numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsDeleted").forall {
-              metrics.get(_).contains("0")
-            }
-          }
-          if (isMerge && knownToHaveNoChangedRows) {
+          val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
+          if (shouldSkipIndexedFile) {
             // This was introduced for a hotfix, so we're mirroring the existing logic as closely
             // as possible - it'd likely be safe to just return an empty dataframe here.
             addFiles.append(CDCDataSpec(v, ts, Nil))
@@ -410,23 +409,48 @@ object CDCReader extends DeltaLogging {
         isStreaming))
     }
 
-    if (addFiles.nonEmpty) {
+    val deletedAndAddedRows = getDeletedAndAddedRows(addFiles.toSeq, removeFiles.toSeq, deltaLog,
+      snapshot, isStreaming, spark)
+    dfs.append(deletedAndAddedRows: _*)
+
+    // build an empty DS. This DS retains the table schema and the isStreaming property
+    val emptyDf = spark.sqlContext.internalCreateDataFrame(
+      spark.sparkContext.emptyRDD[InternalRow],
+      cdcReadSchema(snapshot.metadata.schema),
+      isStreaming)
+
+    CDCVersionDiffInfo(
+      dfs.reduceOption((df1, df2) => df1.union(df2)).getOrElse(emptyDf),
+      totalFiles,
+      totalBytes)
+  }
+
+  protected def getDeletedAndAddedRows(
+      addFileSpecs: Seq[CDCDataSpec[AddFile]],
+      removeFileSpecs: Seq[CDCDataSpec[RemoveFile]],
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      isStreaming: Boolean,
+      spark: SparkSession): Seq[DataFrame] = {
+    val dfs = ListBuffer[DataFrame]()
+
+    if (addFileSpecs.nonEmpty) {
       dfs.append(scanIndex(
         spark,
-        new CdcAddFileIndex(spark, addFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        snapshot.metadata,
+        isStreaming))
+    }
+    if (removeFileSpecs.nonEmpty) {
+      dfs.append(scanIndex(
+        spark,
+        new TahoeRemoveFileIndex(
+          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
         snapshot.metadata,
         isStreaming))
     }
 
-    if (removeFiles.nonEmpty) {
-      dfs.append(scanIndex(
-        spark,
-        new TahoeRemoveFileIndex(spark, removeFiles.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        snapshot.metadata,
-        isStreaming))
-    }
-
-    CDCVersionDiffInfo(dfs.reduce((df1, df2) => df1.unionAll(df2)), totalFiles, totalBytes)
+    dfs.toSeq
   }
 
   /**
@@ -476,7 +500,7 @@ object CDCReader extends DeltaLogging {
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
    */
-  private def scanIndex(
+  protected def scanIndex(
       spark: SparkSession,
       index: TahoeFileIndex,
       metadata: Metadata,
@@ -521,8 +545,6 @@ object CDCReader extends DeltaLogging {
   def isCDCEnabledOnTable(metadata: Metadata): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
   }
-
-  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
 
   /**
    * Represents the changes between some start and end version of a Delta table

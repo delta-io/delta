@@ -1364,23 +1364,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach { hook =>
-        try {
-          hook.run(spark, this, version, postCommitSnapshot, committedActions)
-        } catch {
-          case NonFatal(e) =>
-            logWarning(s"Error when executing post-commit hook ${hook.name} " +
-              s"for commit $version", e)
-            recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
-              "hook" -> hook.name,
-              "version" -> version,
-              "exception" -> e.toString
-            ))
-            hook.handleError(e, version)
-        }
-      }
+      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
+    }
+  }
+
+  protected def runPostCommitHook(
+      hook: PostCommitHook,
+      version: Long,
+      postCommitSnapshot: Snapshot,
+      committedActions: Seq[Action]): Unit = {
+    try {
+      hook.run(spark, this, version, postCommitSnapshot, committedActions)
+    } catch {
+      case NonFatal(e) =>
+        logWarning(s"Error when executing post-commit hook ${hook.name} " +
+          s"for commit $version", e)
+        recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
+          "hook" -> hook.name,
+          "version" -> version,
+          "exception" -> e.toString
+        ))
+        hook.handleError(e, version)
     }
   }
 
