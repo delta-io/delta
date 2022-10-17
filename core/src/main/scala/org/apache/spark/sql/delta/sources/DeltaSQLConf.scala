@@ -543,11 +543,12 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val DELTA_LEGACY_KEEP_OPTION_PREFIX_IN_CATALOGUE =
-    buildConf("legacy.keepOptionPrefix")
+    buildConf("legacy.keepCatalogueOptionPrefix")
       .internal()
       .doc(
         """
-          |Properties options are duplicated by spark with and without 'option.' prefix.
+          |Properties options are duplicated by spark with and without 'option.' prefix
+          |when creating the table with catalogue API.
           |By default delta keeps only the non prefixed version in the log properties.
           |This option allows to keep both versions.
           |""".stripMargin)

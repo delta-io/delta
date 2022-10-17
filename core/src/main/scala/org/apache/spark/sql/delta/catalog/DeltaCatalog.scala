@@ -84,14 +84,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode): Table = {
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
-    val conf = spark.sessionState.conf
-    val prefixDelete =
-      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_KEEP_OPTION_PREFIX_IN_CATALOGUE)) {
-        identity[(String, String)] _
-      } else {
-        (x: (String, String)) => (x._1.stripPrefix("option."), x._2)
-      }
-    val tableProperties = allTableProperties.asScala.map(prefixDelete).filterKeys {
+    val tableProperties = allTableProperties.asScala.filterKeys {
       case TableCatalog.PROP_LOCATION => false
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
@@ -104,6 +97,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
+    val conf = spark.sessionState.conf
 
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
@@ -247,11 +241,22 @@ class DeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+
+      val keepPrefixCatalogue = spark
+        .sessionState
+        .conf
+        .getConf(DeltaSQLConf.DELTA_LEGACY_KEEP_OPTION_PREFIX_IN_CATALOGUE)
+      val prefixDelete =
+        if (keepPrefixCatalogue) {
+          identity[(String, String)] _
+        } else {
+          ((key: String, value: String) => (key.stripPrefix("option."), value)).tupled
+        }
       createDeltaTable(
         ident,
         schema,
         partitions,
-        properties,
+        properties.asScala.map(prefixDelete).asJava,
         Map.empty,
         sourceQuery = None,
         TableCreationModes.Create)
