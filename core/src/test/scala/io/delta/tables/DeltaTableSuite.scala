@@ -198,7 +198,7 @@ class DeltaTableSuite extends QueryTest
   test("isDeltaTableByPath - with non-Delta table path") {
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
-      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+      assert(!DeltaTable.isDeltaTableByPath(dir.getAbsolutePath))
     }
   }
 
@@ -234,6 +234,17 @@ class DeltaTableSuite extends QueryTest
     withView("vwDeltaName") {
       assert(!DeltaTable.isDeltaTableByName("vwDeltaName"))
     }
+  }
+
+  test("isDeltaTableByName - with Parquet table name") {
+    withTable("parquet_table") {
+      testData.write.format("parquet").saveAsTable("parquet_table")
+      assert(!DeltaTable.isDeltaTableByName("parquet_table"))
+    }
+  }
+
+  test("isDeltaTableByName - with non-existent table name") {
+    assert(!DeltaTable.isDeltaTableByName("bad_table_name"))
   }
 
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
