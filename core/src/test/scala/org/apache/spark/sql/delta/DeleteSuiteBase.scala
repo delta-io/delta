@@ -24,7 +24,10 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
@@ -354,6 +357,46 @@ abstract class DeleteSuiteBase extends QueryTest
       executeDelete(target = s"delta.`$tempPath`", "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
+  }
+
+  test("schema pruning on data condition") {
+    val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
+    append(input, Nil)
+
+    val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+      checkDelete(Some("key = 2"),
+        Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
+    }
+
+    val scans = executedPlans.flatMap(_.collect {
+      case f: FileSourceScanExec => f
+    })
+
+    // The first scan is for finding files to delete. We only are matching against the key
+    // so that should be the only field in the schema
+    assert(scans.head.schema.findNestedField(Seq("key")).nonEmpty)
+    assert(scans.head.schema.findNestedField(Seq("value")).isEmpty)
+  }
+
+
+  test("nested schema pruning on data condition") {
+    val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
+      .select(struct("key", "value").alias("nested"))
+    append(input, Nil)
+
+    val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+      checkDelete(Some("nested.key = 2"),
+        Row(Row(1, 4)) :: Row(Row(1, 1)) :: Row(Row(0, 3)) :: Nil)
+    }
+
+    val scans = executedPlans.flatMap(_.collect {
+      case f: FileSourceScanExec => f
+    })
+
+    // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
+    // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
+    // after upgrading
+    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
   }
 
   /**

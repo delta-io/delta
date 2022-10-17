@@ -42,16 +42,12 @@ abstract class TahoeFileIndex(
     val deltaLog: DeltaLog,
     val path: Path) extends FileIndex {
 
-  def tableVersion: Long = deltaLog.snapshot.version
-  def metadata: Metadata = deltaLog.snapshot.metadata
+  def tableVersion: Long = deltaLog.unsafeVolatileSnapshot.version
+  def metadata: Metadata = deltaLog.unsafeVolatileSnapshot.metadata
 
   override def rootPaths: Seq[Path] = path :: Nil
 
-  def getSnapshot: Snapshot = {
-    // TODO(Lars): This is temporary while I'm updating a universe implementation to override this
-    //  new API.
-    throw new RuntimeException("Not yet implemented")
-  }
+  def getSnapshot: Snapshot
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
@@ -155,7 +151,7 @@ case class TahoeLogFileIndex(
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def tableVersion: Long = {
-    if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.snapshot.version
+    if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.unsafeVolatileSnapshot.version
   }
 
   override def metadata: Metadata = {
@@ -210,7 +206,7 @@ case class TahoeLogFileIndex(
   }
 
   override def refresh(): Unit = {}
-  override val sizeInBytes: Long = deltaLog.snapshot.sizeInBytes
+  override val sizeInBytes: Long = deltaLog.unsafeVolatileSnapshot.sizeInBytes
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
@@ -228,7 +224,7 @@ case class TahoeLogFileIndex(
 
 object TahoeLogFileIndex {
   def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex =
-    TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.snapshot)
+    TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.unsafeVolatileSnapshot)
 }
 
 /**
@@ -265,4 +261,5 @@ class TahoeBatchFileIndex(
   override val sizeInBytes: Long = addFiles.map(_.size).sum
 
   override def getSnapshot: Snapshot = snapshot
+
 }

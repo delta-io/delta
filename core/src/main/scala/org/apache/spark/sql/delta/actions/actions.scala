@@ -255,8 +255,6 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def numLogicalRecords: Option[Long]
   @JsonIgnore
-  def getNumLogicalRecords: Long = numLogicalRecords.getOrElse(0L)
-  @JsonIgnore
   val partitionValues: Map[String, String]
   @JsonIgnore
   def getFileSize: Long

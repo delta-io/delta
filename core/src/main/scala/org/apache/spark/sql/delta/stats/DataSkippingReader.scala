@@ -516,8 +516,9 @@ trait DataSkippingReaderBase
 
       // Treat IN(... subquery ...) as a normal IN-list, since the subquery already ran before now.
       case in: InSubqueryExec =>
-        // At this point the subquery has been materialized so it is safe to call get on the Option.
-        constructLiteralInListDataFilters(in.child, in.values().get.toSeq)
+        // At this point the subquery has been materialized, but values() can return None if
+        // the subquery was bypassed at runtime.
+        in.values().flatMap(v => constructLiteralInListDataFilters(in.child, v.toSeq))
 
 
       // Remove redundant pairs of NOT

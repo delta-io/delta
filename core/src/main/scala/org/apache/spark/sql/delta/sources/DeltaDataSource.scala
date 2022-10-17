@@ -89,7 +89,8 @@ class DeltaDataSource
     }
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.schema)
+    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(
+      deltaLog.unsafeVolatileSnapshot.schema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -114,7 +115,7 @@ class DeltaDataSource
       throw DeltaErrors.pathNotSpecifiedException
     })
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    if (deltaLog.snapshot.schema.isEmpty) {
+    if (deltaLog.unsafeVolatileSnapshot.schema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)

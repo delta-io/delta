@@ -352,16 +352,10 @@ class DeltaLogSuite extends QueryTest
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            log.update()
-          }
-          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+        val e = intercept[IllegalStateException] {
+          log.update()
         }
-        // Disable the validation check
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(log.update().version === 0L)
-        }
+        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
       }
     }
   }
@@ -421,18 +415,11 @@ class DeltaLogSuite extends QueryTest
         }
 
         // Verify if the state reconstruction from the checkpoint fails.
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            staleLog.update()
-          }
-          assert(e.getMessage ===
-            DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
+        val e = intercept[IllegalStateException] {
+          staleLog.update()
         }
-
-        // Disable state reconstruction validation and try again
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(staleLog.update().version === checkpointInterval)
-        }
+        assert(e.getMessage ===
+          DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
       }
     }
   }

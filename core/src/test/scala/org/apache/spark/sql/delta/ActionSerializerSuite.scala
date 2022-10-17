@@ -325,20 +325,20 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       name: String,
       action: => Action,
       expectedJson: String,
-    extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
-    test(name) {
+      extraSettings: Seq[(String, String)] = Seq.empty,
+      testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+    test(name, testTags: _*) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         val settings = Seq(
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
-          deltaLog.startTransaction().commit(Seq(), ManualUpdate)
+          deltaLog.startTransaction().commit(Seq(Protocol(1, 2), Metadata()), ManualUpdate)
 
           // Commit the actual action.
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
