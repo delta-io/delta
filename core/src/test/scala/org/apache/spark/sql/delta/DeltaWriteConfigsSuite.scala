@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import scala.collection.mutable
-
 import java.util.Locale
 import scala.collection.mutable.ListBuffer
 
@@ -698,10 +696,9 @@ class DeltaWriteConfigsSuite extends QueryTest
           sql(stmt)
 
           val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-          val config = log.snapshot.metadata.configuration
+          val config = log.unsafeVolatileSnapshot.metadata.configuration
 
-          val mapBuilder =
-            new mutable.MapBuilder[String, String, Map[String, String]](Map.empty)
+          val mapBuilder = ListBuffer.newBuilder[(String, String)]
           if (option_was_set) {
             mapBuilder += (config_prefix -> "interval 2 weeks")
             if (
@@ -721,7 +718,7 @@ class DeltaWriteConfigsSuite extends QueryTest
             mapBuilder += ((config_prefix_2, "20"))
           }
 
-          assert(mapBuilder.result() === config)
+          assert(mapBuilder.result().toMap === config)
 
           sql_output += SQLAPIOutput(
             outputLoc,
