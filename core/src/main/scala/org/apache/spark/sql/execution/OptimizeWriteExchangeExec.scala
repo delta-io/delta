@@ -30,14 +30,22 @@ import org.apache.spark.{MapOutputStatistics, ShuffleDependency}
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
+/**
+ * Execution plan to repartition and rebalance the data for Optimize Write.
+ * The plan will be added on top of the query plan of each write job to avoid any interference
+ * from Adaptive Query Execution.
+ *
+ * @param partitioning Partitioning to use data exchange.
+ * @param child Input plan of write job.
+ */
 case class OptimizeWriteExchangeExec(
     partitioning: Partitioning,
     override val child: SparkPlan) extends Exchange {
 
-  // Use 140% of target file size hint config considering parquet compression.
+  // Use 150% of target file size hint config considering parquet compression.
   // Still the result file can be smaller/larger than the config due to data skew or
   // variable compression ratio for each data type.
-  final val PARQUET_COMPRESSION_RATIO = 1.4
+  final val PARQUET_COMPRESSION_RATIO = 1.5
 
   // Dummy partitioning because:
   // 1) The exact output partitioning is determined at query runtime

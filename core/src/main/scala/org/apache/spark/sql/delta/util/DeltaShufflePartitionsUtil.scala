@@ -26,6 +26,9 @@ import org.apache.spark.{MapOutputTrackerMaster, SparkEnv}
 
 import scala.collection.mutable.ArrayBuffer
 
+/**
+ * Utility functions to rebalance shuffle partitions for OptimizeWrite.
+ */
 object DeltaShufflePartitionsUtil {
 
   // scalastyle:off line.size.limit
@@ -36,6 +39,16 @@ object DeltaShufflePartitionsUtil {
    * The function is copied from Spark 3.2:
    *   https://github.com/apache/spark/blob/v3.2.1/sql/core/src/main/scala/org/apache/spark/sql/execution/adaptive/ShufflePartitionsUtil.scala#L376
    * EDIT: Configurable smallPartitionFactor and mergedPartitionFactor.
+   *
+   * @shuffleId Shuffle ID for retrieve partition info.
+   * @reducerId Reducer ID (Partition ID) for retrieve partition info.
+   * @targetSize Target bin size for splitting.
+   * @smallPartitionFactor Threshold to avoid too small partition. If a partial partition is
+   *                       smaller than targetSize * smallPartitionFactor, merge it to an adjacent
+   *                       partition.
+   * @mergedPartitionFactor Threshold to avoid too large partition. If a partial partition is
+   *                        larger than targetSize * mergedPartitionFactor, do not merge other
+   *                        adjacent partitions to it.
    */
   // scalastyle:on
   def createSkewPartitionSpecs(
@@ -76,14 +89,23 @@ object DeltaShufflePartitionsUtil {
    * The function is copied from Spark 3.2:
    *   https://github.com/apache/spark/blob/v3.2.1/sql/core/src/main/scala/org/apache/spark/sql/execution/adaptive/ShufflePartitionsUtil.scala#L319
    * EDIT: Configurable smallPartitionFactor and mergedPartitionFactor.
+   *
+   *
+   * @targetSize Target bin size for splitting.
+   * @smallPartitionFactor Threshold to avoid too small partition. If a partial partition is
+   *                       smaller than targetSize * smallPartitionFactor, merge it to an adjacent
+   *                       partition.
+   * @mergedPartitionFactor Threshold to avoid too large partition. If a partial partition is
+   *                        larger than targetSize * mergedPartitionFactor, do not merge other
+   *                        adjacent partitions to it.
    */
   // scalastyle:on
   // Visible for testing
   private[sql] def splitSizeListByTargetSize(
-    sizes: Seq[Long],
-    targetSize: Long,
-    smallPartitionFactor: Double,
-    mergedPartitionFactor: Double): Array[Int] = {
+      sizes: Seq[Long],
+      targetSize: Long,
+      smallPartitionFactor: Double,
+      mergedPartitionFactor: Double): Array[Int] = {
     val partitionStartIndices = ArrayBuffer[Int]()
     partitionStartIndices += 0
     var i = 0
@@ -163,8 +185,10 @@ object DeltaShufflePartitionsUtil {
       partitionSchema: StructType,
       numShufflePartitions: Int): Partitioning = {
     if (partitionSchema.fields.isEmpty) {
+      // Non-partitioned data.
       RoundRobinPartitioning(numShufflePartitions)
     } else {
+      // Partitioned data.
       val partitionColumnsExpr = partitionSchema.fields.map { f =>
         outputColumns.find(c => c.name.equals(f.name)).get
       }
