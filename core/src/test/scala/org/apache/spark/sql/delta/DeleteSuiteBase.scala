@@ -25,6 +25,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
@@ -372,6 +373,7 @@ abstract class DeleteSuiteBase extends QueryTest
 
     val scans = executedPlans.flatMap(_.collect {
       case f: FileSourceScanExec => f
+      case b: BatchScanExec => b
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -393,12 +395,18 @@ abstract class DeleteSuiteBase extends QueryTest
 
     val scans = executedPlans.flatMap(_.collect {
       case f: FileSourceScanExec => f
+      case b: BatchScanExec => b
     })
 
     // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
     // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
-    // after upgrading
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
+    // after upgrading. V2 nested column pruning works differently and already works correctly.
+    scans.head match {
+      case f: FileSourceScanExec =>
+        assert(f.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
+      case b: BatchScanExec =>
+        assert(b.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    }
   }
 
   /**
