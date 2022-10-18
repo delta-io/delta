@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.commands
 
 import java.sql.Timestamp
 
+import org.apache.hadoop.fs.Path
+
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
@@ -244,7 +246,7 @@ case class RestoreTableCommand(
 
     val spark: SparkSession = files.sparkSession
 
-    val path = deltaLog.dataPath
+    val pathString = deltaLog.dataPath.toString
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
 
@@ -252,9 +254,9 @@ case class RestoreTableCommand(
 
     val missedFiles = files
       .mapPartitions { files =>
+        val path = new Path(pathString)
         val fs = path.getFileSystem(hadoopConf.value.value)
-        val pathStr = path.toUri.getPath
-        files.filterNot(f => fs.exists(absolutePath(pathStr, f.path)))
+        files.filterNot(f => fs.exists(absolutePath(pathString, f.path)))
       }
       .map(_.path)
       .head(100)
