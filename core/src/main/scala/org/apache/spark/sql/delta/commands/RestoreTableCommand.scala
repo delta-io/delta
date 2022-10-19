@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -243,7 +244,7 @@ case class RestoreTableCommand(
 
     implicit val spark: SparkSession = files.sparkSession
 
-    val path = deltaLog.dataPath
+    val pathString = deltaLog.dataPath.toString
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
 
@@ -251,9 +252,9 @@ case class RestoreTableCommand(
 
     val missedFiles = files
       .mapPartitions { files =>
+        val path = new Path(pathString)
         val fs = path.getFileSystem(hadoopConf.value.value)
-        val pathStr = path.toUri.getPath
-        files.filterNot(f => fs.exists(absolutePath(pathStr, f.path)))
+        files.filterNot(f => fs.exists(absolutePath(pathString, f.path)))
       }
       .map(_.path)
       .head(100)
