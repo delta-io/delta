@@ -1157,8 +1157,10 @@ trait DescribeDeltaHistorySuiteBase
                   "numFiles" -> "2",
                   "numOutputRows" -> "20",
                   "numAddedChangeFiles" -> "0",
-                  "numRemovedFiles" -> "1"
-                ),
+                  "numRemovedFiles" -> "1",
+                  "numCopiedRows" -> "0",
+                  "numDeletedRows" -> "10"
+              ),
                 getOperationMetrics(deltaTable.history(1)),
                 DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS
               )

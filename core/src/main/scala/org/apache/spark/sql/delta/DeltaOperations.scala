@@ -489,19 +489,27 @@ private[delta] object DeltaOperationMetrics {
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows", // number of rows written
     "numAddedChangeFiles", // number of CDC files
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
+    "numCopiedRows", // number of rows copied
+    "numDeletedRows" // number of rows deleted
   )
 
   /**
-   * Deleting the entire table or partition would prevent row level metrics from being recorded.
-   * This is used only in test to verify specific delete cases.
+   * Deleting the entire table or partition will record row level metrics when
+   * DELTA_DML_METRICS_FROM_METADATA is enabled
+   * * DELETE_PARTITIONS is used only in test to verify specific delete cases.
    */
   val DELETE_PARTITIONS = Set(
     "numRemovedFiles", // number of files removed
     "numAddedChangeFiles", // number of CDC files generated - generally 0 in this case
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
+    "numCopiedRows", // number of rows copied
+    "numDeletedRows", // number of rows deleted
+    "numAddedFiles" // number of files added
   )
 
 

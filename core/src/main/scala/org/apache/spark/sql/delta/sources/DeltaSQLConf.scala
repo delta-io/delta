@@ -58,6 +58,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DML_METRICS_FROM_METADATA =
+    buildConf("dmlMetricsFromMetadata.enabled")
+      .internal()
+      .doc(
+        """ When enabled, metadata only Delete, ReplaceWhere and Truncate operations will report row
+        | level operation metrics by reading the file statistics for number of rows.
+        | """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
     buildConf("stats.collect.using.tableSchema")
       .internal()

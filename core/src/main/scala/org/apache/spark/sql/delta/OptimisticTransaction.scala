@@ -538,6 +538,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     scan.files
   }
 
+  /** Same as filterFiles but makes sure that the stats contain at least the numRecords field. */
+  def filterFilesWithNumRecords(filters: Seq[Expression]): Seq[AddFile] = {
+    val scan = snapshot.filesForScan(
+      filters = filters,
+      keepNumRecords = true)
+    val partitionFilters = filters.filter { f =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan.files
+  }
+
   /** Returns files within the given partitions. */
   def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
     import org.apache.spark.sql.functions.{array, col}

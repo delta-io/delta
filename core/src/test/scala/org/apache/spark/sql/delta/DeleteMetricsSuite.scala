@@ -204,19 +204,31 @@ class DeleteMetricsSuite extends QueryTest
     import testImplicits._
 
     Seq(true, false).foreach { cdfEnabled =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
-        withTable("t1") {
-          spark.range(100).withColumn("part", 'id % 10).toDF().write
-            .partitionBy("part").format("delta").saveAsTable("t1")
-          val result = spark.sql("DELETE FROM t1 WHERE part=1").take(1).head(0).toString.toLong
-          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics("t1")
+      Seq(true, false).foreach { deltaCollectStatsEnabled =>
+        Seq(true, false).foreach { deltaDmlMetricsFromMetadataEnabled =>
+          withSQLConf(
+            DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString,
+            DeltaSQLConf.DELTA_COLLECT_STATS.key -> deltaCollectStatsEnabled.toString,
+            DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA.key
+              -> deltaDmlMetricsFromMetadataEnabled.toString
+          ) {
+            withTable("t1") {
+              spark.range(100).withColumn("part", 'id % 10).toDF().write
+                .partitionBy("part").format("delta").saveAsTable("t1")
+              val result = spark.sql("DELETE FROM t1 WHERE part=1")
+                .take(1).head(0).toString.toLong
+              val opMetrics = DeltaMetricsUtils.getLastOperationMetrics("t1")
 
-          // This is a metadata operation. We expect the result (i.e. numAffectedRows) to be -1 and
-          // the operation metric for `numDeletedRows` not to exist. This metric is filtered out
-          // explicitly inside of [[DeltaOperations.Delete.transformMetrics]].
-          assert(opMetrics("numRemovedFiles") > 0)
-          assert(!opMetrics.contains("numDeletedRows"))
-          assert(result == -1)
+              assert(opMetrics("numRemovedFiles") > 0)
+              if (deltaCollectStatsEnabled && deltaDmlMetricsFromMetadataEnabled) {
+                assert(opMetrics("numDeletedRows") == 10)
+                assert(result == 10)
+              } else {
+                assert(!opMetrics.contains("numDeletedRows"))
+                assert(result == -1)
+              }
+            }
+          }
         }
       }
     }
@@ -261,10 +273,10 @@ class DeleteMetricsSuite extends QueryTest
       runDeleteAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
-        expectedNumAffectedRows = -1L,
+        expectedNumAffectedRows = 100,
         expectedOperationMetrics = Map(
           "numCopiedRows" -> -1,
-          "numDeletedRows" -> -1,
+          "numDeletedRows" -> 100,
           "numOutputRows" -> -1,
           "numFiles" -> -1,
           "numAddedFiles" -> -1,
