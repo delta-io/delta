@@ -185,8 +185,8 @@ class DeltaAnalysis(session: SparkSession)
         }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
-    case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
-      val matchedActions = matched.map {
+    case merge: MergeIntoTable if merge.childrenResolved =>
+      val matchedActions = merge.matchedActions.map {
         case update: UpdateAction =>
           DeltaMergeIntoUpdateClause(
             update.condition,
@@ -199,7 +199,7 @@ class DeltaAnalysis(session: SparkSession)
           throw new AnalysisException(
             s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
-      val notMatchedActions = notMatched.map {
+      val notMatchedActions = merge.notMatchedActions.map {
         case insert: InsertAction =>
           DeltaMergeIntoInsertClause(
             insert.condition,
@@ -211,11 +211,14 @@ class DeltaAnalysis(session: SparkSession)
       }
       // rewrites Delta from V2 to V1
       val newTarget =
-        stripTempViewForMergeWrapper(target).transformUp { case DeltaRelation(lr) => lr }
+        stripTempViewForMergeWrapper(merge.targetTable).transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
-      val deltaMerge =
-        DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
+      val deltaMerge = DeltaMergeInto(
+        newTarget,
+        merge.sourceTable,
+        merge.mergeCondition,
+        matchedActions ++ notMatchedActions)
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
