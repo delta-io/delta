@@ -984,15 +984,32 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("Delta source advances with non-data inserts") {
+  test("Delta source advances with non-data inserts and generates empty dataframe for " +
+    "non-data operations") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
       val df = spark.readStream.format("delta").load(inputDir.toString)
-      val stream = df.writeStream
+
+      val stream = df
+        .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
+        .foreachBatch(
+          (outputDf: DataFrame, bid: Long) => {
+              // Apart from first batch, rest of batches work with non-data operations
+              // for which we expect an empty dataframe to be generated.
+              if (bid > 0) {
+                assert(outputDf.isEmpty)
+              }
+              outputDf
+                .write
+                .format("delta")
+                .mode("append")
+                .save(outputDir.toString)
+            }
+        )
+        .start()
       try {
         stream.processAllAvailable()
 
