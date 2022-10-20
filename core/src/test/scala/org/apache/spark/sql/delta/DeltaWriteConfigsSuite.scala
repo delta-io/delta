@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
+
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
