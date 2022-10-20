@@ -630,7 +630,23 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(q) (
         ProcessAllAvailable(),
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, "insert", 0),
+          (1, 1, "insert", 0),
+          (2, 0, "insert", 0),
+          (3, 1, "insert", 0),
+          (4, -1, "insert", 1),
+          (4, -1, "delete", 2),
+          (0, 0, "update_preimage", 3),
+          (0, 0, "update_postimage", 3),
+          (1, 1, "update_preimage", 3),
+          (0, 1, "update_postimage", 3),
+          (2, 0, "update_preimage", 4),
+          (0, 0, "update_postimage", 4),
+          (3, 1, "update_preimage", 4),
+          (0, 1, "update_postimage", 4)
+        )
       )
     }
   }
@@ -710,7 +726,17 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(df)(
         ProcessAllAvailable(),
-        CheckProgress(Seq(4, 4)) // 4 rows(pre and post image) from the 2 AddCDCFiles
+        CheckProgress(Seq(4, 4)),// 4 rows(2 pre- and 2 post-images) for each version
+        CheckAnswer(
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
@@ -740,6 +766,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .option(DeltaOptions.CDC_READ_OPTION, "true")
         .option("startingVersion", "0")
         .load(inputDir.getCanonicalPath)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -750,7 +777,19 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(df)(
         ProcessAllAvailable(),
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
@@ -780,6 +819,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .option(DeltaOptions.CDC_READ_OPTION, "true")
         .option("startingVersion", "0")
         .load(inputDir.getCanonicalPath)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -793,7 +833,19 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         Execute { query =>
           assert(query.awaitTermination(10000))
         },
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
