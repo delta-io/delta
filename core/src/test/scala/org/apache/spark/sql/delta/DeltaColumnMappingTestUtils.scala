@@ -416,10 +416,12 @@ trait DeltaColumnMappingEnableNameMode extends SharedSparkSession
       tableOrPath
     }
 
+    val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
+    val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
     sql(s"""ALTER TABLE $deltaPath SET TBLPROPERTIES (
          |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
-         |${DeltaConfigs.MIN_READER_VERSION.key} = '2',
-         |${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
+         |${DeltaConfigs.MIN_READER_VERSION.key} = '$readerVersion',
+         |${DeltaConfigs.MIN_WRITER_VERSION.key} = '$writerVersion'
          |)""".stripMargin)
   }
 
