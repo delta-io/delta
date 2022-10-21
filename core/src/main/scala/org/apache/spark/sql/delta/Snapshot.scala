@@ -155,7 +155,9 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  @volatile private[delta] var stateReconstructionTriggered = false
   private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+    stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
 
@@ -167,16 +169,6 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]] as plain Rows */
   def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
     cachedState.getDF
-  }
-
-  /** Helper method to log missing actions when state reconstruction checks are not enabled */
-  protected def logMissingActionWarning(action: String): Unit = {
-    logWarning(
-      s"""
-         |Found no $action in computed state, setting it to defaults. State reconstruction
-         |validation was turned off. To turn it back on set
-         |${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "true"
-        """.stripMargin)
   }
 
   /**
@@ -211,17 +203,13 @@ class Snapshot(
         val _computedState = recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
           stateDF.select(aggregations: _*).as[State].first()
         }
-        val stateReconstructionCheck = spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
         if (_computedState.protocol == null) {
           recordDeltaEvent(
             deltaLog,
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("protocol", version)
-          }
+          throw DeltaErrors.actionNotFoundException("protocol", version)
         }
         if (_computedState.metadata == null) {
           recordDeltaEvent(
@@ -229,11 +217,7 @@ class Snapshot(
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("metadata", version)
-          }
-          logMissingActionWarning("metadata")
-          _computedState.copy(metadata = Metadata())
+          throw DeltaErrors.actionNotFoundException("metadata", version)
         } else {
           _computedState
         }
@@ -332,20 +316,6 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
-  /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
-  protected def indexToRelation(
-      index: DeltaLogFileIndex,
-      schema: StructType = logSchema): LogicalRelation = {
-    val fsRelation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      schema,
-      None,
-      index.format,
-      deltaLog.options)(spark)
-    LogicalRelation(fsRelation)
-  }
-
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.
    *
@@ -356,7 +326,7 @@ class Snapshot(
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
-    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, deltaLog.indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
       .withColumn(ACTION_SORT_COL_NAME, input_file_name())
       .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))

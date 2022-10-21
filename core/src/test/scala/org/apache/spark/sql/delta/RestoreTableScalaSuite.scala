@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.util.Utils
 
 /** Restore tests using the Scala APIs. */
 class RestoreTableScalaSuite extends RestoreTableSuiteBase {

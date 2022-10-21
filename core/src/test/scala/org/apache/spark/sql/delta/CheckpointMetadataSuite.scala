@@ -273,4 +273,37 @@ class CheckpointMetadataSuite extends SharedSparkSession
     }
   }
 
+  test("Suppress optional fields in _last_checkpoint") {
+    val expectedStr = """{"version":1,"size":2,"parts":3}"""
+    val cm = CheckpointMetaData(
+      version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2),
+      checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false)))
+    val serializedJson = CheckpointMetaData.serializeToJson(
+      cm, addChecksum = true, suppressOptionalFields = true)
+    assert(serializedJson === expectedStr)
+
+    val expectedStrNoPart = """{"version":1,"size":2}"""
+    val serializedJsonNoPart = CheckpointMetaData.serializeToJson(
+      cm.copy(parts = None), addChecksum = true, suppressOptionalFields = true)
+    assert(serializedJsonNoPart === expectedStrNoPart)
+  }
+
+  test("read and write _last_checkpoint with optional fields suppressed") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS.key -> "true") {
+        // Create a Delta table with a checkpoint.
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        DeltaLog.forTable(spark, dir).checkpoint()
+        DeltaLog.clearCache()
+
+        val log = DeltaLog.forTable(spark, dir)
+        val metadata = log.unsafeVolatileSnapshot.getCheckpointMetadataOpt.get
+        val trimmed = metadata.productIterator.drop(3).forall {
+          case o: Option[_] => o.isEmpty
+        }
+        assert(trimmed, s"Unexpected fields in _last_checkpoint: $metadata")
+      }
+    }
+  }
+
 }

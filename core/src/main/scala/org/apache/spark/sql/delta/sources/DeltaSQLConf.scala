@@ -155,13 +155,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
-    buildConf("stateReconstructionValidation.enabled")
-      .internal()
-      .doc("Whether to perform validation checks on the reconstructed state.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_COMMIT_VALIDATION_ENABLED =
     buildConf("commitValidation.enabled")
       .internal()
@@ -345,16 +338,6 @@ trait DeltaSQLConfBase {
            """)
       .booleanConf
       .createWithDefault(false)
-
-  val DELTA_STATE_CORRUPTION_IS_FATAL =
-    buildConf("state.corruptionIsFatal")
-      .internal()
-      .doc(
-        """If true, throws a fatal error when the recreated Delta State doesn't
-          |match committed checksum file.
-        """)
-      .booleanConf
-      .createWithDefault(true)
 
   val DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT =
     buildConf("stalenessLimit")
@@ -573,6 +556,14 @@ trait DeltaSQLConfBase {
         " whether to validate it while reading the LAST_CHECKPOINT file")
       .booleanConf
       .createWithDefault(true)
+
+  val SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS =
+      buildConf("lastCheckpoint.suppressOptionalFields")
+      .internal()
+      .doc("If set, the LAST_CHECKPOINT file will contain only version, size, and parts fields. " +
+          "For compatibility with broken third-party connectors that choke on unrecognized fields.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_CHECKPOINT_PART_SIZE =
     buildConf("checkpoint.partSize")

@@ -153,11 +153,14 @@ object DeltaOperations {
       numFiles: Long,
       partitionBy: Seq[String],
       collectStats: Boolean,
-      catalogTable: Option[String]) extends Operation("CONVERT") {
+      catalogTable: Option[String],
+      sourceType: Option[String]) extends Operation("CONVERT") {
     override val parameters: Map[String, Any] = Map(
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
-      "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
+      "collectStats" -> collectStats) ++
+        catalogTable.map("catalogTable" -> _) ++
+        sourceType.map("sourceType" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
     override def changesData: Boolean = true
   }

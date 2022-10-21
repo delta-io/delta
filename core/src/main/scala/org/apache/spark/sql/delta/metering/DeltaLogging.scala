@@ -70,7 +70,7 @@ trait DeltaLogging
       val tableTags = if (deltaLog != null) {
         Map(
           TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
-          TAG_TAHOE_ID -> Try(deltaLog.snapshot.metadata.id).getOrElse(null))
+          TAG_TAHOE_ID -> Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
       } else if (path.isDefined) {
         Map(TAG_TAHOE_PATH -> path.get.toString)
       } else {
@@ -114,7 +114,7 @@ trait DeltaLogging
     val tableTags: Map[TagDefinition, String] = if (deltaLog != null) {
       Map(
         TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
-        TAG_TAHOE_ID -> Try(deltaLog.snapshot.metadata.id).getOrElse(null))
+        TAG_TAHOE_ID -> Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
     } else {
       Map.empty
     }

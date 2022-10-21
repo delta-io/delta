@@ -86,4 +86,5 @@ object DeltaThrowableHelper
     Option(errorClass).flatMap(errorClassToInfoMap.get).flatMap(_.sqlState).orNull
 
   def isInternalError(errorClass: String): Boolean = errorClass == "INTERNAL_ERROR"
+
 }
