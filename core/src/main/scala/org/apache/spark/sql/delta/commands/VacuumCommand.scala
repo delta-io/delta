@@ -24,15 +24,16 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
+import org.apache.spark.sql.delta.actions.{DeleteFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, PartitionUtils}
+import org.apache.spark.sql.delta.util.DeltaFileOperations.{tryDeleteNonRecursive, tryRelativizePath}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.functions.{col, count, sum}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
@@ -97,7 +98,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       deltaLog: DeltaLog,
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
-      clock: Clock = new SystemClock): DataFrame = {
+      clock: Clock = new SystemClock): Seq[DeleteFile] = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
       val path = deltaLog.dataPath
@@ -245,7 +246,22 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           logConsole(s"Found $numFiles files and directories in a total of " +
             s"$dirCounts directories that are safe to delete.$stats")
 
-          return diffFiles.map(f => stringToPath(f).toString).toDF("path")
+          val filesToDelete = diffFiles.mapPartitions { files =>
+            val deletionTimestamp = System.currentTimeMillis()
+            val hadoopPath = new Path(basePath)
+            val fs = hadoopPath.getFileSystem(hadoopConf.value.value)
+            val cdcHadoopPath = new Path(basePath, CDCReader.CDC_LOCATION)
+            files.map { file =>
+              val p = stringToPath(file)
+              val isCDCFile = file.contains("/" + CDCReader.CDC_LOCATION + "/")
+              val parentPath = if (isCDCFile) cdcHadoopPath else hadoopPath
+              val relativePath = tryRelativizePath(fs, parentPath, p)
+              val partitionValues = extractPartitionValuesFromPath(relativePath, partitionColumns)
+              DeleteFile(relativePath.toString, partitionValues,
+                deletionTimestamp, fs.getFileStatus(p).getLen, isCDCFile)
+            }
+          }
+          return filesToDelete.collect().toSeq
         }
         logVacuumStart(
           spark,
@@ -258,13 +274,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
         val deleteStartTime = System.currentTimeMillis()
         val filesDeleted = try {
-          delete(diffFiles, spark, basePath,
+          delete(diffFiles, spark, basePath, partitionColumns,
             hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
         } catch {
           case t: Throwable =>
             logVacuumEnd(deltaLog, spark, path)
             throw t
         }
+        val numVacuumedFiles = filesDeleted.size
         val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
         val stats = DeltaVacuumStats(
           isDryRun = false,
@@ -272,14 +289,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           defaultRetentionMillis = deltaLog.tombstoneRetentionMillis,
           minRetainedTimestamp = deleteBeforeTimestamp,
           dirsPresentBeforeDelete = dirCounts,
-          objectsDeleted = filesDeleted,
+          objectsDeleted = numVacuumedFiles,
           sizeOfDataToDelete = sizeOfDataToDelete,
           timeTakenToIdentifyEligibleFiles = timeTakenToIdentifyEligibleFiles,
           timeTakenForDelete = timeTakenForDelete)
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-        logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
+        logVacuumEnd(deltaLog, spark, path, Some(numVacuumedFiles), Some(dirCounts))
 
-        spark.createDataset(Seq(basePath)).toDF("path")
+        filesDeleted
       } finally {
         allFilesAndDirs.unpersist()
       }
@@ -340,22 +357,57 @@ trait VacuumCommandImpl extends DeltaCommand {
       diff: Dataset[String],
       spark: SparkSession,
       basePath: String,
+      partitionColumns: Array[String],
       hadoopConf: Broadcast[SerializableConfiguration],
       parallel: Boolean,
-      parallelPartitions: Int): Long = {
+      parallelPartitions: Int): Seq[DeleteFile] = {
     import org.apache.spark.sql.delta.implicits._
 
+    val cdcHadoopPath = new Path(basePath, CDCReader.CDC_LOCATION)
+
+    def delete(fs: FileSystem, hadoopPath: Path, file: String): Option[DeleteFile] = {
+      val p = stringToPath(file)
+      val fileSize = fs.getFileStatus(p).getLen
+      val res = if (tryDeleteNonRecursive(fs, p)) {
+        val isCDCFile = file.contains("/" + CDCReader.CDC_LOCATION + "/")
+        val parentPath = if (isCDCFile) cdcHadoopPath else hadoopPath
+        val relativePath = tryRelativizePath(fs, parentPath, p)
+        val partitionValues = extractPartitionValuesFromPath(relativePath, partitionColumns)
+        Some(
+          DeleteFile(relativePath.toString, partitionValues,
+            System.currentTimeMillis(), fileSize, isCDCFile))
+      } else {
+        None
+      }
+      res
+    }
+
     if (parallel) {
-      diff.repartition(parallelPartitions).mapPartitions { files =>
-        val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
-        val filesDeletedPerPartition =
-          files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
-        Iterator(filesDeletedPerPartition)
-      }.collect().sum
+      diff.repartition(parallelPartitions).mapPartitions{ files =>
+        val hadoopPath = new Path(basePath)
+        val fs = hadoopPath.getFileSystem(hadoopConf.value.value)
+        files.flatMap(delete(fs, hadoopPath, _))
+      }.collect()
     } else {
+      val hadoopPath = new Path(basePath)
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
-      fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+      fileResultSet.flatMap(delete(fs, hadoopPath, _)).toSeq
+    }
+  }
+
+  protected def extractPartitionValuesFromPath(
+      relativePath: Path, partitionColumns: Array[String]): Map[String, String] = {
+    if (partitionColumns.nonEmpty) {
+      val fragment = if (relativePath.isAbsolute) {
+        pathToString(relativePath.getParent)
+          .split("/").takeRight(partitionColumns.length).mkString("/")
+      } else {
+        pathToString(relativePath.getParent)
+      }
+      PartitionUtils.parsePathFragment(fragment)
+    } else {
+      Map.empty[String, String]
     }
   }
 

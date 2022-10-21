@@ -55,7 +55,7 @@ class CheckpointsSuite extends QueryTest
       assert(lastCheckpointOpt.nonEmpty)
       assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
       assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
-        Seq("txn", "add", "remove", "metaData", "protocol"))
+        Seq("txn", "add", "remove", "delete", "metaData", "protocol"))
 
       spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
       withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
@@ -205,7 +205,7 @@ class CheckpointsSuite extends QueryTest
           val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
           val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
           assert(checkpointSchema.fieldNames.toSeq ==
-            Seq("txn", "add", "remove", "metaData", "protocol"))
+            Seq("txn", "add", "remove", "delete", "metaData", "protocol"))
         }
       }
     }

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaOperations}
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DeleteFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -208,30 +208,32 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         val (fileActions, skipIndexedFile) =
           filterCDCActions(actions, version, verifyMetadataAction)
         val itr = Iterator(IndexedFile(version, -1, null)) ++ fileActions
-          .zipWithIndex.map {
+          .zipWithIndex.flatMap {
           case (action: AddFile, index) =>
-            IndexedFile(
+            Some(IndexedFile(
               version,
               index.toLong,
               action,
               isLast = index + 1 == fileActions.size,
-              shouldSkip = skipIndexedFile)
+              shouldSkip = skipIndexedFile))
           case (cdcFile: AddCDCFile, index) =>
-            IndexedFile(
+            Some(IndexedFile(
               version,
               index.toLong,
               add = null,
               cdc = cdcFile,
               isLast = index + 1 == fileActions.size,
-              shouldSkip = skipIndexedFile)
+              shouldSkip = skipIndexedFile))
           case (remove: RemoveFile, index) =>
-            IndexedFile(
+            Some(IndexedFile(
               version,
               index.toLong,
               add = null,
               remove = remove,
               isLast = index + 1 == fileActions.size,
-              shouldSkip = skipIndexedFile)
+              shouldSkip = skipIndexedFile))
+          case (_: DeleteFile, _) =>
+            None
         }
         (version,
           new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
@@ -293,7 +295,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           a.dataChange
         case r: RemoveFile =>
           r.dataChange
-        case cdc: AddCDCFile =>
+        case _: DeleteFile =>
+          false
+        case _: AddCDCFile =>
           false
         case m: Metadata =>
           if (verifyMetadataAction) {

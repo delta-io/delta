@@ -61,6 +61,7 @@ class InMemoryLogReplay(
       case remove: RemoveFile =>
         activeFiles.remove(remove.pathAsUri)
         tombstones(remove.pathAsUri) = remove.copy(dataChange = false)
+      case delete: DeleteFile => // do nothing
       case ci: CommitInfo => // do nothing
       case cdc: AddCDCFile => // do nothing
       case null => // Some crazy future feature. Ignore

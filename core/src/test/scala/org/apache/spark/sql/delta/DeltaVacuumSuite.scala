@@ -136,7 +136,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("_hidden_dir/000001.text", commitToActionLog = false),
         CreateFile(".hidden.txt", commitToActionLog = false),
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq(
           "file1.txt", "_delta_log", "_hidden_dir", "_hidden_dir/000001.text", ".hidden.txt"))
       )
@@ -159,7 +159,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CheckFiles(Seq("file1.txt", "_underscore_col_=10")),
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = false, Seq("_underscore_col_=10/test.txt")),
         CheckFiles(Seq("file1.txt")),
         CheckFiles(Seq("_underscore_col_=10/test.txt"), exist = false)
       )
@@ -173,12 +173,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("file1.txt", commitToActionLog = true),
         CreateFile("abc/def/file2.txt", commitToActionLog = false),
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = false, Seq("abc/def/file2.txt")),
         CheckFiles(Seq("file1.txt", "abc", "abc/def")),
         CheckFiles(Seq("abc/def/file2.txt"), exist = false),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = false, Seq("abc/def", "abc"), assert = false),
         // we need two GCs to guarantee the deletion of the directories
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = false, Nil, assert = false),
         CheckFiles(Seq("file1.txt")),
         CheckFiles(Seq("abc", "abc/def"), exist = false)
       )
@@ -193,9 +193,9 @@ trait DeltaVacuumSuiteBase extends QueryTest
         AdvanceClock(100),
         LogicallyDeleteFile("file1.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = false, Seq(tempDir.toString)),
+        GC(dryRun = false, Seq("file1.txt")),
         CheckFiles(Seq("file1.txt"), exist = false),
-        GC(dryRun = false, Seq(tempDir.toString)) // shouldn't throw an error
+        GC(dryRun = false, Nil) // shouldn't throw an error
       )
     }
   }
@@ -220,37 +220,37 @@ trait DeltaVacuumSuiteBase extends QueryTest
 
         // Nothing should be deleted here, since we didn't logically delete any file
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
 
         // Create an untracked file
         CreateFile("file3.txt", commitToActionLog = false),
         CheckFiles(Seq("file3.txt")),
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq("file3.txt")),
         AdvanceClock(defaultTombstoneInterval - 1000), // file is still new
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq("file3.txt")),
         AdvanceClock(2000),
-        GC(dryRun = true, Seq(new File(reservoirDir, "file3.txt").toString)),
+        GC(dryRun = true, Seq("file3.txt")),
         // nothing should be deleted
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt", "file3.txt")),
-        GC(dryRun = false, Seq(reservoirDir.toString)), // file3.txt should be deleted
+        GC(dryRun = false, Seq( "file3.txt")), // file3.txt should be deleted
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
         CheckFiles(Seq("file3.txt"), exist = false),
 
         // Verify tombstones
         LogicallyDeleteFile("abc/file2.txt"),
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
         AdvanceClock(defaultTombstoneInterval - 1000),
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Nil),
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
         AdvanceClock(2000), // tombstone should expire
-        GC(dryRun = false, Seq(reservoirDir.toString)),
+        GC(dryRun = false, Seq("abc/file2.txt")),
         CheckFiles(Seq("file1.txt", "abc")),
         CheckFiles(Seq("abc/file2.txt"), exist = false),
-        GC(dryRun = false, Seq(reservoirDir.toString)), // Second gc should clear empty directory
+        GC(dryRun = false, Seq( "abc")), // Second gc should clear empty directory
         CheckFiles(Seq("file1.txt")),
         CheckFiles(Seq("abc"), exist = false),
 
@@ -275,10 +275,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
           LogicallyDeleteFile("file1.txt"),
           CheckFiles(Seq("file1.txt", "file2.txt")),
           AdvanceClock(defaultTombstoneInterval + 1000),
-          GC(dryRun = false, Seq(tempDir)),
+          GC(dryRun = false, Seq("file1.txt")),
           CheckFiles(Seq("file1.txt"), exist = false),
           CheckFiles(Seq("file2.txt")),
-          GC(dryRun = false, Seq(tempDir)), // shouldn't throw an error with no files to delete
+          GC(dryRun = false, Nil), // shouldn't throw an error with no files to delete
           CheckFiles(Seq("file2.txt"))
         )
       }
@@ -316,8 +316,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("abc/def/file2.txt", commitToActionLog = true),
         CreateDirectory("ghi"),
         CheckFiles(Seq("abc", "abc/def", "ghi")),
-        GC(dryRun = true, Seq(new File(tempDir, "ghi"))),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = true, Seq( "ghi")),
+        GC(dryRun = false, Seq("ghi")),
         CheckFiles(Seq("abc", "abc/def")),
         CheckFiles(Seq("ghi"), exist = false)
       )
@@ -332,8 +332,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("abc def/#1/file2.txt", commitToActionLog = false),
         CheckFiles(Seq("abc def", "abc def/#1")),
         AdvanceClock(defaultTombstoneInterval + 1000),
-        GC(dryRun = true, Seq(new File(tempDir, "abc def/#1/file2.txt"))),
-        GC(dryRun = false, Seq(tempDir)),
+        GC(dryRun = true, Seq("abc def/#1/file2.txt")),
+        GC(dryRun = false, Seq("abc def/#1/file2.txt")),
         CheckFiles(Seq("abc def/#1", "abc def/#1/file1.txt")),
         CheckFiles(Seq("abc def/#1/file2.txt"), exist = false)
       )
@@ -357,7 +357,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
       gcTest(deltaLog, clock)(
         CreateFile("file2.txt", commitToActionLog = true),
         CheckFiles(Seq("file2.txt")),
-        GC(false, Seq(tempDir.toString), Some(0))
+        GC(false, Nil, Some(0))
       )
     }
   }
@@ -397,11 +397,18 @@ trait DeltaVacuumSuiteBase extends QueryTest
   case class LogicallyDeleteFile(path: String) extends Action
   /** Check that the given paths exist. */
   case class CheckFiles(paths: Seq[String], exist: Boolean = true) extends Action
-  /** Garbage collect the reservoir. */
+
+  /** Garbage collect the reservoir.
+   *
+   * Set [[assert]] to false to skip the check when we don't know the deleted files exactly.
+   * For example, a directory and all the child files should be deleted. Onlu if try to delete
+   * all the child files first, the directory can be deleted.
+   */
   case class GC(
       dryRun: Boolean,
       expectedDf: Seq[String],
-      retentionHours: Option[Double] = None) extends Action
+      retentionHours: Option[Double] = None,
+      assert: Boolean = true) extends Action
   /** Garbage collect the reservoir. */
   case class ExecuteVacuumInScala(
       deltaTable: io.delta.tables.DeltaTable,
@@ -482,9 +489,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
-        val qualified = e.expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        val df = spark.sql(e.sql).as[String]
-        checkDatasetUnorderly(df, qualified: _*)
+        val df = spark.sql(e.sql).select("path").as[String]
+        checkDatasetUnorderly(df, e.expectedDf: _*)
       case CheckFiles(paths, exist) =>
         Given(s"*** Checking files exist=$exist")
         paths.foreach { p =>
@@ -493,11 +499,13 @@ trait DeltaVacuumSuiteBase extends QueryTest
           val res = if (exist) f.exists() else !f.exists()
           assert(res, s"Expectation: exist=$exist, paths: $p")
         }
-      case GC(dryRun, expectedDf, retention) =>
+      case GC(dryRun, expectedDf, retention, assert) =>
         Given("*** Garbage collecting Reservoir")
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
-        val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        checkDatasetUnorderly(result.as[String], qualified: _*)
+        if (assert) {
+          val df = spark.createDataset(result.map(_.path))
+          checkDatasetUnorderly(df, expectedDf: _*)
+        }
       case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
         val result = if (retention.isDefined) {
@@ -508,8 +516,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         if(expectedDf == Seq()) {
           assert(result === spark.emptyDataFrame)
         } else {
-          val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-          checkDatasetUnorderly(result.as[String], qualified: _*)
+          checkDatasetUnorderly(result.as[String], expectedDf: _*)
         }
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
@@ -539,7 +546,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
       // Dry run should return the not committed file and but not delete files
       ExecuteVacuumInSQL(
         identifier,
-        expectedDf = Seq(new File(tablePath, notCommittedFile).toString),
+        expectedDf = Seq(notCommittedFile),
         dryRun = true),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 

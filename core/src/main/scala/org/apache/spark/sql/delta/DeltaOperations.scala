@@ -427,6 +427,14 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
+  case class Vacuum(
+      horizonHours: Option[Double]
+  ) extends Operation("VACUUM") {
+
+    override val parameters: Map[String, Any] = Map("horizonHours" -> horizonHours)
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM
+  }
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
@@ -623,5 +631,10 @@ private[delta] object DeltaOperationMetrics {
     "numRestoredFiles", // number of files that were added as a result of the restore
     "removedFilesSize", // size in bytes of files removed by the restore
     "restoredFilesSize" // size in bytes of files added by the restore
+  )
+
+  val VACUUM = Set(
+    "numVacuumedFiles", // number of files vacuumed
+    "numVacuumedBytes" // number of bytes vacuumed
   )
 }

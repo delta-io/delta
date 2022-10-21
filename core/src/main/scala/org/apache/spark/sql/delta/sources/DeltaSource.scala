@@ -882,6 +882,8 @@ case class DeltaSource(
             r.size.getOrElse(0L)
           case cdc: AddCDCFile =>
             cdc.size
+          case d: DeleteFile =>
+            d.size
         }
       }
 

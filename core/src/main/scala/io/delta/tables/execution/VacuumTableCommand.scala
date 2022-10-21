@@ -17,13 +17,17 @@
 package io.delta.tables.execution
 
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, DeltaTableUtils}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.types.{LongType, StringType}
 
 /**
  * The `vacuum` command implementation for Spark SQL. Example SQL:
@@ -37,8 +41,22 @@ case class VacuumTableCommand(
     horizonHours: Option[Double],
     dryRun: Boolean) extends LeafRunnableCommand {
 
-  override val output: Seq[Attribute] =
+  override val output: Seq[Attribute] = if (dryRun) {
     Seq(AttributeReference("path", StringType, nullable = true)())
+  } else {
+    Seq(
+      AttributeReference("path", StringType, nullable = true)(),
+      AttributeReference("numVacuumedFiles", LongType, nullable = true)(),
+      AttributeReference("numVacuumedBytes", LongType, nullable = true)()
+    )
+  }
+
+  @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  override lazy val metrics = Map[String, SQLMetric](
+    "numVacuumedFiles" -> createMetric(sc, "number of files vacuumed."),
+    "numVacuumedBytes" -> createMetric(sc, "number of bytes vacuumed.")
+  )
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val pathToVacuum =
@@ -66,6 +84,21 @@ case class VacuumTableCommand(
         "VACUUM",
         DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
     }
-    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
+
+    import org.apache.spark.sql.delta.implicits._
+    val filesDeleted = VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours)
+    metrics("numVacuumedFiles").set(filesDeleted.size)
+    metrics("numVacuumedBytes").set(filesDeleted.map(_.size).sum)
+
+    val txn = deltaLog.startTransaction()
+    txn.registerSQLMetrics(sparkSession, metrics)
+    if (dryRun) {
+      filesDeleted.map(f => Row(f.path))
+    } else {
+      val actions = filesDeleted
+      txn.commit(actions, DeltaOperations.Vacuum(horizonHours))
+      Seq(Row(deltaLog.dataPath.toUri.getPath,
+        metrics("numVacuumedFiles").value, metrics("numVacuumedBytes").value))
+    }
   }
 }

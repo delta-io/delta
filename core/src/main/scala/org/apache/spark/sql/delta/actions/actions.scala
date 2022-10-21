@@ -451,6 +451,25 @@ case class RemoveFile(
 }
 // scalastyle:on
 
+case class DeleteFile(
+    override val path: String,
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    partitionValues: Map[String, String],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    deletionTimestamp: Long,
+    size: Long,
+    cdc: Boolean,
+    override val tags: Map[String, String] = null) extends FileAction {
+
+  override val dataChange = false
+
+  override def numLogicalRecords: Option[Long] = None
+
+  override def getFileSize: Long = size
+
+  override def wrap: SingleAction = SingleAction(delete = this)
+}
+
 /**
  * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
  * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
@@ -704,6 +723,7 @@ case class SingleAction(
     txn: SetTransaction = null,
     add: AddFile = null,
     remove: RemoveFile = null,
+    delete: DeleteFile = null,
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
@@ -714,6 +734,8 @@ case class SingleAction(
       add
     } else if (remove != null) {
       remove
+    } else if (delete != null) {
+      delete
     } else if (metaData != null) {
       metaData
     } else if (txn != null) {
@@ -736,6 +758,9 @@ object SingleAction extends Logging {
 
   implicit def addFileEncoder: Encoder[AddFile] =
     org.apache.spark.sql.delta.implicits.addFileEncoder
+
+  implicit def deleteFileEncoder: Encoder[DeleteFile] =
+    org.apache.spark.sql.delta.implicits.deleteFileEncoder
 
   lazy val nullLitForRemoveFile: Column =
     new Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
