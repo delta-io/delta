@@ -26,9 +26,6 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, 
 
 trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteUtils {
 
-  override protected val supportedModes =
-    Seq("name")
-
   protected val simpleNestedSchema = new StructType()
     .add("a", StringType, true)
     .add("b",

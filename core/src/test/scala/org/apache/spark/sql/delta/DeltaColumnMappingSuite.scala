@@ -23,6 +23,7 @@ import java.nio.file.Files
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, SetTransaction}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -33,6 +34,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
@@ -40,7 +42,7 @@ import org.apache.spark.sql.types._
 trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
 
 
-  protected def supportedModes: Seq[String]
+  protected def supportedModes: Seq[String] = Seq("id", "name")
 
   protected def colName(name: String) = s"$name with special chars ,;{}()\n\t="
 
@@ -91,8 +93,6 @@ trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLComma
 
 class DeltaColumnMappingSuite extends QueryTest
   with GivenWhenThen  with DeltaColumnMappingSuiteUtils {
-
-  protected def supportedModes: Seq[String] = Seq("name")
 
   import testImplicits._
 
@@ -593,76 +593,6 @@ class DeltaColumnMappingSuite extends QueryTest
       // But it IS read compatible with the initial schema, because the added column should not
       // be blocked by this column mapping check.
       assert(DeltaColumnMapping.isColumnMappingReadCompatible(m5, m0))
-    }
-  }
-
-  test("create table under id mode should be blocked") {
-    withTable("t1") {
-      val mode = "id"
-      assert(intercept[ColumnMappingUnsupportedException] {
-        createTableWithSQLAPI(
-          "t1",
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-          withColumnIds = true,
-          randomIds = true)
-      }.getMessage.contains("not supported for"))
-
-      assert(intercept[ColumnMappingUnsupportedException] {
-        createTableWithDataFrameAPI(
-          "t1",
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-          withColumnIds = true,
-          randomIds = true)
-      }.getMessage.contains("not supported for"))
-
-      assert(intercept[ColumnMappingUnsupportedException] {
-        createTableWithSQLCreateOrReplaceAPI(
-          "t1",
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-          withColumnIds = true,
-          randomIds = true)
-      }.getMessage.contains("not supported for"))
-
-      assert(intercept[ColumnMappingUnsupportedException] {
-        createTableWithDataFrameWriterV2API(
-          "t1",
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-          withColumnIds = true,
-          randomIds = true)
-      }.getMessage.contains("not supported for"))
-    }
-  }
-
-  ignore("read/write id mode should be blocked") {
-    withTable("t1") {
-      // create in name mode is allowed
-      createTableWithSQLAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"),
-        withColumnIds = true,
-        randomIds = true)
-
-      // manually change delta log metadata to id
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t1"))
-      val crcFiles = new File(deltaLog.logPath.toUri).listFiles()
-        .filter(_.getAbsolutePath.endsWith(".crc"))
-      val jsonFile = new File(deltaLog.logPath.toUri).listFiles()
-        .find(_.getAbsolutePath.endsWith(".json"))
-        .get
-      crcFiles.foreach(_.delete())
-      val jsonContent = new String(Files.readAllBytes(jsonFile.toPath))
-        .replace("\"name\"", "\"id\"")
-      Files.write(jsonFile.toPath, jsonContent.getBytes)
-
-      // read should fail
-      assert(intercept[ColumnMappingUnsupportedException] {
-        sql("SELECT * FROM t1").collect()
-      }.getMessage.contains("not supported for"))
-
-      // write should fail
-      assert(intercept[ColumnMappingUnsupportedException] {
-        sql(s"insert into t1 values ('a', 1), ('b', 2)").collect()
-      }.getMessage.contains("not supported for"))
     }
   }
 
@@ -1575,6 +1505,76 @@ class DeltaColumnMappingSuite extends QueryTest
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
         DeltaConfigs.MIN_READER_VERSION.key -> "2",
         DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+    }
+  }
+
+  test("explicit id matching") {
+    // Explicitly disable field id reading to test id mode reinitialization
+    val requiredConfs = Seq(
+      SQLConf.PARQUET_FIELD_ID_READ_ENABLED,
+      SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED)
+
+    requiredConfs.foreach { conf =>
+      withSQLConf(conf.key -> "false") {
+        val e = intercept[IllegalArgumentException] {
+          withTable("t1") {
+            createStrictSchemaTableWithDeltaTableApi(
+              "t1",
+              schemaWithIdNested,
+              Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id")
+            )
+            val testData = spark.createDataFrame(
+              Seq(Row("str3", Row("str1.3", 3))).asJava, schemaWithIdNested)
+            testData.write.format("delta").mode("append").saveAsTable("t1")
+          }
+        }
+        assert(e.getMessage.contains(conf.key))
+      }
+    }
+
+    // The above configs are enabled by default, so no need to explicitly enable.
+    withTable("t1") {
+      val testSchema = schemaWithIdNested.add("e", StringType, true, withId(5))
+      val testData = spark.createDataFrame(
+        Seq(Row("str3", Row("str1.3", 3), "str4")).asJava, testSchema)
+
+      createStrictSchemaTableWithDeltaTableApi(
+        "t1",
+        testSchema,
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id")
+      )
+
+      testData.write.format("delta").mode("append").saveAsTable("t1")
+
+      def read: DataFrame = spark.read.format("delta").table("t1")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t1"))
+
+      def updateFieldIdFor(fieldName: String, newId: Int): Unit = {
+        val currentMetadata = deltaLog.update().metadata
+        val currentSchema = currentMetadata.schema
+        val field = currentSchema(fieldName)
+        deltaLog.withNewTransaction { txn =>
+          val updated = field.copy(metadata =
+            new MetadataBuilder().withMetadata(field.metadata)
+              .putLong(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY, newId)
+              .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, newId)
+              .build())
+          val newSchema = StructType(Seq(updated) ++ currentSchema.filter(_.name != field.name))
+          txn.commit(currentMetadata.copy(schemaString = newSchema.json) :: Nil, ManualUpdate)
+        }
+      }
+
+      // Case 1: manually modify the schema to read a non-existing id
+      updateFieldIdFor("a", 100)
+      // Reading non-existing id should return null
+      checkAnswer(read.select("a"), Row(null) :: Nil)
+
+      // Case 2: manually modify the schema to read another field's id
+      // First let's drop e, because Delta detects duplicated field
+      sql(s"ALTER TABLE t1 DROP COLUMN e")
+      // point to the dropped field <e>'s data
+      updateFieldIdFor("a", 5)
+      checkAnswer(read.select("a"), Row("str4"))
     }
   }
 }

@@ -337,13 +337,16 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 }
 
-
-class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def columnMappingMode: String = NameMapping.name
-
+trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] =
     Seq("schema evolution - new nested column with update non-* and insert * - " +
       "array of struct - longer target")
 }
+
+class MergeIntoSQLIdColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableIdMode
+  with MergeIntoSQLColumnMappingSuiteBase
+
+class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode
+  with MergeIntoSQLColumnMappingSuiteBase

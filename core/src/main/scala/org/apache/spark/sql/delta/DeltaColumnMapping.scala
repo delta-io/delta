@@ -60,7 +60,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     ).map(_.toLowerCase(Locale.ROOT)).toSet
 
   val supportedModes: Set[DeltaColumnMappingMode] =
-    Set(NoMapping, NameMapping)
+    Set(IdMapping, NoMapping, NameMapping)
 
   def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
     .contains(field.name.toLowerCase(Locale.ROOT))
