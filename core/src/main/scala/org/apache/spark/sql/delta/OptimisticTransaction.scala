@@ -107,9 +107,11 @@ class OptimisticTransaction
   /** Creates a new OptimisticTransaction.
    *
    * @param deltaLog The Delta Log for the table this transaction is modifying.
+   * @param snapshotOpt The most recent snapshot of the table, if available.
    */
-  def this(deltaLog: DeltaLog)(implicit clock: Clock) {
-    this(deltaLog, deltaLog.update())
+  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
+  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
+    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
   }
 }
 

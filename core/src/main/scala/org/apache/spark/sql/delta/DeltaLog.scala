@@ -236,8 +236,10 @@ class DeltaLog private(
    * Note that all reads in a transaction must go through the returned transaction object, and not
    * directly to the [[DeltaLog]] otherwise they will not be checked for conflicts.
    */
-  def startTransaction(): OptimisticTransaction = {
-    new OptimisticTransaction(this)
+  def startTransaction(): OptimisticTransaction = startTransaction(None)
+
+  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
+    new OptimisticTransaction(this, snapshotOpt)
   }
 
   /**
@@ -263,15 +265,17 @@ class DeltaLog private(
    * Upgrade the table's protocol version, by default to the maximum recognized reader and writer
    * versions in this DBR release.
    */
-  def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
-    val currentVersion = unsafeVolatileSnapshot.protocol
+  def upgradeProtocol(
+      snapshot: Snapshot,
+      newVersion: Protocol): Unit = {
+    val currentVersion = snapshot.protocol
     if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
         newVersion.minWriterVersion == currentVersion.minWriterVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
 
-    val txn = startTransaction()
+    val txn = startTransaction(Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -280,6 +284,11 @@ class DeltaLog private(
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
+  }
+
+  // Test-only!!
+  private[delta] def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
+    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
   /**
@@ -520,6 +529,13 @@ object DeltaLog extends DeltaLogging {
    */
   private type DeltaLogCacheKey = (Path, Map[String, String])
 
+  /** The name of the subdirectory that holds Delta metadata files */
+  private val LOG_DIR_NAME = "_delta_log"
+
+  private[delta] def logPathFor(dataPath: String): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: Path): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
+
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
@@ -544,42 +560,42 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), Map.empty, new SystemClock)
+    apply(spark, logPathFor(dataPath), Map.empty, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
-    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), new SystemClock)
+    apply(spark, logPathFor(dataPath), new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
+    apply(spark, logPathFor(dataPath), new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log for the table. */
@@ -603,22 +619,59 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    val log = apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
-    log
+    apply(spark, logPathFor(new Path(table.location)), clock)
   }
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
+    forTable(spark, deltaTable, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
     if (deltaTable.path.isDefined) {
-      forTable(spark, deltaTable.path.get)
+      forTable(spark, deltaTable.path.get, clock)
     } else {
-      forTable(spark, deltaTable.table.get)
+      forTable(spark, deltaTable.table.get, clock)
     }
   }
 
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, dataPath, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, dataPath, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      tableName: TableIdentifier): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, tableName, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, tableName, _) }
+
+  /**
+   * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
+   * partially applied DeltaLog.forTable call, which we can then wrap around with a
+   * snapshot update. We use the system clock to avoid back-to-back updates.
+   */
+  private[delta] def withFreshSnapshot(thunk: Clock => DeltaLog): (DeltaLog, Snapshot) = {
+    val clock = new SystemClock
+    val ts = clock.getTimeMillis()
+    val deltaLog = thunk(clock)
+    val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(ts))
+    (deltaLog, snapshot)
+  }
 
   private def apply(
       spark: SparkSession,
@@ -684,7 +737,7 @@ object DeltaLog extends DeltaLogging {
   /** Invalidate the cached DeltaLog object for the given `dataPath`. */
   def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
     try {
-      val rawPath = new Path(dataPath, "_delta_log")
+      val rawPath = logPathFor(dataPath)
       // scalastyle:off deltahadoopconfiguration
       // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
       // has set the correct file system configurations in the session configs.
