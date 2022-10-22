@@ -47,10 +47,10 @@ case class ShowTableColumnsCommand(tableID: DeltaTableIdentifier)
     // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
     val deltaLog = DeltaLog.forTable(sparkSession, tableID)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
-      if (deltaLog.snapshot.version < 0) {
+      if (deltaLog.unsafeVolatileSnapshot.version < 0) {
         throw DeltaErrors.notADeltaTableException("SHOW COLUMNS")
       } else {
-        deltaLog.snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
+        deltaLog.unsafeVolatileSnapshot.schema.fieldNames.map { x => Row(x) }.toSeq
       }
     }
   }

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.expressions
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.{Partitioner, RangePartitioner, SparkFunSuite}
+import org.apache.spark.{Partitioner, RangePartitioner, SparkFunSuite, SparkThrowable}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -76,7 +76,7 @@ class RangePartitionIdSuite
   }
 
   test("RangePartitionId: unevaluable") {
-    intercept[UnsupportedOperationException] {
+    intercept[Exception with SparkThrowable] {
       evaluateWithoutCodegen(RangePartitionId(Literal(2), 10))
     }
   }

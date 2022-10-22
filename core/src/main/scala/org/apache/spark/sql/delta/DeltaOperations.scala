@@ -153,11 +153,14 @@ object DeltaOperations {
       numFiles: Long,
       partitionBy: Seq[String],
       collectStats: Boolean,
-      catalogTable: Option[String]) extends Operation("CONVERT") {
+      catalogTable: Option[String],
+      sourceType: Option[String]) extends Operation("CONVERT") {
     override val parameters: Map[String, Any] = Map(
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
-      "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
+      "collectStats" -> collectStats) ++
+        catalogTable.map("catalogTable" -> _) ++
+        sourceType.map("sourceType" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
     override def changesData: Boolean = true
   }
@@ -501,6 +504,60 @@ private[delta] object DeltaOperationMetrics {
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
+
+  trait MetricsTransformer {
+    /**
+     * Produce the output metric `metricName`, given all available metrics.
+     *
+     * If one or more input metrics are missing, the output metrics may be skipped by
+     * returning `None`.
+     */
+    def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)]
+
+    def transformToString(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, String)] = {
+      this.transform(metricName, allMetrics).map { case (name, metric) =>
+        name -> metric.toString
+      }
+    }
+  }
+
+  /** Pass metric on unaltered. */
+  final object PassMetric extends MetricsTransformer {
+    override def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)] =
+      allMetrics.get(metricName).map(metric => metricName -> metric.value)
+  }
+
+  /**
+   * Produce a new metric by summing up the values of `inputMetrics`.
+   *
+   * Treats missing metrics at 0.
+   */
+  final case class SumMetrics(inputMetrics: String*)
+    extends MetricsTransformer {
+
+    override def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)] = {
+      var atLeastOneMetricExists = false
+      val total = inputMetrics.map { name =>
+        val metricValueOpt = allMetrics.get(name)
+        atLeastOneMetricExists |= metricValueOpt.isDefined
+        metricValueOpt.map(_.value).getOrElse(0L)
+      }.sum
+      if (atLeastOneMetricExists) {
+        Some(metricName -> total)
+      } else {
+        None
+      }
+    }
+  }
+
   val TRUNCATE = Set(
     "numRemovedFiles", // number of files removed
     "executionTimeMs" // time taken to execute the entire operation
@@ -524,7 +581,6 @@ private[delta] object DeltaOperationMetrics {
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
-
 
   val UPDATE = Set(
     "numAddedFiles", // number of files added

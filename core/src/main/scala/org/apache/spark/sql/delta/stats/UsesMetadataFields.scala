@@ -39,5 +39,6 @@ trait UsesMetadataFields {
  */
 trait ReadsMetadataFields extends UsesMetadataFields {
   /** Returns a Column that references the stats field data skipping should use */
-  def getBaseStatsColumn: Column = col("stats")
+  def getBaseStatsColumn: Column = col(getBaseStatsColumnName)
+  def getBaseStatsColumnName: String = "stats"
 }

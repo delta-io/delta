@@ -585,9 +585,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.actionNotFoundException("action", 0)
       }
       val msg = s"""The action of your Delta table could not be recovered while Reconstructing
-        |version: 0. Did you manually delete files in the _delta_log directory?
-        |Set ${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "false"
-        |to skip validation.""".stripMargin
+        |version: 0. Did you manually delete files in the _delta_log directory?""".stripMargin
       assert(e.getMessage == msg)
     }
     {
