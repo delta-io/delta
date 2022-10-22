@@ -48,7 +48,7 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
     .withColumn("key2", col("id") % 3 cast "String")
 
   protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None,
-      collectStats: Boolean = false): Unit
+      collectStats: Boolean = true): Unit
 
   protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
