@@ -35,8 +35,12 @@ class TahoeChangeFileIndex(
     val filesByVersion: Seq[CDCDataSpec[AddCDCFile]],
     deltaLog: DeltaLog,
     path: Path,
-    override val tableVersion: Long,
-    override val metadata: Metadata) extends TahoeFileIndex(spark, deltaLog, path) {
+    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
+
+  override val tableVersion: Long = snapshot.version
+  override val metadata: Metadata = snapshot.metadata
+
+  override lazy val getSnapshot: Snapshot = deltaLog.getSnapshotAt(tableVersion)
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -62,7 +66,7 @@ class TahoeChangeFileIndex(
     filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
   }
 
-  override val partitionSchema: StructType = metadata.partitionSchema
+  override val partitionSchema: StructType = super.partitionSchema
     .add(CDC_COMMIT_VERSION, LongType)
     .add(CDC_COMMIT_TIMESTAMP, TimestampType)
 

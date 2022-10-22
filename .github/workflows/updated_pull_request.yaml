@@ -5,11 +5,13 @@ on:
     types: [created]
   pull_request_target:
     types: [synchronize]
+  pull_request_review_comment:
+    types: [created]
 
 jobs:
   automate-updated-pull-requests:
     if: ${{ (github.event.issue.pull_request || github.event.pull_request) &&
-            !contains('allisonport-db dennyglee scottsand-db tdas vkorukanti zsxwing', github.event.sender.login) &&
+            !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) &&
             (github.event.pull_request.state == 'open' || github.event.issue.state == 'open') }}
     runs-on: ubuntu-latest
     steps:

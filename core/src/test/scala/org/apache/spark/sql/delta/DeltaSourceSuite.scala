@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.TimeoutException
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
@@ -1879,6 +1880,135 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       } finally {
         q.stop()
       }
+    }
+  }
+
+  test("DeltaSourceOffset.validateOffsets") {
+    DeltaSourceOffset.validateOffsets(
+      previousOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false),
+      currentOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false)
+    )
+    DeltaSourceOffset.validateOffsets(
+      previousOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false),
+      currentOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 5,
+        index = 1,
+        isStartingVersion = false)
+    )
+
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = true)
+      )
+    }.getMessage.contains("Found invalid offsets: 'isStartingVersion' fliped incorrectly."))
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 1,
+          index = 10,
+          isStartingVersion = false)
+      )
+    }.getMessage.contains("Found invalid offsets: 'reservoirVersion' moved back."))
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 9,
+          isStartingVersion = false)
+      )
+    }.getMessage.contains("Found invalid offsets. 'index' moved back."))
+  }
+
+  test("ES-445863: delta source should not hang or reprocess data when using AvailableNow") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      def runQuery(): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+          // Require a partition filter. The max index of files matching the partition filter must
+          // be less than the number of files in the second commit.
+          .where("part = 0")
+          .writeStream
+          .format("delta")
+          .trigger(Trigger.AvailableNow)
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+        try {
+          if (!q.awaitTermination(60000)) {
+            throw new TimeoutException("the query didn't stop in 60 seconds")
+          }
+        } finally {
+          q.stop()
+        }
+      }
+
+      spark.range(0, 1)
+        .selectExpr("id", "id as part")
+        .repartition(10)
+        .write
+        .partitionBy("part")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+      runQuery()
+
+      spark.range(1, 10)
+        .selectExpr("id", "id as part")
+        .repartition(9)
+        .write
+        .partitionBy("part")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+      runQuery()
+
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        Row(0, 0) :: Nil)
     }
   }
 }

@@ -36,9 +36,13 @@ class TahoeRemoveFileIndex(
     val filesByVersion: Seq[CDCDataSpec[RemoveFile]],
     deltaLog: DeltaLog,
     path: Path,
-    override val tableVersion: Long,
-    override val metadata: Metadata
+    snapshot: Snapshot
   ) extends TahoeFileIndex(spark, deltaLog, path) {
+
+  override val tableVersion: Long = snapshot.version
+  override val metadata: Metadata = snapshot.metadata
+
+  override def getSnapshot: Snapshot = snapshot
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
@@ -73,8 +77,7 @@ class TahoeRemoveFileIndex(
     filesByVersion.flatMap(_.actions).map(f => absolutePath(f.path).toString).toArray
   }
 
-  override def partitionSchema: StructType =
-    CDCReader.cdcReadSchema(metadata.partitionSchema)
+  override def partitionSchema: StructType = CDCReader.cdcReadSchema(super.partitionSchema)
 
   override def refresh(): Unit = {}
 

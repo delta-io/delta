@@ -125,12 +125,12 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
    *
    * All the above methods take SparkSession and the table path as parameters
    */
-  def testConcurrentChange(testName: String)(
+  def testConcurrentChange(testName: String, testTags: org.scalatest.Tag*)(
     createTable: (SparkSession, String) => Unit,
     actionToTest: (SparkSession, String) => Unit,
     concurrentChange: (SparkSession, String) => Unit): Unit = {
 
-    test(testName) {
+    test(testName, testTags: _*) {
       withTempDir { tempDir =>
         testConcurrentChangeBase(tempDir.getCanonicalPath)(
           createTable,

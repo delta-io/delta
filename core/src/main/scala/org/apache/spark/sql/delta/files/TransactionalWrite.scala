@@ -239,6 +239,88 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
+   * Return a tuple of (statsDataSchema, statsCollectionSchema).
+   * statsDataSchema is the data source schema from DataFrame used for stats collection. It
+   * contains the columns in the DataFrame output, excluding the partition columns.
+   * statsCollectionSchema is the schema to collect stats for. It contains the columns in the
+   * table schema, excluding the partition columns.
+   * Note: We only collect NULL_COUNT stats (as the number of rows) for the columns in
+   * statsCollectionSchema but missing in statsDataSchema
+   */
+  protected def getStatsSchema(
+    dataFrameOutput: Seq[Attribute],
+    partitionSchema: StructType): (Seq[Attribute], Seq[Attribute]) = {
+    val partitionColNames = partitionSchema.map(_.name).toSet
+
+    // statsDataSchema comes from DataFrame output
+    // schema should be normalized, therefore we can do an equality check
+    val statsDataSchema = dataFrameOutput.filterNot(c => partitionColNames.contains(c.name))
+
+    // statsCollectionSchema comes from table schema
+    val statsTableSchema = metadata.schema.toAttributes
+    val mappedStatsTableSchema = if (metadata.columnMappingMode == NoMapping) {
+      statsTableSchema
+    } else {
+      mapColumnAttributes(statsTableSchema, metadata.columnMappingMode)
+    }
+
+    // It's important to first do the column mapping and then drop the partition columns
+    val filteredStatsTableSchema = mappedStatsTableSchema
+      .filterNot(c => partitionColNames.contains(c.name))
+
+    (statsDataSchema, filteredStatsTableSchema)
+  }
+
+  protected def getStatsColExpr(
+      statsDataSchema: Seq[Attribute],
+      statsCollection: StatisticsCollection): Expression = {
+    Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+      .select(to_json(statsCollection.statsCollector))
+      .queryExecution.analyzed.expressions.head
+  }
+
+  /** Return the pair of optional stats tracker and stats collection class */
+  protected def getOptionalStatsTrackerAndStatsCollection(
+      output: Seq[Attribute],
+      outputPath: Path,
+      partitionSchema: StructType, data: DataFrame): (
+        Option[DeltaJobStatisticsTracker],
+        Option[StatisticsCollection]) = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
+
+      val (statsDataSchema, statsCollectionSchema) = getStatsSchema(output, partitionSchema)
+
+      val indexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+
+      val statsCollection = new StatisticsCollection {
+        override def tableDataSchema = {
+          // If collecting stats using the table schema, then pass in statsCollectionSchema.
+          // Otherwise pass in statsDataSchema to collect stats using the DataFrame schema.
+          if (spark.sessionState.conf.getConf(DeltaSQLConf
+            .DELTA_COLLECT_STATS_USING_TABLE_SCHEMA)) {
+            statsCollectionSchema.toStructType
+          } else {
+            statsDataSchema.toStructType
+          }
+        }
+        override def dataSchema = statsDataSchema.toStructType
+        override val spark: SparkSession = data.sparkSession
+        override val numIndexedCols = indexedCols
+      }
+
+      val statsColExpr = getStatsColExpr(statsDataSchema, statsCollection)
+
+      (Some(new DeltaJobStatisticsTracker(
+        deltaLog.newDeltaHadoopConf(),
+        outputPath,
+        statsDataSchema,
+        statsColExpr)), Some(statsCollection))
+    } else {
+      (None, None)
+    }
+  }
+
+  /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
@@ -261,35 +343,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     // If Statistics Collection is enabled, then create a stats tracker that will be injected during
     // the FileFormatWriter.write call below and will collect per-file stats using
     // StatisticsCollection
-    val optionalStatsTracker =
-      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
-        val partitionColNames = partitionSchema.map(_.name).toSet
-
-        // schema should be normalized, therefore we can do an equality check
-        val statsDataSchema = output.filterNot(c => partitionColNames.contains(c.name))
-
-        val indexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
-
-        val statsCollection = new StatisticsCollection {
-          override def dataSchema = statsDataSchema.toStructType
-          override val spark: SparkSession = data.sparkSession
-          override val numIndexedCols = indexedCols
-        }
-
-        val statsColExpr: Expression = {
-          val dummyDF = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
-          dummyDF.select(to_json(statsCollection.statsCollector))
-            .queryExecution.analyzed.expressions.head
-        }
-
-        Some(new DeltaJobStatisticsTracker(
-          deltaLog.newDeltaHadoopConf(),
-          outputPath,
-          statsDataSchema,
-          statsColExpr))
-      } else {
-        None
-      }
+    val (optionalStatsTracker, _) = getOptionalStatsTrackerAndStatsCollection(output, outputPath,
+      partitionSchema, data)
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints

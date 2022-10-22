@@ -106,7 +106,16 @@ object CheckpointMetaData {
    * used by readers to validate consistency of the [[CheckpointMetadata]].
    * It is calculated using rules mentioned in "JSON checksum" section in PROTOCOL.md.
    */
-  def serializeToJson(chkMetadata: CheckpointMetaData, addChecksum: Boolean): String = {
+  def serializeToJson(
+      chkMetadata: CheckpointMetaData,
+      addChecksum: Boolean,
+      suppressOptionalFields: Boolean = false): String = {
+    if (suppressOptionalFields) {
+      return JsonUtils.toJson(
+          CheckpointMetaData(
+            chkMetadata.version, chkMetadata.size, chkMetadata.parts, None, None, None))
+    }
+
     val jsonStr: String = JsonUtils.toJson(chkMetadata.copy(checksum = None))
     if (!addChecksum) return jsonStr
     val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[ObjectNode])
@@ -286,7 +295,6 @@ trait Checkpoints extends DeltaLogging {
 
   def logPath: Path
   def dataPath: Path
-  def snapshot: Snapshot
   protected def store: LogStore
   protected def metadata: Metadata
 
@@ -298,11 +306,6 @@ trait Checkpoints extends DeltaLogging {
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)
-
-  /**
-   * Creates a checkpoint using the default snapshot.
-   */
-  def checkpoint(): Unit = checkpoint(snapshot)
 
   /**
    * Catch non-fatal exceptions related to checkpointing, since the checkpoint is written
@@ -327,6 +330,15 @@ trait Checkpoints extends DeltaLogging {
         if (throwError) throw e
     }
   }
+
+  /**
+   * Creates a checkpoint using the default snapshot.
+   *
+   * WARNING: This API is being deprecated, and will be removed in future versions.
+   * Please use the checkpoint(Snapshot) function below to write checkpoints to the delta log.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions.", "12.0")
+  def checkpoint(): Unit = checkpoint(unsafeVolatileSnapshot)
 
   /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
@@ -356,7 +368,10 @@ trait Checkpoints extends DeltaLogging {
       checkpointMetaData: CheckpointMetaData,
       addChecksum: Boolean): Unit = {
     withCheckpointExceptionHandling(deltaLog, "delta.lastCheckpoint.write.error") {
-      val json = CheckpointMetaData.serializeToJson(checkpointMetaData, addChecksum)
+      val suppressOptionalFields = spark.sessionState.conf.getConf(
+        DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS)
+      val json = CheckpointMetaData.serializeToJson(
+        checkpointMetaData, addChecksum, suppressOptionalFields)
       store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
     }
   }
@@ -682,12 +697,12 @@ object Checkpoints extends DeltaLogging {
   private[delta] def buildCheckpoint(state: DataFrame, snapshot: Snapshot): DataFrame = {
     val additionalCols = new mutable.ArrayBuffer[Column]()
     val sessionConf = state.sparkSession.sessionState.conf
-    if (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)) {
+    if (Checkpoints.shouldWriteStatsAsJson(snapshot)) {
       additionalCols += col("add.stats").as("stats")
     }
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
-    val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)
+    val includeStructColumns = shouldWriteStatsAsStruct(sessionConf, snapshot)
     if (includeStructColumns) {
       val partitionValues = CheckpointV2.extractPartitionValues(
         snapshot.metadata.partitionSchema, "add.partitionValues")
@@ -706,10 +721,14 @@ object Checkpoints extends DeltaLogging {
     )
   }
 
-  def getWriteStatsAsStructConf(conf: SQLConf, snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
       .fromMetaData(snapshot.metadata)
       .getOrElse(conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+  }
+
+  def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)
   }
 }
 

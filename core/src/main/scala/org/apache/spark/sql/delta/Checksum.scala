@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
@@ -54,7 +55,8 @@ case class VersionChecksum(
     protocol: Protocol,
     metadata: Metadata,
     histogramOpt: Option[FileSizeHistogram],
-    txnId: Option[String])
+    txnId: Option[String],
+    allFiles: Option[Seq[AddFile]])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -73,28 +75,34 @@ trait RecordChecksum extends DeltaLogging {
 
     val version = snapshot.version
     val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
+    val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
+    eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
+    val startTimeMs = System.currentTimeMillis()
     try {
-      recordDeltaOperation(
-        deltaLog,
-        opType = "delta.checksum.write"
-      ) {
-        val stream = writer.createAtomic(
-          FileNames.checksumFile(deltaLog.logPath, version),
-          overwriteIfPossible = false)
-        try {
-          val toWrite = JsonUtils.toJson(checksum) + "\n"
-          stream.write(toWrite.getBytes(UTF_8))
-          stream.close()
-        } catch {
-          case NonFatal(e) =>
-            logWarning(s"Failed to write the checksum for version: $version", e)
-            stream.cancel()
-        }
+      val toWrite = JsonUtils.toJson(checksum) + "\n"
+      eventData("jsonSerializationTimeTakenMs") = System.currentTimeMillis() - startTimeMs
+      eventData("checksumLength") = toWrite.length
+      val stream = writer.createAtomic(
+        FileNames.checksumFile(deltaLog.logPath, version),
+        overwriteIfPossible = false)
+      try {
+        stream.write(toWrite.getBytes(UTF_8))
+        stream.close()
+        eventData("overallTimeTakenMs") = System.currentTimeMillis() - startTimeMs
+        eventData("operationSucceeded") = true
+      } catch {
+        case NonFatal(e) =>
+          logWarning(s"Failed to write the checksum for version: $version", e)
+          stream.cancel()
       }
     } catch {
       case NonFatal(e) =>
         logWarning(s"Failed to write the checksum for version: $version", e)
     }
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.checksum.write",
+      data = eventData)
   }
 }
 

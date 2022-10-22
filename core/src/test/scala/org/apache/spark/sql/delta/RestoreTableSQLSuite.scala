@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 
 /** Restore tests using the SQL. */

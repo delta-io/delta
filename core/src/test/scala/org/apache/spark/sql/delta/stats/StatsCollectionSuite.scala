@@ -54,6 +54,7 @@ class StatsCollectionSuite
 
       val skipping = new StatisticsCollection {
         override val spark = StatsCollectionSuite.this.spark
+        override def tableDataSchema = dataRenamed.schema
         override def dataSchema = dataRenamed.schema
         override val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
           DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
@@ -126,10 +127,11 @@ class StatsCollectionSuite
         )
         val statsDf = statsDF(deltaLog)
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
-        checkAnswer(statsDf, Seq(
-          Row(4, Row(10, 20), Row(17, 27)),
-          Row(2, Row(11, 21), Row(19, 29)),
-          Row(4, Row(12, 22), Row(18, 28))))
+        // scalastyle:off line.size.limit
+        // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
+        val expectedStats = Seq(Row(4, Row(10, 20), Row(17, 27)), Row(2, Row(11, 21), Row(19, 29)), Row(4, Row(12, 22), Row(18, 28)))
+        // scalastyle:on line.size.limit
+        checkAnswer(statsDf, expectedStats)
       }
     }
   }

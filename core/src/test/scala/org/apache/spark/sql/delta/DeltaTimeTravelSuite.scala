@@ -736,4 +736,5 @@ class DeltaTimeTravelSuite extends QueryTest
       }
     }
   }
+
 }
