@@ -607,7 +607,7 @@ object DeltaTable {
       partitionSchema: StructType,
       collectStats: Boolean): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
-    DeltaConvert.executeConvert(spark, tableId, Some(partitionSchema), None, collectStats)
+    DeltaConvert.executeConvert(spark, tableId, Some(partitionSchema), collectStats, None)
   }
 
   /**
@@ -663,8 +663,8 @@ object DeltaTable {
       partitionSchema: String,
       collectStats: Boolean): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
-    DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)), None,
-      collectStats)
+    DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)),
+      collectStats, None)
   }
 
   /**
@@ -716,8 +716,7 @@ object DeltaTable {
       identifier: String,
       collectStats: Boolean): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
-    DeltaConvert.executeConvert(spark, tableId, None, None,
-      collectStats)
+    DeltaConvert.executeConvert(spark, tableId, None, collectStats, None)
   }
 
   /**
