@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
@@ -71,8 +72,8 @@ import org.apache.spark.util.SerializableConfiguration
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String],
-    collectStats: Boolean = true) extends LeafRunnableCommand with DeltaCommand {
+    collectStats: Boolean = true,
+    deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
 
   protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
     lowerCaseProvider == "parquet"
@@ -266,20 +267,22 @@ abstract class ConvertToDeltaCommandBase(
    */
   protected def createDeltaActions(
       sparkSession: SparkSession,
-      deltaLog: DeltaLog,
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
       fs: FileSystem,
       collectStats: Boolean): Iterator[AddFile] = {
+    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
+    val collectStatsDeltaConfiguration = sparkSession.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
+    val shouldCollectStats = collectStats && collectStatsDeltaConfiguration
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
         ConvertToDeltaCommand.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
-      if (collectStats &&
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
-        computeStats(deltaLog, deltaLog.snapshot, adds)
+      if (shouldCollectStats) {
+        computeStats(txn.deltaLog, initialSnapshot, adds)
       }
       else if (collectStats) {
         logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
@@ -349,7 +352,7 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(spark, txn.deltaLog, manifest, partitionFields,
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields,
         txn, fs, collectStats)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
@@ -401,7 +404,7 @@ abstract class ConvertToDeltaCommandBase(
     DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
-      collectStats = false,
+      collectStats = true,
       convertProperties.catalogTable.map(t => t.identifier.toString))
   }
 
@@ -424,9 +427,9 @@ abstract class ConvertToDeltaCommandBase(
 case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String],
-    collectStats: Boolean)
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath, collectStats)
+    collectStats: Boolean,
+    deltaPath: Option[String])
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, collectStats, deltaPath)
 
 /**
  * An interface for the file to be included during conversion.

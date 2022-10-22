@@ -197,6 +197,7 @@ IN: 'IN';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 MINUS: '-';
+NO: 'NO';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
 OF: 'OF';
@@ -216,7 +217,6 @@ VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';
 ZORDER: 'ZORDER';
-NO: 'NO';
 STATISTICS: 'STATISTICS';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
