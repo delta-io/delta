@@ -202,16 +202,6 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("isDeltaTableByPath - with table name in current path") {
-    val currDir = System.getProperty("user.dir")
-    try {
-      testData.write.format("delta").save(currDir + "/deltaTableName")
-      assert(DeltaTable.isDeltaTableByPath("deltaTableName"))
-    } finally {
-      JavaUtils.deleteRecursively(new File(currDir, "deltaTableName"))
-    }
-  }
-
   test("isDeltaTableByName - with table name") {
     val tblName = "anotherDeltaTable"
     withTable(tblName) {
