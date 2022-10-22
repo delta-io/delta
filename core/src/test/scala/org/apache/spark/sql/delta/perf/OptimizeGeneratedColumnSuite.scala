@@ -698,6 +698,21 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
+    "value DOUBLE",
+    "part BIGINT",
+    Map("part" -> "CEIL(value)"),
+    expectedPartitionExpr = CeilPartitionExpr("part"),
+    filterTestCases = Seq(
+      "value < 2.1" -> Seq("((part <= CEIL(2.1D)) OR ((part <= CEIL(2.1D)) IS NULL))"),
+      "value <= 2.1" -> Seq("((part <= CEIL(2.1D)) OR ((part <= CEIL(2.1D)) IS NULL))"),
+      "value = 2.1" -> Seq("((part = CEIL(2.1D)) OR ((part = CEIL(2.1D)) IS NULL))"),
+      "value >= 2.1" -> Seq("((part >= CEIL(2.1D)) OR ((part >= CEIL(2.1D)) IS NULL))"),
+      "value > 2.1" -> Seq("((part >= CEIL(2.1D)) OR ((part >= CEIL(2.1D)) IS NULL))"),
+      "value is null" -> Seq("(part IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
     "value STRING",
     "substr STRING",
     Map("substr" -> "SUBSTRING(value, 1, 3)"),
@@ -788,6 +803,146 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       "`nested.value` is null" -> Seq("(part1 IS NULL)")
     )
   )
+
+  test("end-to-end optimizable partition expression Double CEIL ") {
+    withTempDir { tempDir =>
+      withTableName("optimizable_partition_expression") { table =>
+
+        createTable(
+          table,
+          Some(tempDir.getCanonicalPath),
+          "c1 INT, c2 DOUBLE, c3 BIGINT",
+          Map("c3" -> "ceil(c2)"),
+          Seq("c3")
+        )
+
+        Seq(
+          Tuple2(1, 2.2),
+          Tuple2(2, 3.3),
+          Tuple2(3, 4.4)
+        ).foreach { values =>
+          insertInto(
+            tempDir.getCanonicalPath,
+            Seq(values).toDF("c1", "c2")
+          )
+        }
+
+        assert(tempDir.listFiles().map(_.getName).toSet ==
+          Set("c3=3", "c3=4", "c3=5", "_delta_log"))
+        // Delete folders which should not be read if we generate the partition filters correctly
+        tempDir.listFiles().foreach { f =>
+          if (f.getName != "c3=3" && f.getName != "_delta_log") {
+            Utils.deleteRecursively(f)
+          }
+        }
+        assert(tempDir.listFiles().map(_.getName).toSet == Set("c3=3", "_delta_log"))
+        checkAnswer(
+          sql(s"select * from $table where " +
+            s"c2 >= 2.1 AND c2 <= 2.9"),
+          Row(1, 2.2, 3))
+        // Verify `OptimizeGeneratedColumn` doesn't mess up Projects.
+        checkAnswer(
+          sql(s"select c1 from $table where " +
+            s"c2 >= 2.1 AND c2 <= 2.9"),
+          Row(1))
+
+        // Check both projection orders to make sure projection orders are handled correctly
+        checkAnswer(
+          sql(s"select c1, c2 from $table where " +
+            s"c2 >= 2.1 AND c2 <= 2.9"),
+          Row(1, 2.2))
+        checkAnswer(
+          sql(s"select c2, c1 from $table where " +
+            s"c2 >= 2.1 AND c2 <= 2.9"),
+          Row(2.2, 1))
+
+        // Verify the optimization works for limit.
+        val limitQuery = sql(
+          s"""select * from $table
+             |where c2 >= 2.1 AND c2 <= 2.9
+             |limit 10""".stripMargin)
+        val expectedPartitionFilters = Seq(
+          "((c3 >= CEIL(2.1D)) " +
+            "OR ((c3 >= CEIL(2.1D)) IS NULL))",
+          "((c3 <= CEIL(2.9D)) " +
+            "OR ((c3 <= CEIL(2.9D)) IS NULL))"
+        )
+        assert(expectedPartitionFilters ==
+          getPushedPartitionFilters(limitQuery.queryExecution).map(_.sql))
+        checkAnswer(limitQuery, Row(1, 2.2, 3))
+      }
+    }
+  }
+
+  test("end-to-end optimizable partition expression INT CEIL ") {
+    withTempDir { tempDir =>
+      withTableName("optimizable_partition_expression") { table =>
+
+        createTable(
+          table,
+          Some(tempDir.getCanonicalPath),
+          "c1 INT, c2 INT, c3 BIGINT",
+          Map("c3" -> "ceil(c2)"),
+          Seq("c3")
+        )
+
+        Seq(
+          Tuple2(1, 2),
+          Tuple2(2, 3),
+          Tuple2(3, 4)
+        ).foreach { values =>
+          insertInto(
+            tempDir.getCanonicalPath,
+            Seq(values).toDF("c1", "c2")
+          )
+        }
+
+        assert(tempDir.listFiles().map(_.getName).toSet ==
+          Set("c3=2", "c3=3", "c3=4", "_delta_log"))
+        // Delete folders which should not be read if we generate the partition filters correctly
+        tempDir.listFiles().foreach { f =>
+          if (f.getName != "c3=2" && f.getName != "_delta_log") {
+            Utils.deleteRecursively(f)
+          }
+        }
+        assert(tempDir.listFiles().map(_.getName).toSet == Set("c3=2", "_delta_log"))
+        checkAnswer(
+          sql(s"select * from $table where " +
+            s"c2 >= 2 AND c2 <= 2"),
+          Row(1, 2, 2))
+        // Verify `OptimizeGeneratedColumn` doesn't mess up Projects.
+        checkAnswer(
+          sql(s"select c1 from $table where " +
+            s"c2 >= 2 AND c2 <= 2"),
+          Row(1))
+
+        // Check both projection orders to make sure projection orders are handled correctly
+        checkAnswer(
+          sql(s"select c1, c2 from $table where " +
+            s"c2 >= 2 AND c2 <= 2"),
+          Row(1, 2))
+        checkAnswer(
+          sql(s"select c2, c1 from $table where " +
+            s"c2 >= 2 AND c2 <= 2"),
+          Row(2, 1))
+
+        // Verify the optimization works for limit.
+        val limitQuery = sql(
+          s"""select * from $table
+             |where c2 >= 2 AND c2 <= 2
+             |limit 10""".stripMargin)
+        val expectedPartitionFilters = Seq(
+          "((c3 >= CEIL(CAST(2 AS DOUBLE))) " +
+            "OR ((c3 >= CEIL(CAST(2 AS DOUBLE))) IS NULL))",
+          "((c3 <= CEIL(CAST(2 AS DOUBLE))) " +
+            "OR ((c3 <= CEIL(CAST(2 AS DOUBLE))) IS NULL))"
+        )
+        assert(expectedPartitionFilters ==
+          getPushedPartitionFilters(limitQuery.queryExecution).map(_.sql))
+        checkAnswer(limitQuery, Row(1, 2, 2))
+      }
+    }
+  }
 
   test("end-to-end optimizable partition expression") {
     withTempDir { tempDir =>

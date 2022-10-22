@@ -360,6 +360,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
+                case Ceil(ExtractBaseColumn(name, DoubleType)) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
+                case Ceil(Cast(ExtractBaseColumn(name, IntegerType), DoubleType, _, _)) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
