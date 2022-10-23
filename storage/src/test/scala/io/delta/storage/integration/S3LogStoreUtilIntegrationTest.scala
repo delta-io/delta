@@ -11,6 +11,25 @@ import java.net.URI
 import scala.math.max
 import scala.math.ceil
 
+/**
+ * These integration tests are executed by setting the
+ * environment variables
+ * S3_LOG_STORE_UTIL_TEST_BUCKET=some-s3-bucket-name
+ * S3_LOG_STORE_UTIL_TEST_RUN_UID=some-uuid-for-test-run
+ * and running
+ * python run-integration-tests.py --s3-log-store-util-only
+ *
+ * Alternatively you can set the environment variables
+ * S3_LOG_STORE_UTIL_TEST_ENABLED=true
+ * S3_LOG_STORE_UTIL_TEST_BUCKET=some-s3-bucket-name
+ * S3_LOG_STORE_UTIL_TEST_RUN_UID=some-uuid-for-test-run
+ * and run the tests in this suite using your preferred
+ * test execution mechanism (e.g., the IDE or sbt)
+ *
+ * S3_LOG_STORE_UTIL_TEST_BUCKET is the name of the S3 bucket used for the test.
+ * S3_LOG_STORE_UTIL_TEST_RUN_UID is a prefix for all keys used in the test.
+ * This is useful for isolating multiple test runs.
+ */
 class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private val runIntegrationTests: Boolean =
     Option(System.getenv("S3_LOG_STORE_UTIL_TEST_ENABLED")).exists(_.toBoolean)
