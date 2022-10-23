@@ -84,8 +84,8 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       deltaLog: DeltaLog,
       retentionHours: Option[Double],
       tableId: Option[TableIdentifier] = None): DataFrame = {
-    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
-    sparkSession.emptyDataFrame
+    val vacuum = VacuumTableCommand(Some(deltaLog.dataPath.toString), None, retentionHours, false)
+    toDataset(sparkSession, vacuum)
   }
 
   protected def executeRestore(

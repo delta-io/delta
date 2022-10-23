@@ -301,7 +301,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("file2.txt", commitToActionLog = true),
         CheckFiles(Seq("file2.txt")),
         ExpectFailure(
-          ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
+          ExecuteVacuumInScala(deltaTable, Seq(tempDir.getAbsolutePath), Some(-2)),
           classOf[IllegalArgumentException],
           Seq("Retention", "less than", "0"))
       )
@@ -513,11 +513,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         } else {
           deltaTable.vacuum()
         }
-        if(expectedDf == Seq()) {
-          assert(result === spark.emptyDataFrame)
-        } else {
-          checkDatasetUnorderly(result.as[String], expectedDf: _*)
-        }
+        val df = result.select("path").as[String]
+        checkDatasetUnorderly(df, expectedDf: _*)
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
         clock.advance(timeToAdd)
@@ -576,7 +573,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
       // Actual run should delete the not committed file and but not delete files
-      ExecuteVacuumInScala(deltaTable, Seq()),
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath)),
       CheckFiles(Seq(committedFile)),
       CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
 
@@ -585,7 +582,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CheckFiles(Seq(committedFile)),
 
       // Vacuum with 0 retention should actually delete the file.
-      ExecuteVacuumInScala(deltaTable, Seq(), Some(0)),
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath), Some(0)),
       CheckFiles(Seq(committedFile), exist = false))
   }
 
