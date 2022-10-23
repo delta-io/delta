@@ -54,7 +54,10 @@ public final class S3LogStoreUtil {
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
      */
-    private static RemoteIterator<S3AFileStatus> s3ListFrom(S3AFileSystem s3afs, Path resolvedPath, Path parentPath) throws IOException {
+    private static RemoteIterator<S3AFileStatus> s3ListFrom(
+            S3AFileSystem s3afs,
+            Path resolvedPath,
+            Path parentPath) throws IOException {
         int maxKeys = S3AUtils.intOption(s3afs.getConf(), MAX_PAGING_KEYS, DEFAULT_MAX_PAGING_KEYS, 1);
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
@@ -79,7 +82,10 @@ public final class S3LogStoreUtil {
      *
      * TODO: Remove this method when iterators are used everywhere.
      */
-    public static FileStatus[] s3ListFromArray(FileSystem fs, Path resolvedPath, Path parentPath) throws IOException {
+    public static FileStatus[] s3ListFromArray(
+            FileSystem fs,
+            Path resolvedPath,
+            Path parentPath) throws IOException {
         S3AFileSystem s3afs;
         try {
              s3afs = (S3AFileSystem) fs;
