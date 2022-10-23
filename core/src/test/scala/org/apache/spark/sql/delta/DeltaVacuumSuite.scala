@@ -22,18 +22,18 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, CommitInfo, DeleteFile, Metadata, RemoveFile, SingleAction, Action => DeltaAction}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.{AnalysisException, Dataset, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -491,6 +491,9 @@ trait DeltaVacuumSuiteBase extends QueryTest
         Given(s"*** Executing SQL: ${e.sql}")
         val df = spark.sql(e.sql).select("path").as[String]
         checkDatasetUnorderly(df, e.expectedDf: _*)
+        if (!e.dryRun) {
+          checkVacuumCommit(deltaLog, e.expectedDf.size)
+        }
       case CheckFiles(paths, exist) =>
         Given(s"*** Checking files exist=$exist")
         paths.foreach { p =>
@@ -515,6 +518,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         }
         val df = result.select("path").as[String]
         checkDatasetUnorderly(df, expectedDf: _*)
+        checkVacuumCommit(deltaLog, expectedDf.size)
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
         clock.advance(timeToAdd)
@@ -775,6 +779,25 @@ trait DeltaVacuumSuiteBase extends QueryTest
 
   test("vacuum for cdc - delete tombstones") {
     testCDCVacuumForTombstones()
+  }
+
+  protected def checkVacuumCommit(deltaLog: DeltaLog, numOfDeletedFiles: Int): Unit = {
+    val vacuumActions = loadLatestCommit(deltaLog)
+    val commitInfo = vacuumActions.collect{ case c: CommitInfo => c}.head
+    assert(commitInfo.operation == "VACUUM")
+
+    val deletes = vacuumActions.collect{ case d: DeleteFile => d}
+    assert(deletes.size == numOfDeletedFiles)
+  }
+
+  protected def loadLatestCommit(deltaLog: DeltaLog): Seq[DeltaAction] = {
+    val deltaFile = FileNames.deltaFile(deltaLog.logPath, deltaLog.update().version)
+    val fs = deltaFile.getFileSystem(deltaLog.newDeltaHadoopConf())
+    val index = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, fs, Seq(deltaFile))
+    Dataset.ofRows(spark, deltaLog.indexToRelation(index))
+      .as[SingleAction]
+      .collect()
+      .map(_.unwrap)
   }
 }
 
