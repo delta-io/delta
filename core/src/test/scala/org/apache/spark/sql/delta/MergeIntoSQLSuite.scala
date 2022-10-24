@@ -335,6 +335,35 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       }
     }
   }
+
+  Seq(true, false).foreach { partitioned =>
+    test(s"User defined _change_type column doesn't get dropped - partitioned=$partitioned") {
+      withTable("target") {
+        sql(
+          s"""CREATE TABLE target USING DELTA
+             |${if (partitioned) "PARTITIONED BY (part) " else ""}
+             |TBLPROPERTIES (delta.enableChangeDataFeed = false)
+             |AS SELECT id, int(id / 10) AS part, 'foo' as _change_type
+             |FROM RANGE(1000)
+             |""".stripMargin)
+        executeMerge(
+          target = "target as t",
+          source =
+            """(
+              |  SELECT id * 42 AS id, int(id / 10) AS part, 'bar' as _change_type FROM RANGE(33)
+              |) s""".stripMargin,
+          condition = "t.id = s.id",
+          update = "*",
+          insert = "*")
+
+        sql("SELECT id, _change_type FROM target").collect().foreach { row =>
+          val _change_type = row.getString(1)
+          assert(_change_type === "foo" || _change_type === "bar",
+            s"Invalid _change_type for id=${row.get(0)}")
+        }
+      }
+    }
+  }
 }
 
 trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
