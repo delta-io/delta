@@ -17,7 +17,6 @@
 package io.delta.tables.execution
 
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -39,7 +38,8 @@ case class VacuumTableCommand(
     path: Option[String],
     table: Option[TableIdentifier],
     horizonHours: Option[Double],
-    dryRun: Boolean) extends LeafRunnableCommand {
+    dryRun: Boolean,
+    options: Map[String, String] = Map.empty) extends LeafRunnableCommand {
 
   override val output: Seq[Attribute] = if (dryRun) {
     Seq(AttributeReference("path", StringType, nullable = true)())
@@ -72,13 +72,13 @@ case class VacuumTableCommand(
       } else {
         throw DeltaErrors.missingTableIdentifierException("VACUUM")
       }
-    val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
+    val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum, options)
     if (baseDeltaPath.isDefined) {
       if (baseDeltaPath.get != pathToVacuum) {
         throw DeltaErrors.vacuumBasePathMissingException(baseDeltaPath.get)
       }
     }
-    val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
+    val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum, options)
     if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
