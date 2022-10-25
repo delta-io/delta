@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.lang.ref.WeakReference
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
@@ -38,7 +39,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -48,6 +49,7 @@ import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expressi
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -518,6 +520,38 @@ class DeltaLog private(
       }
     }
   }
+
+  /**
+   * Returns a proper path canonicalization function for the current Delta log.
+   *
+   * If `runsOnExecutors` is true, the returned method will use a broadcast Hadoop Configuration
+   * so that the method is suitable for execution on executors. Otherwise, the returned method
+   * will use a local Hadoop Configuration and the method can only be executed on the driver.
+   */
+  private[delta] def getCanonicalPathFunction(runsOnExecutors: Boolean): String => String = {
+    val hadoopConf = newDeltaHadoopConf()
+    // Wrap `hadoopConf` with a method to delay the evaluation to run on executors.
+    val getHadoopConf = if (runsOnExecutors) {
+      val broadcastHadoopConf =
+        spark.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+      () => broadcastHadoopConf.value.value
+    } else {
+      () => hadoopConf
+    }
+
+    new DeltaLog.CanonicalPathFunction(getHadoopConf)
+  }
+
+  /**
+   * Returns a proper path canonicalization UDF for the current Delta log.
+   *
+   * If `runsOnExecutors` is true, the returned UDF will use a broadcast Hadoop Configuration.
+   * Otherwise, the returned UDF will use a local Hadoop Configuration and the UDF can
+   * only be executed on the driver.
+   */
+  private[delta] def getCanonicalPathUdf(runsOnExecutors: Boolean = true): UserDefinedFunction = {
+    DeltaUDF.stringFromString(getCanonicalPathFunction(runsOnExecutors))
+  }
 }
 
 object DeltaLog extends DeltaLogging {
@@ -830,5 +864,27 @@ object DeltaLog extends DeltaLogging {
             UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
         }
     })
+  }
+
+  /** Get a function that canonicalizes a given `path`. */
+  private[delta] class CanonicalPathFunction(getHadoopConf: () => Configuration)
+      extends Function[String, String] with Serializable {
+    // Mark it `@transient lazy val` so that de-serialization happens only once on every executor.
+    @transient
+    private lazy val fs = {
+      // scalastyle:off FileSystemGet
+      FileSystem.get(getHadoopConf())
+      // scalastyle:on FileSystemGet
+    }
+
+    override def apply(path: String): String = {
+      val hadoopPath = new Path(new URI(path))
+      if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
+        fs.makeQualified(hadoopPath).toUri.toString
+      } else {
+        // return untouched if it is a relative path or is already fully qualified
+        hadoopPath.toUri.toString
+      }
+    }
   }
 }
