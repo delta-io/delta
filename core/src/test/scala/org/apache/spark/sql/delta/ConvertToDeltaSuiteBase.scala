@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.{File, FileNotFoundException}
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -30,8 +32,6 @@ import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.util.Utils
-
-import java.io.{File, FileNotFoundException}
 
 /**
  * Common functions used across CONVERT TO DELTA test suites. We separate out these functions

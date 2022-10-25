@@ -29,7 +29,7 @@ abstract class HiveConvertToDeltaSuiteBase
 
   override protected def convertToDelta(
       identifier: String,
-      partitionSchema: Option[String] = None, collectStats: Boolean = false): Unit = {
+      partitionSchema: Option[String] = None, collectStats: Boolean = true): Unit = {
     if (partitionSchema.isEmpty) {
       sql(s"convert to delta $identifier ${collectStatisticsStringOption(collectStats)} ")
     } else {

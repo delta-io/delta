@@ -269,16 +269,14 @@ abstract class ConvertToDeltaCommandBase(
    * Given the file manifest, create corresponding AddFile actions for the entire list of files.
    */
   protected def createDeltaActions(
-      sparkSession: SparkSession,
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
       fs: FileSystem,
       collectStats: Boolean): Iterator[AddFile] = {
     val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
-    val collectStatsDeltaConfiguration = sparkSession.sessionState.conf
-      .getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
-    val shouldCollectStats = collectStats && collectStatsDeltaConfiguration
+    val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
+    val shouldCollectStats = collectStats && statsEnabled
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
@@ -286,13 +284,11 @@ abstract class ConvertToDeltaCommandBase(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
         computeStats(txn.deltaLog, initialSnapshot, adds)
-      }
-      else if (collectStats) {
+      } else if (collectStats) {
         logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
           s" is false. Skip statistics collection")
         adds.toIterator
-      }
-      else adds.toIterator
+      } else adds.toIterator
     }
   }
 
@@ -355,8 +351,8 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(spark, manifest, partitionFields,
-        txn, fs, collectStats)
+      val addFilesIter = createDeltaActions(manifest, partitionFields, txn,
+        fs, collectStats)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )

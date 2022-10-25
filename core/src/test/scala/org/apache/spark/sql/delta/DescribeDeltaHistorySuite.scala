@@ -924,7 +924,7 @@ trait DescribeDeltaHistorySuiteBase
         val expectedMetrics = Map(
           "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
         )
-        val operationMetrics = getOperationMetrics(deltaTable.history())
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.CONVERT)
       }
     }
