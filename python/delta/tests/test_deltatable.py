@@ -967,18 +967,26 @@ class DeltaTableTests(DeltaTestCase):
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
+        print("BEFORE")
+        self.spark.sql("SELECT count(*) from delta.`" + self.tempFile + "` WHERE p=2").show()
+        print(os.listdir(self.tempFile + "/p=2"))
+
         # execute Z-OrderBy
         optimizer = dt.optimize().where("p = 2")
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
+        print("AFTER")
+        self.spark.sql("SELECT count(*) from delta.`" + self.tempFile + "` WHERE p=2").show()
+        print(os.listdir(self.tempFile + "/p=2"))
+
         # assertions (partition 'p = 2' has four files)
-        self.assertTrue(metrics.numFilesAdded == 1)
-        self.assertTrue(metrics.numFilesRemoved == 4)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 4)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
+        self.assertEqual(1, metrics.numFilesAdded)
+        self.assertEqual(4, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        self.assertEqual(4, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(1, metrics.zOrderStats.numOutputCubes)
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
