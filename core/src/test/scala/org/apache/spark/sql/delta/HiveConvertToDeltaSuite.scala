@@ -63,8 +63,8 @@ abstract class HiveConvertToDeltaSuiteBase
       val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
       convertToDelta(tbl, Some("part string"), collectStats = true)
       val deltaLog = DeltaLog.forTable(spark, catalogTable)
-      val statsDf = deltaLog.snapshot.allFiles
-        .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
+      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+        .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
         .select("stats.*")
       assert(statsDf.filter(col("numRecords").isNull).count == 0)
       val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
@@ -89,8 +89,8 @@ abstract class HiveConvertToDeltaSuiteBase
       val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
       convertToDelta(tbl, Some("part string"), collectStats = false)
       val deltaLog = DeltaLog.forTable(spark, catalogTable)
-      val statsDf = deltaLog.snapshot.allFiles
-        .select(from_json(col("stats"), deltaLog.snapshot.statsSchema).as("stats"))
+      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+        .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
         .select("stats.*")
       assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
       val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()

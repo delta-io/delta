@@ -19,9 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
 import java.util.Locale
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -29,16 +27,15 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.util._
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand.computeStats
+import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
@@ -272,8 +269,7 @@ abstract class ConvertToDeltaCommandBase(
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
-      fs: FileSystem,
-      collectStats: Boolean): Iterator[AddFile] = {
+      fs: FileSystem): Iterator[AddFile] = {
     val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
     val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
     val shouldCollectStats = collectStats && statsEnabled
@@ -351,8 +347,7 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(manifest, partitionFields, txn,
-        fs, collectStats)
+      val addFilesIter = createDeltaActions(manifest, partitionFields, txn, fs)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
@@ -377,21 +372,6 @@ abstract class ConvertToDeltaCommandBase(
     Seq.empty[Row]
   }
 
-  private def computeStats(
-      deltaLog: DeltaLog,
-      snapshot: Snapshot,
-      addFiles: Seq[AddFile]): Iterator[AddFile] = {
-    import org.apache.spark.sql.functions._
-    val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
-      .groupBy(input_file_name).agg(to_json(snapshot.statsCollector))
-    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
-    filesWithStats
-      .collect().iterator.map{ row =>
-        val addFile = getTouchedFile(deltaLog.dataPath, row.getString(0), pathToAddFileMap)
-        addFile.copy(stats = row.getString(1))
-    }
-  }
-
   protected def getContext: Map[String, String] = {
     Map.empty
   }
@@ -401,10 +381,11 @@ abstract class ConvertToDeltaCommandBase(
       numFilesConverted: Long,
       convertProperties: ConvertTarget,
       sourceType: String): DeltaOperations.Operation = {
+    val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
     DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
-      collectStats = true,
+      collectStats = collectStats && statsEnabled,
       convertProperties.catalogTable.map(t => t.identifier.toString),
       sourceType = Some(sourceType))
   }
@@ -871,4 +852,20 @@ object ConvertToDeltaCommand {
     // Allow partition column name starting with underscore and dot
     DeltaFileOperations.defaultHiddenFileFilter(fileName) && !fileName.contains("=")
   }
+
+  def computeStats(
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      addFiles: Seq[AddFile]): Iterator[AddFile] = {
+    import org.apache.spark.sql.functions._
+    val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
+      .groupBy(input_file_name).agg(to_json(snapshot.statsCollector))
+    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
+    filesWithStats
+      .collect().iterator.map{ row =>
+      val addFile = getTouchedFile(deltaLog.dataPath, row.getString(0), pathToAddFileMap)
+      addFile.copy(stats = row.getString(1))
+    }
+  }
+
 }
