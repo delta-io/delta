@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.util.Utils
@@ -113,8 +113,9 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
         simpleDF
       )
       assert(history.count == 1)
-      val statsDf = deltaLog.snapshot.allFiles
-        .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
+      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+          .as("stats")).select("stats.*")
       assert(statsDf.filter($"numRecords".isNull).count == 0)
     }
   }
@@ -132,8 +133,30 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
           simpleDF
         )
         assert(history.count == 1)
-        val statsDf = deltaLog.snapshot.allFiles
-          .select(from_json($"stats", deltaLog.snapshot.statsSchema).as("stats")).select("stats.*")
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+            .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+            .as("stats")).select("stats.*")
+        assert(statsDf.filter($"numRecords".isNotNull).count == 0)
+      }
+    }
+  }
+
+  test("convert with collectStats set to false") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF)
+        convertToDelta(s"parquet.`$tempDir`", collectStats = false)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+        checkAnswer(
+          spark.read.format("delta").load(tempDir),
+          simpleDF
+        )
+        assert(history.count == 1)
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+            .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+            .as("stats")).select("stats.*")
         assert(statsDf.filter($"numRecords".isNotNull).count == 0)
       }
     }
