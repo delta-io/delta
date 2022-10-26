@@ -144,6 +144,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   test("convert with collectStats set to false") {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+        
         val tempDir = dir.getCanonicalPath
         writeFiles(tempDir, simpleDF)
         convertToDelta(s"parquet.`$tempDir`", collectStats = false)
