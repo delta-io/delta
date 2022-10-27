@@ -116,6 +116,11 @@ case class Protocol(
   override def wrap: SingleAction = SingleAction(protocol = this)
   @JsonIgnore
   def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
+
+  def max(other: Protocol): Protocol = Protocol(
+    minReaderVersion = this.minReaderVersion.max(other.minReaderVersion),
+    minWriterVersion = this.minWriterVersion.max(other.minWriterVersion)
+  )
 }
 
 object Protocol {

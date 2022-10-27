@@ -492,4 +492,34 @@ class DeltaLogSuite extends QueryTest
       )
     }
   }
+
+  test("forTableWithSnapshot should always return the latest snapshot") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      assert(deltaLog.snapshot.version === 0)
+
+      val (_, snapshot) = DeltaLog.withFreshSnapshot { _ =>
+        // This update is necessary to advance the lastUpdatedTs beyond the start time of
+        // withFreshSnapshot call.
+        deltaLog.update()
+        // Manually add a commit. However, the deltaLog should now be fresh enough
+        // that we don't trigger another update, and thus don't find the commit.
+        val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
+        deltaLog.store.write(
+          FileNames.deltaFile(deltaLog.logPath, 1L),
+          Iterator(JsonUtils.toJson(add.wrap)),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
+        deltaLog
+      }
+      assert(snapshot.version === 0)
+
+      val deltaLog2 = DeltaLog.forTable(spark, path)
+      assert(deltaLog2.snapshot.version === 0) // This shouldn't update
+      val (_, snapshot2) = DeltaLog.forTableWithSnapshot(spark, path)
+      assert(snapshot2.version === 1) // This should get the latest snapshot
+    }
+  }
 }

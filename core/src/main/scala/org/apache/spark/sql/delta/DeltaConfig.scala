@@ -460,7 +460,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.",
-    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY))
+    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY),
+    minimumProtocolVersion = Some(Protocol(0, minWriterVersion = 4)))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",

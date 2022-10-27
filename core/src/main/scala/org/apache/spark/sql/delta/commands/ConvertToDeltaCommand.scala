@@ -215,7 +215,7 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       target: ConvertTarget,
-      sourceType: String): Unit = {
+      sourceFormat: String): Unit = {
     // In the case that the table is a delta table but the provider has not been updated we should
     // update table metadata to reflect that the table is a delta table and table properties should
     // also be updated
@@ -240,7 +240,7 @@ abstract class ConvertToDeltaCommandBase(
             partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
             collectStats = false,
             catalogTable = catalogTable.map(t => t.identifier.toString),
-            sourceType = Some(sourceType)
+            sourceFormat = Some(sourceFormat)
           ))
       }
       convertMetadata(
@@ -380,14 +380,15 @@ abstract class ConvertToDeltaCommandBase(
   protected def getOperation(
       numFilesConverted: Long,
       convertProperties: ConvertTarget,
-      sourceType: String): DeltaOperations.Operation = {
-    val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
-    DeltaOperations.Convert(
+      sourceFormat: String): DeltaOperations.Operation = {
+      val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
+
+      DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
       collectStats = collectStats && statsEnabled,
       convertProperties.catalogTable.map(t => t.identifier.toString),
-      sourceType = Some(sourceType))
+      sourceFormat = Some(sourceFormat))
   }
 
   protected case class ConvertTarget(

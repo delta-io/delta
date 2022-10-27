@@ -107,9 +107,11 @@ class OptimisticTransaction
   /** Creates a new OptimisticTransaction.
    *
    * @param deltaLog The Delta Log for the table this transaction is modifying.
+   * @param snapshotOpt The most recent snapshot of the table, if available.
    */
-  def this(deltaLog: DeltaLog)(implicit clock: Clock) {
-    this(deltaLog, deltaLog.update())
+  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
+  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
+    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
   }
 }
 
@@ -534,6 +536,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
     readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    readFiles ++= scan.files
+    scan.files
+  }
+
+  /** Same as filterFiles but makes sure that the stats contain at least the numRecords field. */
+  def filterFilesWithNumRecords(filters: Seq[Expression]): Seq[AddFile] = {
+    val scan = snapshot.filesForScan(
+      filters = filters,
+      keepNumRecords = true)
+    val partitionFilters = filters.filter { f =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
     readFiles ++= scan.files
     scan.files
   }

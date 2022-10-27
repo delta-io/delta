@@ -27,7 +27,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
@@ -2298,15 +2298,7 @@ class DeltaTableCreationSuite
   }
 }
 
-
-class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def getTableProperties(tableName: String): Map[String, String] = {
-    // ignore comparing column mapping properties
-    dropColumnMappingConfigurations(super.getTableProperties(tableName))
-  }
-
+trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] = Seq(
     "create table with schema and path",
     "create external table without schema",
@@ -2322,5 +2314,20 @@ class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
     } ++ Seq("a b", "a:b", "a%b").map { specialChars =>
       s"location uri contains $specialChars for datasource table"
     }
+}
 
+class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableIdMode {
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
+}
+
+class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableNameMode {
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
 }

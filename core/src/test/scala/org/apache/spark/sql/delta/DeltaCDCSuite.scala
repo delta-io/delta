@@ -797,7 +797,15 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 }
 
 abstract class DeltaCDCColumnMappingSuiteBase extends DeltaCDCScalaSuite
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with DeltaColumnMappingSelectedTestMixin {
+
+  override def runOnlyTests: Seq[String] = Seq(
+    "changes from table by name",
+    "changes from table by path",
+    "batch write: append, dynamic partition overwrite + CDF",
+    "blocking batch cdc read"
+  )
 
   private def assertBlocked(f: => Unit): Unit = {
     val e = intercept[DeltaColumnMappingUnsupportedSchemaIncompatibleException] {
@@ -858,6 +866,14 @@ abstract class DeltaCDCColumnMappingSuiteBase extends DeltaCDCScalaSuite
            |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
       // write more data
       writeDeltaData((5 until 10), deltaLog)
+    }
+    else if (columnMappingModeString == IdMapping.name) {
+      // For id mode, we could only create a table from scratch
+      withColumnMappingConf("id") {
+        writeDeltaData((0 until 10), deltaLog, userSpecifiedSchema = Some(
+          new StructType().add("id", StringType, true).add("value", StringType, true)
+        ))
+      }
     }
 
     checkAnswer(
@@ -965,15 +981,9 @@ abstract class DeltaCDCColumnMappingSuiteBase extends DeltaCDCScalaSuite
   }
 }
 
+class DeltaCDCIdColumnMappingSuite extends DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode
 
 class DeltaCDCNameColumnMappingSuite extends DeltaCDCColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode with DeltaColumnMappingSelectedTestMixin {
-
-  override def runOnlyTests: Seq[String] = Seq(
-    "changes from table by name",
-    "changes from table by path",
-    "batch write: append, dynamic partition overwrite + CDF",
-    "blocking batch cdc read"
-  )
-
+  with DeltaColumnMappingEnableNameMode {
 }
