@@ -1202,6 +1202,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES" : {
+    "message" : [
+      "Partition schema cannot be specified when converting Iceberg tables"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
       "<path> doesn't exist"

@@ -2452,6 +2452,11 @@ trait DeltaErrorsBase
         unsupportedOptions.mkString(","))
     )
   }
+
+  def partitionSchemaInIcebergTables: Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES", messageParameters = null)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
