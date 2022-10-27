@@ -933,7 +933,8 @@ abstract class MergeIntoSuiteBase
 
       append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
       // cache is in effect, as the above change is not reflected
-      checkAnswer(spark.table(s"delta.`$tempPath`"), Row(2, 2) :: Row(1, 4) :: Nil)
+      checkAnswer(spark.table(s"delta.`$tempPath`"),
+        Row(2, 2) :: Row(1, 4) :: Row(100, 100) :: Row(3, 5) :: Nil)
 
       executeMerge(
         target = s"delta.`$tempPath` as trgNew",
