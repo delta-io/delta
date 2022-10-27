@@ -19,15 +19,19 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
 import java.util.Locale
+
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
-import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
+
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
@@ -382,7 +386,6 @@ abstract class ConvertToDeltaCommandBase(
       convertProperties: ConvertTarget,
       sourceFormat: String): DeltaOperations.Operation = {
       val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
-
       DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
