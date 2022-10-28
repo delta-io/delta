@@ -15,7 +15,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.utils.DeltaTableUpdater;
 import io.delta.flink.utils.DeltaTestUtils;
@@ -290,7 +290,7 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
         Future<List<RowData>> unexpectedFuture = singleThreadExecutor.submit(
             () -> DataStreamUtils.collectRecordsFromUnboundedStream(client, 1));
 
-        DeltaSourceConfiguration sourceConfiguration = source.getSourceConfiguration();
+        DeltaConnectorConfiguration sourceConfiguration = source.getSourceConfiguration();
         // Main thread waits some time. To stay on a safe side, we wait doubled time of update
         // check interval. So source will have time to check table twice for updates.
         long testTimeout =

@@ -1,8 +1,8 @@
-package io.delta.flink.source.internal.builder;
+package io.delta.flink.internal.options;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import static io.delta.flink.source.internal.utils.TestOptions.*;
+import static io.delta.flink.internal.options.TestOptions.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.junit.jupiter.api.Assertions.assertAll;

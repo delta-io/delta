@@ -6,7 +6,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.file.AddFileEnumerator.SplitFilter;
@@ -94,12 +94,12 @@ public abstract class DeltaSourceSplitEnumeratorTestBase {
 
     protected MockedStatic<DeltaLog> deltaLogStatic;
 
-    protected DeltaSourceConfiguration sourceConfiguration;
+    protected DeltaConnectorConfiguration sourceConfiguration;
 
     private DeltaSourceSplitEnumerator enumerator;
 
     protected void setUp() throws URISyntaxException {
-        sourceConfiguration = new DeltaSourceConfiguration();
+        sourceConfiguration = new DeltaConnectorConfiguration();
         deltaLogStatic = Mockito.mockStatic(DeltaLog.class);
         deltaLogStatic.when(() -> DeltaLog.forTable(any(Configuration.class), anyString()))
             .thenReturn(this.deltaLog);

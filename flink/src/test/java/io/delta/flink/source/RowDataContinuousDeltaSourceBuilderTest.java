@@ -4,11 +4,11 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import io.delta.flink.internal.options.DeltaConfigOption;
+import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
-import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
-import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
 import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.core.fs.Path;
@@ -121,8 +121,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -198,8 +198,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "set" or "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -261,8 +261,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -320,8 +320,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -383,8 +383,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -449,8 +449,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -514,8 +514,8 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         // execute "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception

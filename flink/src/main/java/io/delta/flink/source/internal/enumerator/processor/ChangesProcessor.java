@@ -3,7 +3,7 @@ package io.delta.flink.source.internal.enumerator.processor;
 import java.util.List;
 import java.util.function.Consumer;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.enumerator.monitor.ChangesPerVersion;
 import io.delta.flink.source.internal.enumerator.monitor.TableMonitor;
@@ -68,7 +68,7 @@ public class ChangesProcessor extends TableProcessorBase implements ContinuousTa
         Path deltaTablePath, TableMonitor tableMonitor,
         SplitEnumeratorContext<DeltaSourceSplit> enumContext,
         AddFileEnumerator<DeltaSourceSplit> fileEnumerator,
-        DeltaSourceConfiguration sourceConfiguration) {
+        DeltaConnectorConfiguration sourceConfiguration) {
         super(deltaTablePath, fileEnumerator);
         this.tableMonitor = tableMonitor;
         this.enumContext = enumContext;

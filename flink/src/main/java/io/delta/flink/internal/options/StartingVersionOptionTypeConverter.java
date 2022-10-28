@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal.builder;
+package io.delta.flink.internal.options;
 
 import java.util.regex.Pattern;
 

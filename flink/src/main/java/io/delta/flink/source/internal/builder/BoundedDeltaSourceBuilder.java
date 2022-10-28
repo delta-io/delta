@@ -50,12 +50,12 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
     }
 
     public SELF versionAsOf(long snapshotVersion) {
-        tryToSetOption(() -> VERSION_AS_OF.setOnConfig(sourceConfiguration, snapshotVersion));
+        this.option(VERSION_AS_OF.key(), snapshotVersion);
         return self();
     }
 
     public SELF timestampAsOf(String snapshotTimestamp) {
-        tryToSetOption(() -> TIMESTAMP_AS_OF.setOnConfig(sourceConfiguration, snapshotTimestamp));
+        this.option(TIMESTAMP_AS_OF.key(), snapshotTimestamp);
         return self();
     }
 

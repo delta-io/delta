@@ -26,6 +26,7 @@ import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.DeltaBucketAssigner;
 import io.delta.flink.sink.internal.DeltaPartitionComputer;
@@ -342,7 +343,8 @@ public class DeltaSinkTestUtils {
                 new BasePathBucketAssigner<>(),
                 OnCheckpointRollingPolicy.build(),
                 DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE,
-                false // mergeSchema
+                false, // mergeSchema
+                new DeltaConnectorConfiguration()
             );
             return builder
                 .withBucketAssigner(getTestPartitionAssigner())

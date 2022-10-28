@@ -5,11 +5,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConfigOption;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
+import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
-import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
-import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
 import org.apache.hadoop.conf.Configuration;
 import org.codehaus.janino.util.Producer;
 import org.junit.jupiter.api.Test;
@@ -100,8 +100,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             () -> getBuilderForColumns(columnNames).build()
         );
 
-        DeltaSourceValidationException exception =
-            (DeltaSourceValidationException) validation.orElseThrow(
+        DeltaOptionValidationException exception =
+            (DeltaOptionValidationException) validation.orElseThrow(
                 () -> new AssertionError(
                     "Builder should throw exception on invalid column names and column types "
                         + "arrays."));
@@ -114,8 +114,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
 
         Optional<Exception> validation = testValidation(() -> getBuilderWithNulls().build());
 
-        DeltaSourceValidationException exception =
-            (DeltaSourceValidationException) validation.orElseThrow(
+        DeltaOptionValidationException exception =
+            (DeltaOptionValidationException) validation.orElseThrow(
                 () -> new AssertionError("Builder should throw exception on null arguments."));
 
         assertThat(exception.getValidationMessages().size(), equalTo(2));
@@ -128,8 +128,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             () -> getBuilderWithMutuallyExcludedOptions().build()
         );
 
-        DeltaSourceValidationException exception =
-            (DeltaSourceValidationException) validation.orElseThrow(
+        DeltaOptionValidationException exception =
+            (DeltaOptionValidationException) validation.orElseThrow(
                 () -> new AssertionError(
                     "Builder should throw exception when using mutually exclusive options."));
 
@@ -143,8 +143,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             () -> getBuilderWithGenericMutuallyExcludedOptions().build()
         );
 
-        DeltaSourceValidationException exception =
-            (DeltaSourceValidationException) validation.orElseThrow(
+        DeltaOptionValidationException exception =
+            (DeltaOptionValidationException) validation.orElseThrow(
                 () -> new AssertionError(
                     "Builder should throw exception when using mutually exclusive options."));
 
@@ -158,8 +158,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             () -> getBuilderWithNullMandatoryFieldsAndExcludedOption().build()
         );
 
-        DeltaSourceValidationException exception =
-            (DeltaSourceValidationException) validation.orElseThrow(
+        DeltaOptionValidationException exception =
+            (DeltaOptionValidationException) validation.orElseThrow(
                 () -> new AssertionError("Builder should throw validation exception."));
 
         assertThat(exception.getValidationMessages().size(), equalTo(2));
@@ -167,8 +167,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
 
     @Test
     public void shouldThrowWhenUsingNotExistingOption() {
-        DeltaSourceValidationException exception =
-            assertThrows(DeltaSourceValidationException.class,
+        DeltaOptionValidationException exception =
+            assertThrows(DeltaOptionValidationException.class,
                 () -> getBuilderAllColumns().option("SomeOption", "SomeValue"));
 
         LOG.info("Option Validation Exception: ", exception);
@@ -178,7 +178,7 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
                 .getValidationMessages()
                 .stream()
                 .allMatch(message -> message.contains(
-                    "Invalid option [SomeOption] used for Delta Source Connector")),
+                    "Invalid option [SomeOption] used for Delta Connector")),
             equalTo(true)
         );
     }
@@ -186,8 +186,8 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
     @Test
     public void shouldThrowWhenSettingInternalOption() {
 
-        DeltaSourceValidationException exception =
-            assertThrows(DeltaSourceValidationException.class,
+        DeltaOptionValidationException exception =
+            assertThrows(DeltaOptionValidationException.class,
                 () -> getBuilderWithOption(
                     DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION, 10L));
 
@@ -198,7 +198,7 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
     public void shouldThrowWhenInapplicableOptionUsed() {
         assertAll(() -> {
             for (DeltaSourceBuilderBase<?, ?> builder : initBuildersWithInapplicableOptions()) {
-                assertThrows(DeltaSourceValidationException.class, builder::build,
+                assertThrows(DeltaOptionValidationException.class, builder::build,
                     "Builder should throw when inapplicable option was used. Config: "
                         + builder.getSourceConfiguration());
             }
@@ -211,7 +211,7 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
         DeltaSourceBuilderBase<?, ?> builder = getBuilderAllColumns();
         builder.option(DeltaSourceOptions.STARTING_VERSION.key(), 10);
 
-        DeltaSourceConfiguration originalConfiguration = builder.getSourceConfiguration();
+        DeltaConnectorConfiguration originalConfiguration = builder.getSourceConfiguration();
 
         // making sure that "startingVersion" option was added and configuration has no
         // "updateCheckIntervalMillis" and "updateCheckDelayMillis" options set.

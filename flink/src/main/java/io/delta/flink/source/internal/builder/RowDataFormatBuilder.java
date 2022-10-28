@@ -6,7 +6,6 @@ import java.util.stream.Collectors;
 
 import io.delta.flink.source.internal.DeltaPartitionFieldExtractor;
 import io.delta.flink.source.internal.DeltaSourceOptions;
-import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import org.apache.flink.formats.parquet.vector.ColumnBatchFactory;
 import org.apache.flink.table.data.RowData;
@@ -70,7 +69,7 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     /**
      * Creates an instance of {@link RowDataFormat}.
      *
-     * @throws DeltaSourceValidationException if invalid arguments were passed to {@link
+     * @throws DeltaOptionValidationException if invalid arguments were passed to {@link
      *                                        RowDataFormatBuilder}. For example null arguments.
      */
     @Override

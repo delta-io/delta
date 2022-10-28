@@ -1,6 +1,6 @@
 package io.delta.flink.source.internal.enumerator.supplier;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTAMP;
@@ -36,7 +36,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
      * snapshot was found.
      */
     @Override
-    public Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration) {
+    public Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration) {
         return getSnapshotFromStartingVersionOption(sourceConfiguration)
             .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration))
             .or(this::getHeadSnapshot)
@@ -44,7 +44,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
     }
 
     private TransitiveOptional<Snapshot> getSnapshotFromStartingVersionOption(
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
 
         String startingVersion = sourceConfiguration.getValue(STARTING_VERSION);
         if (startingVersion != null) {
@@ -61,7 +61,7 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
     }
 
     private TransitiveOptional<Snapshot> getSnapshotFromStartingTimestampOption(
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
         Long startingTimestamp = sourceConfiguration.getValue(STARTING_TIMESTAMP);
         if (startingTimestamp != null) {
             // Delta Lake streaming semantics match timestamps to versions using

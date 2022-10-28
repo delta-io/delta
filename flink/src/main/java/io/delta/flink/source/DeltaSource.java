@@ -1,6 +1,6 @@
 package io.delta.flink.source;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceInternal;
 import io.delta.flink.source.internal.enumerator.SplitEnumeratorProvider;
 import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory;
@@ -108,7 +108,7 @@ public class DeltaSource<T> extends DeltaSourceInternal<T> {
             BulkFormat<T, DeltaSourceSplit> readerFormat,
             SplitEnumeratorProvider splitEnumeratorProvider,
             Configuration configuration,
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
         super(tablePath, readerFormat, splitEnumeratorProvider, configuration, sourceConfiguration);
     }
 

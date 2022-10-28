@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal;
+package io.delta.flink.internal.options;
 
 import java.io.Serializable;
 import java.util.HashMap;
@@ -6,23 +6,22 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import io.delta.flink.source.internal.builder.DeltaConfigOption;
+import io.delta.flink.source.internal.DeltaSourceOptions;
 import org.apache.flink.configuration.ConfigOption;
 
 /**
- * This class keeps {@link DeltaSourceOptions} used for {@link io.delta.flink.source.DeltaSource}
- * instance.
+ * This class keeps options used for delta source and sink connectors.
  *
- * @implNote This class should not be used directly by user but rather indirectly through {@code
- * BaseDeltaSourceStepBuilder} which will have dedicated setter methods for public options.
+ * @implNote This class should not be used directly by user but rather indirectly through source or
+ * sink builders which will have dedicated setter methods for public options.
  */
-public class DeltaSourceConfiguration implements Serializable {
+public class DeltaConnectorConfiguration implements Serializable {
 
     /**
-     * Map of used Options. The map entry key is a string representation of used {@link
-     * DeltaSourceOptions} and the entry map value is equal option's value used for this entry.
+     * Map of used Options. The map entry key is a string representation of used option name
+     * and the entry map value is equal option's value used for this entry.
      *
-     * @implNote The {@code DeltaSourceConfiguration} object will be de/serialized by flink and
+     * @implNote The {@code DeltaConnectorConfiguration} object will be de/serialized by flink and
      * passed to Cluster node during job initialization. For that the map content has to be
      * serializable as well. The {@link ConfigOption} is not a serializable object, and therefore it
      * cannot be used as a map entry key.
@@ -30,9 +29,9 @@ public class DeltaSourceConfiguration implements Serializable {
     private final Map<String, Object> usedSourceOptions = new HashMap<>();
 
     /**
-     * Creates {@link DeltaSourceConfiguration} instance without any options.
+     * Creates {@link DeltaConnectorConfiguration} instance without any options.
      */
-    public DeltaSourceConfiguration() {
+    public DeltaConnectorConfiguration() {
 
     }
 
@@ -40,19 +39,19 @@ public class DeltaSourceConfiguration implements Serializable {
      * Creates a copy of DeltaSourceConfiguration. Changes to the copy object do not influence
      * the state of the original object.
      */
-    public DeltaSourceConfiguration copy() {
-        return new DeltaSourceConfiguration(this.usedSourceOptions);
+    public DeltaConnectorConfiguration copy() {
+        return new DeltaConnectorConfiguration(this.usedSourceOptions);
     }
 
     /**
-     * Creates an instance of {@link DeltaSourceConfiguration} using provided options.
-     * @param options options that should be added to {@link DeltaSourceConfiguration}.
+     * Creates an instance of {@link DeltaConnectorConfiguration} using provided options.
+     * @param options options that should be added to {@link DeltaConnectorConfiguration}.
      */
-    public DeltaSourceConfiguration(Map<String, Object> options) {
+    public DeltaConnectorConfiguration(Map<String, Object> options) {
         this.usedSourceOptions.putAll(options);
     }
 
-    public <T> DeltaSourceConfiguration addOption(DeltaConfigOption<T> name, T value) {
+    public <T> DeltaConnectorConfiguration addOption(DeltaConfigOption<T> name, T value) {
         this.usedSourceOptions.put(name.key(), value);
         return this;
     }

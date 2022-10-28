@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal.builder;
+package io.delta.flink.internal.options;
 
 /**
  * Implementation of {@link OptionTypeConverter} that validates values for

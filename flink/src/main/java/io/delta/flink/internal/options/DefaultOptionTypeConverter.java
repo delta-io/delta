@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal.builder;
+package io.delta.flink.internal.options;
 
 /**
  * An implementation of {@link OptionTypeConverter} interface to convert {@link DeltaConfigOption}

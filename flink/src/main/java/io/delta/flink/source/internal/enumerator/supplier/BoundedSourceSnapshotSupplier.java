@@ -1,6 +1,6 @@
 package io.delta.flink.source.internal.enumerator.supplier;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
 
@@ -34,7 +34,7 @@ public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
      * snapshot was found.
      */
     @Override
-    public Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration) {
+    public Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration) {
         return getSnapshotFromVersionAsOfOption(sourceConfiguration)
             .or(() -> getSnapshotFromTimestampAsOfOption(sourceConfiguration))
             .or(this::getHeadSnapshot)
@@ -42,7 +42,7 @@ public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
     }
 
     private TransitiveOptional<Snapshot> getSnapshotFromVersionAsOfOption(
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
         Long versionAsOf = sourceConfiguration.getValue(DeltaSourceOptions.VERSION_AS_OF);
         if (versionAsOf != null) {
             return TransitiveOptional.ofNullable(deltaLog.getSnapshotForVersionAsOf(versionAsOf));
@@ -51,7 +51,7 @@ public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
     }
 
     private TransitiveOptional<Snapshot> getSnapshotFromTimestampAsOfOption(
-        DeltaSourceConfiguration sourceConfiguration) {
+        DeltaConnectorConfiguration sourceConfiguration) {
         Long timestampAsOf = sourceConfiguration.getValue(DeltaSourceOptions.TIMESTAMP_AS_OF);
         if (timestampAsOf != null) {
             return TransitiveOptional.ofNullable(

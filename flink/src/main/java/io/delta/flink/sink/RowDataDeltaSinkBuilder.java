@@ -18,9 +18,12 @@
 
 package io.delta.flink.sink;
 
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
+import io.delta.flink.internal.options.OptionValidator;
 import io.delta.flink.sink.internal.DeltaBucketAssigner;
 import io.delta.flink.sink.internal.DeltaPartitionComputer;
 import io.delta.flink.sink.internal.DeltaSinkBuilder;
+import io.delta.flink.sink.internal.DeltaSinkOptions;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.formats.parquet.ParquetWriterFactory;
 import org.apache.flink.formats.parquet.row.ParquetRowDataBuilder;
@@ -71,6 +74,16 @@ public class RowDataDeltaSinkBuilder {
     private String[] partitionColumns = {};
 
     /**
+     * Stores sink configuration options.
+     */
+    private final DeltaConnectorConfiguration sinkConfiguration = new DeltaConnectorConfiguration();
+
+    /**
+     * Validates sink configuration options.
+     */
+    private final OptionValidator optionValidator;
+
+    /**
      * Creates instance of the builder for {@link DeltaSink}.
      *
      * @param tableBasePath path to a Delta table
@@ -90,6 +103,8 @@ public class RowDataDeltaSinkBuilder {
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
+        this.optionValidator = new OptionValidator(tableBasePath,
+            sinkConfiguration, DeltaSinkOptions.USER_FACING_SINK_OPTIONS);
     }
 
     /**
@@ -124,6 +139,39 @@ public class RowDataDeltaSinkBuilder {
         return this;
     }
 
+
+    /**
+     * Sets a configuration option.
+     */
+    public RowDataDeltaSinkBuilder option(String optionName, String optionValue) {
+        optionValidator.option(optionName, optionValue);
+        return this;
+    }
+
+    /**
+     * Sets a configuration option.
+     */
+    public RowDataDeltaSinkBuilder option(String optionName, boolean optionValue) {
+        optionValidator.option(optionName, optionValue);
+        return this;
+    }
+
+    /**
+     * Sets a configuration option.
+     */
+    public RowDataDeltaSinkBuilder option(String optionName, int optionValue) {
+        optionValidator.option(optionName, optionValue);
+        return this;
+    }
+
+    /**
+     * Sets a configuration option.
+     */
+    public RowDataDeltaSinkBuilder option(String optionName, long optionValue) {
+        optionValidator.option(optionName, optionValue);
+        return this;
+    }
+
     /**
      * Creates the actual sink.
      *
@@ -145,7 +193,8 @@ public class RowDataDeltaSinkBuilder {
                 resolveBucketAssigner(),
                 OnCheckpointRollingPolicy.build(),
                 rowType,
-                mergeSchema
+                mergeSchema,
+                sinkConfiguration
             );
         return new DeltaSink<>(sinkBuilder);
     }

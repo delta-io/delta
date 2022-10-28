@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal.builder;
+package io.delta.flink.internal.options;
 
 import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
 import org.apache.flink.util.StringUtils;

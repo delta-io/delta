@@ -4,11 +4,11 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import io.delta.flink.internal.options.DeltaConfigOption;
+import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
-import io.delta.flink.source.internal.builder.DeltaConfigOption;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import io.delta.flink.source.internal.enumerator.supplier.TimestampFormatConverter;
-import io.delta.flink.source.internal.exceptions.DeltaSourceValidationException;
 import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.core.fs.Path;
@@ -135,8 +135,8 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
         // execute "set" or "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception
@@ -188,7 +188,6 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
 
     @Test
     public void shouldThrowOnSourceWithInvalidTimestampAsOf() {
-
         String timestampAsOfKey = DeltaSourceOptions.TIMESTAMP_AS_OF.key();
         List<Executable> builders = Arrays.asList(
             // set via dedicated method
@@ -196,15 +195,15 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
 
             // set via generic option(int)
             () -> getBuilderAllColumns()
-                .option(timestampAsOfKey, 10),
+               .option(timestampAsOfKey, 10),
 
             // set via generic option(long)
             () -> getBuilderAllColumns()
-                .option(timestampAsOfKey, 10L),
+               .option(timestampAsOfKey, 10L),
 
             // set via generic option(boolean)
             () -> getBuilderAllColumns()
-                .option(timestampAsOfKey, true),
+               .option(timestampAsOfKey, true),
 
             // set via generic option(String)
             () -> getBuilderAllColumns().option(timestampAsOfKey, "not_a_date")
@@ -213,8 +212,8 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
         // execute "set" or "option" on builder with invalid value.
         assertAll(() -> {
             for (Executable builderExecutable : builders) {
-                DeltaSourceValidationException exception =
-                    assertThrows(DeltaSourceValidationException.class, builderExecutable);
+                DeltaOptionValidationException exception =
+                    assertThrows(DeltaOptionValidationException.class, builderExecutable);
                 LOG.info("Option Validation Exception: ", exception);
                 assertThat(
                     exception

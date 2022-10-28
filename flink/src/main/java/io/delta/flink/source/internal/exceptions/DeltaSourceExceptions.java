@@ -2,7 +2,6 @@ package io.delta.flink.source.internal.exceptions;
 
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Collections;
 
 import io.delta.flink.source.internal.file.AddFileEnumeratorContext;
 import org.apache.flink.core.fs.Path;
@@ -134,17 +133,6 @@ public final class DeltaSourceExceptions {
                 action.getClass(), snapshotVersion, tablePath));
     }
 
-    public static DeltaSourceValidationException invalidOptionNameException(
-        String tablePath,
-        String invalidOption) {
-
-        return new DeltaSourceValidationException(
-            tablePath,
-            Collections.singletonList(
-                String.format("Invalid option [%s] used for Delta Source Connector.",
-                    invalidOption)));
-    }
-
     public static DeltaSourceException notPartitionedTableException(String columnName) {
         return new DeltaSourceException(
             String.format(
@@ -161,12 +149,4 @@ public final class DeltaSourceExceptions {
                 partitionName, expectedPartitionColumnNames));
     }
 
-    public static DeltaSourceValidationException optionValidationException(
-            String tablePath,
-            Exception e) {
-        return new DeltaSourceValidationException(
-            tablePath,
-            Collections.singletonList(e.getClass() + " - " + e.getMessage())
-        );
-    }
 }

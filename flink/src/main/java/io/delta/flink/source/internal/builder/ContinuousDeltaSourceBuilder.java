@@ -59,36 +59,32 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
     }
 
     public SELF startingVersion(String startingVersion) {
-        tryToSetOption(() -> STARTING_VERSION.setOnConfig(sourceConfiguration, startingVersion));
+        this.option(STARTING_VERSION.key(), startingVersion);
         return self();
     }
 
     public SELF startingVersion(long startingVersion) {
-        tryToSetOption(() -> STARTING_VERSION.setOnConfig(sourceConfiguration, startingVersion));
+        this.option(STARTING_VERSION.key(), startingVersion);
         return self();
     }
 
     public SELF startingTimestamp(String startingTimestamp) {
-        tryToSetOption(
-            () -> STARTING_TIMESTAMP.setOnConfig(sourceConfiguration, startingTimestamp)
-        );
+        this.option(STARTING_TIMESTAMP.key(), startingTimestamp);
         return self();
     }
 
     public SELF updateCheckIntervalMillis(long updateCheckInterval) {
-        tryToSetOption(
-            () -> UPDATE_CHECK_INTERVAL.setOnConfig(sourceConfiguration, updateCheckInterval)
-        );
+        this.option(UPDATE_CHECK_INTERVAL.key(), updateCheckInterval);
         return self();
     }
 
     public SELF ignoreDeletes(boolean ignoreDeletes) {
-        tryToSetOption(() -> IGNORE_DELETES.setOnConfig(sourceConfiguration, ignoreDeletes));
+        this.option(IGNORE_DELETES.key(), ignoreDeletes);
         return self();
     }
 
     public SELF ignoreChanges(boolean ignoreChanges) {
-        tryToSetOption(() -> IGNORE_CHANGES.setOnConfig(sourceConfiguration, ignoreChanges));
+        this.option(IGNORE_CHANGES.key(), ignoreChanges);
         return self();
     }
 

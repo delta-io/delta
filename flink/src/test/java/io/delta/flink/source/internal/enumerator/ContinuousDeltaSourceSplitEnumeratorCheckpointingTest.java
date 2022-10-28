@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import static java.util.Collections.singletonMap;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
@@ -50,7 +50,7 @@ import io.delta.standalone.actions.AddFile;
  * org.apache.flink.api.connector.source.SplitEnumerator#snapshotState(long)} contains a valid
  * {@link Snapshot} version so enumerator can be recovered using this checkpoint via {@link
  * ContinuousSplitEnumeratorProvider#createEnumeratorForCheckpoint(DeltaEnumeratorStateCheckpoint,
- * Configuration, SplitEnumeratorContext, DeltaSourceConfiguration)} method and resume work from
+ * Configuration, SplitEnumeratorContext, DeltaConnectorConfiguration)} method and resume work from
  * correct snapshot version.
  */
 @RunWith(MockitoJUnitRunner.class)
@@ -141,7 +141,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
         TestingSplitEnumeratorContext<DeltaSourceSplit> enumContext =
             new TestingSplitEnumeratorContext<>(1);
 
-        DeltaSourceConfiguration sourceConfiguration = new DeltaSourceConfiguration(
+        DeltaConnectorConfiguration sourceConfiguration = new DeltaConnectorConfiguration(
             singletonMap(DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
                 headSnapshot.getVersion()));
 
@@ -172,7 +172,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
         // reset enumContext and restore enumerator from checkpoint
         enumContext = new TestingSplitEnumeratorContext<>(1);
         splitEnumeratorProvider.createEnumeratorForCheckpoint(checkpoint,
-                DeltaTestUtils.getHadoopConf(), enumContext, new DeltaSourceConfiguration())
+                DeltaTestUtils.getHadoopConf(), enumContext, new DeltaConnectorConfiguration())
             .start();
 
         enumContext.getExecutorService().triggerPeriodicScheduledTasks();
@@ -208,7 +208,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
         TestingSplitEnumeratorContext<DeltaSourceSplit> enumContext =
             new TestingSplitEnumeratorContext<>(1);
 
-        DeltaSourceConfiguration sourceConfiguration = new DeltaSourceConfiguration();
+        DeltaConnectorConfiguration sourceConfiguration = new DeltaConnectorConfiguration();
         sourceConfiguration.addOption(DeltaSourceOptions.STARTING_VERSION, "latest");
         sourceConfiguration.addOption(
             DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION,
@@ -239,7 +239,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
         // reset enumContext and restore enumerator from checkpoint
         enumContext = new TestingSplitEnumeratorContext<>(1);
         splitEnumeratorProvider.createEnumeratorForCheckpoint(checkpoint,
-                DeltaTestUtils.getHadoopConf(), enumContext, new DeltaSourceConfiguration())
+                DeltaTestUtils.getHadoopConf(), enumContext, new DeltaConnectorConfiguration())
             .start();
 
         enumContext.getExecutorService().triggerPeriodicScheduledTasks();
@@ -268,7 +268,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
                 tablePath,
                 DeltaTestUtils.getHadoopConf(),
                 new TestingSplitEnumeratorContext<>(1),
-                new DeltaSourceConfiguration(
+                new DeltaConnectorConfiguration(
                     singletonMap(DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
                         headSnapshot.getVersion()))
             );
@@ -288,7 +288,7 @@ public class ContinuousDeltaSourceSplitEnumeratorCheckpointingTest {
                 checkpoint,
                 DeltaTestUtils.getHadoopConf(),
                 enumContext,
-                new DeltaSourceConfiguration(
+                new DeltaConnectorConfiguration(
                     singletonMap(DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION.key(),
                     headSnapshot.getVersion()))
             );

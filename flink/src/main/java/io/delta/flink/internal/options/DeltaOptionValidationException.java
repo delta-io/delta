@@ -1,13 +1,14 @@
-package io.delta.flink.source.internal.exceptions;
+package io.delta.flink.internal.options;
 
 import java.util.Collection;
 import java.util.Collections;
 
+import org.apache.flink.core.fs.Path;
+
 /**
- * Exception throw during validation of Delta source builder. It contains all validation error
- * messages that occurred during this validation.
+ * Exception throw during validation of Delta connector options.
  */
-public class DeltaSourceValidationException extends RuntimeException {
+public class DeltaOptionValidationException extends RuntimeException {
 
     /**
      * Path to Delta table for which exception was thrown. Can be null if exception was thrown on
@@ -20,10 +21,17 @@ public class DeltaSourceValidationException extends RuntimeException {
      */
     private final Collection<String> validationMessages;
 
-    public DeltaSourceValidationException(String tablePath, Collection<String> validationMessages) {
-        this.tablePath = String.valueOf(tablePath);
+    public DeltaOptionValidationException(Path tablePath, Collection<String> validationMessages) {
+        this(String.valueOf(tablePath), validationMessages);
+    }
+
+    public DeltaOptionValidationException(
+            String tablePathString,
+            Collection<String> validationMessages) {
+        this.tablePath = tablePathString;
         this.validationMessages =
             (validationMessages == null) ? Collections.emptyList() : validationMessages;
+
     }
 
     @Override
@@ -31,18 +39,21 @@ public class DeltaSourceValidationException extends RuntimeException {
 
         String validationMessages = String.join(System.lineSeparator(), this.validationMessages);
 
-        return "Invalid Delta Source definition detected."
+        return "Invalid Delta connector definition detected."
             + System.lineSeparator()
             + "The reported issues are:"
             + System.lineSeparator()
             + validationMessages;
     }
 
+    /** Table path for this exception. */
     public String getTablePath() {
         return tablePath;
     }
 
+    /** Detailed validation messages for the cause of this exception. */
     public Collection<String> getValidationMessages() {
         return Collections.unmodifiableCollection(this.validationMessages);
     }
+
 }

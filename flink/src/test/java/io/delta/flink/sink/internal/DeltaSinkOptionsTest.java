@@ -1,4 +1,4 @@
-package io.delta.flink.source.internal;
+package io.delta.flink.sink.internal;
 
 import java.lang.reflect.Field;
 import java.util.HashSet;
@@ -8,23 +8,23 @@ import static java.lang.reflect.Modifier.isStatic;
 
 import io.delta.flink.internal.options.DeltaConfigOption;
 import org.apache.flink.configuration.ConfigOption;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 
-public class DeltaSourceOptionsTest {
+public class DeltaSinkOptionsTest {
 
     /**
      * This test checks if all ConfigOption fields from DeltaSourceOptions class were added to
-     * {@link DeltaSourceOptions#USER_FACING_SOURCE_OPTIONS} or
-     * {@link DeltaSourceOptions#INNER_SOURCE_OPTIONS} map.
+     * {@link DeltaSinkOptions#USER_FACING_SINK_OPTIONS} or
+     * {@link DeltaSinkOptions#INNER_SINK_OPTIONS} map.
      * <p>
      * This tests uses Java Reflection to get all static, public fields of type {@link ConfigOption}
-     * from {@link DeltaSourceOptions}.
+     * from {@link DeltaSinkOptions}.
      */
     @Test
     public void testAllOptionsAreCategorized() {
-        Field[] declaredFields = DeltaSourceOptions.class.getDeclaredFields();
+        Field[] declaredFields = DeltaSinkOptions.class.getDeclaredFields();
         Set<Field> configOptionFields = new HashSet<>();
         for (Field field : declaredFields) {
             if (isPublicStatic(field) && isConfigOptionField(field)) {
@@ -33,12 +33,11 @@ public class DeltaSourceOptionsTest {
         }
 
         assertThat(
-            "Probably not all ConfigOption Fields were added to DeltaSourceOptions "
-                + "VALID_SOURCE_OPTIONS or INNER_SOURCE_OPTIONS map",
+            "Probably not all ConfigOption Fields were added to DeltaSinkOptions ",
             configOptionFields.size(),
             equalTo(
-                DeltaSourceOptions.USER_FACING_SOURCE_OPTIONS.size()
-                + DeltaSourceOptions.INNER_SOURCE_OPTIONS.size()));
+                DeltaSinkOptions.USER_FACING_SINK_OPTIONS.size()
+                + DeltaSinkOptions.INNER_SINK_OPTIONS.size()));
     }
 
     private boolean isConfigOptionField(Field field) {

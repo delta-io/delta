@@ -1,5 +1,6 @@
 package io.delta.flink.source.internal;
 
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.enumerator.SplitEnumeratorProvider;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaPendingSplitsCheckpointSerializer;
@@ -88,13 +89,13 @@ public class DeltaSourceInternal<T>
     /**
      * Source Options used for {@code DeltaSourceInternal} creation.
      */
-    private final DeltaSourceConfiguration sourceConfiguration;
+    private final DeltaConnectorConfiguration sourceConfiguration;
 
     // ---------------------------------------------------------------------------------------------
 
     protected DeltaSourceInternal(Path tablePath, BulkFormat<T, DeltaSourceSplit> readerFormat,
         SplitEnumeratorProvider splitEnumeratorProvider, Configuration configuration,
-        DeltaSourceConfiguration sourceConfiguration) {
+        DeltaConnectorConfiguration sourceConfiguration) {
 
         this.tablePath = tablePath;
         this.readerFormat = readerFormat;
@@ -154,7 +155,7 @@ public class DeltaSourceInternal<T>
     }
 
     @VisibleForTesting
-    public DeltaSourceConfiguration getSourceConfiguration() {
+    public DeltaConnectorConfiguration getSourceConfiguration() {
         return sourceConfiguration;
     }
 

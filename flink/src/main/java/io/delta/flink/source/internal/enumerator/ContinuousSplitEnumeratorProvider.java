@@ -4,7 +4,7 @@ import java.util.Collection;
 import java.util.Collections;
 import static java.util.Collections.emptyList;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.enumerator.monitor.TableMonitor;
 import io.delta.flink.source.internal.enumerator.processor.ActionProcessor;
@@ -58,7 +58,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
     public ContinuousDeltaSourceSplitEnumerator createInitialStateEnumerator(
             Path deltaTablePath, Configuration configuration,
             SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
 
         DeltaLog deltaLog =
             DeltaLog.forTable(configuration, SourceUtils.pathToString(deltaTablePath));
@@ -83,7 +83,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
             DeltaEnumeratorStateCheckpoint<DeltaSourceSplit> checkpoint,
             Configuration configuration,
             SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-            DeltaSourceConfiguration sourceConfiguration) {
+            DeltaConnectorConfiguration sourceConfiguration) {
 
         ContinuousTableProcessor tableProcessor =
             createTableProcessorFromCheckpoint(checkpoint, configuration, enumContext,
@@ -110,7 +110,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
     private ContinuousTableProcessor createTableProcessorFromCheckpoint(
         DeltaEnumeratorStateCheckpoint<DeltaSourceSplit> checkpoint, Configuration configuration,
         SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration) {
+        DeltaConnectorConfiguration sourceConfiguration) {
         long snapshotVersion = checkpoint.getSnapshotVersion();
 
         Path deltaTablePath = checkpoint.getDeltaTablePath();
@@ -137,7 +137,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
      */
     private ContinuousTableProcessor createTableProcessor(
         Path deltaTablePath, SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration, DeltaLog deltaLog, Snapshot snapshot) {
+        DeltaConnectorConfiguration sourceConfiguration, DeltaLog deltaLog, Snapshot snapshot) {
 
         if (isChangeStreamOnly(sourceConfiguration)) {
             return
@@ -152,7 +152,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
 
     private ChangesProcessor createChangesProcessor(
         Path deltaTablePath, SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration, DeltaLog deltaLog,
+        DeltaConnectorConfiguration sourceConfiguration, DeltaLog deltaLog,
         long monitorSnapshotVersion) {
 
         ActionProcessor actionProcessor = new ActionProcessor(
@@ -170,7 +170,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
 
     private ContinuousTableProcessor createSnapshotAndChangesProcessor(Path deltaTablePath,
         SplitEnumeratorContext<DeltaSourceSplit> enumContext,
-        DeltaSourceConfiguration sourceConfiguration, DeltaLog deltaLog, Snapshot snapshot) {
+        DeltaConnectorConfiguration sourceConfiguration, DeltaLog deltaLog, Snapshot snapshot) {
 
         // Since this is the processor for both snapshot and changes, the version for which we
         // should start monitoring for changes is snapshot.version + 1. We don't want to get
@@ -191,7 +191,7 @@ public class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvide
         return Boundedness.CONTINUOUS_UNBOUNDED;
     }
 
-    private boolean isChangeStreamOnly(DeltaSourceConfiguration sourceConfiguration) {
+    private boolean isChangeStreamOnly(DeltaConnectorConfiguration sourceConfiguration) {
         return
             sourceConfiguration.hasOption(STARTING_VERSION) ||
                 sourceConfiguration.hasOption(STARTING_TIMESTAMP);

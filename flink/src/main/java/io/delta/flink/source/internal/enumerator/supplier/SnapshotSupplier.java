@@ -1,6 +1,6 @@
 package io.delta.flink.source.internal.enumerator.supplier;
 
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
+import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
 
 import io.delta.standalone.DeltaLog;
@@ -8,7 +8,7 @@ import io.delta.standalone.Snapshot;
 
 /**
  * This class abstract's logic needed to acquirer Delta table {@link Snapshot} based on {@link
- * DeltaSourceConfiguration} and any other implementation specific logic.
+ * DeltaConnectorConfiguration} and any other implementation specific logic.
  */
 public abstract class SnapshotSupplier {
 
@@ -25,7 +25,7 @@ public abstract class SnapshotSupplier {
      * @return A {@link Snapshot} instance acquired from {@link #deltaLog}. Every implementation of
      * {@link SnapshotSupplier} class can have its own rules about how snapshot should be acquired.
      */
-    public abstract Snapshot getSnapshot(DeltaSourceConfiguration sourceConfiguration);
+    public abstract Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration);
 
     /**
      * A helper method that returns the latest {@link Snapshot} at moment when this method was
