@@ -776,6 +776,6 @@ trait DeltaVacuumSuiteBase extends QueryTest
 class DeltaVacuumSuite
   extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   override def sparkConf: SparkConf = {
-    super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
+    super.sparkConf.set("spark.databricks.delta.vacuum.fileListing.parallelism", "2")
   }
 }
