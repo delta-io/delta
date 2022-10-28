@@ -13,8 +13,8 @@ jobs:
       - name: install java
         uses: actions/setup-java@v2
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: "zulu"
+          java-version: "8"
       - name: Cache Scala, SBT
         uses: actions/cache@v2
         with:
