@@ -399,8 +399,10 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   }
 
   test("convert a streaming parquet path: ignore metadata") {
-    val stream = MemoryStream[Int]
-    val df = stream.toDS().toDF("col1")
+    for (confKey <- List("spark.delta.convert.useMetadataLog",
+                         "spark.databricks.delta.convert.useMetadataLog")) {
+      val stream = MemoryStream[Int]
+      val df = stream.toDS().toDF("col1")
 
     withTempDir { outputDir =>
       val checkpoint = new File(outputDir, "_check").toString
@@ -728,14 +730,17 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   }
 
   test("can fetch global configs") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      val deltaLog = DeltaLog.forTable(spark, path)
-      withSQLConf("spark.databricks.delta.properties.defaults.appendOnly" -> "true") {
-        writeFiles(path, simpleDF.coalesce(1))
-        convertToDelta(s"parquet.`$path`")
+    for (confKey <- List("spark.delta.properties.defaults.appendOnly",
+                         "spark.databricks.delta.properties.defaults.appendOnly")) {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        val deltaLog = DeltaLog.forTable(spark, path)
+        withSQLConf(confKey -> "true") {
+          writeFiles(path, simpleDF.coalesce(1))
+          convertToDelta(s"parquet.`$path`")
+        }
+        assert(deltaLog.snapshot.metadata.configuration("delta.appendOnly") === "true")
       }
-      assert(deltaLog.snapshot.metadata.configuration("delta.appendOnly") === "true")
     }
   }
 

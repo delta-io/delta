@@ -95,6 +95,12 @@
     ],
     "sqlState" : "429BQ"
   },
+  "DELTA_AMBIGUOUS_CONFIGURATIONS" : {
+    "message" : [
+      "Ambiguous configurations were specified: <key>=<value>, <key>=<value>"
+    ],
+    "sqlState" : "25000"
+  },
   "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
     "message" : [
       "Ambiguous partition column <column> can be <colMatches>."
