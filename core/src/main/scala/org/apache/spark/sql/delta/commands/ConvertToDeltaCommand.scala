@@ -75,8 +75,14 @@ abstract class ConvertToDeltaCommandBase(
   protected lazy val icebergEnabled: Boolean =
     conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
 
-  protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
-    lowerCaseProvider == "parquet" || (icebergEnabled && lowerCaseProvider == "iceberg")
+  protected def isParquetPathProvider(provider: String): Boolean =
+    provider.equalsIgnoreCase("provider")
+
+  protected def isIcebergPathProvider(provider: String): Boolean =
+    icebergEnabled && provider.equalsIgnoreCase("iceberg")
+
+  protected def isSupportedPathTableProvider(provider: String): Boolean = {
+    isParquetPathProvider(provider) || isIcebergPathProvider(provider)
   }
 
   override def run(spark: SparkSession): Seq[Row] = {
@@ -198,7 +204,8 @@ abstract class ConvertToDeltaCommandBase(
   override def isPathIdentifier(tableIdent: TableIdentifier): Boolean = {
     val provider = tableIdent.database.getOrElse("")
     // If db doesnt exist or db is called delta/tahoe then check if path exists
-    (DeltaSourceUtils.isDeltaDataSourceName(provider) || isSupportedProvider(provider)) &&
+    (DeltaSourceUtils.isDeltaDataSourceName(provider) ||
+      isSupportedPathTableProvider(provider)) &&
       new Path(tableIdent.table).isAbsolute
   }
 
@@ -288,11 +295,10 @@ abstract class ConvertToDeltaCommandBase(
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
         case checkProvider
           if target.catalogTable.exists(ConvertToDeltaCommand.isHiveStyleParquetTable) ||
-            checkProvider.equalsIgnoreCase("parquet") =>
+            isParquetPathProvider(checkProvider) =>
           ConvertToDeltaCommand.getParquetTable(
             spark, target.targetDir, target.catalogTable, partitionSchema)
-        case checkProvider
-          if icebergEnabled && checkProvider.equalsIgnoreCase("iceberg") =>
+        case checkProvider if isIcebergPathProvider(checkProvider) =>
           if (partitionSchema.isDefined) {
             throw DeltaErrors.partitionSchemaInIcebergTables
           }

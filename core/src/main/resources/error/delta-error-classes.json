@@ -1204,7 +1204,7 @@
   },
   "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES" : {
     "message" : [
-      "Partition schema cannot be specified when converting Iceberg tables"
+      "Partition schema cannot be specified when converting Iceberg tables. It is automatically inferred."
     ],
     "sqlState" : "42000"
   },

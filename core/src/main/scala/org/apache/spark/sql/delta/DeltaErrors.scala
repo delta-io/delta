@@ -2454,8 +2454,7 @@ trait DeltaErrorsBase
   }
 
   def partitionSchemaInIcebergTables: Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES", messageParameters = null)
+    new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
   }
 }
 
