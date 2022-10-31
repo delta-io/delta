@@ -76,7 +76,7 @@ abstract class ConvertToDeltaCommandBase(
     conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
 
   protected def isParquetPathProvider(provider: String): Boolean =
-    provider.equalsIgnoreCase("provider")
+    provider.equalsIgnoreCase("parquet")
 
   protected def isIcebergPathProvider(provider: String): Boolean =
     icebergEnabled && provider.equalsIgnoreCase("iceberg")
