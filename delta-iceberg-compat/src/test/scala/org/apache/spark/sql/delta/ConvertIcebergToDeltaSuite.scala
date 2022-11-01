@@ -135,6 +135,33 @@ trait ConvertIcebergToDeltaSuiteBase
   }
 
 
+  test("missing iceberg library should throw a sensical error") {
+    val validIcebergSparkTableClassPath = ConvertToDeltaCommand.icebergSparkTableClassPath
+    val validIcebergLibTableClassPath = ConvertToDeltaCommand.icebergLibTableClassPath
+
+    Seq(
+      () => {
+        ConvertToDeltaCommand.icebergSparkTableClassPath = validIcebergSparkTableClassPath + "2"
+      }).foreach { makeInvalid =>
+      try {
+        makeInvalid()
+        withTable(table) {
+          spark.sql(
+            s"""CREATE TABLE $table (`1 id` bigint, 2data string)
+               |USING iceberg PARTITIONED BY (2data)""".stripMargin)
+          spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+          val e = intercept[DeltaIllegalStateException] {
+            convert(s"iceberg.`$tablePath`")
+          }
+          assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
+        }
+      } finally {
+        ConvertToDeltaCommand.icebergSparkTableClassPath = validIcebergSparkTableClassPath
+        ConvertToDeltaCommand.icebergLibTableClassPath = validIcebergLibTableClassPath
+      }
+    }
+  }
+
   test("non-parquet table") {
     withTable(table) {
       spark.sql(

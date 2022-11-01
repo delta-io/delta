@@ -747,7 +747,12 @@ class MetadataLogFileManifest(
 }
 
 trait ConvertToDeltaCommandUtils extends DeltaLogging {
+
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+
+  var icebergSparkTableClassPath = "org.apache.spark.sql.delta.IcebergTable"
+  var icebergLibTableClassPath = "org.apache.iceberg.Table"
+
   def createAddFile(
       targetFile: ConvertTargetFile,
       basePath: Path,
@@ -869,11 +874,11 @@ trait ConvertToDeltaCommandUtils extends DeltaLogging {
       sparkTable: Option[Table],
       tableSchema: Option[StructType]): ConvertTargetTable = {
     try {
-      val clazz = Utils.classForName("org.apache.spark.sql.delta.IcebergTable")
+      val clazz = Utils.classForName(icebergSparkTableClassPath)
       if (sparkTable.isDefined) {
         val constFromTable = clazz.getConstructor(
           classOf[SparkSession],
-          Utils.classForName("org.apache.iceberg.Table"),
+          Utils.classForName(icebergLibTableClassPath),
           classOf[Option[StructType]])
         val method = sparkTable.get.getClass.getMethod("table")
         constFromTable.newInstance(spark, method.invoke(sparkTable.get), tableSchema)
@@ -884,10 +889,9 @@ trait ConvertToDeltaCommandUtils extends DeltaLogging {
         constFromPath.newInstance(spark, baseDir, tableSchema)
       }
     } catch {
-      case e: InvocationTargetException =>
+      case e @ (_: InvocationTargetException | _: ClassNotFoundException) =>
         logError(s"Got error when creating an Iceberg Converter", e)
-        // Unwrap better error messages
-        throw e.getCause
+        throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
     }
   }
 }
