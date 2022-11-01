@@ -82,7 +82,8 @@ trait DeltaErrorsSuiteBase
     "sourceNotDeterministicInMergeException" ->
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
     "columnMappingAdviceMessage" ->
-      DeltaErrors.columnRenameNotSupported
+      DeltaErrors.columnRenameNotSupported,
+    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable())
   )
 
   def otherMessagesToTest: Map[String, String] = Map(

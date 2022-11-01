@@ -948,8 +948,8 @@
   },
   "DELTA_MISSING_ICEBERG_CLASS" : {
     "message" : [
-      "Iceberg class path is not found. Please ensure Delta Iceberg support is installed.",
-      "Pleas refer to <docLink> for more details."
+      "Iceberg class was not found. Please ensure Delta Iceberg support is installed.",
+      "Please refer to <docLink> for more details."
     ]
   },
   "DELTA_MISSING_NOT_NULL_COLUMN_VALUE" : {
