@@ -2462,7 +2462,8 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_MISSING_ICEBERG_CLASS",
       messageParameters = Array(
-        generateDocsLink(sparkConf, "delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
   }
 }
