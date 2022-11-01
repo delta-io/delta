@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
@@ -889,9 +890,13 @@ trait ConvertToDeltaCommandUtils extends DeltaLogging {
         constFromPath.newInstance(spark, baseDir, tableSchema)
       }
     } catch {
-      case e @ (_: InvocationTargetException | _: ClassNotFoundException) =>
-        logError(s"Got error when creating an Iceberg Converter", e)
+      case e: ClassNotFoundException =>
+        logError(s"Failed to find Iceberg class", e)
         throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
+      case e: InvocationTargetException =>
+        logError(s"Got error when creating an Iceberg Converter", e)
+        // The better error is within the cause
+        throw ExceptionUtils.getRootCause(e)
     }
   }
 }
