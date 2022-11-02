@@ -98,7 +98,8 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage"
+    "columnMappingAdviceMessage",
+    "icebergClassMissing"
   )
 }
 
@@ -2451,6 +2452,19 @@ trait DeltaErrorsBase
         DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]"),
         unsupportedOptions.mkString(","))
     )
+  }
+
+  def partitionSchemaInIcebergTables: Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
+  }
+
+  def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_ICEBERG_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
   }
 }
 

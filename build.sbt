@@ -195,6 +195,21 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
+lazy val deltaIceberg = (project in file("delta-iceberg"))
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .settings (
+    name := "delta-iceberg",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq( {
+        val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
+          .cross(CrossVersion.binary)
+      }
+    )
+  )
+
 /**
  * Get list of python files and return the mapping between source files and target paths
  * in the generated package JAR.
