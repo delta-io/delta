@@ -881,7 +881,16 @@ Field Name | Description
 name| Name of this (possibly nested) column
 type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
 nullable| Boolean denoting whether this field can be null
-metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that clients must handle when writing to a table.
+metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [metadata](#metadata) for more information on column level metadata that clients must handle when writing to a table.
+
+### metadata
+This field include column mapping information to avoid any column naming restrictions.
+
+Field Name | Description
+-|-
+id| a unique 32 bit integer
+PhysicalName| Always "String"
+mode | `none`, `id` or `name`
 
 ### Array Type
 
