@@ -194,10 +194,10 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
-lazy val deltaIcebergCompat = (project in file("delta-iceberg-compat"))
+lazy val deltaIceberg = (project in file("delta-iceberg"))
   .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
-    name := "delta-iceberg-compat",
+    name := "delta-iceberg",
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
