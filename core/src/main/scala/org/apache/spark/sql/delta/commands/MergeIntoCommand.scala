@@ -827,14 +827,6 @@ case class MergeIntoCommand(
     // Write to Delta
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
-      .filter {
-        // In some cases (e.g. delete with empty source, or empty target, or on disjoint tables)
-        // we can write out an empty outputDF. This is hard to catch before the write without
-        // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
-        // actually add rows or when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
-        case _ => true
-      }
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)

@@ -405,16 +405,7 @@ class DeleteMetricsSuite extends QueryTest
       testConfig = testConfig
     )
 
-    // TODO: for some reason, when the table is not partitioned and CDF is disabled, the operation
-    //       metric 'numAddedFiles' is 1 instead of 0.
-    var shouldFail = !testConfig.partitioned && !testConfig.cdfEnabled
-    if (shouldFail) {
-      assertThrows[TestFailedException] {
-        executeTest
-      }
-    } else {
-      executeTest
-    }
+    executeTest
   }
 
   testDeleteMetrics("delete one row per file") { testConfig =>
