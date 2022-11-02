@@ -408,11 +408,6 @@ The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-L
 
 ## Frequently asked questions (FAQ)
 
-#### Can I use this connector to read data from a Delta table?
-
-No, currently we are supporting only writing to a Delta table. A `DeltaSource` API with the support for reading data from
-Delta tables will be added in future releases.
-
 #### Can I use this connector to append data to a Delta table?
 
 Yes, you can use this connector to append data to either an existing or a new Delta table (if there is no existing
