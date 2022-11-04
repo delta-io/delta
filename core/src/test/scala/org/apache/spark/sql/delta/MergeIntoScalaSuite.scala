@@ -586,8 +586,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       tgt = target,
       src = source,
       cond = condition,
-      MergeClause(isMatched = true, condition = null, action = s"UPDATE SET $update"),
-      MergeClause(isMatched = false, condition = null, action = s"INSERT $insert"))
+      this.update(set = update),
+      this.insert(values = insert))
   }
 
   override protected def executeMerge(
@@ -615,11 +615,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       }
     }
 
-    def buildClause(
-      clause: MergeClause,
-      mergeBuilder: DeltaMergeBuilder): DeltaMergeBuilder = {
-
-      if (clause.isMatched) {
+    def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
+      : DeltaMergeBuilder = clause match {
+      case _: MatchedClause =>
         val actionBuilder: DeltaMergeMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenMatched(clause.condition)
           else mergeBuilder.whenMatched()
@@ -637,7 +635,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
             actionBuilder.updateExpr(setColExprPairs)
           }
         }
-      } else {                                        // INSERT clause
+      case _: NotMatchedClause =>                     // INSERT clause
         val actionBuilder: DeltaMergeNotMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
           else mergeBuilder.whenNotMatched()
@@ -649,7 +647,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           actionBuilder.insertExpr(valueColExprsPairs)
         }
       }
-    }
 
     val deltaTable = {
       val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)

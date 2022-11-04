@@ -5000,24 +5000,34 @@ class ComplexTestUDT extends UserDefinedType[ComplexTest] {
 
 trait MergeHelpers {
   /** A simple representative of a any WHEN clause in a MERGE statement */
-  protected case class MergeClause(isMatched: Boolean, condition: String, action: String = null) {
+  protected sealed trait MergeClause {
+    def condition: String
+    def action: String
+    def clause: String
     def sql: String = {
       assert(action != null, "action not specified yet")
-      val matched = if (isMatched) "MATCHED" else "NOT MATCHED"
       val cond = if (condition != null) s"AND $condition" else ""
-      s"WHEN $matched $cond THEN $action"
+      s"WHEN $clause $cond THEN $action"
     }
   }
 
+  protected case class MatchedClause(condition: String, action: String) extends MergeClause {
+    override def clause: String = "MATCHED"
+  }
+
+  protected case class NotMatchedClause(condition: String, action: String) extends MergeClause {
+    override def clause: String = "NOT MATCHED"
+  }
+
   protected def update(set: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"UPDATE SET $set")
+    MatchedClause(condition, s"UPDATE SET $set")
   }
 
   protected def delete(condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"DELETE")
+    MatchedClause(condition, s"DELETE")
   }
 
   protected def insert(values: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = false, condition, s"INSERT $values")
+    NotMatchedClause(condition, s"INSERT $values")
   }
 }
