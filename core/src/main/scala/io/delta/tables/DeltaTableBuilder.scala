@@ -365,9 +365,9 @@ class DeltaTableBuilder private[tables](
 
     // Return DeltaTable Object.
     if (DeltaTableUtils.isValidPath(tableId)) {
-        DeltaTable.forPath(location.get)
+      DeltaTable.forPath(spark, location.get)
     } else {
-      DeltaTable.forName(this.identifier)
+      DeltaTable.forName(spark, this.identifier)
     }
   }
 }
