@@ -11,7 +11,7 @@ USER root
 ARG DELTA_CORE_VERSION="2.1.0"
 
 RUN pip install --no-cache-dir delta-spark==${DELTA_CORE_VERSION} \
-jupyterlab
+jupyterlab deltalake
 
 FROM delta as startup
 
