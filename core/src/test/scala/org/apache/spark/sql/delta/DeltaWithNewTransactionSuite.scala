@@ -351,3 +351,8 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
 
 class DeltaWithNewTransactionSuite extends DeltaWithNewTransactionSuiteBase
 
+class DeltaWithNewTransactionIdColumnMappingSuite extends DeltaWithNewTransactionSuite
+  with DeltaColumnMappingEnableIdMode
+
+class DeltaWithNewTransactionNameColumnMappingSuite extends DeltaWithNewTransactionSuite
+  with DeltaColumnMappingEnableNameMode

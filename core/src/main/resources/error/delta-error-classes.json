@@ -1371,9 +1371,7 @@
   "DELTA_STATE_RECOVER_ERROR" : {
     "message" : [
       "The <operation> of your Delta table could not be recovered while Reconstructing",
-      "version: <version>. Did you manually delete files in the _delta_log directory?",
-      "Set <config> to \"false\"",
-      "to skip validation."
+      "version: <version>. Did you manually delete files in the _delta_log directory?"
     ],
     "sqlState" : "22000"
   },

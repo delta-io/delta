@@ -1655,13 +1655,20 @@ class DeltaAlterTableByNameSuite
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
 
 
-
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests = Seq(
     "ADD COLUMNS into complex types - Array",
     "CHANGE COLUMN - move to first (nested)",
     "CHANGE COLUMN - case insensitive")
 }
+
+class DeltaAlterTableByNameIdColumnMappingSuite extends DeltaAlterTableByNameSuite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaAlterTableColumnMappingSelectedTests
+
+class DeltaAlterTableByPathIdColumnMappingSuite extends DeltaAlterTableByPathSuite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaAlterTableColumnMappingSelectedTests
 
 class DeltaAlterTableByNameNameColumnMappingSuite extends DeltaAlterTableByNameSuite
   with DeltaColumnMappingEnableNameMode

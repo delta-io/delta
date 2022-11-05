@@ -352,16 +352,10 @@ class DeltaLogSuite extends QueryTest
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            log.update()
-          }
-          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+        val e = intercept[IllegalStateException] {
+          log.update()
         }
-        // Disable the validation check
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(log.update().version === 0L)
-        }
+        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
       }
     }
   }
@@ -421,18 +415,11 @@ class DeltaLogSuite extends QueryTest
         }
 
         // Verify if the state reconstruction from the checkpoint fails.
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
-          val e = intercept[IllegalStateException] {
-            staleLog.update()
-          }
-          assert(e.getMessage ===
-            DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
+        val e = intercept[IllegalStateException] {
+          staleLog.update()
         }
-
-        // Disable state reconstruction validation and try again
-        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(staleLog.update().version === checkpointInterval)
-        }
+        assert(e.getMessage ===
+          DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
       }
     }
   }
@@ -503,6 +490,36 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("forTableWithSnapshot should always return the latest snapshot") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      assert(deltaLog.snapshot.version === 0)
+
+      val (_, snapshot) = DeltaLog.withFreshSnapshot { _ =>
+        // This update is necessary to advance the lastUpdatedTs beyond the start time of
+        // withFreshSnapshot call.
+        deltaLog.update()
+        // Manually add a commit. However, the deltaLog should now be fresh enough
+        // that we don't trigger another update, and thus don't find the commit.
+        val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
+        deltaLog.store.write(
+          FileNames.deltaFile(deltaLog.logPath, 1L),
+          Iterator(JsonUtils.toJson(add.wrap)),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
+        deltaLog
+      }
+      assert(snapshot.version === 0)
+
+      val deltaLog2 = DeltaLog.forTable(spark, path)
+      assert(deltaLog2.snapshot.version === 0) // This shouldn't update
+      val (_, snapshot2) = DeltaLog.forTableWithSnapshot(spark, path)
+      assert(snapshot2.version === 1) // This should get the latest snapshot
     }
   }
 }

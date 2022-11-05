@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 
@@ -564,11 +564,18 @@ class OptimizeCompactionScalaSuite extends OptimizeCompactionSuiteBase
   }
 }
 
-
-class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSQLSuite
-  with DeltaColumnMappingEnableNameMode {
+trait OptimizeCompactionColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests = Seq(
     "optimize command: on table with multiple partition columns",
     "optimize command: on null partition columns"
   )
 }
+
+class OptimizeCompactionIdColumnMappingSuite extends OptimizeCompactionSQLSuite
+  with DeltaColumnMappingEnableIdMode
+  with OptimizeCompactionColumnMappingSuiteBase {
+}
+
+class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSQLSuite
+  with DeltaColumnMappingEnableNameMode
+  with OptimizeCompactionColumnMappingSuiteBase

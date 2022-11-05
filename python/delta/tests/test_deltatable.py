@@ -980,11 +980,13 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
+        expectedFilesRemoved = 4
+        expectedFilesConsidered = 4
         # assertions (partition 'p = 2' has four files)
         self.assertTrue(metrics.numFilesAdded == 1)
-        self.assertTrue(metrics.numFilesRemoved == 4)
+        self.assertTrue(metrics.numFilesRemoved == expectedFilesRemoved)
         self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 4)
+        self.assertTrue(metrics.totalConsideredFiles == expectedFilesConsidered)
         self.assertTrue(metrics.zOrderStats.strategyName == 'all')
         self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
 

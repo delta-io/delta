@@ -984,15 +984,32 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("Delta source advances with non-data inserts") {
+  test("Delta source advances with non-data inserts and generates empty dataframe for " +
+    "non-data operations") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
       val df = spark.readStream.format("delta").load(inputDir.toString)
-      val stream = df.writeStream
+
+      val stream = df
+        .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
+        .foreachBatch(
+          (outputDf: DataFrame, bid: Long) => {
+              // Apart from first batch, rest of batches work with non-data operations
+              // for which we expect an empty dataframe to be generated.
+              if (bid > 0) {
+                assert(outputDf.isEmpty)
+              }
+              outputDf
+                .write
+                .format("delta")
+                .mode("append")
+                .save(outputDir.toString)
+            }
+        )
+        .start()
       try {
         stream.processAllAvailable()
 
@@ -1693,6 +1710,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the first file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
 
@@ -1726,6 +1745,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the second file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
 
@@ -1760,6 +1781,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the first file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
 
@@ -1794,6 +1817,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the second file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
 
@@ -2009,6 +2034,56 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       checkAnswer(
         spark.read.format("delta").load(outputDir.getCanonicalPath),
         Row(0, 0) :: Nil)
+    }
+  }
+
+  test("restarting a query should pick up latest table schema and recover") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        spark.range(10)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(inputDir.getCanonicalPath)
+
+        // Store a `DeltaLog` instance outside the cache.
+        val deltaLog = DeltaLog.forTable(spark, inputDir.getCanonicalPath)
+        DeltaLog.clearCache()
+
+        def startQuery(): StreamingQuery = {
+          spark.readStream.format("delta")
+            .load(inputDir.getCanonicalPath)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
+          // table schema change happens on a different cluster
+          val txn = deltaLog.startTransaction()
+          val oldSchema = deltaLog.snapshot.metadata.schema
+          val newSchema = StructType(Seq(oldSchema(0).copy(nullable = false)))
+          val newMetadata = deltaLog.snapshot.metadata.copy(schemaString = newSchema.json)
+          txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query should recover from the schema change error
+          q = startQuery()
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
     }
   }
 }

@@ -116,6 +116,11 @@ case class Protocol(
   override def wrap: SingleAction = SingleAction(protocol = this)
   @JsonIgnore
   def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
+
+  def max(other: Protocol): Protocol = Protocol(
+    minReaderVersion = this.minReaderVersion.max(other.minReaderVersion),
+    minWriterVersion = this.minWriterVersion.max(other.minWriterVersion)
+  )
 }
 
 object Protocol {
@@ -254,8 +259,6 @@ sealed trait FileAction extends Action {
   lazy val pathAsUri: URI = new URI(path)
   @JsonIgnore
   def numLogicalRecords: Option[Long]
-  @JsonIgnore
-  def getNumLogicalRecords: Long = numLogicalRecords.getOrElse(0L)
   @JsonIgnore
   val partitionValues: Map[String, String]
   @JsonIgnore

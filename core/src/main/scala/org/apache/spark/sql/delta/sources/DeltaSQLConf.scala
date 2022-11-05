@@ -58,6 +58,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DML_METRICS_FROM_METADATA =
+    buildConf("dmlMetricsFromMetadata.enabled")
+      .internal()
+      .doc(
+        """ When enabled, metadata only Delete, ReplaceWhere and Truncate operations will report row
+        | level operation metrics by reading the file statistics for number of rows.
+        | """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
     buildConf("stats.collect.using.tableSchema")
       .internal()
@@ -150,13 +160,6 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Whether to check whether the partition column names have valid names, just like " +
         "the data columns.")
-      .booleanConf
-      .createWithDefault(true)
-
-  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
-    buildConf("stateReconstructionValidation.enabled")
-      .internal()
-      .doc("Whether to perform validation checks on the reconstructed state.")
       .booleanConf
       .createWithDefault(true)
 
@@ -343,16 +346,6 @@ trait DeltaSQLConfBase {
            """)
       .booleanConf
       .createWithDefault(false)
-
-  val DELTA_STATE_CORRUPTION_IS_FATAL =
-    buildConf("state.corruptionIsFatal")
-      .internal()
-      .doc(
-        """If true, throws a fatal error when the recreated Delta State doesn't
-          |match committed checksum file.
-        """)
-      .booleanConf
-      .createWithDefault(true)
 
   val DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT =
     buildConf("stalenessLimit")

@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQ
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -412,10 +413,12 @@ trait CDCReaderImpl extends DeltaLogging {
       snapshot, isStreaming, spark)
     dfs.append(deletedAndAddedRows: _*)
 
-    // build an empty DS. This DS retains the table schema
-    val emptyDf = spark.createDataFrame(
-      spark.sparkContext.emptyRDD[Row],
-      cdcReadSchema(snapshot.metadata.schema))
+    // build an empty DS. This DS retains the table schema and the isStreaming property
+    val emptyDf = spark.sqlContext.internalCreateDataFrame(
+      spark.sparkContext.emptyRDD[InternalRow],
+      cdcReadSchema(snapshot.metadata.schema),
+      isStreaming)
+
     CDCVersionDiffInfo(
       dfs.reduceOption((df1, df2) => df1.union(df2)).getOrElse(emptyDf),
       totalFiles,

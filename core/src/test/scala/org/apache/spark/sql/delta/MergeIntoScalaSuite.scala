@@ -54,6 +54,31 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
+
+  // test created to validate a fix for a bug where merge command was
+  // resulting in a empty target table when statistics collection is disabled
+  test("basic scala API - without stats") {
+    withSQLConf((DeltaSQLConf.DELTA_COLLECT_STATS.key, "false")) {
+      withTable("source") {
+        append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil) // target
+        val source = Seq((1, 100), (3, 30)).toDF("key2", "value2") // source
+
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 100) :: // Update
+            Row(2, 20) :: // No change
+            Row(3, 30) :: // Insert
+            Nil)
+      }
+    }
+  }
+
   test("extended scala API") {
     withTable("source") {
       append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target

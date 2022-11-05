@@ -89,7 +89,7 @@ abstract class ConvertToDeltaCommandBase(
     val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
     val txn = deltaLog.startTransaction()
     if (txn.readVersion > -1) {
-      handleExistingTransactionLog(spark, txn, convertProperties)
+      handleExistingTransactionLog(spark, txn, convertProperties, targetTable.format)
       return Seq.empty[Row]
     }
 
@@ -214,7 +214,8 @@ abstract class ConvertToDeltaCommandBase(
   private def handleExistingTransactionLog(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      target: ConvertTarget): Unit = {
+      target: ConvertTarget,
+      sourceFormat: String): Unit = {
     // In the case that the table is a delta table but the provider has not been updated we should
     // update table metadata to reflect that the table is a delta table and table properties should
     // also be updated
@@ -238,7 +239,9 @@ abstract class ConvertToDeltaCommandBase(
             numFiles = 0L,
             partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
             collectStats = false,
-            catalogTable = catalogTable.map(t => t.identifier.toString)))
+            catalogTable = catalogTable.map(t => t.identifier.toString),
+            sourceFormat = Some(sourceFormat)
+          ))
       }
       convertMetadata(
         catalogTable.get,
@@ -342,7 +345,7 @@ abstract class ConvertToDeltaCommandBase(
       val (committedVersion, postCommitSnapshot) = txn.commitLarge(
         spark,
         Iterator.single(txn.protocol) ++ addFilesIter,
-        getOperation(numFiles, convertProperties),
+        getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
         metrics)
     } finally {
@@ -367,12 +370,14 @@ abstract class ConvertToDeltaCommandBase(
   /** Get the operation to store in the commit message. */
   protected def getOperation(
       numFilesConverted: Long,
-      convertProperties: ConvertTarget): DeltaOperations.Operation = {
+      convertProperties: ConvertTarget,
+      sourceFormat: String): DeltaOperations.Operation = {
     DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
       collectStats = false,
-      convertProperties.catalogTable.map(t => t.identifier.toString))
+      convertProperties.catalogTable.map(t => t.identifier.toString),
+      sourceFormat = Some(sourceFormat))
   }
 
   protected case class ConvertTarget(
@@ -431,6 +436,9 @@ trait ConvertTargetTable {
   /** Whether this table requires column mapping to be converted */
   def requiredColumnMappingMode: DeltaColumnMappingMode = NoMapping
 
+  /* The format of the table */
+  def format: String
+
 }
 
 class ParquetTable(
@@ -478,6 +486,8 @@ class ParquetTable(
     }
     _tableSchema.get
   }
+
+  override val format: String = "parquet"
 
   /**
    * This method is forked from [[ParquetFileFormat]]. The only change here is that we use
