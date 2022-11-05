@@ -881,16 +881,7 @@ Field Name | Description
 name| Name of this (possibly nested) column
 type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
 nullable| Boolean denoting whether this field can be null
-metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [metadata](#metadata) for more information on column level metadata that clients must handle when writing to a table.
-
-### metadata
-This field include column mapping information to avoid any column naming restrictions.
-
-Field Name | Description
--|-
-id| a unique 32 bit integer
-PhysicalName| Always "String"
-mode | `none`, `id` or `name`
+metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [Column Metadata](#column-metadata) for more information on column level metadata that clients must handle when writing to a table.
 
 ### Array Type
 
@@ -911,6 +902,17 @@ Field Name | Description
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+
+### Column Metadata
+A column metadata stores various information about the column.
+For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
+Field Name | Description
+-|-
+delta.columnMapping| This is to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. The more information is [Column Mapping](#column-mapping)
+delta.identity.xxx| This is for defining identity columns. The more information is [Identity Columns](#identity-columns)
+delta.invariants| Always JSON string. The more information is [Column Invariants](#column-invariants)
+delta.generationExpression| Alaways parsed as SQL expression. The more information is [Generated Columns](#generated-columns)
+
 
 ### Example
 
