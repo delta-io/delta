@@ -325,16 +325,16 @@ case class MergeIntoCommand(
     }
     val (materializeSource, _) = shouldMaterializeSource(spark, source, isSingleInsertOnly)
     if (!materializeSource) {
-      doRun(spark)
+      runMerge(spark)
     } else {
       // If it is determined that source should be materialized, wrap the execution with retries,
       // in case the data of the materialized source is lost.
       runWithMaterializedSourceLostRetries(
-        spark, targetFileIndex.deltaLog, metrics, runMerge = doRun)
+        spark, targetFileIndex.deltaLog, metrics, runMerge)
     }
   }
 
-  protected def doRun(spark: SparkSession): Seq[Row] = {
+  protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>
@@ -352,8 +352,12 @@ case class MergeIntoCommand(
 
         // If materialized, prepare the DF reading the materialize source
         // Otherwise, prepare a regular DF from source plan.
-        val materializeSourceReason =
-        createSourcePlanDF(spark, source, condition, matchedClauses, notMatchedClauses,
+        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+          spark,
+          source,
+          condition,
+          matchedClauses,
+          notMatchedClauses,
           isSingleInsertOnly)
 
         val deltaActions = {
@@ -438,7 +442,7 @@ case class MergeIntoCommand(
 
     // UDF to increment metrics
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
-    val sourceDF = sourcePlanDF
+    val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
 
     // Apply inner join to between source and target using the merge condition to find matches
@@ -551,7 +555,7 @@ case class MergeIntoCommand(
     }
 
     // source DataFrame
-    val sourceDF = sourcePlanDF
+    val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
       .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal.TrueLiteral)))
 
@@ -672,7 +676,7 @@ case class MergeIntoCommand(
     // We add row IDs to the targetDF if we have a delete-when-matched clause with duplicate
     // matches and CDC is enabled, and additionally add row IDs to the source if we also have an
     // insert clause. See above at isDeleteWithDuplicateMatchesAndCdc definition for more details.
-    var sourceDF = sourcePlanDF
+    var sourceDF = getSourceDF()
       .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
     var targetDF = Dataset.ofRows(spark, newTarget)
       .withColumn(TARGET_ROW_PRESENT_COL, lit(true))

@@ -25,23 +25,36 @@ import org.apache.spark.sql.delta.commands.MergeStats
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceError, MergeIntoMaterializeSourceErrorType, MergeIntoMaterializeSourceReason}
 import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSource.mergeMaterializedSourceRddBlockLostErrorRegex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.scalactic.source.Position
 import org.scalatest.Tag
 
-import org.apache.spark.SparkException
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, LogicalRDD, RDDScanExec, SQLExecution, WholeStageCodegenExec}
-import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.{FilterExec, LogicalRDD, RDDScanExec, SQLExecution}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
 
-trait MergeIntoMaterializeSourceTests extends MergeIntoSQLSuite {
+trait MaterializeSourceBase
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with SQLTestUtils
+
+
+trait MergeIntoMaterializeSourceTests
+    extends
+    MaterializeSourceBase
+    with
+    DeltaTestUtilsBase
+  {
 
   import testImplicits._
 
@@ -273,7 +286,3 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoSQLSuite {
 // MERGE + materialize
 class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
 
-// MERGE + CDC + materialize
-class MergeIntoMaterializeSourceCDCSuite
-  extends MergeCDCSuite
-    with MergeIntoMaterializeSourceTests

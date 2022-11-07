@@ -48,7 +48,7 @@ import org.apache.spark.storage.StorageLevel
  * materialized RDD[InternalRow] on the executor local disks.
  *
  * 1st concern is that if an executor is lost, this data can be lost.
- * However, when Spark executor decomissioning API is used, it should attempt to move this
+ * When Spark executor decomissioning API is used, it should attempt to move this
  * materialized data safely out before removing the executor.
  *
  * 2nd concern is that if an executor is lost for another reason (e.g. spot kill), we will
@@ -67,9 +67,9 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
 
   /**
    * Prepared Dataframe with source data.
-   * If needed, it is materialized, @see prepareSourceDF
+   * If needed, it is materialized, @see prepareSourceDFAndReturnMaterializeReason
    */
-  protected var sourcePlanDF: Dataset[Row] = null
+  private var sourceDF: Option[Dataset[Row]] = None
 
   /**
    * If the source was materialized, reference to the checkpointed RDD.
@@ -82,7 +82,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
   protected var attempt: Int = 0
 
   /**
-   * This will run the Merge with retries in case it detects an RDD block lost error of the
+   * Run the Merge with retries in case it detects an RDD block lost error of the
    * materialized source RDD.
    * It will also record out of disk error, if such happen - possibly because of increased disk
    * pressure from the materialized source RDD.
@@ -91,7 +91,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       metrics: Map[String, SQLMetric],
-      runMerge: SparkSession => Seq[Row]): Seq[Row] = {
+      runMergeFunc: SparkSession => Seq[Row]): Seq[Row] = {
     var doRetry = false
     var runResult: Seq[Row] = null
     attempt = 1
@@ -99,7 +99,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       doRetry = false
       metrics.values.foreach(_.reset())
       try {
-        runResult = runMerge(spark)
+        runResult = runMergeFunc(spark)
       } catch {
         case NonFatal(ex) =>
           val isLastAttempt =
@@ -118,7 +118,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
           rdd.unpersist()
         }
         materializedSourceRDD = None
-        sourcePlanDF = null
+        sourceDF = null
       }
     } while (doRetry)
 
@@ -216,13 +216,12 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
         (true, MergeIntoMaterializeSourceReason.INVALID_CONFIG)
     }
   }
-
   /**
-   * If source needs to be materialized, prepare the materialized dataframe in sourcePlanDF
+   * If source needs to be materialized, prepare the materialized dataframe in sourceDF
    * Otherwise, prepare regular dataframe.
    * @return the source materialization reason
    */
-  protected def createSourcePlanDF(
+  protected def prepareSourceDFAndReturnMaterializeReason(
       spark: SparkSession,
       source: LogicalPlan,
       condition: Expression,
@@ -233,7 +232,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       shouldMaterializeSource(spark, source, isInsertOnly)
     if (!materialize) {
       // Does not materialize, simply return the dataframe from source plan
-      sourcePlanDF = Dataset.ofRows(spark, source)
+      sourceDF = Some(Dataset.ofRows(spark, source))
       return materializeReason
     }
 
@@ -269,12 +268,12 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
         sourceWithSelectedColumns.constraints, checkpointedPlan)
     }
 
-    sourcePlanDF = Dataset.ofRows(spark, checkpointedPlan)
+    sourceDF = Some(Dataset.ofRows(spark, checkpointedPlan))
 
     // FIXME: This can be removed once Delta adopts Spark 3.4 as the statistics will be materialized
     // and the optimal join will be picked during planning
     if (spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_PROPAGATE_BROADCASTABILITY)) {
-      sourcePlanDF = addBroadcastHintToDF(sourceWithSelectedColumns, sourcePlanDF)
+      sourceDF = Some(addBroadcastHintToDF(sourceWithSelectedColumns, sourceDF.get))
     }
 
     // Sets appropriate StorageLevel
@@ -289,8 +288,16 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
     rdd.persist(storageLevel)
 
     logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns. ")
-    logDebug(s"Materialized MERGE source plan:\n${sourcePlanDF.queryExecution}")
+    logDebug(s"Materialized MERGE source plan:\n${sourceDF.get.queryExecution}")
     materializeReason
+  }
+
+  protected def getSourceDF(): Dataset[Row] = {
+    if (sourceDF.isEmpty) {
+      throw new IllegalStateException(
+        "sourceDF was not initialized! Call prepareSourceDFAndReturnMaterializeReason before.")
+    }
+    sourceDF.get
   }
 
   private def addHintsToPlan(sourcePlan: LogicalPlan, plan: LogicalPlan): LogicalPlan = {

@@ -25,7 +25,8 @@ import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
+import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
 
@@ -132,6 +133,40 @@ trait DeltaTestUtilsBase {
       sc.removeSparkListener(listener)
     }
     jobCount.get()
+  }
+
+  protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
+    // The expected plan for touched file computation is of the format below.
+    // The data column should be pruned from both leaves.
+    // HashAggregate(output=[count#3463L])
+    // +- HashAggregate(output=[count#3466L])
+    //   +- Project
+    //      +- Filter (isnotnull(count#3454L) AND (count#3454L > 1))
+    //         +- HashAggregate(output=[count#3454L])
+    //            +- HashAggregate(output=[_row_id_#3418L, sum#3468L])
+    //               +- Project [_row_id_#3418L, UDF(_file_name_#3422) AS one#3448]
+    //                  +- BroadcastHashJoin [id#3342L], [id#3412L], Inner, BuildLeft
+    //                     :- Project [id#3342L]
+    //                     :  +- Filter isnotnull(id#3342L)
+    //                     :     +- FileScan parquet [id#3342L,part#3343L]
+    //                     +- Filter isnotnull(id#3412L)
+    //                        +- Project [...]
+    //                           +- Project [...]
+    //                             +- FileScan parquet [id#3412L,part#3413L]
+    // Note: It can be RDDScanExec instead of FileScan if the source was materialized.
+    // We pick the first plan starting from FileScan and ending in HashAggregate as a
+    // stable heuristic for the one we want.
+    plans.map(_.executedPlan)
+      .filter {
+        case WholeStageCodegenExec(hash: HashAggregateExec) =>
+          hash.collectLeaves().size == 2 &&
+            hash.collectLeaves()
+              .forall { s =>
+                s.isInstanceOf[FileSourceScanExec] ||
+                  s.isInstanceOf[RDDScanExec]
+              }
+        case _ => false
+      }.head
   }
 }
 
