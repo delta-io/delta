@@ -283,21 +283,21 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         partitionBy = Seq("a", "b"),
         collectStats = false,
         catalogTable = Some("t1"),
-        sourceType = Some("parquet"))
+        sourceFormat = Some("parquet"))
       val commitInfo1 = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
       val expectedCommitInfoJson1 = // TODO JSON ordering differs between 2.12 and 2.13
         if (scala.util.Properties.versionNumberString.startsWith("2.13")) {
           """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
-            """:{"catalogTable":"t1","partitionedBy":"[\"a\",\"b\"]","collectStats":false,""" +
-            """"numFiles":23,"sourceType":"parquet"},"clusterId":"23","readVersion":23,""" +
-            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
+            """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         } else {
           """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
-            """:{"catalogTable":"t1","numFiles":23,"sourceType":"parquet","partitionedBy":""" +
-            """"[\"a\",\"b\"]","collectStats":false},"clusterId":"23","readVersion":23,""" +
-            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
+            """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         }

@@ -948,12 +948,10 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        expectedFilesRemoved = 37
-        expectedFilesConsidered = 37
         self.assertTrue(metrics.numFilesAdded == 10)
-        self.assertTrue(metrics.numFilesRemoved == expectedFilesRemoved)
+        self.assertTrue(metrics.numFilesRemoved == 37)
         self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == expectedFilesConsidered)
+        self.assertTrue(metrics.totalConsideredFiles == 37)
         self.assertTrue(metrics.zOrderStats.strategyName == 'all')
         self.assertTrue(metrics.zOrderStats.numOutputCubes == 10)
 

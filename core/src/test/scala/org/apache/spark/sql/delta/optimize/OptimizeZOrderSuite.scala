@@ -299,3 +299,7 @@ class OptimizeZOrderScalaSuite extends OptimizeZOrderSuiteBase
 class OptimizeZOrderNameColumnMappingSuite extends OptimizeZOrderSQLSuite
   with DeltaColumnMappingEnableNameMode
   with DeltaColumnMappingTestUtils
+
+class OptimizeZOrderIdColumnMappingSuite extends OptimizeZOrderSQLSuite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaColumnMappingTestUtils

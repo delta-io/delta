@@ -639,9 +639,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     def rStats: DataFrame =
       getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-    // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-    val expectedStats = Seq(Row(4, 0, 8), Row(6, 1, 9))
-    checkAnswer(rStats, expectedStats)
+    checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
     sql(s"OPTIMIZE '$tempDir'")
     checkAnswer(rStats, Seq(Row(10, 0, 9)))
   }
@@ -1709,11 +1707,8 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
     Given("appending data and collecting stats")
     withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
       data.write.format("delta").mode("append").save(r.dataPath.toString)
-      // scalastyle:off line.size.limit
-      // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-      val expectedStats = Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9))
-      // scalastyle:on line.size.limit
-      checkAnswer(rStats, expectedStats)
+      checkAnswer(rStats,
+        Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
     }
 
     Given("querying reservoir without using stats")
