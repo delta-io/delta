@@ -117,6 +117,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
           .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
           .as("stats")).select("stats.*")
       assert(statsDf.filter($"numRecords".isNull).count == 0)
+      assert(statsDf.agg(sum("numRecords")).as[Long].head() == simpleDF.count)
     }
   }
 
