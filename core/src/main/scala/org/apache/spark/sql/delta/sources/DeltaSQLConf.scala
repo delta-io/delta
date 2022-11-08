@@ -889,7 +889,7 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_OPTIMIZE_METADATA_QUERY =
+  val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
     buildConf("optimizeMetadataQuery.enabled")
       .internal()
       .doc("Whether we can use the metadata in the DeltaLog to" +

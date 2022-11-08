@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.optimizer
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -58,6 +58,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       df.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(mixedStatsTableName)
 
       spark.sql(s"DELETE FROM $noStatsTableName WHERE id = 1")
+      spark.sql(s"DELETE FROM $mixedStatsTableName WHERE id = 1")
 
       df2.write.format("delta").mode("append").saveAsTable(noStatsTableName)
     }
@@ -70,7 +71,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
       spark.sql(s"DELETE FROM $testTableName WHERE id = 1")
       DeltaTable.forPath(spark, testTablePath).delete("id = 1")
-      spark.sql(s"DELETE FROM $mixedStatsTableName WHERE id = 1")
 
       df2.write.format("delta").mode(SaveMode.Append).saveAsTable(testTableName)
       df2.write.format("delta").mode(SaveMode.Append).save(testTablePath)
@@ -141,6 +141,14 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       s"SELECT COUNT(*) FROM $testTableName LIMIT 3",
       Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
+  }
+
+  test("Select Count: empty table") {
+    sql(s"CREATE TABLE TestEmpty (c1 int) USING DELTA")
+
+    val query = "SELECT COUNT(*) FROM TestEmpty"
+
+    checkResultsAndOptimizedPlan(query, Seq(Row(0)), "LocalRelation [none#0L]")
   }
 
   test("Select Count: snapshot isolation") {
@@ -260,16 +268,18 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       Seq(Row(totalRows)))
   }
 
-  private def checkResultsAndOptimizedPlan(query: String,
-                                           expectedAnswer: scala.Seq[org.apache.spark.sql.Row],
-                                           expectedOptimizedPlan: String): Unit = {
+  private def checkResultsAndOptimizedPlan(
+    query: String,
+    expectedAnswer: scala.Seq[Row],
+    expectedOptimizedPlan: String): Unit = {
     checkResultsAndOptimizedPlan(() => spark.sql(query), expectedAnswer, expectedOptimizedPlan)
   }
 
-  private def checkResultsAndOptimizedPlan(generateQueryDf: () => DataFrame,
-                                           expectedAnswer: scala.Seq[org.apache.spark.sql.Row],
-                                           expectedOptimizedPlan: String): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "true") {
+  private def checkResultsAndOptimizedPlan(
+    generateQueryDf: () => DataFrame,
+    expectedAnswer: scala.Seq[Row],
+    expectedOptimizedPlan: String): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
       val queryDf = generateQueryDf()
       val optimizedPlan = queryDf.queryExecution.optimizedPlan.canonicalized.toString()
 
@@ -283,12 +293,20 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
-  private def checkSameQueryPlanAndResults(query: String,
-                                           expectedAnswer: scala.Seq[org.apache.spark.sql.Row]) {
+  /**
+   * Verify the query plans and results are the same with/without metadata query optimization.
+   * This method can be used to verify cases that we shouldn't trigger optimization
+   * or cases that we can potentially improve.
+   * @param query
+   * @param expectedAnswer
+   */
+  private def checkSameQueryPlanAndResults(
+    query: String,
+    expectedAnswer: scala.Seq[Row]) {
     var optimizationEnabledQueryPlan: String = null
     var optimizationDisabledQueryPlan: String = null
 
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "true") {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
 
       val queryDf = spark.sql(query)
       optimizationEnabledQueryPlan = queryDf.queryExecution.optimizedPlan
@@ -296,7 +314,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       checkAnswer(queryDf, expectedAnswer)
     }
 
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "false") {
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false") {
 
       val countQuery = spark.sql(query)
       optimizationDisabledQueryPlan = countQuery.queryExecution.optimizedPlan

@@ -16,51 +16,36 @@
 
 package org.apache.spark.sql.delta.optimizer
 
-import org.apache.spark.sql.{Column, Row, SparkSession, functions}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, ExprId, Literal, SubqueryExpression}
+import org.apache.spark.sql.{Column, Row}
+import org.apache.spark.sql.catalyst.expressions.aggregate.Complete
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Count}
+import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
-import org.apache.spark.sql.functions.count
+import org.apache.spark.sql.functions.{count, sum}
 import org.apache.spark.sql.types.LongType
 
 trait OptimizeMetadataOnlyDeltaQuery {
-  def optimizeQueryWithMetadata(spark: SparkSession, plan: LogicalPlan): LogicalPlan = {
-    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY)) {
-      plan
-    } else {
-
-      def transformSubqueries(plan: LogicalPlan): LogicalPlan = {
-        import org.apache.spark.sql.delta.implicits._
-
-        plan transformAllExpressionsUp {
-          case subquery: SubqueryExpression =>
-            subquery.withNewPlan(transform(subquery.plan))
-        }
+  def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
+    def transform(plan: LogicalPlan): LogicalPlan =
+      plan.transformUpWithSubqueries {
+        case CountStarDeltaTable(alias, countValue) =>
+          createLocalRelationPlan(alias, countValue)
       }
 
-      def transform(plan: LogicalPlan): LogicalPlan =
-        transformSubqueries(plan) transform {
-          case CountStarDeltaTable(aliasName, exprId, qualifier, countValue) =>
-            createLocalRelationPlan(aliasName, exprId, qualifier, countValue)
-        }
-
-      transform(plan)
-    }
+    transform(plan)
   }
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
 
   private def createLocalRelationPlan(
-    aliasName: String,
-    exprId: ExprId,
-    qualifier: Seq[String],
+    alias: Alias,
     rowCount: Long): LogicalPlan = {
     val relation = LocalRelation.fromExternalRows(
-      output = Seq(AttributeReference(aliasName, LongType)(exprId, qualifier)),
+      output = Seq(AttributeReference(alias.name, LongType)(alias.exprId, alias.qualifier)),
       data = Seq(Row(rowCount)))
 
     relation
@@ -68,40 +53,39 @@ trait OptimizeMetadataOnlyDeltaQuery {
 
   object CountStarDeltaTable {
 
-    def unapply(plan: Aggregate): Option[(String, ExprId, Seq[String], Long)] = {
+    def unapply(plan: Aggregate): Option[(Alias, Long)] = {
       plan match {
         case Aggregate(
         Nil,
         Seq(oldAlias@Alias
-          (AggregateExpression(Count(Seq(Literal(1, _))), _, false, None, _), aliasName)),
-        Project(_, DeltaTable(tahoeLogFileIndex: TahoeLogFileIndex))) =>
+          (AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _), _)),
+        PhysicalOperation(_, Nil, DeltaTable(tahoeLogFileIndex: TahoeLogFileIndex))) =>
           extractGlobalCount(tahoeLogFileIndex).map(rowCount =>
-            (oldAlias.name, oldAlias.exprId, oldAlias.qualifier, rowCount))
+            (oldAlias, rowCount))
         case _ => None
       }
     }
 
     private def extractGlobalCount(tahoeLogFileIndex: TahoeLogFileIndex): Option[Long] = {
-      val scanGenerator = getDeltaScanGenerator(tahoeLogFileIndex)
-
-      val row = scanGenerator.snapshotToScan.withStats
+      val row = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
         .agg(
-          functions.sum("stats.numRecords"),
-          count(new Column("stats.*")),
+          sum("stats.numRecords"),
+          count(new Column("*")),
           count(new Column("stats.numRecords")))
         .first
 
-      if (row.isNullAt(0) // It is Null if deltaLog.snapshot.allFiles is empty
-        // If COUNT(*) is greater than COUNT(numRecords) means not every AddFile records has stats
-        || row.getLong(1) != row.getLong(2)
-      ) {
-        None
+      val numOfFiles = row.getLong(1)
+      val numOfFilesWithStats = row.getLong(2)
+
+      if (numOfFiles == numOfFilesWithStats) {
+        val numRecords = if (row.isNullAt(0)) {
+          0 // It is Null if deltaLog.snapshot.allFiles is empty
+        } else { row.getLong(0) }
+
+        Some(numRecords)
       } else {
-        // When a transaction is committed it checks if any of the files read in that transaction
-        // has been changed and throws a DeltaConcurrentModificationException if it did.
-        // Mark the whole table as read to simulate the behavior of getting the row count.
-        scanGenerator.filesWithStatsForScan(Nil)
-        Some(row.getLong(0))
+        // If COUNT(*) is greater than COUNT(numRecords) means not every AddFile records has stats
+        None
       }
     }
   }

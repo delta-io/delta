@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -33,7 +34,6 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
-import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
@@ -211,7 +211,14 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         return plan
       }
 
-      prepareDeltaScan(optimizeQueryWithMetadata(spark, plan))
+      val optimizeMetadataQueryEnabled =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)
+
+      if (optimizeMetadataQueryEnabled) {
+        plan = optimizeQueryWithMetadata(plan)
+      }
+
+      prepareDeltaScan(plan)
     } else {
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.

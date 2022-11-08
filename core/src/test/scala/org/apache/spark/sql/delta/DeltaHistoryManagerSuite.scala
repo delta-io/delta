@@ -553,18 +553,17 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
         generateCommits(tblName, start, start + 20.minutes)
         sql(s"optimize $tblName")
 
-        // Disable query rewrite or else the parquet files are not scanned.
-        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY.key -> "false") {
-          withSQLConf(
-            DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        withSQLConf(
+          // Disable query rewrite or else the parquet files are not scanned.
+          DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
 
-            sql(s"vacuum $tblName retain 0 hours")
-            intercept[SparkException] {
-              sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
-            }
-            intercept[SparkException] {
-              sql(s"select count(*) from ${versionAsOf(tblName, 1)}").collect()
-            }
+          sql(s"vacuum $tblName retain 0 hours")
+          intercept[SparkException] {
+            sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
+          }
+          intercept[SparkException] {
+            sql(s"select count(*) from ${versionAsOf(tblName, 1)}").collect()
           }
         }
       }
