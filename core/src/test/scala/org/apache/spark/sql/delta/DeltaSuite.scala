@@ -1525,7 +1525,7 @@ class DeltaSuite extends QueryTest
       }
 
       val thrown = intercept[SparkException] {
-          data.toDF().collect()
+        data.toDF().collect()
       }
       assert(thrown.getMessage.contains("FileNotFound"))
     }
