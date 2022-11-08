@@ -18,14 +18,11 @@ package org.apache.spark.sql.delta.optimizer
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 import org.scalatest.BeforeAndAfterAll
-import org.scalatest.time.SpanSugar.convertIntToGrainOfTime
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
 
 class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
@@ -166,29 +163,16 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         ":  +- LocalRelation [none#0L]\n" +
         "+- OneRowRelation")
 
-    Future {
-      val deadline = 60.seconds.fromNow
-
-      while (deadline.hasTimeLeft) {
-        spark.sql(s"INSERT INTO TestSnapshotIsolation VALUES (1)")
-      }
-    }
-
-    var c1: Long = 0
-    var c2: Long = 0
-    var equal: Boolean = false
-    val deadline = 60.seconds.fromNow
-
-    do {
+    PrepareDeltaScanBase.withCallbackOnGetDeltaScanGenerator(_ => {
+      // Insert a row after each call to get scanGenerator
+      // to test if the count doesn't change in the same query
+      spark.sql("INSERT INTO TestSnapshotIsolation VALUES (1)")
+    }) {
       val result = spark.sql(query).collect()(0)
-      c1 = result.getLong(0)
-      c2 = result.getLong(1)
-      equal = c1 == c2
-    } while (equal && deadline.hasTimeLeft)
-
-    sql(s"DROP TABLE TestSnapshotIsolation")
-
-    assertResult(c1, "Snapshot isolation should guarantee the results are always the same")(c2)
+      val c1 = result.getLong(0)
+      val c2 = result.getLong(1)
+      assertResult(c1, "Snapshot isolation should guarantee the results are always the same")(c2)
+    }
   }
 
   // Tests to validate the optimizer won't use missing or partial stats
