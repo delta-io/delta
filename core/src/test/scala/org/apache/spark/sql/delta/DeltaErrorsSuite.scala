@@ -472,6 +472,15 @@ trait DeltaErrorsSuiteBase
         "documentation for more details.")
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertToDeltaNoPartitionFound("testTable")
+      }
+      assert(e.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Found no partition information in the catalog for table testTable." +
+        " Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?")
+    }
+    {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(IdMapping)
       }

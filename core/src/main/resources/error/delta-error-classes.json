@@ -354,6 +354,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CONVERSION_NO_PARTITION_FOUND" : {
+    "message" : [
+      "Found no partition information in the catalog for table <tableName>. Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING" : {
     "message" : [
       "The configuration '<config>' cannot be set to `<mode>` when using CONVERT TO DELTA."

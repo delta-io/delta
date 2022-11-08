@@ -710,6 +710,10 @@ class CatalogFileManifest(
 
   override lazy val allFiles: Dataset[ConvertTargetFile] = {
     import org.apache.spark.sql.delta.implicits._
+    if (partitionList.isEmpty) {
+      throw DeltaErrors.convertToDeltaNoPartitionFound(catalogTable.identifier.unquotedString)
+    }
+
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -719,7 +723,7 @@ class CatalogFileManifest(
         DeltaFileOperations
           .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
           .map(ConvertTargetFile(_))
-    }
+      }
     spark.createDataset(rdd).cache()
   }
 

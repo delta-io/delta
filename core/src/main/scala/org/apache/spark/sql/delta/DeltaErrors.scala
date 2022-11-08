@@ -1887,6 +1887,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
   }
 
+  def convertToDeltaNoPartitionFound(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONVERSION_NO_PARTITION_FOUND",
+      messageParameters = Array(tableName)
+    )
+  }
+
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING",
