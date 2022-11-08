@@ -39,13 +39,21 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
+    val log = DeltaLog.forTable(spark, tempPath)
+    val latestVersion = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+      CDCReader
+        .changesToBatchDF(log, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) ::
-        Row(2, 2, "update_preimage", 1) :: Row(2, -1, "update_postimage", 1) ::
-        Row(3, 3, "update_preimage", 1) :: Row(3, -1, "update_postimage", 1) ::
-        Row(4, 4, "update_preimage", 1) :: Row(4, -1, "update_postimage", 1) :: Nil)
+      Row(1, 1, "update_preimage", latestVersion) ::
+        Row(1, -1, "update_postimage", latestVersion) ::
+        Row(2, 2, "update_preimage", latestVersion) ::
+        Row(2, -1, "update_postimage", latestVersion) ::
+        Row(3, 3, "update_preimage", latestVersion) ::
+        Row(3, -1, "update_postimage", latestVersion) ::
+        Row(4, 4, "update_preimage", latestVersion) ::
+        Row(4, -1, "update_postimage", latestVersion) ::
+        Nil)
   }
 
   test("CDC for conditional update on all rows") {
@@ -56,13 +64,21 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
+    val log = DeltaLog.forTable(spark, tempPath)
+    val latestVersion = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+      CDCReader
+        .changesToBatchDF(log, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) ::
-        Row(2, 2, "update_preimage", 1) :: Row(2, -1, "update_postimage", 1) ::
-        Row(3, 3, "update_preimage", 1) :: Row(3, -1, "update_postimage", 1) ::
-        Row(4, 4, "update_preimage", 1) :: Row(4, -1, "update_postimage", 1) :: Nil)
+      Row(1, 1, "update_preimage", latestVersion) ::
+        Row(1, -1, "update_postimage", latestVersion) ::
+        Row(2, 2, "update_preimage", latestVersion) ::
+        Row(2, -1, "update_postimage", latestVersion) ::
+        Row(3, 3, "update_preimage", latestVersion) ::
+        Row(3, -1, "update_postimage", latestVersion) ::
+        Row(4, 4, "update_preimage", latestVersion) ::
+        Row(4, -1, "update_postimage", latestVersion) ::
+        Nil)
   }
 
   test("CDC for point update") {
@@ -73,10 +89,15 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
+    val log = DeltaLog.forTable(spark, tempPath)
+    val latestVersion = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+      CDCReader
+        .changesToBatchDF(log, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) :: Nil)
+      Row(1, 1, "update_preimage", latestVersion) ::
+        Row(1, -1, "update_postimage", latestVersion) ::
+        Nil)
   }
 
   test("CDC for repeated point update") {
@@ -87,21 +108,31 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
+    val log = DeltaLog.forTable(spark, tempPath)
+    val latestVersion1 = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
-          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) :: Nil)
+      CDCReader
+        .changesToBatchDF(log, latestVersion1, latestVersion1, spark)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(1, 1, "update_preimage", latestVersion1) ::
+        Row(1, -1, "update_postimage", latestVersion1) ::
+        Nil)
 
     checkUpdate(
       condition = Some("key = 3"),
       setClauses = "value = -3",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -3) :: Row(4, 4) :: Nil)
 
+    val latestVersion2 = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 2, spark)
-          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, "update_preimage", 1) :: Row(1, -1, "update_postimage", 1) ::
-          Row(3, 3, "update_preimage", 2) :: Row(3, -3, "update_postimage", 2) :: Nil)
+      CDCReader
+        .changesToBatchDF(log, latestVersion1, latestVersion2, spark)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(1, 1, "update_preimage", latestVersion1) ::
+        Row(1, -1, "update_postimage", latestVersion1) ::
+        Row(3, 3, "update_preimage", latestVersion2) ::
+        Row(3, -3, "update_postimage", latestVersion2) ::
+        Nil)
   }
 
   test("CDC for partition-optimized update") {
@@ -114,11 +145,17 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -1) :: Row(4, 4) :: Nil)
 
+    val log = DeltaLog.forTable(spark, tempPath)
+    val latestVersion = log.unsafeVolatileSnapshot.version
     checkAnswer(
-      CDCReader.changesToBatchDF(DeltaLog.forTable(spark, tempPath), 1, 1, spark)
+      CDCReader
+        .changesToBatchDF(log, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-      Row(1, 1, 1, "update_preimage", 1) :: Row(1, -1, 1, "update_postimage", 1) ::
-        Row(3, 3, 1, "update_preimage", 1) :: Row(3, -1, 1, "update_postimage", 1) :: Nil)
+      Row(1, 1, 1, "update_preimage", latestVersion) ::
+        Row(1, -1, 1, "update_postimage", latestVersion) ::
+        Row(3, 3, 1, "update_preimage", latestVersion) ::
+        Row(3, -1, 1, "update_postimage", latestVersion) ::
+        Nil)
   }
 
 
