@@ -42,18 +42,12 @@ import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
 
-trait MaterializeSourceBase
-  extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest
-  with SQLTestUtils
-
-
 trait MergeIntoMaterializeSourceTests
-    extends
-    MaterializeSourceBase
-    with
-    DeltaTestUtilsBase
+    extends QueryTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
+    with SQLTestUtils
+    with DeltaTestUtilsBase
   {
 
   import testImplicits._

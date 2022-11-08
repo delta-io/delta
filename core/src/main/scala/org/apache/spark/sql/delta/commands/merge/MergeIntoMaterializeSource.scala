@@ -226,7 +226,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       isInsertOnly: Boolean): MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason = {
     val (materialize, materializeReason) =
       shouldMaterializeSource(spark, source, isInsertOnly)
@@ -346,7 +346,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause]) = {
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
     val conditionCols = condition.references
     val matchedCondCols = matchedClauses.flatMap { clause =>
       clause.condition.getOrElse(Literal(true)).flatMap(_.references)
