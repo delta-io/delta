@@ -30,13 +30,10 @@ import org.apache.spark.sql.types.LongType
 
 trait OptimizeMetadataOnlyDeltaQuery {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
-    def transform(plan: LogicalPlan): LogicalPlan =
-      plan.transformUpWithSubqueries {
-        case CountStarDeltaTable(alias, countValue) =>
-          createLocalRelationPlan(alias, countValue)
-      }
-
-    transform(plan)
+    plan.transformUpWithSubqueries {
+      case CountStarDeltaTable(alias, countValue) =>
+        createLocalRelationPlan(alias, countValue)
+    }
   }
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
