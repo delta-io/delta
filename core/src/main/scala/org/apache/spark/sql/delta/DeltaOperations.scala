@@ -624,4 +624,5 @@ private[delta] object DeltaOperationMetrics {
     "removedFilesSize", // size in bytes of files removed by the restore
     "restoredFilesSize" // size in bytes of files added by the restore
   )
+
 }
