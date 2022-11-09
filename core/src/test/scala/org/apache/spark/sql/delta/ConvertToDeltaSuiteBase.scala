@@ -1247,4 +1247,39 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         simpleDF.filter("id % 2 == 1").filter("id % 3 == 1").select("id"))
     }
   }
+
+  test("can convert table with partition overwrite") {
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      // Create table with original partitions of "key1=0" and "key1=1".
+      val df = spark.range(0, 100)
+        .withColumn("key1", col("id") % 2)
+        .withColumn("key2", col("id") % 3 cast "String")
+      df.write.format("parquet").partitionBy("key1").mode("append").saveAsTable(tableName)
+      checkAnswer(sql(s"SELECT id FROM $tableName"), df.select("id"))
+
+      val dataDir =
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location.toString
+
+      // Create orphan partition "key1=0;key2=3" with additional column.
+      val df1 = spark.range(100, 120, 2)
+        .withColumn("key1", col("id") % 2)
+        .withColumn("key2", lit("3"))
+      df1.write.format("parquet").partitionBy("key1", "key2").mode("append").save(dataDir)
+
+      // Point table partition "key1=0" to the path of orphan partition "key1=0;key2=3"
+      sql(s"ALTER TABLE $tableName PARTITION (key1=0) SET LOCATION '$dataDir/key1=0/key2=3/'")
+      checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
+
+      // ConvertToDelta should work without inferring the partition values from partition path.
+      convertToDelta(tableName)
+
+      // Verify that table is converted to delta
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
+
+      // Check data in the converted delta table.
+      checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
+    }
+  }
 }

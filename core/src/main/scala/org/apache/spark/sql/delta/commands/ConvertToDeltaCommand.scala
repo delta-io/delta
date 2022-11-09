@@ -691,19 +691,21 @@ class CatalogFileManifest(
   serializableConf: SerializableConfiguration)
   extends ConvertTargetFileManifest {
 
+  // List of partition directories and corresponding partition values.
   private lazy val partitionList = {
     if (catalogTable.partitionSchema.isEmpty) {
       // Not a partitioned table.
-      Seq(basePath)
+      Seq(basePath -> Map.empty[String, String])
     } else {
       val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
       partitions.map { partition =>
-        partition.storage.locationUri.map(_.toString())
+        val partitionDir = partition.storage.locationUri.map(_.toString())
           .getOrElse {
             val partitionDir =
               PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
             basePath.stripSuffix("/") + "/" + partitionDir
           }
+        partitionDir -> partition.spec
       }
     }
   }
@@ -719,11 +721,13 @@ class CatalogFileManifest(
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
     val rdd = spark.sparkContext.parallelize(partitionList)
       .repartition(math.min(parallelism, partitionList.length))
-      .mapPartitions { dirs =>
-        DeltaFileOperations
-          .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
-          .map(ConvertTargetFile(_))
-      }
+      .mapPartitions { partitions =>
+        partitions.flatMap ( partition =>
+          DeltaFileOperations
+            .localListDirs(conf.value.value, Seq(partition._1), recursive = false).filter(!_.isDir)
+            .map(ConvertTargetFile(_, Some(partition._2)))
+        )
+    }
     spark.createDataset(rdd).cache()
   }
 
