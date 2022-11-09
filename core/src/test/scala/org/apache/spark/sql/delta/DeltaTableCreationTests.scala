@@ -1786,7 +1786,8 @@ class DeltaTableCreationSuite
                |LOCATION '${dir.getAbsolutePath}'
            """.stripMargin)
         }
-        assert(e.getMessage.contains("cannot be replaced as it did not exist"))
+        assert(e.getMessage.contains("cannot be replaced as it did not exist") ||
+          e.getMessage.contains(s"table or view `default`.`delta_test` cannot be found"))
       }
     }
   }

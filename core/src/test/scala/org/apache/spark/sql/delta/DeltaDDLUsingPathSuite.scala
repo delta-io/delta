@@ -123,7 +123,8 @@ trait DeltaDDLUsingPathTests extends QueryTest
       val ex = intercept[AnalysisException] {
         spark.table(s"delta.`/path/to/delta`")
       }
-      errorContains(ex.message, "Table or view not found: delta.`/path/to/delta`")
+      assert(ex.getMessage.contains("Table or view not found: delta.`/path/to/delta`") ||
+        ex.getMessage.contains("table or view `delta`.`/path/to/delta` cannot be found"))
     }
   }
 

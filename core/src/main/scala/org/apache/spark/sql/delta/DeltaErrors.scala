@@ -2724,7 +2724,7 @@ class DeltaSparkException(
 class DeltaNoSuchTableException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
-  extends NoSuchTableException(
+  extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass

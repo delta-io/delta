@@ -76,7 +76,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     var e: Exception = intercept[AnalysisException] {
       spark.sql("GENERATE symlink_format_manifest FOR TABLE nonExistentTable")
     }
-    assert(e.getMessage.contains("not found"))
+    assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
 
     withTable("nonDeltaTable") {
       spark.range(2).write.format("parquet").saveAsTable("nonDeltaTable")
@@ -107,7 +107,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
       }
-      assert(e.getMessage.contains("not found"))
+      assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
     }
   }
 
@@ -118,7 +118,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
-      assert(e.getMessage.contains("not found"))
+      assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
     }
   }
 

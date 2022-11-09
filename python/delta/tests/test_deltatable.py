@@ -599,7 +599,7 @@ class DeltaTableTests(DeltaTestCase):
             self.__create_table(False, tableName="testTable")
         except AnalysisException as e:
             msg = e.desc
-        assert (msg == "Table default.testTable already exists")
+        assert ("testTable" in msg and "already exists" in msg)
 
         # ignore table creation.
         self.__create_table(True, tableName="testTable")
@@ -676,8 +676,8 @@ class DeltaTableTests(DeltaTestCase):
         except AnalysisException as e:
             msg = e.desc
         assert msg is not None
-        assert (msg.startswith(
-            "Table default.testTable cannot be replaced as it did not exist."))
+        assert ("testTable" in msg)
+        assert("did not exist" in msg or "cannot be found" in msg)
         deltaTable = self.__replace_table(True, tableName="testTable")
         self.__verify_table_schema("testTable",
                                    deltaTable.toDF().schema,
