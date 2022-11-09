@@ -43,7 +43,7 @@
   - [Data Files](#data-files-1)
   - [Append-only Tables](#append-only-tables)
   - [Column Invariants](#column-invariants)
-  - [Check Constraints](#check-constraints)
+  - [CHECK Constraints](#check-constraints)
   - [Generated Columns](#generated-columns)
   - [Identity Columns](#identity-columns)
   - [Writer Version Requirements](#writer-version-requirements)
@@ -708,14 +708,17 @@ For example, given the schema string (pretty printed for readability. The entire
 
 Writers should reject any transaction that contains data where the expression `x > 3` returns `false` or `null`.
 
-## Check Constraints
+## CHECK Constraints
 
-- Check constraints are stored at the table-level in `Metadata.configuration` and consist of a `name` and an `expression`. An input row satisfies a constraint when `expression` evaluates to `true`.
-  - They are stored in `Metadata.configuration` with the key `delta.constraints.{name}`.
-  - `expression` is stored as the value of `delta.constraints.{name}` and SHOULD be parsed as a boolean SQL expression.
-- CHECK constraints are strongly enforced:
-  - The transaction which adds a new constraint must verify that all existing data satisfies the constraint; otherwise the write must fail.
-  - For subsequent writes, all constraints must be satisfied for every row being written to the table; otherwise the write must fail.
+CHECK constraints are stored in the map of the `configuration` field in [Metadata](#change-metadata). Each CHECK constraint has a name and is stored as a key value pair. The key format is `delta.constraints.{name}`, and the value is a SQL expression string whose return type must be `Boolean`. Columns referred by the SQL expression must exist in the table schema.
+
+Rows in a table must satisfy CHECK constraints. In other words, evaluating the SQL expressions of CHECK constraints must return `true` for each row in a table.
+
+For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
+
+Hence, a writer must follow the rules below:
+- When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
+- When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
 
 ## Generated Columns
 
