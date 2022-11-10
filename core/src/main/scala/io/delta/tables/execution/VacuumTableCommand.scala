@@ -41,15 +41,11 @@ case class VacuumTableCommand(
     dryRun: Boolean,
     options: Map[String, String] = Map.empty) extends LeafRunnableCommand {
 
-  override val output: Seq[Attribute] = if (dryRun) {
-    Seq(AttributeReference("path", StringType, nullable = true)())
-  } else {
-    Seq(
-      AttributeReference("path", StringType, nullable = true)(),
-      AttributeReference("numVacuumedFiles", LongType, nullable = true)(),
-      AttributeReference("numVacuumedBytes", LongType, nullable = true)()
-    )
-  }
+  override val output: Seq[Attribute] = Seq(
+    AttributeReference("path", StringType, nullable = true)(),
+    AttributeReference("numVacuumedFiles", LongType, nullable = true)(),
+    AttributeReference("numVacuumedBytes", LongType, nullable = true)()
+  )
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
 
@@ -85,7 +81,6 @@ case class VacuumTableCommand(
         DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
     }
 
-    import org.apache.spark.sql.delta.implicits._
     val filesDeleted = VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours)
     metrics("numVacuumedFiles").set(filesDeleted.size)
     metrics("numVacuumedBytes").set(filesDeleted.map(_.size).sum)
@@ -93,7 +88,7 @@ case class VacuumTableCommand(
     val txn = deltaLog.startTransaction()
     txn.registerSQLMetrics(sparkSession, metrics)
     if (dryRun) {
-      filesDeleted.map(f => Row(f.path))
+      filesDeleted.map(f => Row(f.path, 1L, f.size))
     } else {
       val actions = filesDeleted
       txn.commit(actions, DeltaOperations.Vacuum(horizonHours))
