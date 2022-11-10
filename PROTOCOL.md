@@ -6,6 +6,7 @@
 - [Delta Table Specification](#delta-table-specification)
   - [File Types](#file-types)
     - [Data Files](#data-files)
+    - [Deletion Vector Files](#deletion-vector-files)
     - [Change Data Files](#change-data-files)
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
@@ -17,6 +18,8 @@
       - [Format Specification](#format-specification)
     - [Add File and Remove File](#add-file-and-remove-file)
     - [Add CDC File](#add-cdc-file)
+      - [Writer Requirements for AddCDCFile](#writer-requirements-for-addcdcfile)
+      - [Reader Requirements for AddCDCFile](#reader-requirements-for-addcdcfile)
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
@@ -24,6 +27,13 @@
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
+- [Deletion Vectors](#deletion-vectors)
+  - [Deletion Vector Descriptor Schema](#deletion-vector-descriptor-schema)
+    - [Derived Fields](#derived-fields)
+    - [JSON Example 1 — On Disk with Relative Path (with Random Prefix)](#json-example-1--on-disk-with-relative-path-with-random-prefix)
+    - [JSON Example 2 — On Disk with Absolute Path](#json-example-2--on-disk-with-absolute-path)
+    - [JSON Example 3 — Inline](#json-example-3--inline)
+  - [Reader Requirements for Deletion Vectors](#reader-requirements-for-deletion-vectors)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -33,11 +43,14 @@
   - [Data Files](#data-files-1)
   - [Append-only Tables](#append-only-tables)
   - [Column Invariants](#column-invariants)
+  - [CHECK Constraints](#check-constraints)
   - [Generated Columns](#generated-columns)
   - [Identity Columns](#identity-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
+  - [Reader Version Requirements](#reader-version-requirements)
 - [Appendix](#appendix)
+  - [Deletion Vector Format](#deletion-vector-format)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
@@ -695,6 +708,18 @@ For example, given the schema string (pretty printed for readability. The entire
 
 Writers should reject any transaction that contains data where the expression `x > 3` returns `false` or `null`.
 
+## CHECK Constraints
+
+CHECK constraints are stored in the map of the `configuration` field in [Metadata](#change-metadata). Each CHECK constraint has a name and is stored as a key value pair. The key format is `delta.constraints.{name}`, and the value is a SQL expression string whose return type must be `Boolean`. Columns referred by the SQL expression must exist in the table schema.
+
+Rows in a table must satisfy CHECK constraints. In other words, evaluating the SQL expressions of CHECK constraints must return `true` for each row in a table.
+
+For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
+
+Hence, a writer must follow the rules below:
+- When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
+- When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
+
 ## Generated Columns
 
  - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
@@ -728,7 +753,7 @@ The requirements of the writers according to the protocol versions are summarize
 <br> | Requirements
 -|-
 Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
-Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
+Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- [`CHECK` constraints](#check-constraints)
 Writer Version 4 | - Support [Change Data Feed](#add-cdc-file)<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
 Writer Version 6 | Support [Identity Columns](#identity-columns)
