@@ -53,8 +53,7 @@ public interface DeltaPartitionComputer<T> extends Serializable {
          * @param partitionColumns list of partition column names in the order they should be
          *                         applied when creating a destination path
          */
-        public DeltaRowDataPartitionComputer(RowType rowType,
-                                             String[] partitionColumns) {
+        public DeltaRowDataPartitionComputer(RowType rowType, String[] partitionColumns) {
             this(rowType, partitionColumns, new LinkedHashMap<>());
         }
 
@@ -67,9 +66,10 @@ public interface DeltaPartitionComputer<T> extends Serializable {
          * @param staticPartitionSpec static values for partitions that should set explicitly
          *                            instead of being derived from the content of the records
          */
-        public DeltaRowDataPartitionComputer(RowType rowType,
-                                             String[] partitionColumns,
-                                             LinkedHashMap<String, String> staticPartitionSpec) {
+        public DeltaRowDataPartitionComputer(
+                RowType rowType,
+                String[] partitionColumns,
+                LinkedHashMap<String, String> staticPartitionSpec) {
             this.rowType = rowType;
             this.partitionColumns = partitionColumns;
             this.staticPartitionSpec = staticPartitionSpec;
@@ -77,8 +77,8 @@ public interface DeltaPartitionComputer<T> extends Serializable {
 
         @Override
         public LinkedHashMap<String, String> generatePartitionValues(
-            RowData element,
-            BucketAssigner.Context context) {
+                RowData element,
+                BucketAssigner.Context context) {
             LinkedHashMap<String, String> partitionValues = new LinkedHashMap<>();
 
             for (String partitionKey : partitionColumns) {

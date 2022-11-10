@@ -51,7 +51,7 @@ import org.apache.flink.util.Preconditions;
  *     <li>Since it's a class member of {@link DeltaInProgressPart} it shares its life span as
  *         well</li>
  *     <li>Instances of this class are being created inside
- *         {@link io.delta.flink.sink.internal.writer.DeltaWriterBucket#rollPartFile}
+ *         {@link io.delta.flink.sink.internal.writer.DeltaWriterBucket}
  *         method every time a bucket processes the first event or if the previously opened file
  *         met conditions for rolling (e.g. size threshold)</li>
  *     <li>Its life span holds as long as the underlying file stays in an in-progress state (so
@@ -78,10 +78,10 @@ public class DeltaBulkPartWriter<IN, BucketID>
     private boolean closed = false;
 
     public DeltaBulkPartWriter(
-        final BucketID bucketId,
-        final RecoverableFsDataOutputStream currentPartStream,
-        final BulkWriter<IN> writer,
-        final long creationTime) {
+            BucketID bucketId,
+            RecoverableFsDataOutputStream currentPartStream,
+            BulkWriter<IN> writer,
+            long creationTime) {
         super(bucketId, creationTime);
         this.currentPartStream = currentPartStream;
         this.writer = Preconditions.checkNotNull(writer);

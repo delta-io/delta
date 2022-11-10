@@ -24,6 +24,7 @@ import org.apache.flink.api.common.serialization.BulkWriter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.fs.RecoverableFsDataOutputStream;
 import org.apache.flink.core.fs.RecoverableWriter;
+import org.apache.flink.core.fs.RecoverableWriter.ResumeRecoverable;
 import org.apache.flink.util.Preconditions;
 
 /**
@@ -53,18 +54,22 @@ public class DeltaBulkBucketWriter<IN, BucketID> extends BulkBucketWriter<IN, Bu
     // FileSink-specific
     ///////////////////////////////////////////////////////////////////////////
 
+
     @Override
-    public DeltaBulkPartWriter<IN, BucketID> resumeFrom(
-        final BucketID bucketId,
-        final RecoverableFsDataOutputStream stream,
-        final RecoverableWriter.ResumeRecoverable resumable,
-        final long creationTime)
-        throws IOException {
+    public InProgressFileWriter<IN, BucketID> resumeFrom(
+            BucketID bucketId,
+            RecoverableFsDataOutputStream stream,
+            Path path,
+            ResumeRecoverable resumable,
+            long creationTime) throws IOException {
+
         Preconditions.checkNotNull(stream);
         Preconditions.checkNotNull(resumable);
 
-        final BulkWriter<IN> writer = writerFactory.create(stream);
+        BulkWriter<IN> writer = writerFactory.create(stream);
 
+        // Path would be needed in new sink API to implement getPath method ofPendingFileRecoverable
+        // interface. Since we are on v1 currently, we don't have to pass Path down.
         return new DeltaBulkPartWriter<>(bucketId, stream, writer, creationTime);
     }
 
@@ -79,7 +84,7 @@ public class DeltaBulkBucketWriter<IN, BucketID> extends BulkBucketWriter<IN, Bu
         Preconditions.checkNotNull(stream);
         Preconditions.checkNotNull(path);
 
-        final BulkWriter<IN> writer = writerFactory.create(stream);
+        BulkWriter<IN> writer = writerFactory.create(stream);
         return new DeltaBulkPartWriter<>(bucketId, stream, writer, creationTime);
     }
 }

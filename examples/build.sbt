@@ -59,7 +59,7 @@ lazy val helloWorld = (project in file("hello-world")) settings (
   extraMavenRepo
 )
 
-val flinkVersion = "1.14.0"
+val flinkVersion = "1.15.2"
 val flinkHadoopVersion = "3.1.0"
 lazy val flinkExample = (project in file("flink-example")) settings (
   name := "flink",

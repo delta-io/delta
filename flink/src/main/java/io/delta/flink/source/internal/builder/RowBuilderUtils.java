@@ -3,12 +3,12 @@ package io.delta.flink.source.internal.builder;
 import java.util.List;
 
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
+import org.apache.flink.connector.file.table.PartitionFieldExtractor;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.formats.parquet.ParquetColumnarRowInputFormat;
 import org.apache.flink.formats.parquet.vector.ColumnBatchFactory;
-import org.apache.flink.table.data.vector.ColumnVector;
-import org.apache.flink.table.data.vector.VectorizedColumnBatch;
-import org.apache.flink.table.filesystem.PartitionFieldExtractor;
+import org.apache.flink.table.data.columnar.vector.ColumnVector;
+import org.apache.flink.table.data.columnar.vector.VectorizedColumnBatch;
 import org.apache.flink.table.types.logical.RowType;
 import static org.apache.flink.formats.parquet.vector.ParquetSplitReaderUtil.createVectorFromConstant;
 

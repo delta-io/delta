@@ -39,7 +39,7 @@ Depending on the version of the connector you can use it with following Apache F
 |:-------------------:|:---------------------:|
 |  0.4.x (Sink Only)  | 1.12.0 <= X <= 1.14.5 |
 |        0.5.0        | 1.13.0 <= X <= 1.13.6 |
-|   0.5.1-SNAPSHOT    | 1.14.0 <= X <= 1.14.5 |
+|   0.5.1-SNAPSHOT    |      X >= 1.15.0      |
 
 ### APIs
 

@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 
 import io.delta.flink.utils.DeltaTestUtils;
-import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.CheckpointingMode;
@@ -59,13 +58,16 @@ import org.apache.flink.table.types.logical.VarBinaryType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.types.Row;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.rules.TemporaryFolder;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -74,12 +76,21 @@ import io.delta.standalone.data.RowRecord;
 
 public class DeltaSinkWriteReadITCase {
 
-    @ClassRule
     public static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
 
     private String deltaTablePath;
 
-    @Before
+    @BeforeAll
+    public static void beforeAll() throws IOException {
+        TEMPORARY_FOLDER.create();
+    }
+
+    @AfterAll
+    public static void afterAll() {
+        TEMPORARY_FOLDER.delete();
+    }
+
+    @BeforeEach
     public void setup() throws IOException {
         deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
     }
@@ -136,7 +147,7 @@ public class DeltaSinkWriteReadITCase {
         validate(deltaLog.snapshot(), testRow);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testNestedTypes() throws Throwable {
         // GIVEN
         RowType rowType = new RowType(
@@ -147,29 +158,25 @@ public class DeltaSinkWriteReadITCase {
                     new RowType.RowField("f01", new IntType())
                 )))
             ));
+
         Integer value = 1;
         Integer[] testArray = {value};
         Map<String, Integer> testMap = new HashMap<String, Integer>() {{
                 put(String.valueOf(value), value);
             }};
+
         Row nestedRow = Row.of(value);
-        Row testRow = Row.of(
-            testMap,
-            testArray,
-            nestedRow
-        );
+        Row testRow = Row.of(testMap, testArray, nestedRow);
 
         // WHEN
-        try {
-            runFlinkJob(rowType, rowToRowData(rowType, testRow));
-        } catch (Exception e) {
-            // rethrow root cause
-            Throwable rootCause = ExceptionUtils.getRootCause(e);
-            assertTrue(rootCause.toString().contains("Unsupported type"));
-            throw rootCause;
-        }
+        runFlinkJobInBackground(rowType, rowToRowData(rowType, testRow));
+
         // THEN
-        // expect nothing
+        DeltaLog deltaLog =
+            DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), deltaTablePath);
+        waitUntilDeltaLogExists(deltaLog);
+
+        validateNestedData(deltaLog.snapshot(), testRow);
     }
 
     /**
@@ -248,47 +255,91 @@ public class DeltaSinkWriteReadITCase {
      *                    written by the Flink job
      * @param originalRow original row containing values before writing
      */
-    public static void validate(Snapshot snapshot,
-                                Row originalRow) {
+    public static void validate(Snapshot snapshot, Row originalRow) throws IOException {
+
         assertTrue(snapshot.getVersion() >= 0);
         assertTrue(snapshot.getAllFiles().size() > 0);
 
         Integer originalValue = (Integer) originalRow.getField(1);
-        CloseableIterator<RowRecord> iter = snapshot.open();
+
+        try (CloseableIterator<RowRecord> iterator = snapshot.open()) {
+
+            RowRecord row;
+            int numRows = 0;
+            while (iterator.hasNext()) {
+                row = iterator.next();
+                numRows++;
+                assertEquals(originalValue.floatValue(), row.getFloat("f1"), 0.0);
+                assertEquals(originalValue.intValue(), row.getInt("f2"));
+                assertEquals(originalValue.toString(), row.getString("f3"));
+                assertEquals(originalValue.doubleValue(), row.getDouble("f4"), 0.0);
+                assertFalse(row.getBoolean("f5"));
+                assertEquals(originalValue.byteValue(), row.getByte("f6"));
+                assertEquals(originalValue.shortValue(), row.getShort("f7"));
+                assertEquals(originalValue.longValue(), row.getLong("f8"));
+                assertEquals(
+                    originalValue,
+                    Integer.valueOf(new String(row.getBinary("f9"), StandardCharsets.UTF_8)));
+                assertEquals(
+                    originalValue,
+                    Integer.valueOf(new String(row.getBinary("f10"), StandardCharsets.UTF_8)));
+                assertEquals(
+                    originalRow.getField(10), row.getTimestamp("f11").toLocalDateTime());
+                assertEquals(originalRow.getField(11),
+                    row.getTimestamp("f12").toLocalDateTime().toInstant(ZoneOffset.UTC));
+                assertEquals(originalRow.getField(12), row.getDate("f13").toLocalDate());
+                assertEquals(String.valueOf(originalValue), row.getString("f14"));
+                BigDecimal expectedBigDecimal1 = BigDecimal.valueOf(originalValue);
+                assertEquals(
+                    expectedBigDecimal1,
+                    row.getBigDecimal("f15").setScale(expectedBigDecimal1.scale()));
+                BigDecimal expectedBigDecimal2 = new BigDecimal("11.11");
+                assertEquals(
+                    expectedBigDecimal2,
+                    row.getBigDecimal("f16").setScale(expectedBigDecimal2.scale()));
+            }
+            assertEquals(1, numRows);
+        }
+    }
+
+    /**
+     * Method that reads record with nested types written to a Delta table and with the use of Delta
+     * Standalone Reader validates whether the read fields are equal to their original values.
+     *
+     * @param snapshot    current snapshot representing the table's state after the record has been
+     *                    written by the Flink job
+     * @param originalRow original row containing values before writing
+     */
+    @SuppressWarnings("unchecked")
+    private void validateNestedData(Snapshot snapshot, Row originalRow) throws IOException {
+
+        assertTrue(snapshot.getVersion() >= 0);
+        assertTrue(snapshot.getAllFiles().size() > 0);
+
         RowRecord row;
         int numRows = 0;
-        while (iter.hasNext()) {
-            row = iter.next();
+        try (CloseableIterator<RowRecord> iterator = snapshot.open()) {
+            row = iterator.next();
             numRows++;
-            assertEquals(originalValue.floatValue(), row.getFloat("f1"), 0.0);
-            assertEquals(originalValue.intValue(), row.getInt("f2"));
-            assertEquals(originalValue.toString(), row.getString("f3"));
-            assertEquals(originalValue.doubleValue(), row.getDouble("f4"), 0.0);
-            assertFalse(row.getBoolean("f5"));
-            assertEquals(originalValue.byteValue(), row.getByte("f6"));
-            assertEquals(originalValue.shortValue(), row.getShort("f7"));
-            assertEquals(originalValue.longValue(), row.getLong("f8"));
-            assertEquals(
-                originalValue,
-                Integer.valueOf(new String(row.getBinary("f9"), StandardCharsets.UTF_8)));
-            assertEquals(
-                originalValue,
-                Integer.valueOf(new String(row.getBinary("f10"), StandardCharsets.UTF_8)));
-            assertEquals(
-                originalRow.getField(10), row.getTimestamp("f11").toLocalDateTime());
-            assertEquals(originalRow.getField(11),
-                row.getTimestamp("f12").toLocalDateTime().toInstant(ZoneOffset.UTC));
-            assertEquals(originalRow.getField(12), row.getDate("f13").toLocalDate());
-            assertEquals(String.valueOf(originalValue), row.getString("f14"));
-            BigDecimal expectedBigDecimal1 = BigDecimal.valueOf(originalValue);
-            assertEquals(
-                expectedBigDecimal1,
-                row.getBigDecimal("f15").setScale(expectedBigDecimal1.scale()));
-            BigDecimal expectedBigDecimal2 = new BigDecimal("11.11");
-            assertEquals(
-                expectedBigDecimal2,
-                row.getBigDecimal("f16").setScale(expectedBigDecimal2.scale()));
+
+            Map<String, Integer> actualMap = row.getMap("f1");
+            Map<String, Integer> expectedMap = (Map<String, Integer>) originalRow.getField(0);
+
+            assertThat(actualMap, equalTo(expectedMap));
+            assertThat(actualMap.get("1"), equalTo(expectedMap.get("1")));
+
+            List<Integer> actualArray = row.getList("f2");
+            Integer[] expectedArray = (Integer[]) originalRow.getField(1);
+            assertThat(actualArray.toArray(new Integer[0]), equalTo(expectedArray));
+
+            RowRecord actualRecord = row.getRecord("f3");
+            Row expectedRecord = (Row) originalRow.getField(2);
+
+            assertThat(actualRecord.getInt("f01"), equalTo(expectedRecord.getField(0)));
         }
+
         assertEquals(1, numRows);
+
     }
+
 }

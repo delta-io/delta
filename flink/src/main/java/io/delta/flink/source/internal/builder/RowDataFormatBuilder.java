@@ -2,13 +2,13 @@ package io.delta.flink.source.internal.builder;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import io.delta.flink.source.internal.DeltaPartitionFieldExtractor;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import org.apache.flink.formats.parquet.vector.ColumnBatchFactory;
+import org.apache.flink.formats.parquet.ParquetColumnarRowInputFormat;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
@@ -69,8 +69,9 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     /**
      * Creates an instance of {@link RowDataFormat}.
      *
-     * @throws DeltaOptionValidationException if invalid arguments were passed to {@link
-     *                                        RowDataFormatBuilder}. For example null arguments.
+     * @throws io.delta.flink.internal.options.DeltaOptionValidationException if invalid
+     *                arguments were passed to {@link RowDataFormatBuilder}. For example null
+     *                arguments.
      */
     @Override
     public RowDataFormat build() {
@@ -90,43 +91,30 @@ public class RowDataFormatBuilder implements FormatBuilder<RowData> {
     }
 
     private RowDataFormat buildFormatWithoutPartitions() {
-
-        return new RowDataFormat(
-            hadoopConfiguration,
+        return buildFormatWithPartitionColumns(
             rowType,
-            batchSize,
-            PARQUET_UTC_TIMESTAMP,
-            PARQUET_CASE_SENSITIVE);
+            hadoopConfiguration,
+            Collections.emptyList()
+        );
     }
 
     private RowDataFormat buildFormatWithPartitionColumns(
-        RowType producedRowType,
-        Configuration hadoopConfig,
-        List<String> partitionColumns) {
+            RowType producedRowType,
+            Configuration hadoopConfig,
+            List<String> partitionColumns) {
 
-        RowType projectedRowType =
-            new RowType(
-                producedRowType.getFields().stream()
-                    .filter(field -> !partitionColumns.contains(field.getName()))
-                    .collect(Collectors.toList()));
-
-        List<String> projectedNames = projectedRowType.getFieldNames();
-
-        ColumnBatchFactory<DeltaSourceSplit> factory =
-            RowBuilderUtils.createPartitionedColumnFactory(
+        ParquetColumnarRowInputFormat<DeltaSourceSplit> rowInputFormat =
+            ParquetColumnarRowInputFormat.createPartitionedFormat(
+                hadoopConfig,
                 producedRowType,
-                projectedNames,
+                InternalTypeInfo.of(producedRowType),
                 partitionColumns,
                 new DeltaPartitionFieldExtractor<>(),
-                batchSize);
+                batchSize,
+                PARQUET_UTC_TIMESTAMP,
+                PARQUET_CASE_SENSITIVE
+            );
 
-        return new RowDataFormat(
-            hadoopConfig,
-            projectedRowType,
-            producedRowType,
-            factory,
-            batchSize,
-            PARQUET_UTC_TIMESTAMP,
-            PARQUET_CASE_SENSITIVE);
+        return new RowDataFormat(rowInputFormat);
     }
 }

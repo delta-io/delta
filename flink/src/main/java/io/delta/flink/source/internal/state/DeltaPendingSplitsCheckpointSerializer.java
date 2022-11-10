@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import io.delta.flink.source.internal.utils.SourceUtils;
 import org.apache.flink.api.connector.source.SourceSplit;
 import org.apache.flink.api.connector.source.SplitEnumerator;
-import org.apache.flink.connector.file.src.FileSourceSplit;
 import org.apache.flink.connector.file.src.PendingSplitsCheckpoint;
 import org.apache.flink.connector.file.src.PendingSplitsCheckpointSerializer;
 import org.apache.flink.core.fs.Path;
@@ -46,8 +45,9 @@ public class DeltaPendingSplitsCheckpointSerializer<SplitT extends DeltaSourceSp
     private static final int VERSION = 1;
 
     /**
-     * A de/serializer for {@link FileSourceSplit} that {@link DeltaSourceSplit} extends. It handles
-     * de/serialization all fields inherited from {@code FileSourceSplit}
+     * A de/serializer for {@link org.apache.flink.connector.file.src.FileSourceSplit} that {@link
+     * DeltaSourceSplit} extends. It handles de/serialization all fields inherited from {@code
+     * FileSourceSplit}
      */
     private final PendingSplitsCheckpointSerializer<SplitT> decoratedSerDe;
 

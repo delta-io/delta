@@ -110,9 +110,7 @@ public class DeltaSinkTestUtils {
         return rows;
     }
 
-    public static RowData getTestRowDataEvent(String name,
-                                              String surname,
-                                              Integer age) {
+    public static RowData getTestRowDataEvent(String name, String surname, Integer age) {
         return TEST_ROW_TYPE_CONVERTER.toInternal(Row.of(name, surname, age));
     }
 
@@ -329,8 +327,10 @@ public class DeltaSinkTestUtils {
     // IT case utils
     ///////////////////////////////////////////////////////////////////////////
 
-    public static DeltaSinkInternal<RowData> createDeltaSink(String deltaTablePath,
-                                                             boolean isTablePartitioned) {
+    public static DeltaSinkInternal<RowData> createDeltaSink(
+            String deltaTablePath,
+            boolean isTablePartitioned) {
+
         if (isTablePartitioned) {
             DeltaSinkBuilder<RowData> builder = new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
                 new Path(deltaTablePath),

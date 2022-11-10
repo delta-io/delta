@@ -4,8 +4,8 @@ import java.util.Map;
 
 import io.delta.flink.source.internal.exceptions.DeltaSourceExceptions;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import org.apache.flink.table.filesystem.PartitionFieldExtractor;
-import org.apache.flink.table.filesystem.RowPartitionComputer;
+import org.apache.flink.connector.file.table.PartitionFieldExtractor;
+import org.apache.flink.connector.file.table.RowPartitionComputer;
 import org.apache.flink.table.types.logical.LogicalType;
 
 /**

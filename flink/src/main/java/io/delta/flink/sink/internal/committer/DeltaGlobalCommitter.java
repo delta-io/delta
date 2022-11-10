@@ -105,10 +105,12 @@ public class DeltaGlobalCommitter
      */
     private final boolean mergeSchema;
 
-    public DeltaGlobalCommitter(Configuration conf,
-                                Path basePath,
-                                RowType rowType,
-                                boolean mergeSchema) {
+    public DeltaGlobalCommitter(
+            Configuration conf,
+            Path basePath,
+            RowType rowType,
+            boolean mergeSchema) {
+
         this.conf = conf;
         this.basePath = basePath;
         this.rowType = rowType;
@@ -131,7 +133,7 @@ public class DeltaGlobalCommitter
      */
     @Override
     public List<DeltaGlobalCommittable> filterRecoveredCommittables(
-        List<DeltaGlobalCommittable> globalCommittables) {
+            List<DeltaGlobalCommittable> globalCommittables) {
         return globalCommittables;
     }
 
