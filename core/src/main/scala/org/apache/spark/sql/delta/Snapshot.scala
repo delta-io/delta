@@ -218,7 +218,9 @@ class Snapshot(
   def metadata: Metadata = computedState.metadata
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
   def sizeInBytes: Long = computedState.sizeInBytes
+  def sizeInBytesOpt: Option[Long] = Some(sizeInBytes)
   def numOfFiles: Long = computedState.numOfFiles
+  def numOfFilesOpt: Option[Long] = Some(numOfFiles)
   def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol

@@ -174,10 +174,10 @@ trait DataSkippingReaderBase
   def path: Path
   def version: Long
   def metadata: Metadata
-  def sizeInBytes: Long
+  def sizeInBytesOpt: Option[Long]
   def deltaLog: DeltaLog
   def schema: StructType
-  def numOfFiles: Long
+  def numOfFilesOpt: Option[Long]
   def redactedPath: String
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
@@ -826,9 +826,9 @@ trait DataSkippingReaderBase
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
         val dataSize = DataSize(
-          bytesCompressed = Some(sizeInBytes),
+          bytesCompressed = sizeInBytesOpt,
           rows = None,
-          files = Some(numOfFiles))
+          files = numOfFilesOpt)
         return DeltaScan(
           version = version,
           files = getAllFiles(keepNumRecords),
@@ -864,7 +864,7 @@ trait DataSkippingReaderBase
       DeltaScan(
         version = version,
         files = files,
-        total = DataSize(Some(sizeInBytes), None, Some(numOfFiles)),
+        total = DataSize(sizeInBytesOpt, None, numOfFilesOpt),
         partition = scanSize,
         scanned = scanSize)(
         scannedSnapshot = snapshotToScan,
