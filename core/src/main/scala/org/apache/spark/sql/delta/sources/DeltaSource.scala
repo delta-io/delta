@@ -672,6 +672,25 @@ case class DeltaSource(
   }
 
   /**
+   * Verify whether the schema change in `version` is safe to continue. If not, throw an exception
+   * to fail the query.
+   */
+  protected def verifySchemaChange(newSchema: StructType, version: Long): Unit = {
+    // There is a schema change. All of files after this commit will use `newSchema`. Hence, we
+    // check whether we can use `schema` (the fixed source schema we use in the same run of the
+    // query) to read these new files safely.
+    if (!SchemaUtils.isReadCompatible(newSchema, schema)) {
+      val retryable = SchemaUtils.isReadCompatible(schema, newSchema)
+      throw DeltaErrors.schemaChangedException(
+        schema,
+        newSchema,
+        retryable = retryable,
+        Some(version),
+        includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
+    }
+  }
+
+  /**
    * Check stream for violating any constraints.
    *
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
@@ -693,9 +712,7 @@ case class DeltaSource(
       case m: Metadata =>
         if (verifyMetadataAction) {
           checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
-            throw DeltaErrors.schemaChangedException(schema, m.schema, false)
-          }
+          verifySchemaChange(m.schema, version)
         }
       case protocol: Protocol =>
         deltaLog.protocolRead(protocol)
@@ -749,9 +766,7 @@ case class DeltaSource(
       case m: Metadata =>
         if (verifyMetadataAction) {
           checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
-            throw DeltaErrors.schemaChangedException(schema, m.schema, false)
-          }
+          verifySchemaChange(m.schema, version)
         }
         false
       case protocol: Protocol =>

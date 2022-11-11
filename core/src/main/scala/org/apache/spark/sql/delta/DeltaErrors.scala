@@ -916,25 +916,36 @@ trait DeltaErrorsBase
       messageParameters = Array(action, version.toString))
   }
 
+
   def schemaChangedException(
       oldSchema: StructType,
       newSchema: StructType,
-      retryable: Boolean): Throwable = {
-    val msg =
-      s"""Detected schema change:
-        |old schema: ${formatSchema(oldSchema)}
-        |
-        |new schema: ${formatSchema(newSchema)}
-        |
-        |Please try restarting the query. If this issue repeats across query restarts without
-        |making progress, you have made an incompatible schema change and need to start your
-        |query from scratch using a new checkpoint directory.
-        |""".stripMargin
-    new DeltaIllegalStateException(
-      errorClass = "DELTA_SCHEMA_CHANGED",
-      messageParameters = Array(
+      retryable: Boolean,
+      version: Option[Long],
+      includeStartingVersionOrTimestampMessage: Boolean): Throwable = {
+    def newException(errorClass: String, messageParameters: Array[String]): Throwable = {
+      new DeltaIllegalStateException(errorClass, messageParameters)
+    }
+
+    if (version.isEmpty) {
+      newException("DELTA_SCHEMA_CHANGED", Array(
         formatSchema(oldSchema),
-        formatSchema(newSchema)))
+        formatSchema(newSchema)
+        ))
+    } else if (!includeStartingVersionOrTimestampMessage) {
+      newException("DELTA_SCHEMA_CHANGED_WITH_VERSION", Array(
+        version.get.toString,
+        formatSchema(oldSchema),
+        formatSchema(newSchema)
+      ))
+    } else {
+      newException("DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS", Array(
+        version.get.toString,
+        formatSchema(oldSchema),
+        formatSchema(newSchema),
+        version.get.toString
+      ))
+    }
   }
 
   def streamWriteNullTypeException: Throwable = {

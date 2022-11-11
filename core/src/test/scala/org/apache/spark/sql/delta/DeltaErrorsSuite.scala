@@ -39,6 +39,7 @@ import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -601,23 +602,71 @@ trait DeltaErrorsSuiteBase
     {
       val oldSchema = StructType(Seq(StructField("c0", IntegerType)))
       val newSchema = StructType(Seq(StructField("c0", StringType)))
-      val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.schemaChangedException(oldSchema, newSchema, false)
+      for (retryable <- DeltaTestUtils.BOOLEAN_DOMAIN) {
+        val expectedClass: Class[_] = classOf[DeltaIllegalStateException]
+
+        var e = intercept[Exception with SparkThrowable] {
+          throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, None, false)
+        }
+        assert(expectedClass.isAssignableFrom(e.getClass))
+        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED")
+        assert(e.getSqlState == "22000")
+        // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
+        var msg =
+          s"""Detected schema change:
+             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #
+             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #
+             #Please try restarting the query. If this issue repeats across query restarts without
+             #making progress, you have made an incompatible schema change and need to start your
+             #query from scratch using a new checkpoint directory.
+             #""".stripMargin('#')
+        assert(e.getMessage == msg)
+
+        // Check the error message with version information
+        e = intercept[Exception with SparkThrowable] {
+          throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, Some(10), false)
+        }
+        assert(expectedClass.isAssignableFrom(e.getClass))
+        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED_WITH_VERSION")
+        assert(e.getSqlState == "22000")
+        // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
+        msg =
+          s"""Detected schema change in version 10:
+             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #
+             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #
+             #Please try restarting the query. If this issue repeats across query restarts without
+             #making progress, you have made an incompatible schema change and need to start your
+             #query from scratch using a new checkpoint directory.
+             #""".stripMargin('#')
+        assert(e.getMessage == msg)
+
+        // Check the error message with startingVersion/Timestamp error message
+        e = intercept[Exception with SparkThrowable] {
+          throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, Some(10), true)
+        }
+        assert(expectedClass.isAssignableFrom(e.getClass))
+        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
+        assert(e.getSqlState == "22000")
+        // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
+        msg =
+          s"""Detected schema change in version 10:
+             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #
+             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #
+             #Please try restarting the query. If this issue repeats across query restarts without
+             #making progress, you have made an incompatible schema change and need to start your
+             #query from scratch using a new checkpoint directory. If the issue persists after
+             #changing to a new checkpoint directory, you may need to change the existing
+             #'startingVersion' or 'startingTimestamp' option to start from a version newer than
+             #10 with a new checkpoint directory.
+             #""".stripMargin('#')
+        assert(e.getMessage == msg)
       }
-      assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED")
-      assert(e.getSqlState == "22000")
-      // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
-      val msg =
-        s"""Detected schema change:
-          #old schema: ${DeltaErrors.formatSchema(oldSchema)}
-          #
-          #new schema: ${DeltaErrors.formatSchema(newSchema)}
-          #
-          #Please try restarting the query. If this issue repeats across query restarts without
-          #making progress, you have made an incompatible schema change and need to start your
-          #query from scratch using a new checkpoint directory.
-          #""".stripMargin('#')
-      assert(e.getMessage == msg)
     }
     {
       val e = intercept[DeltaAnalysisException] {

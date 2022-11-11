@@ -194,6 +194,10 @@ trait DeltaReadOptions extends DeltaOptionParser {
     }
   }
 
+  def containsStartingVersionOrTimestamp: Boolean = {
+    options.contains(STARTING_VERSION_OPTION) || options.contains(STARTING_TIMESTAMP_OPTION)
+  }
+
   provideOneStartingOption()
 }
 
