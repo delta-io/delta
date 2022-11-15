@@ -205,8 +205,7 @@ class DeltaLog private(
       schema: StructType = Action.logSchema): LogicalRelation = {
     val formatSpecificOptions: Map[String, String] = index.format match {
       case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
-        // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
-        Map("mode" -> FailFastMode.name)
+        DeltaLog.jsonCommitParseOption
       case _ => Map.empty
     }
     // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
@@ -591,6 +590,9 @@ object DeltaLog extends DeltaLogging {
     builder.build[DeltaLogCacheKey, DeltaLog]()
   }
 
+
+  // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
+  val jsonCommitParseOption = Map("mode" -> FailFastMode.name)
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
