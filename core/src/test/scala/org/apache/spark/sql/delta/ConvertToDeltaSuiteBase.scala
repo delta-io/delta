@@ -121,7 +121,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
     }
   }
 
-  test("convert with collectStats true but config set to false") {
+  test("convert with collectStats true but config set to false -> Do not collect stats") {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
         val tempDir = dir.getCanonicalPath

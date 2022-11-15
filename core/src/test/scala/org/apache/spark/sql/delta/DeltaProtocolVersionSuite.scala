@@ -191,7 +191,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           fn(dir.getCanonicalPath)
 
           val deltaLog = DeltaLog.forTable(spark, dir)
-          assert(deltaLog.snapshot.version == 0, "did not create a Delta table")
+          assert(deltaLog.snapshot.version === 0, "did not create a Delta table")
           assert(deltaLog.snapshot.protocol.minWriterVersion === writerVersion)
           assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
         }
