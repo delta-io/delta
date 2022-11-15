@@ -16,49 +16,35 @@
 
 package org.apache.spark.sql.delta.optimizer
 
-import org.apache.spark.sql.{Column, Row}
-import org.apache.spark.sql.catalyst.expressions.aggregate.Complete
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Literal, SubqueryExpression}
-import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Count}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{Alias, Literal}
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions.{count, sum}
-import org.apache.spark.sql.types.LongType
 
 trait OptimizeMetadataOnlyDeltaQuery {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
-      case CountStarDeltaTable(alias, countValue) =>
-        createLocalRelationPlan(alias, countValue)
+      case agg@CountStarDeltaTable(countValue) =>
+        LocalRelation(agg.output, Seq(InternalRow(countValue)))
     }
   }
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
 
-  private def createLocalRelationPlan(
-    alias: Alias,
-    rowCount: Long): LogicalPlan = {
-    val relation = LocalRelation.fromExternalRows(
-      output = Seq(AttributeReference(alias.name, LongType)(alias.exprId, alias.qualifier)),
-      data = Seq(Row(rowCount)))
-
-    relation
-  }
-
   object CountStarDeltaTable {
-
-    def unapply(plan: Aggregate): Option[(Alias, Long)] = {
+    def unapply(plan: Aggregate): Option[Long] = {
       plan match {
         case Aggregate(
         Nil,
-        Seq(oldAlias@Alias
-          (AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _), _)),
+        Seq(Alias(AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _), _)),
         PhysicalOperation(_, Nil, DeltaTable(tahoeLogFileIndex: TahoeLogFileIndex))) =>
-          extractGlobalCount(tahoeLogFileIndex).map(rowCount =>
-            (oldAlias, rowCount))
+          extractGlobalCount(tahoeLogFileIndex)
         case _ => None
       }
     }
