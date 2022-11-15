@@ -209,7 +209,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1).toDF("value"),
     source = Seq(1, 1).toDF("value"),
     mergeCondition = "t.value = s.value",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData = Seq(0).toDF(),
     expectedCdcDataWithoutVersion = ((1, "delete") :: Nil).toDF()
   )
@@ -219,7 +219,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0).toDF("value"),
     source = ((0, 0) :: (0, 1) :: Nil).toDF("col1", "col2"),
     mergeCondition = "t.value = s.col1",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
         .toDF("value"),
@@ -231,7 +231,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1, 1).toDF("value"),
     source = Seq(1, 1).toDF("value"),
     mergeCondition = "t.value = s.value",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData = Seq(0).toDF(),
     expectedCdcDataWithoutVersion = ((1, "delete") :: (1, "delete") :: Nil).toDF()
   )
@@ -240,7 +240,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "t.value > 0",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData = Seq(0).toDF(),
     expectedCdcDataWithoutVersion = ((1, "delete") :: Nil).toDF()
   )
@@ -250,7 +250,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "t.value > 0",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData = Seq(0).toDF(),
     expectedCdcDataWithoutVersion = ((1, "delete") :: (1, "delete") :: Nil).toDF()
   )
@@ -259,7 +259,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "s.value < 2",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
       .toDF("value"),
@@ -271,7 +271,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(0, 1, 1).toDF("value"),
     source = Seq(0, 1).toDF("value"),
     mergeCondition = "s.value < 2",
-    clauses = MergeClause(isMatched = true, null, "DELETE") :: Nil,
+    clauses = delete() :: Nil,
     expectedTableData =
       Nil.asInstanceOf[List[Integer]]
         .toDF("value"),
@@ -282,7 +282,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = ((1, 1) :: (2, 2) :: Nil).toDF("key", "value"),
     source = ((1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil).toDF("key", "value"),
     mergeCondition = "s.key = t.key",
-    clauses = MergeClause(isMatched = true, null, "DELETE") ::
+    clauses = delete() ::
       insert(values = "(key, value) VALUES (s.key, s.value)") :: Nil,
     expectedTableData = ((2, 2) :: (3, 30) :: (3, 300) :: Nil).toDF("key", "value"),
     expectedCdcDataWithoutVersion =
@@ -294,7 +294,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = ((1, 1) :: (2, 2) :: Nil).toDF("key", "value"),
     source = ((1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: (3, 300) :: Nil).toDF("key", "value"),
     mergeCondition = "s.key = t.key",
-    clauses = MergeClause(isMatched = true, null, "DELETE") ::
+    clauses = delete() ::
       insert(values = "(key, value) VALUES (s.key, s.value)") :: Nil,
     expectedTableData = ((2, 2) :: (3, 30) :: (3, 300) :: (3, 300) :: Nil).toDF("key", "value"),
     expectedCdcDataWithoutVersion =
@@ -307,7 +307,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
     target = Seq(1, 2).toDF("value"),
     source = ((1, 10) :: (1, 100) :: (3, 2) :: Nil).toDF("col1", "col2"),
     mergeCondition = "s.col1 = t.value",
-    clauses = MergeClause(isMatched = true, null, "DELETE") ::
+    clauses = delete() ::
       insert(values = "(value) VALUES (col2)") :: Nil,
     expectedTableData = Seq(2, 2).toDF(),
     expectedCdcDataWithoutVersion =

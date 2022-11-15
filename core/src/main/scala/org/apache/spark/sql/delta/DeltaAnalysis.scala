@@ -188,24 +188,25 @@ class DeltaAnalysis(session: SparkSession)
     case merge: MergeIntoTable if merge.childrenResolved =>
       val matchedActions = merge.matchedActions.map {
         case update: UpdateAction =>
-          DeltaMergeIntoUpdateClause(
+          DeltaMergeIntoMatchedUpdateClause(
             update.condition,
             DeltaMergeIntoClause.toActions(update.assignments))
         case update: UpdateStarAction =>
-          DeltaMergeIntoUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
+          DeltaMergeIntoMatchedUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
         case delete: DeleteAction =>
-          DeltaMergeIntoDeleteClause(delete.condition)
+          DeltaMergeIntoMatchedDeleteClause(delete.condition)
         case other =>
           throw new AnalysisException(
             s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
       val notMatchedActions = merge.notMatchedActions.map {
         case insert: InsertAction =>
-          DeltaMergeIntoInsertClause(
+          DeltaMergeIntoNotMatchedInsertClause(
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
         case insert: InsertStarAction =>
-          DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
+          DeltaMergeIntoNotMatchedInsertClause(
+            insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
           throw DeltaErrors.invalidMergeClauseWhenNotMatched(s"${other.prettyName}")
       }

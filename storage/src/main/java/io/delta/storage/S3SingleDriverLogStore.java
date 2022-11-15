@@ -32,10 +32,13 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.io.CountingOutputStream;
 import io.delta.storage.internal.FileNameUtils;
+import io.delta.storage.internal.S3LogStoreUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -60,6 +63,17 @@ import org.apache.hadoop.fs.Path;
  * </ul>
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
+
+    /**
+     * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list
+     * requests. The feature is enabled by setting the property delta.enableFastS3AListFrom in the
+     * Hadoop configuration.
+     *
+     * This feature requires the Hadoop file system used for S3 paths to be castable to
+     * org.apache.hadoop.fs.s3a.S3AFileSystem.
+     */
+    private final boolean enableFastListFrom
+            = initHadoopConf().getBoolean("delta.enableFastS3AListFrom", false);
 
     ///////////////////////////
     // Static Helper Methods //
@@ -223,8 +237,18 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             );
         }
 
+        FileStatus[] statuses;
+        if (
+            // LocalFileSystem and RawLocalFileSystem checks are needed for tests to pass
+            fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem || !enableFastListFrom
+        ) {
+            statuses = fs.listStatus(parentPath);
+        } else {
+            statuses = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, parentPath);
+        }
+
         final List<FileStatus> listedFromFs = Arrays
-            .stream(fs.listStatus(parentPath))
+            .stream(statuses)
             .filter(s -> s.getPath().getName().compareTo(resolvedPath.getName()) >= 0)
             .collect(Collectors.toList());
 

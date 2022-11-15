@@ -354,6 +354,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CONVERSION_NO_PARTITION_FOUND" : {
+    "message" : [
+      "Found no partition information in the catalog for table <tableName>. Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING" : {
     "message" : [
       "The configuration '<config>' cannot be set to `<mode>` when using CONVERT TO DELTA."
@@ -946,6 +952,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_MISSING_ICEBERG_CLASS" : {
+    "message" : [
+      "Iceberg class was not found. Please ensure Delta Iceberg support is installed.",
+      "Please refer to <docLink> for more details."
+    ]
+  },
   "DELTA_MISSING_NOT_NULL_COLUMN_VALUE" : {
     "message" : [
       "Column <columnName>, which has a NOT NULL constraint, is missing from the data being written into the table."
@@ -1199,6 +1211,12 @@
   "DELTA_PARTITION_COLUMN_NOT_FOUND" : {
     "message" : [
       "Partition column <columnName> not found in schema [<schemaMap>]"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES" : {
+    "message" : [
+      "Partition schema cannot be specified when converting Iceberg tables. It is automatically inferred."
     ],
     "sqlState" : "42000"
   },

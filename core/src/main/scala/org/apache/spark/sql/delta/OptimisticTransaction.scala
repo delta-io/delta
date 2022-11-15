@@ -530,25 +530,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
   /** Returns files matching the given predicates. */
-  def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(filters)
+  def filterFiles(filters: Seq[Expression], keepNumRecords: Boolean = false): Seq[AddFile] = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
     readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    readFiles ++= scan.files
-    scan.files
-  }
-
-  /** Same as filterFiles but makes sure that the stats contain at least the numRecords field. */
-  def filterFilesWithNumRecords(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(
-      filters = filters,
-      keepNumRecords = true)
-    val partitionFilters = filters.filter { f =>
-      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
-    }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
     readFiles ++= scan.files
     scan.files
   }

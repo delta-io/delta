@@ -82,7 +82,8 @@ trait DeltaErrorsSuiteBase
     "sourceNotDeterministicInMergeException" ->
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
     "columnMappingAdviceMessage" ->
-      DeltaErrors.columnRenameNotSupported
+      DeltaErrors.columnRenameNotSupported,
+    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable())
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -469,6 +470,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Manifest generation is not supported for tables that leverage " +
         "column mapping, as external readers cannot read these Delta tables. See Delta " +
         "documentation for more details.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertToDeltaNoPartitionFound("testTable")
+      }
+      assert(e.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Found no partition information in the catalog for table testTable." +
+        " Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?")
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {

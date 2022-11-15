@@ -17,7 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaHiveTest
-import org.apache.spark.sql.Row
+
+import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.test.SQLTestUtils
@@ -152,6 +153,29 @@ abstract class HiveConvertToDeltaSuiteBase
         verifyExternalCatalogMetadata(tbl)
         val updatedTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
         assert(updatedTable.provider === Some("delta"))
+      }
+    }
+  }
+
+  test("negative case: convert empty partitioned parquet table") {
+    val tbl = "hive_parquet"
+    withTempDir { dir =>
+      withTable(tbl) {
+        sql(
+          s"""
+             |CREATE EXTERNAL TABLE $tbl (id int, str string)
+             |PARTITIONED BY (part string)
+             |STORED AS PARQUET
+             |LOCATION '${dir.getCanonicalPath}'
+         """.stripMargin)
+
+        val ae = intercept[AnalysisException] {
+          convertToDelta(tbl, Some("part string"))
+        }
+
+        assert(ae.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
+        assert(ae.getSqlState == "42000")
+        assert(ae.getMessage.contains(tbl))
       }
     }
   }

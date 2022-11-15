@@ -17,7 +17,7 @@
 import java.nio.file.Files
 import TestParallelization._
 
-val sparkVersion = "3.3.0"
+val sparkVersion = "3.3.1"
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
@@ -171,6 +171,7 @@ lazy val storage = (project in file("storage"))
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
       "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
 
       // Test Deps
       "org.scalatest" %% "scalatest" % "3.2.11" % "test",
@@ -191,6 +192,21 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
 
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
+    )
+  )
+
+lazy val deltaIceberg = (project in file("delta-iceberg"))
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .settings (
+    name := "delta-iceberg",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq( {
+        val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
+          .cross(CrossVersion.binary)
+      }
     )
   )
 

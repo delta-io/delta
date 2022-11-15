@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
+import java.lang.reflect.InvocationTargetException
 import java.util.Locale
 
 import scala.collection.JavaConverters._
@@ -29,7 +30,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
-
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
@@ -40,13 +41,14 @@ import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand.computeStats
 import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
  * Convert an existing parquet table to a delta table by creating delta logs based on
@@ -76,8 +78,17 @@ abstract class ConvertToDeltaCommandBase(
     collectStats: Boolean,
     deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
 
-  protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
-    lowerCaseProvider == "parquet"
+  protected lazy val icebergEnabled: Boolean =
+    conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
+
+  protected def isParquetPathProvider(provider: String): Boolean =
+    provider.equalsIgnoreCase("parquet")
+
+  protected def isIcebergPathProvider(provider: String): Boolean =
+    icebergEnabled && provider.equalsIgnoreCase("iceberg")
+
+  protected def isSupportedPathTableProvider(provider: String): Boolean = {
+    isParquetPathProvider(provider) || isIcebergPathProvider(provider)
   }
 
   override def run(spark: SparkSession): Seq[Row] = {
@@ -199,7 +210,8 @@ abstract class ConvertToDeltaCommandBase(
   override def isPathIdentifier(tableIdent: TableIdentifier): Boolean = {
     val provider = tableIdent.database.getOrElse("")
     // If db doesnt exist or db is called delta/tahoe then check if path exists
-    (DeltaSourceUtils.isDeltaDataSourceName(provider) || isSupportedProvider(provider)) &&
+    (DeltaSourceUtils.isDeltaDataSourceName(provider) ||
+      isSupportedPathTableProvider(provider)) &&
       new Path(tableIdent.table).isAbsolute
   }
 
@@ -293,19 +305,21 @@ abstract class ConvertToDeltaCommandBase(
   }
 
   /** Get the instance of the convert target table, which provides file manifest and schema */
-  protected def getTargetTable(
-      spark: SparkSession,
-      target: ConvertTarget): ConvertTargetTable = {
-    val qualifiedDir =
-      ConvertToDeltaCommand.getQualifiedPath(spark, new Path(target.targetDir)).toString
+  protected def getTargetTable(spark: SparkSession, target: ConvertTarget): ConvertTargetTable = {
     target.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
-        case _ if target.catalogTable.exists(ConvertToDeltaCommand.isHiveStyleParquetTable) =>
-          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
-        case checkProvider if checkProvider.equalsIgnoreCase("parquet") =>
-          new ParquetTable(spark, qualifiedDir, target.catalogTable, partitionSchema)
-        case checkProvider =>
-          throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, checkProvider)
+        case checkProvider
+          if target.catalogTable.exists(ConvertToDeltaCommand.isHiveStyleParquetTable) ||
+            isParquetPathProvider(checkProvider) =>
+          ConvertToDeltaCommand.getParquetTable(
+            spark, target.targetDir, target.catalogTable, partitionSchema)
+        case checkProvider if isIcebergPathProvider(checkProvider) =>
+          if (partitionSchema.isDefined) {
+            throw DeltaErrors.partitionSchemaInIcebergTables
+          }
+          ConvertToDeltaCommand.getIcebergTable(spark, target.targetDir, None, None)
+        case other =>
+          throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, other)
       }
       case None =>
         throw DeltaErrors.missingProviderForConvertException(target.targetDir)
@@ -457,10 +471,10 @@ trait ConvertTargetTable {
 }
 
 class ParquetTable(
-    spark: SparkSession,
-    basePath: String,
-    catalogTable: Option[CatalogTable],
-    userPartitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
+    val spark: SparkSession,
+    val basePath: String,
+    val catalogTable: Option[CatalogTable],
+    val userPartitionSchema: Option[StructType]) extends ConvertTargetTable with DeltaLogging {
   // Validate user provided partition schema if catalogTable is available.
   if (catalogTable.isDefined && userPartitionSchema.isDefined
     && !catalogTable.get.partitionSchema.equals(userPartitionSchema.get)) {
@@ -712,6 +726,10 @@ class CatalogFileManifest(
 
   override lazy val allFiles: Dataset[ConvertTargetFile] = {
     import org.apache.spark.sql.delta.implicits._
+    if (partitionList.isEmpty) {
+      throw DeltaErrors.convertToDeltaNoPartitionFound(catalogTable.identifier.unquotedString)
+    }
+
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -721,7 +739,7 @@ class CatalogFileManifest(
         DeltaFileOperations
           .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
           .map(ConvertTargetFile(_))
-    }
+      }
     spark.createDataset(rdd).cache()
   }
 
@@ -749,8 +767,13 @@ class MetadataLogFileManifest(
   override def close(): Unit = allFiles.unpersist()
 }
 
-object ConvertToDeltaCommand {
+trait ConvertToDeltaCommandUtils extends DeltaLogging {
+
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+
+  var icebergSparkTableClassPath = "org.apache.spark.sql.delta.IcebergTable"
+  var icebergLibTableClassPath = "org.apache.iceberg.Table"
+
   def createAddFile(
       targetFile: ConvertTargetFile,
       basePath: Path,
@@ -872,4 +895,45 @@ object ConvertToDeltaCommand {
     }
   }
 
+  def getParquetTable(
+      spark: SparkSession,
+      targetDir: String,
+      catalogTable: Option[CatalogTable],
+      partitionSchema: Option[StructType]): ConvertTargetTable = {
+    val qualifiedDir = ConvertToDeltaCommand.getQualifiedPath(spark, new Path(targetDir)).toString
+    new ParquetTable(spark, qualifiedDir, catalogTable, partitionSchema)
+  }
+
+  def getIcebergTable(
+      spark: SparkSession,
+      targetDir: String,
+      sparkTable: Option[Table],
+      tableSchema: Option[StructType]): ConvertTargetTable = {
+    try {
+      val clazz = Utils.classForName(icebergSparkTableClassPath)
+      if (sparkTable.isDefined) {
+        val constFromTable = clazz.getConstructor(
+          classOf[SparkSession],
+          Utils.classForName(icebergLibTableClassPath),
+          classOf[Option[StructType]])
+        val method = sparkTable.get.getClass.getMethod("table")
+        constFromTable.newInstance(spark, method.invoke(sparkTable.get), tableSchema)
+      } else {
+        val baseDir = ConvertToDeltaCommand.getQualifiedPath(spark, new Path(targetDir)).toString
+        val constFromPath = clazz.getConstructor(
+          classOf[SparkSession], classOf[String], classOf[Option[StructType]])
+        constFromPath.newInstance(spark, baseDir, tableSchema)
+      }
+    } catch {
+      case e: ClassNotFoundException =>
+        logError(s"Failed to find Iceberg class", e)
+        throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
+      case e: InvocationTargetException =>
+        logError(s"Got error when creating an Iceberg Converter", e)
+        // The better error is within the cause
+        throw ExceptionUtils.getRootCause(e)
+    }
+  }
 }
+
+object ConvertToDeltaCommand extends ConvertToDeltaCommandUtils
