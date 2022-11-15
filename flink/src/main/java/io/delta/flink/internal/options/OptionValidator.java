@@ -10,7 +10,7 @@ import org.apache.flink.core.fs.Path;
  *
  * Setting of an option is allowed for known option names. For invalid options, the validation
  * throws {@link DeltaOptionValidationException}. Known option names are passed via constructor
- * parameter {@param validOptions}.
+ * parameter {@code validOptions}.
  *
  * This is an internal class meant for connector implementations only.
  * Usage example (for sink):

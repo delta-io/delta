@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
+// TODO PR Flink 1.15 verify javadoc below.
 /**
  * Committer implementation for {@link DeltaSink}.
  *
@@ -38,10 +39,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * state, created by the {@link io.delta.flink.sink.internal.writer.DeltaWriter}
  * and put them in "finished" state ready to be committed to the DeltaLog during "global" commit.
  *
- * <p> This class behaves almost in the same way as its Sink V1 equivalent
- * {@code org.apache.flink.connector.file.sink.committer.FileCommitter} from Flink 1.14.
- *
- * The only differences are:
+ * <p> This class behaves almost in the same way as its equivalent
+ * {@link org.apache.flink.connector.file.sink.committer.FileCommitter}
+ * in the {@link org.apache.flink.connector.file.sink.FileSink}. The only differences are:
  *
  * <ol>
  *   <li>use of the {@link DeltaCommittable} instead of

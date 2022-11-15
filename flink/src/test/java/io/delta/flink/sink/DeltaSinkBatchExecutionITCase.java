@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.LongStream;
-import java.util.stream.Stream;
 
 import io.delta.flink.sink.internal.DeltaSinkInternal;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -37,13 +36,10 @@ import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.time.Time;
-import org.apache.flink.api.connector.sink.Committer;
 import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.api.connector.sink.Sink;
-import org.apache.flink.api.connector.sink.SinkWriter;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
-import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -52,10 +48,12 @@ import org.apache.flink.table.data.RowData;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.rules.TemporaryFolder;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.core.IsEqual.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,7 +64,7 @@ import io.delta.standalone.actions.CommitInfo;
 /**
  * Tests the functionality of the {@link DeltaSink} in BATCH mode.
  */
-public class DeltaSinkBatchExecutionITCase {
+public class DeltaSinkBatchExecutionITCase extends DeltaSinkExecutionITCaseBase {
 
     private static final int NUM_SINKS = 3;
 
@@ -96,25 +94,32 @@ public class DeltaSinkBatchExecutionITCase {
     }
 
     /**
-     * Arguments for parametrized Delta Sink test.
-     * Parameters are:
-     * <ul>
-     *     <li>isPartitioned</li>
-     *     <li>triggerFailover</li>
-     * </ul>
+     * This test executes simple source -> sink job with Flink cluster failures caused by
+     * an Exception thrown from {@link GlobalCommitter}.
+     * Depending on value of exceptionMode parameter, exception will be thrown before or after
+     * committing data to the Delta log.
+     * @param exceptionMode whether to throw an exception before or after Delta log commit.
      */
-    private static Stream<Arguments> deltaSinkArguments() {
-        return Stream.of(
-            Arguments.of(false, false),
-            Arguments.of(true, false),
-            Arguments.of(false, true),
-            Arguments.of(true, true)
-        );
-    }
+    @ResourceLock("BatchFailoverDeltaGlobalCommitter")
+    @ParameterizedTest(name = "isPartitioned = {0}, exceptionMode = {1}")
+    @CsvSource({
+        "false, NONE",
+        "true, NONE",
+        "false, BEFORE_COMMIT",
+        "false, AFTER_COMMIT",
+        "true, BEFORE_COMMIT",
+        "true, AFTER_COMMIT"
+    })
+    public void testFileSink(boolean isPartitioned, GlobalCommitterExceptionMode exceptionMode)
+            throws Exception {
 
-    @ParameterizedTest(name = "isPartitioned = {0}, triggerFailover = {1}")
-    @MethodSource("deltaSinkArguments")
-    public void testFileSink(boolean isPartitioned, boolean triggerFailover) throws Exception {
+        FailoverDeltaGlobalCommitter.reset();
+        assertThat(
+            "Test setup issue. Static FailoverDeltaGlobalCommitter.throwException field"
+                + " must be reset to true before test.",
+            FailoverDeltaGlobalCommitter.throwException,
+            equalTo(true)
+        );
 
         initSourceFolder(isPartitioned, deltaTablePath);
 
@@ -130,7 +135,7 @@ public class DeltaSinkBatchExecutionITCase {
             assertEquals(2, initialDeltaFiles.size());
         }
 
-        JobGraph jobGraph = createJobGraph(deltaTablePath, isPartitioned, triggerFailover);
+        JobGraph jobGraph = createJobGraph(deltaTablePath, isPartitioned, exceptionMode);
 
         // WHEN
         try (MiniCluster miniCluster = DeltaSinkTestUtils.getMiniCluster()) {
@@ -165,35 +170,38 @@ public class DeltaSinkBatchExecutionITCase {
 
         assertEquals(finalDeltaFiles.size() - initialDeltaFiles.size(), totalAddedFiles);
         assertEquals(NUM_RECORDS, totalRowsAdded);
-    }
 
-    private String initSourceFolder(boolean isPartitioned, String deltaTablePath) {
-        try {
-            if (isPartitioned) {
-                DeltaTestUtils.initTestForPartitionedTable(deltaTablePath);
-            } else {
-                DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
-            }
-
-            return deltaTablePath;
-        } catch (IOException e) {
-            throw new RuntimeException("Weren't able to setup the test dependencies", e);
+        if (!GlobalCommitterExceptionMode.NONE.equals(exceptionMode)) {
+            assertThat(
+                "It seems that Flink job did not throw an exception even though"
+                    + " used exceptionMode indicates it should."
+                    + " Used exception mode was " + exceptionMode,
+                FailoverDeltaGlobalCommitter.throwException,
+                equalTo(false)
+            );
+        } else {
+            assertThat(
+                "It seems that Flink job throw an exception even though"
+                    + " used exceptionMode indicates it should not."
+                    + " Used exception mode was " + exceptionMode,
+                FailoverDeltaGlobalCommitter.throwException,
+                equalTo(true)
+            );
         }
     }
 
     protected JobGraph createJobGraph(
             String deltaTablePath,
             boolean isPartitioned,
-            boolean triggerFailover) {
+            GlobalCommitterExceptionMode exceptionMode) {
 
+        boolean triggerFailover = !GlobalCommitterExceptionMode.NONE.equals(exceptionMode);
         StreamExecutionEnvironment env = getTestStreamEnv(triggerFailover);
 
         Sink<RowData, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> deltaSink =
             DeltaSinkTestUtils.createDeltaSink(deltaTablePath, isPartitioned);
 
-        if (triggerFailover) {
-            deltaSink = new FailoverDeltaSink<>((DeltaSinkInternal<RowData>) deltaSink);
-        }
+        deltaSink = new FailoverDeltaSink((DeltaSinkInternal<RowData>) deltaSink, exceptionMode);
 
         env.fromCollection(DeltaSinkTestUtils.getTestRowData(NUM_RECORDS))
             .setParallelism(1)
@@ -220,96 +228,94 @@ public class DeltaSinkBatchExecutionITCase {
         return env;
     }
 
-    private static class FailoverDeltaSink<IN>
-        implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> {
+    /**
+     * Wrapper for original {@link DeltaSinkInternal} that can be used for IT testing batch jobs.
+     * This implementation will use {@link FailoverDeltaGlobalCommitter} as GlobalCommitter.
+     */
+    private static class FailoverDeltaSink extends FailoverDeltaSinkBase<RowData> {
 
-        private final DeltaSinkInternal<IN> decoratedSink;
+        private final GlobalCommitterExceptionMode exceptionMode;
 
-        private FailoverDeltaSink(DeltaSinkInternal<IN> decoratedSink) {
-            this.decoratedSink = decoratedSink;
-        }
+        private FailoverDeltaSink(
+                DeltaSinkInternal<RowData> deltaSink,
+                GlobalCommitterExceptionMode exceptionMode) {
 
-        @Override
-        public SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState> createWriter(
-            InitContext initContext, List<DeltaWriterBucketState> list) throws IOException {
-            return this.decoratedSink.createWriter(initContext, list);
-        }
-
-        @Override
-        public Optional<SimpleVersionedSerializer<DeltaWriterBucketState>>
-            getWriterStateSerializer() {
-
-            return this.decoratedSink.getWriterStateSerializer();
-        }
-
-        @Override
-        public Optional<Committer<DeltaCommittable>> createCommitter() throws IOException {
-            return this.decoratedSink.createCommitter();
+            super(deltaSink);
+            this.exceptionMode = exceptionMode;
         }
 
         @Override
         public Optional<GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>>
             createGlobalCommitter() throws IOException {
 
-            return Optional.of(new FailoverDeltaGlobalCommitter(
-                (DeltaGlobalCommitter) this.decoratedSink.createGlobalCommitter().get()));
-        }
-
-        @Override
-        public Optional<SimpleVersionedSerializer<DeltaCommittable>> getCommittableSerializer() {
-            return this.decoratedSink.getCommittableSerializer();
-        }
-
-        @Override
-        public Optional<SimpleVersionedSerializer<DeltaGlobalCommittable>>
-            getGlobalCommittableSerializer() {
-            return this.decoratedSink.getGlobalCommittableSerializer();
+            return Optional.of(
+                new FailoverDeltaGlobalCommitter(
+                    (DeltaGlobalCommitter) this.decoratedSink.createGlobalCommitter().get(),
+                    this.exceptionMode)
+            );
         }
     }
 
-    private static class FailoverDeltaGlobalCommitter
-        implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
+    /**
+     * Wrapper for original {@link DeltaGlobalCommitter} that can be used for IT testing Batch jobs.
+     * This implementation will throw an exception once per Batch job, before or after committing
+     * data to the delta log.
+     * <p>
+     * This implementation uses a static field as a flag, so it cannot be used in multithreading
+     * test setup where there will be multiple tests using this class running at the same time.
+     * This would cause unpredictable results.
+     */
+    private static class FailoverDeltaGlobalCommitter extends FailoverDeltaGlobalCommitterBase {
 
-        private static boolean THROW_EXCEPTION = true;
+        /**
+         * JVM global static flag that indicates where exception should be thrown from
+         * FailoverDeltaGlobalCommitter
+         */
+        public static boolean throwException = true;
 
-        private final DeltaGlobalCommitter decoratedGlobalCommitter;
+        private final GlobalCommitterExceptionMode exceptionMode;
 
-        private FailoverDeltaGlobalCommitter(DeltaGlobalCommitter decoratedGlobalCommitter) {
-            this.decoratedGlobalCommitter = decoratedGlobalCommitter;
-        }
+        private FailoverDeltaGlobalCommitter(
+                DeltaGlobalCommitter decoratedGlobalCommitter,
+                GlobalCommitterExceptionMode exceptionMode) {
 
-        @Override
-        public List<DeltaGlobalCommittable> filterRecoveredCommittables(
-            List<DeltaGlobalCommittable> list) throws IOException {
-            return this.decoratedGlobalCommitter.filterRecoveredCommittables(list);
-        }
-
-        @Override
-        public DeltaGlobalCommittable combine(List<DeltaCommittable> list) throws IOException {
-            return this.decoratedGlobalCommitter.combine(list);
+            super(decoratedGlobalCommitter);
+            this.exceptionMode = exceptionMode;
         }
 
         @Override
         public List<DeltaGlobalCommittable> commit(List<DeltaGlobalCommittable> list)
             throws IOException, InterruptedException {
-            try {
-                if (THROW_EXCEPTION) {
-                    throw new RuntimeException("Designed Global Committer Exception.");
-                }
-            } finally {
-                THROW_EXCEPTION = false;
+
+            switch (exceptionMode) {
+                case BEFORE_COMMIT:
+                    if (throwException) {
+                        throwException = false;
+                        throw new RuntimeException("Designed Exception from Global Committer BEFORE"
+                            + " Delta log commit.");
+                    }
+                    return this.decoratedGlobalCommitter.commit(list);
+                case AFTER_COMMIT:
+                    List<DeltaGlobalCommittable> commit =
+                        this.decoratedGlobalCommitter.commit(list);
+                    if (throwException) {
+                        throwException = false;
+                        throw new RuntimeException("Designed Exception from Global Committer AFTER"
+                            + " Delta log commit.");
+                    }
+                    return commit;
+                case NONE:
+                    return this.decoratedGlobalCommitter.commit(list);
+                default:
+                    throw new RuntimeException("Unexpected Exception mode");
             }
-            return this.decoratedGlobalCommitter.commit(list);
         }
 
-        @Override
-        public void endOfInput() throws IOException, InterruptedException {
-            this.decoratedGlobalCommitter.endOfInput();
-        }
-
-        @Override
-        public void close() throws Exception {
-            this.decoratedGlobalCommitter.close();
+        /**
+         * Reset static fields since those are initialized only once per entire JVM.
+         */
+        public static void reset() {
+            throwException = true;
         }
     }
 }

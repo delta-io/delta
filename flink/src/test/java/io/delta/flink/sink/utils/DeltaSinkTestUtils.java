@@ -151,10 +151,39 @@ public class DeltaSinkTestUtils {
     }
 
     public static DeltaPendingFile getTestDeltaPendingFile(
-        LinkedHashMap<String, String> partitionSpec) {
+            LinkedHashMap<String, String> partitionSpec) {
         return new DeltaPendingFile(
             partitionSpec,
             "file_name-" + UUID.randomUUID(),
+            new FileSinkTestUtils.TestPendingFileRecoverable(),
+            new Random().nextInt(30000),
+            new Random().nextInt(500000),
+            System.currentTimeMillis()
+        );
+    }
+
+    public static DeltaPendingFile getTestDeltaPendingFileWithAbsolutePath(
+            org.apache.hadoop.fs.Path basePath,
+            LinkedHashMap<String, String> partitionSpec) {
+
+        return new DeltaPendingFile(
+            partitionSpec,
+            ((basePath.toString().endsWith("/")) ? basePath.toString() : basePath + "/")
+            + "file_name-" + UUID.randomUUID(),
+            new FileSinkTestUtils.TestPendingFileRecoverable(),
+            new Random().nextInt(30000),
+            new Random().nextInt(500000),
+            System.currentTimeMillis()
+        );
+    }
+
+    public static DeltaPendingFile getTestDeltaPendingFileForFileName(
+        String fileName,
+        LinkedHashMap<String, String> partitionSpec) {
+
+        return new DeltaPendingFile(
+            partitionSpec,
+            fileName,
             new FileSinkTestUtils.TestPendingFileRecoverable(),
             new Random().nextInt(30000),
             new Random().nextInt(500000),

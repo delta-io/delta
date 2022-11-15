@@ -2,6 +2,8 @@ package io.delta.flink.utils;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -9,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import org.apache.commons.io.FileUtils;
@@ -29,6 +32,8 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileSystemTestHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.core.IsEqual.equalTo;
 
 public class DeltaTestUtils {
 
@@ -424,5 +429,25 @@ public class DeltaTestUtils {
             testDescriptor.add(rowType, newRows);
         }
         return testDescriptor;
+    }
+
+    /**
+     * Reset Delta log file last modify timestamp value to current timestamp.
+     * @param sourceTablePath table root folder
+     * @throws IOException if the file could not otherwise be opened because it is not a directory.
+     */
+    public static void resetDeltaLogLastModifyTimestamp(String sourceTablePath) throws IOException {
+
+        List<java.nio.file.Path> sortedLogFiles =
+            Files.list(Paths.get(sourceTablePath + "/_delta_log"))
+                .filter(file -> file.getFileName().toUri().toString().endsWith(".json"))
+                .sorted()
+                .collect(Collectors.toList());
+
+        for (java.nio.file.Path logFile : sortedLogFiles) {
+            assertThat(
+                "Unable to modify " + logFile + " last modified timestamp.",
+                logFile.toFile().setLastModified(System.currentTimeMillis()), equalTo(true));
+        }
     }
 }

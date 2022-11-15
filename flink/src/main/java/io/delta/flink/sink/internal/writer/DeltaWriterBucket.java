@@ -96,6 +96,7 @@ public class DeltaWriterBucket<IN> {
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriterBucket.class);
 
     public static final String RECORDS_WRITTEN_METRIC_NAME = "DeltaSinkRecordsWritten";
+
     public static final String BYTES_WRITTEN_METRIC_NAME = "DeltaSinkBytesWritten";
 
     private final String bucketId;

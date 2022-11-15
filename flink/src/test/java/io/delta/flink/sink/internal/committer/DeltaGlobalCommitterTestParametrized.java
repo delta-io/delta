@@ -88,6 +88,7 @@ public class DeltaGlobalCommitterTestParametrized {
     private RowType rowTypeToCommit;
 
     private Path tablePath;
+
     private DeltaLog deltaLog;
 
     @Before

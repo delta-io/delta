@@ -44,7 +44,10 @@ object StandaloneMimaExcludes {
 
     // ParquetSchemaConverter etc. were moved to project standalone-parquet
     ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.util.ParquetSchemaConverter"),
-    ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.util.ParquetSchemaConverter$ParquetOutputTimestampType")
+    ProblemFilters.exclude[MissingClassProblem]("io.delta.standalone.util.ParquetSchemaConverter$ParquetOutputTimestampType"),
+
+    // Public API changes in 0.5.0 -> 0.6.0
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.OptimisticTransaction.readVersion"),
 
     // scalastyle:on line.size.limit
   )

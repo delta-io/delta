@@ -19,6 +19,8 @@
 package io.delta.flink.sink.internal.committer;
 
 import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,7 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
-import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -36,18 +38,23 @@ import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.connector.file.sink.utils.FileSinkTestUtils;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileSystemTestHelper;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.rules.TemporaryFolder;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.standalone.DeltaLog;
+import io.delta.standalone.VersionLog;
 import io.delta.standalone.actions.AddFile;
 
 /**
@@ -59,17 +66,26 @@ public class DeltaGlobalCommitterTest {
 
     private final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
 
-    @ClassRule
     public static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
 
     private Path tablePath;
 
-    @Before
+    @BeforeAll
+    public static void beforeAll() throws IOException {
+        TEMPORARY_FOLDER.create();
+    }
+
+    @AfterAll
+    public static void afterAll() {
+        TEMPORARY_FOLDER.delete();
+    }
+
+    @BeforeEach
     public void setup() throws IOException {
         tablePath = new Path(TEMPORARY_FOLDER.newFolder().toURI());
     }
 
-    @Test(expected = RuntimeException.class)
+    @Test
     public void testWrongPartitionOrderWillFail() throws IOException {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
@@ -90,7 +106,7 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(3, partitionSpec);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
     }
 
     @Test
@@ -100,7 +116,7 @@ public class DeltaGlobalCommitterTest {
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
         DeltaLog deltaLog = DeltaLog.forTable(
             DeltaTestUtils.getHadoopConf(), tablePath.getPath());
-        assertEquals(deltaLog.snapshot().getVersion(), 0);
+        assertEquals(0, deltaLog.snapshot().getVersion());
         int initialTableFilesCount = deltaLog.snapshot().getAllFiles().size();
 
         List<DeltaGlobalCommittable> globalCommittables =
@@ -110,10 +126,14 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
+            .commit(globalCommittables);
         deltaLog.update();
-        assertEquals(deltaLog.snapshot().getVersion(), 1);
-        globalCommitter.commit(globalCommittables);
+        assertEquals(1, deltaLog.snapshot().getVersion());
+
+        // create new GlobalCommitter as it would be during recovery
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
+            .commit(globalCommittables);
 
         // THEN
         // after trying to commit same committables nothing should change in DeltaLog
@@ -121,7 +141,8 @@ public class DeltaGlobalCommitterTest {
         assertEquals(1, deltaLog.snapshot().getVersion());
         assertEquals(
             initialTableFilesCount + numAddedFiles,
-            deltaLog.snapshot().getAllFiles().size());
+            deltaLog.snapshot().getAllFiles().size()
+        );
     }
 
     @Test
@@ -158,7 +179,7 @@ public class DeltaGlobalCommitterTest {
             SchemaConverter.toDeltaDataType(updatedSchema).toJson());
     }
 
-    @Test(expected = RuntimeException.class)
+    @Test
     public void testMergeSchemaSetToFalse() throws Exception {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
@@ -172,10 +193,10 @@ public class DeltaGlobalCommitterTest {
         DeltaGlobalCommitter globalCommitter = getTestGlobalCommitter(updatedSchema);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
     }
 
-    @Test(expected = RuntimeException.class)
+    @Test
     public void testMergeIncompatibleSchema() throws Exception {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
@@ -190,10 +211,10 @@ public class DeltaGlobalCommitterTest {
         DeltaGlobalCommitter globalCommitter = getTestGlobalCommitter(updatedSchema);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
     }
 
-    @Test(expected = RuntimeException.class)
+    @Test
     public void testWrongStreamPartitionValues() throws Exception {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
@@ -205,7 +226,7 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
     }
 
     @Test
@@ -264,6 +285,7 @@ public class DeltaGlobalCommitterTest {
         List<DeltaCommittable> deltaCommittables2 = DeltaSinkTestUtils.getListOfDeltaCommittables(
             numAddedFiles2, 2);
         List<DeltaCommittable> deltaCommittablesCombined = new ArrayList<>(Collections.emptyList());
+        deltaCommittablesCombined.addAll(deltaCommittables1FirstTrial);
         deltaCommittablesCombined.addAll(deltaCommittables1SecondTrial);
         deltaCommittablesCombined.addAll(deltaCommittables2);
 
@@ -272,39 +294,130 @@ public class DeltaGlobalCommitterTest {
         List<DeltaGlobalCommittable> globalCommittablesCombined =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(deltaCommittablesCombined);
 
-        DeltaGlobalCommitter globalCommitter =
-            getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
-
         // WHEN
         // we first commit committables from the former checkpoint interval, and then combined
         // committables from both checkpoint intervals
-        globalCommitter.commit(globalCommittables1FirstTrial);
-        globalCommitter.commit(globalCommittablesCombined);
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE)
+            .commit(globalCommittables1FirstTrial);
+
+        // create new GlobalCommitter as it would be during recovery
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE)
+            .commit(globalCommittablesCombined);
 
         // THEN
         // we should've committed only files from the first try for checkpointId == 1 and files
         // for checkpointId == 2
         deltaLog.update();
-        assertEquals(1, deltaLog.snapshot().getVersion());
+        assertEquals(2, deltaLog.snapshot().getVersion());
         List<AddFile> filesInTable = deltaLog.snapshot().getAllFiles();
-        assertEquals(numAddedFiles1FirstTrial + numAddedFiles2, filesInTable.size());
+        assertEquals(
+            numAddedFiles1FirstTrial + numAddedFiles1SecondTrial + numAddedFiles2,
+            filesInTable.size()
+        );
 
-        // we simply check if the table really contains all the files from the first trial
-        // and by implication it will also mean that it does not contain any files from second trial
-        for (DeltaCommittable deltaCommittable : deltaCommittables1FirstTrial) {
-            Stream<String> filePathsInTableStream = filesInTable
-                .stream()
-                .map(AddFile::getPath);
-            assertTrue(
-                filePathsInTableStream.anyMatch(name -> {
-                    String name1 = deltaCommittable.getDeltaPendingFile().getFileName();
-                    return name.equals(name1);
-                })
-            );
-        }
+        // we simply check if the table really contains all the files from all tries respective
+        // to the version.
+        List<VersionLog> changes = new ArrayList<>();
+        deltaLog.getChanges(0, true).forEachRemaining(changes::add);
+
+        assertEquals(3, changes.size());
+
+        List<String> filesFor1CommittableFirstTrial =
+            getCommittableFiles(deltaCommittables1FirstTrial);
+        List<String> filesFor1CommittableSecondTrial =
+            getCommittableFiles(deltaCommittables1SecondTrial);
+        List<String> filesFor2Committable = getCommittableFiles(deltaCommittables2);
+
+        List<String> filesFromVersionOne = getFromVersion(changes.get(0));
+        List<String> filesFromVersionTwo = getFromVersion(changes.get(1));
+        List<String> filesFromVersionThree =getFromVersion(changes.get(2));
+
+        assertThat(filesFromVersionOne)
+            .containsExactlyInAnyOrder(filesFor1CommittableFirstTrial.toArray(new String[0]));
+        assertThat(filesFromVersionTwo)
+            .containsExactlyInAnyOrder(filesFor1CommittableSecondTrial.toArray(new String[0]));
+        assertThat(filesFromVersionThree)
+            .containsExactlyInAnyOrder(filesFor2Committable.toArray(new String[0]));
     }
 
-    @Test(expected = RuntimeException.class)
+    @Test
+    public void testAddCommittableWithAbsolutePath() {
+
+        // GIVEN
+        DeltaLog deltaLog = DeltaLog.forTable(
+            DeltaTestUtils.getHadoopConf(), tablePath.getPath());
+        assertEquals(-1, deltaLog.snapshot().getVersion());
+
+        DeltaPendingFile pendingFileAbsolutePath =
+            DeltaSinkTestUtils.getTestDeltaPendingFileWithAbsolutePath(
+                deltaLog.getPath(),
+                new LinkedHashMap<>());
+
+        DeltaPendingFile pendingFileRelativePath =
+            DeltaSinkTestUtils.getTestDeltaPendingFileForFileName(
+                Paths.get(
+                    URI.create(pendingFileAbsolutePath.getFileName())).getFileName().toString(),
+                new LinkedHashMap<>()
+            );
+
+        // Make sure that second DeltaPendingFile has the same file name.
+        assertThat(
+            pendingFileAbsolutePath.getFileName().endsWith(pendingFileRelativePath.getFileName()))
+            .isEqualTo(true);
+
+        DeltaCommittable committableWithAbsolutePath = new DeltaCommittable(
+            pendingFileAbsolutePath,
+            TEST_APP_ID,
+            TEST_CHECKPOINT_ID
+        );
+
+        DeltaCommittable committableWithRelativePath = new DeltaCommittable(
+            DeltaSinkTestUtils.getTestDeltaPendingFileForFileName(
+                pendingFileRelativePath.getFileName(),
+                new LinkedHashMap<>()),
+            TEST_APP_ID,
+            TEST_CHECKPOINT_ID
+        );
+
+        // WHEN
+        // commit AddFile with relative path.
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
+            .commit(Collections.singletonList(
+                new DeltaGlobalCommittable(
+                    DeltaSinkTestUtils.committablesToAbstractCommittables(Collections.singletonList(
+                        committableWithRelativePath
+                    ))
+                )
+            ));
+
+        // commit AddFile with absolute path.
+        getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
+            .commit(Collections.singletonList(
+                new DeltaGlobalCommittable(
+                    DeltaSinkTestUtils.committablesToAbstractCommittables(Collections.singletonList(
+                        committableWithAbsolutePath
+                    ))
+                )
+            ));
+
+        // THEN
+        assertThat(deltaLog.update().getVersion())
+            .describedAs(
+                "Target delta table should be at version 0 since second commit call should be "
+                    + "ignored since it is adding a duplicate data.")
+            .isEqualTo(0L);
+        assertThat(deltaLog.snapshot().getAllFiles().size()).isEqualTo(1);
+
+        VersionLog versionLog = deltaLog.getChanges(0, true).next();
+        assertThat(
+            versionLog.getActions().stream().filter(action -> action instanceof AddFile)
+                .count())
+            .describedAs("Target Delta Table should have only one AddFile action in its log. "
+                + "Probably duplicate data was added.")
+            .isEqualTo(1);
+    }
+
+    @Test
     public void testCommittablesFromDifferentCheckpointIntervalOneWithIncompatiblePartitions()
         throws Exception {
         //GIVEN
@@ -332,20 +445,17 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE);
 
         // WHEN
-        try {
-            globalCommitter.commit(globalCommittables);
-        } catch (Exception exc) {
-            // the commit should raise an exception for incompatible committables for the second
-            // checkpoint interval but correct committables for the first checkpoint interval should
-            // have been committed
-            deltaLog.update();
-            assertEquals(1, deltaLog.snapshot().getVersion());
-            assertEquals(
-                initialNumberOfFiles + numAddedFiles1,
-                deltaLog.snapshot().getAllFiles().size());
-            // we rethrow the exception for the test to pass
-            throw exc;
-        }
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+
+        // the commit should raise an exception for incompatible committables for the second
+        // checkpoint interval but correct committables for the first checkpoint interval should
+        // have been committed
+        deltaLog.update();
+        assertEquals(1, deltaLog.snapshot().getVersion());
+        assertEquals(
+            initialNumberOfFiles + numAddedFiles1,
+            deltaLog.snapshot().getAllFiles().size()
+        );
     }
 
     @Test
@@ -437,7 +547,7 @@ public class DeltaGlobalCommitterTest {
         // THEN
         // should have created the deltaLog files in the specified path regardless
         // of the configured default filesystem
-        assertEquals(deltaLog.snapshot().getVersion(), 1);
+        assertEquals(1, deltaLog.snapshot().getVersion());
         assertEquals(
                 initialTableFilesCount + numAddedFiles,
                 deltaLog.snapshot().getAllFiles().size());
@@ -476,5 +586,16 @@ public class DeltaGlobalCommitterTest {
             );
         byte[] data = serializer.serialize(globalCommittable);
         return serializer.deserialize(serializer.getVersion(), data);
+    }
+
+    private List<String> getFromVersion(VersionLog versionLog) {
+        return versionLog.getActions().stream().filter(action -> action instanceof AddFile)
+            .map(action -> ((AddFile) action).getPath()).collect(Collectors.toList());
+    }
+
+    private List<String> getCommittableFiles(List<DeltaCommittable> deltaCommittables1FirstTrial) {
+        return deltaCommittables1FirstTrial.stream()
+            .map(committable -> committable.getDeltaPendingFile().toAddFile())
+            .map(AddFile::getPath).collect(Collectors.toList());
     }
 }

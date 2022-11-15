@@ -86,9 +86,6 @@ private[internal] class OptimisticTransactionImpl(
    */
   def metadataScala: Metadata = newMetadata.getOrElse(snapshot.metadataScala)
 
-  /** The version that this transaction is reading from. */
-  private def readVersion: Long = snapshot.version
-
   ///////////////////////////////////////////////////////////////////////////
   // Public Java API Methods
   ///////////////////////////////////////////////////////////////////////////
@@ -222,6 +219,10 @@ private[internal] class OptimisticTransactionImpl(
   override def txnVersion(id: String): Long = {
     readTxn += id
     snapshot.transactions.getOrElse(id, -1L)
+  }
+
+  override def readVersion(): Long = {
+    snapshot.version
   }
 
   ///////////////////////////////////////////////////////////////////////////

@@ -122,4 +122,9 @@ public interface OptimisticTransaction {
      *         transaction.
      */
     Metadata metadata();
+
+    /**
+     * @return The table version that this transaction is reading from.
+     */
+    long readVersion();
 }
