@@ -217,6 +217,7 @@ class Snapshot(
   def protocol: Protocol = computedState.protocol
   def metadata: Metadata = computedState.metadata
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
+  def setTransactionsOpt: Option[Seq[SetTransaction]] = Some(setTransactions)
   def sizeInBytes: Long = computedState.sizeInBytes
   def sizeInBytesOpt: Option[Long] = Some(sizeInBytes)
   def numOfFiles: Long = computedState.numOfFiles
@@ -234,14 +235,15 @@ class Snapshot(
    * attached. E.g. if a snapshot is created by reading a checkpoint, then no txnId is present.
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
+    txnId = None,
     tableSizeBytes = sizeInBytes,
     numFiles = numOfFiles,
     numMetadata = numOfMetadata,
     numProtocol = numOfProtocol,
     protocol = protocol,
     metadata = metadata,
+    setTransactions = checksumOpt.flatMap(_.setTransactions),
     histogramOpt = fileSizeHistogram,
-    txnId = None,
     allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** A map to look up transaction version by appId. */

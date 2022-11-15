@@ -151,13 +151,7 @@ class DeltaLog private(
    * state, but no files will be deleted.
    */
   def minSetTransactionRetentionTimestamp: Option[Long] = {
-    val intervalOpt = DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.fromMetaData(metadata)
-
-    if (intervalOpt.isDefined) {
-      Some(clock.getTimeMillis() - DeltaConfigs.getMilliSeconds(intervalOpt.get))
-    } else {
-      None
-    }
+    DeltaLog.minSetTransactionRetentionInterval(metadata).map { clock.getTimeMillis() - _ }
   }
 
   /**
@@ -866,6 +860,12 @@ object DeltaLog extends DeltaLogging {
             UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
         }
     })
+  }
+
+  def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
+    DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
+      .fromMetaData(metadata)
+      .map(DeltaConfigs.getMilliSeconds)
   }
 
   /** Get a function that canonicalizes a given `path`. */
