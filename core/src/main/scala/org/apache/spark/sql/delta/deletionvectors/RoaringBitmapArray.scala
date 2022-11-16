@@ -62,11 +62,11 @@ final class RoaringBitmapArray extends Equals {
     highBitmap.add(low)
   }
 
-  /** Add all `values` to the container. */
-  def addAll(values: Long*): Unit = values.foreach(add)
+  /** Add all `values` to the container. For testing purposes only. */
+  protected[delta] def addAll(values: Long*): Unit = values.foreach(add)
 
   /** Add all values in `range` to the container. */
-  def addRange(range: Range): Unit = {
+  protected[delta] def addRange(range: Range): Unit = {
     require(0 <= range.start && range.start <= range.end)
     if (range.isEmpty) return // Nothing to do.
     if (range.step != 1) {
@@ -83,7 +83,7 @@ final class RoaringBitmapArray extends Equals {
   }
 
   /** Add all values in `range` to the container. */
-  def addRange(range: NumericRange[Long]): Unit = {
+  protected[delta] def addRange(range: NumericRange[Long]): Unit = {
     require(0L <= range.start && range.start <= range.end && range.end <= MAX_REPRESENTABLE_VALUE)
     if (range.isEmpty) return // Nothing to do.
     if (range.step != 1L) {
@@ -118,7 +118,7 @@ final class RoaringBitmapArray extends Equals {
    *
    * @param value The index in a bitmap.
    */
-  def remove(value: Long): Unit = {
+  protected[deletionvectors] def remove(value: Long): Unit = {
     require(value >= 0 && value <= MAX_REPRESENTABLE_VALUE)
     val (high, low) = decomposeHighLowBytes(value)
     if (high < bitmaps.length) {
@@ -380,6 +380,10 @@ final class RoaringBitmapArray extends Equals {
   def mkString(start: String = "", sep: String = "", end: String = ""): String =
     toArray.mkString(start, sep, end)
 
+  /**
+   * Utility method to extend the array of [[RoaringBitmap]] to given length, keeping
+   * the existing elements in place.
+   */
   private def extendBitmaps(newLength: Int): Unit = {
     // Optimization for the most common case
     if (bitmaps.isEmpty && newLength == 1) {
@@ -399,6 +403,7 @@ final class RoaringBitmapArray extends Equals {
     bitmaps = newBitmaps
   }
 
+  /** Utility method to shrink the array of [[RoaringBitmap]] to given length. */
   private def shrinkBitmaps(newLength: Int): Unit = {
     if (newLength == 0) {
       bitmaps = Array.empty
