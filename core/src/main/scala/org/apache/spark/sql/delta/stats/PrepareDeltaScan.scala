@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -49,7 +50,8 @@ import org.apache.spark.sql.types.StructType
  */
 trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
-  with DeltaLogging { self: PrepareDeltaScan =>
+  with DeltaLogging
+  with OptimizeMetadataOnlyDeltaQuery { self: PrepareDeltaScan =>
 
   private val snapshotIsolationEnabled = spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)
 
@@ -199,7 +201,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
     )
     if (shouldPrepareDeltaScan) {
-
       // Should not be applied to subqueries to avoid duplicate delta jobs.
       val isSubquery = plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]
       // Should not be applied to DataSourceV2 write plans, because they'll be planned later
@@ -207,6 +208,13 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
       if (isSubquery || isDataSourceV2) {
         return plan
+      }
+
+      val optimizeMetadataQueryEnabled =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)
+
+      if (optimizeMetadataQueryEnabled) {
+        plan = optimizeQueryWithMetadata(plan)
       }
 
       prepareDeltaScan(plan)

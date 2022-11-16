@@ -911,6 +911,14 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
+    buildConf("optimizeMetadataQuery.enabled")
+      .internal()
+      .doc("Whether we can use the metadata in the DeltaLog to" +
+        " optimize queries that can be run purely on metadata.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
