@@ -723,9 +723,8 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    var path = rawPath
-    val fs = path.getFileSystem(hadoopConf)
-    path = fs.makeQualified(path)
+    val fs = rawPath.getFileSystem(hadoopConf)
+    val path = fs.makeQualified(rawPath)
     def createDeltaLog(): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
