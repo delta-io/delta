@@ -90,8 +90,11 @@ class ShowTableColumnsSuite extends QueryTest
     val fakeTableName = s"test_table"
     val schemaName = s"delta"
     showDeltaColumnsTest(f => s"$schemaName.`${f.toString}`")
-    val e = intercept[AnalysisException] { sql(s"SHOW COLUMNS IN `$fakeTableName` IN $schemaName") }
-    assert(e.getMessage().contains(s"Table or view not found: $schemaName.$fakeTableName"))
+    val e = intercept[AnalysisException] {
+      sql(s"SHOW COLUMNS IN `$fakeTableName` IN $schemaName")
+    }
+    assert(e.getMessage().contains(s"Table or view not found: $schemaName.$fakeTableName") ||
+      e.getMessage().contains(s"table or view `$schemaName`.`$fakeTableName` cannot be found"))
   }
 
   test("delta table: check duplicated schema name") {
@@ -121,14 +124,18 @@ class ShowTableColumnsSuite extends QueryTest
       }
       assert(e
         .getMessage()
-        .contains(s"Table or view not found: $fakeSchemaName.$tableName"))
+        .contains(s"Table or view not found: $fakeSchemaName.$tableName") ||
+        e.getMessage()
+          .contains(s"table or view `$fakeSchemaName`.`$tableName` cannot be found"))
 
       e = intercept[AnalysisException] {
         sql(s"SHOW COLUMNS IN $fakeSchemaName.$tableName IN $schemaName")
       }
       assert(e
         .getMessage()
-        .contains(s"Table or view not found: $fakeSchemaName.$tableName"))
+        .contains(s"Table or view not found: $fakeSchemaName.$tableName") ||
+        e.getMessage()
+          .contains(s"table or view `$fakeSchemaName`.`$tableName` cannot be found"))
 
       e = intercept[AnalysisException] {
         sql(s"SHOW COLUMNS IN $schemaName.$tableName IN $fakeSchemaName")
