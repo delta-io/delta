@@ -226,7 +226,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       isInsertOnly: Boolean): MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason = {
     val (materialize, materializeReason) =
       shouldMaterializeSource(spark, source, isInsertOnly)
@@ -260,21 +260,18 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
     // We should still keep the hints from the input plan.
     checkpointedPlan = addHintsToPlan(source, checkpointedPlan)
 
-    // FIXME: Can be removed once Delta adopts Spark 3.4 and constraints are propagated
+    // FIXME(SPARK-39834): Can be removed once Delta adopts Spark 3.4 and constraints are propagated
     // Add filters to the logical plan so the optimizer can pick up the constraints even though
-    // they are lost when materializing
-    if (spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_PROPAGATE_CONSTRAINTS)) {
-      checkpointedPlan = addFiltersForConstraintsToPlan(
-        sourceWithSelectedColumns.constraints, checkpointedPlan)
-    }
+    // they are lost when materializing.
+    checkpointedPlan = addFiltersForConstraintsToPlan(
+      sourceWithSelectedColumns.constraints, checkpointedPlan)
 
     sourceDF = Some(Dataset.ofRows(spark, checkpointedPlan))
 
-    // FIXME: This can be removed once Delta adopts Spark 3.4 as the statistics will be materialized
+    // FIXME(SPARK-39834): This can be removed once Delta adopts Spark 3.4 as the statistics
+    //  will be materialized
     // and the optimal join will be picked during planning
-    if (spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_PROPAGATE_BROADCASTABILITY)) {
-      sourceDF = Some(addBroadcastHintToDF(sourceWithSelectedColumns, sourceDF.get))
-    }
+    sourceDF = Some(addBroadcastHintToDF(sourceWithSelectedColumns, sourceDF.get))
 
     // Sets appropriate StorageLevel
     val storageLevel = StorageLevel.fromString(
@@ -346,7 +343,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause]) = {
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
     val conditionCols = condition.references
     val matchedCondCols = matchedClauses.flatMap { clause =>
       clause.condition.getOrElse(Literal(true)).flatMap(_.references)

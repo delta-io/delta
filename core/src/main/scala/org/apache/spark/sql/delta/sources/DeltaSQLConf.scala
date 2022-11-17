@@ -503,32 +503,6 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(4)
 
-  val MERGE_MATERIALIZE_SOURCE_PROPAGATE_CONSTRAINTS =
-    buildConf("merge.materializeSource.propagateConstraints")
-      .internal()
-      .doc(
-        """
-          |When MERGE source is materialized, propagate constraints from the source plan.
-          |The workaround re-introduces the constraints by placing a dummy filter. This can be
-          |disabled in Spark 3.4+, as there constraints will be propagated automatically by Spark.
-        """.stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
-
-  val MERGE_MATERIALIZE_SOURCE_PROPAGATE_BROADCASTABILITY =
-    buildConf("merge.materializeSource.propagateBroadcastability")
-      .internal()
-      .doc(
-        """
-          |When MERGE source is materialized, propagate broadcastability from the source plan.
-          |The materialized source plan loses it's statistics. If it was broadcastable, propagate
-          |the broadcastability with a hint, so that broadcast join can be used. This can be
-          |disabled in Spark 3.4+, as there statistics will be propagated automatically by Spark.
-        """.stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
