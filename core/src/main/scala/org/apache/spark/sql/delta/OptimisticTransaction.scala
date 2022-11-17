@@ -497,18 +497,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * given log
    */
   def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
-    if (index.deltaLog.isSameLogAs(deltaLog)) {
-      this
-    } else {
-      if (spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)) {
-        readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
-          // Will be called only when the log is accessed the first time
-          index.getSnapshot
-        })
-      } else {
-        index.getSnapshot
-      }
-    }
+    if (index.deltaLog.isSameLogAs(deltaLog)) return this
+
+    // Will be called only when the log is accessed the first time
+    readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */

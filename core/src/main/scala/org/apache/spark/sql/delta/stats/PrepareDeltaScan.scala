@@ -53,8 +53,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with DeltaLogging
   with OptimizeMetadataOnlyDeltaQuery { self: PrepareDeltaScan =>
 
-  private val snapshotIsolationEnabled = spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)
-
   /**
    * Tracks the first-access snapshots of other logs planned by this rule. The snapshots are
    * the keyed by the log's unique id. Note that the lifetime of this rule is a single
@@ -75,17 +73,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     // The first case means that we've fixed the table snapshot for time travel
     if (index.isTimeTravelQuery) return index.getSnapshot
-    val scanGenerator = OptimisticTransaction.getActive().map(_.getDeltaScanGenerator(index))
+    val scanGenerator = OptimisticTransaction.getActive()
+      .map(_.getDeltaScanGenerator(index))
       .getOrElse {
-        val snapshot = if (snapshotIsolationEnabled) {
-          scannedSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
-            // Will be called only when the log is accessed the first time
-            index.getSnapshot
-          })
-        } else {
-          index.getSnapshot
-        }
-        snapshot
+        // Will be called only when the log is accessed the first time
+        scannedSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
       }
     import PrepareDeltaScanBase._
     if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)

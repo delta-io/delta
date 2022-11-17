@@ -243,14 +243,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_SNAPSHOT_ISOLATION =
-    buildConf("snapshotIsolation.enabled")
-      .internal()
-      .doc("Controls whether queries on Delta tables are guaranteed to have " +
-        "snapshot isolation.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()

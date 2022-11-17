@@ -293,9 +293,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     },
     shouldFail = true)
 
-  def testSnapshotIsolation(
-      name: String,
-      isolationEnabled: Boolean): Unit = {
+  def testSnapshotIsolation(): Unit = {
     val txnTablePath = Utils.createTempDir().getCanonicalPath
     val nonTxnTablePath = Utils.createTempDir().getCanonicalPath
 
@@ -310,8 +308,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     }
 
     testWithNewTransaction(
-      name = s"snapshot isolation - $name",
-      confs = Map(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION.key -> isolationEnabled.toString),
+      name = s"snapshot isolation uses first-access snapshots when enabled",
       partitionTablePath = txnTablePath,
       partitionedTableKeys = Seq(1, 2, 3, 4, 5),  // Prepare txn-table
       preTxnSetup = _ => {
@@ -332,21 +329,14 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
         require(nonTxnTable.count() == 10)
       },
       currentThreadCommitOperation = _ => {
-        if (isolationEnabled) {
-          // Second read on concurrently updated tables should read old snapshots
-          assert(txnTable.count() == 5, "snapshot isolation failed on txn table")
-          assert(nonTxnTable.count() == 3, "snapshot isolation failed on non-txn table")
-        } else {
-          assert(txnTable.count() == 5) // txn table always gets snapshot isolation
-          assert(nonTxnTable.count() > 3) // non-txn table does not get snapshot isolation
-        }
+        // Second read on concurrently updated tables should read old snapshots
+        assert(txnTable.count() == 5, "snapshot isolation failed on txn table")
+        assert(nonTxnTable.count() == 3, "snapshot isolation failed on non-txn table")
       },
       shouldFail = false)
   }
 
-  testSnapshotIsolation("disabled", isolationEnabled = false)
-
-  testSnapshotIsolation("uses first-access snapshots when enabled", isolationEnabled = true)
+  testSnapshotIsolation()
 }
 
 class DeltaWithNewTransactionSuite extends DeltaWithNewTransactionSuiteBase
