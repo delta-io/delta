@@ -17,10 +17,12 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -430,6 +432,68 @@ trait DeltaSQLConfBase {
       """.stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  final object MergeMaterializeSource {
+    // See value explanations in the doc below.
+    final val NONE = "none"
+    final val ALL = "all"
+    final val AUTO = "auto"
+
+    final val list = Set(NONE, ALL, AUTO)
+  }
+
+  val MERGE_MATERIALIZE_SOURCE =
+    buildConf("merge.materializeSource")
+      .internal()
+      .doc("When to materializes source plan during MERGE execution. " +
+        "The value 'none' means source will never be materialized. " +
+        "The value 'all' means source will always be materialized. " +
+        "The value 'auto' means sources will not be materialized when they are certain to be " +
+        "deterministic."
+      )
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(MergeMaterializeSource.list)
+      .createWithDefault(MergeMaterializeSource.AUTO)
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
+    buildConf("merge.materializeSource.rddStorageLevel")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevel" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY")
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+        "Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
+  val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
+    buildStaticConf("merge.materializeSource.maxAttempts")
+      .doc("How many times to try MERGE with in case of lost RDD materialized source data")
+      .intConf
+      .createWithDefault(4)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
