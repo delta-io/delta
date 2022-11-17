@@ -76,7 +76,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     var e: Exception = intercept[AnalysisException] {
       spark.sql("GENERATE symlink_format_manifest FOR TABLE nonExistentTable")
     }
-    assert(e.getMessage.contains("not found"))
+    assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
 
     withTable("nonDeltaTable") {
       spark.range(2).write.format("parquet").saveAsTable("nonDeltaTable")
@@ -107,7 +107,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
       }
-      assert(e.getMessage.contains("not found"))
+      assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
     }
   }
 
@@ -118,7 +118,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
-      assert(e.getMessage.contains("not found"))
+      assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
     }
   }
 
@@ -192,13 +192,13 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 5)
       generateSymlinkManifest(tablePath.toString)
       assertManifest(
-        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
+        tablePath, expectSameFiles = true, expectedNumFiles = 0)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
 
       // delete all data
       write(5)
       assertManifest(
-        tablePath, expectSameFiles = false, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
+        tablePath, expectSameFiles = false, expectedNumFiles = 0)
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tablePath.toString)
       deltaTable.delete()
       generateSymlinkManifest(tablePath.toString)
@@ -314,7 +314,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
       assertManifest(
-        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
+        tablePath, expectSameFiles = true, expectedNumFiles = 0)
     }
   }
 
@@ -605,9 +605,6 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     GenerateSymlinkManifest.generateFullManifest(spark, deltaLog)
   }
-
-  // Open Source Spark writes at least one file, even if its empty, to preserve metadata.
-  protected val expectedNumberOfFilesInEmptyTable = 1
 }
 
 class SymlinkManifestFailureTestAbstractFileSystem(

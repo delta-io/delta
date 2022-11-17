@@ -230,7 +230,7 @@ trait DeltaTimeTravelTests extends QueryTest
 
       // We should still use the default, non-delta code paths for a non-delta table.
       // For parquet, that means to fail with QueryCompilationErrors::tableNotSupportTimeTravelError
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[Exception] {
         spark.sql("SELECT * FROM t1 VERSION AS OF 0")
       }.getMessage
       assert(e.contains("does not support time travel"))
@@ -498,7 +498,7 @@ trait DeltaTimeTravelTests extends QueryTest
       val tblName = "parq_table"
       withTable(tblName) {
         sql(s"create table $tblName using parquet as select * from parquet.`$dir`")
-        val e = intercept[UnsupportedOperationException] {
+        val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
         var catalogPrefix = ""

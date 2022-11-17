@@ -281,13 +281,15 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
       }
 
       // upgrade to name mode
+      val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
+      val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
       sql(
         s"""
            |ALTER TABLE delta.`${tablePath}`
            |SET TBLPROPERTIES (
            |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
-           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
-           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "$readerVersion",
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "$writerVersion")""".stripMargin)
 
       // write more data post upgrade
       writeDeltaData(5 until 10, deltaLog)

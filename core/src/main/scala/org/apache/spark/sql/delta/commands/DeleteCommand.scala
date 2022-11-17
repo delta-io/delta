@@ -163,12 +163,8 @@ case class DeleteCommand(
     val deleteActions: Seq[Action] = condition match {
       case None =>
         // Case 1: Delete the whole table if the condition is true
-        val allFiles =
-          if (conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)) {
-            txn.filterFilesWithNumRecords(Nil)
-          } else {
-            txn.filterFiles(Nil)
-          }
+        val reportRowLevelMetrics = conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)
+        val allFiles = txn.filterFiles(Nil, keepNumRecords = reportRowLevelMetrics)
 
         numRemovedFiles = allFiles.size
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
@@ -199,12 +195,9 @@ case class DeleteCommand(
           // Case 2: The condition can be evaluated using metadata only.
           //         Delete a set of files without the need of scanning any data files.
           val operationTimestamp = System.currentTimeMillis()
+          val reportRowLevelMetrics = conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)
           val candidateFiles =
-            if (conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)) {
-              txn.filterFilesWithNumRecords(metadataPredicates)
-            } else {
-              txn.filterFiles(metadataPredicates)
-            }
+            txn.filterFiles(metadataPredicates, keepNumRecords = reportRowLevelMetrics)
 
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numRemovedFiles = candidateFiles.size

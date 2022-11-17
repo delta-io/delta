@@ -1988,6 +1988,19 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }.getMessage.contains("Found invalid offsets. 'index' moved back."))
   }
 
+  test("self union a Delta table should pass the catalog table assert") {
+    withTable("self_union_delta") {
+      spark.range(10).write.format("delta").saveAsTable("self_union_delta")
+      val df = spark.readStream.format("delta").table("self_union_delta")
+      val q = df.union(df).writeStream.format("noop").start()
+      try {
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("ES-445863: delta source should not hang or reprocess data when using AvailableNow") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       def runQuery(): Unit = {

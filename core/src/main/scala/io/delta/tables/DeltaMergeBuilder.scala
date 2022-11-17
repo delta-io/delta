@@ -366,7 +366,7 @@ class DeltaMergeMatchedActionBuilder private(
    * @since 0.3.0
    */
   def updateAll(): DeltaMergeBuilder = {
-    val updateClause = DeltaMergeIntoUpdateClause(
+    val updateClause = DeltaMergeIntoMatchedUpdateClause(
       matchCondition.map(_.expr),
       DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(updateClause)
@@ -377,7 +377,7 @@ class DeltaMergeMatchedActionBuilder private(
    * @since 0.3.0
    */
   def delete(): DeltaMergeBuilder = {
-    val deleteClause = DeltaMergeIntoDeleteClause(matchCondition.map(_.expr))
+    val deleteClause = DeltaMergeIntoMatchedDeleteClause(matchCondition.map(_.expr))
     mergeBuilder.withClause(deleteClause)
   }
 
@@ -391,7 +391,9 @@ class DeltaMergeMatchedActionBuilder private(
         colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
         exprs = setActions.map(x => x._2.expr),
         isEmptySeqEqualToStar = false)
-      val updateClause = DeltaMergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
+      val updateClause = DeltaMergeIntoMatchedUpdateClause(
+        matchCondition.map(_.expr),
+        updateActions)
       mergeBuilder.withClause(updateClause)
     }
   }
@@ -480,7 +482,7 @@ class DeltaMergeNotMatchedActionBuilder private(
    * @since 0.3.0
    */
   def insertAll(): DeltaMergeBuilder = {
-    val insertClause = DeltaMergeIntoInsertClause(
+    val insertClause = DeltaMergeIntoNotMatchedInsertClause(
       notMatchCondition.map(_.expr),
       DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(insertClause)
@@ -492,7 +494,9 @@ class DeltaMergeNotMatchedActionBuilder private(
       colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
       exprs = values.map(x => x._2.expr),
       isEmptySeqEqualToStar = false)
-    val insertClause = DeltaMergeIntoInsertClause(notMatchCondition.map(_.expr), insertActions)
+    val insertClause = DeltaMergeIntoNotMatchedInsertClause(
+      notMatchCondition.map(_.expr),
+      insertActions)
     mergeBuilder.withClause(insertClause)
   }
 

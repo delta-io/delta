@@ -722,15 +722,14 @@ trait DataSkippingReaderBase
    */
   protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = recordFrameProfile(
       "Delta", "DataSkippingReader.getAllFiles") {
-    if (keepNumRecords) {
+    val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
         .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
-        .as[AddFile]
-        .collect().toSeq
     } else {
-      allFiles.withColumn("stats", nullStringLiteral).as[AddFile].collect().toSeq
+      allFiles.withColumn("stats", nullStringLiteral)
     }
+    convertDataFrameToAddFiles(ds.toDF())
   }
 
   /**
@@ -756,23 +755,20 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val files = if (keepNumRecords) {
+    val df = if (keepNumRecords) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
         .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
-        .as[AddFile]
-        .collect()
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
       filteredFiles
         .withColumn("stats", nullStringLiteral)
-        .as[AddFile]
-        .collect()
     }
+    val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
     files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
   }
@@ -808,7 +804,8 @@ trait DataSkippingReaderBase
 
     val files =
       recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
-      filteredFiles.withColumn("stats", statsColumn).as[AddFile].collect()
+      val df = filteredFiles.withColumn("stats", statsColumn)
+      convertDataFrameToAddFiles(df)
     }
 
     files.toSeq -> Seq(DataSize(totalSize), DataSize(partitionSize), DataSize(scanSize))
@@ -931,8 +928,13 @@ trait DataSkippingReaderBase
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
     recordFrameProfile("Delta", "DataSkippingReader.getSpecificFilesWithStats") {
       val right = paths.toDF(spark, "path")
-      allFiles.join(right, Seq("path"), "leftsemi").as[AddFile].collect()
+      val df = allFiles.join(right, Seq("path"), "leftsemi")
+      convertDataFrameToAddFiles(df)
     }
+  }
+
+  protected def convertDataFrameToAddFiles(df: DataFrame): Array[AddFile] = {
+    df.as[AddFile].collect()
   }
 }
 

@@ -55,6 +55,11 @@ class DelayedCommitProtocol(
   @transient val changeFiles = new ArrayBuffer[AddCDCFile]
 
   // Track the overall files added, only used on the driver.
+  //
+  // In rare cases, some of these AddFiles can be empty (i.e. contain no logical records).
+  // If the caller wishes to have only non-empty AddFiles, they must collect stats and perform
+  // the filter themselves. See TransactionalWrite::writeFiles. This filter will be best-effort,
+  // since there's no guarantee the stats will exist.
   @transient val addedStatuses = new ArrayBuffer[AddFile]
 
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"

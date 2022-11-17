@@ -10,11 +10,10 @@ on:
   issue_comment:
     types: [created]
 
-
 jobs:
   automate-new-updated-issues:
     if: ${{ !github.event.issue.pull_request &&
-            !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) }}
+      !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) }}
     runs-on: ubuntu-latest
     steps:
       - name: Move to Needs Review (ENG)

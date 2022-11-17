@@ -831,6 +831,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_ICEBERG_ENABLED =
+    buildConf("convert.iceberg.enabled")
+      .internal()
+      .doc("If enabled, Iceberg tables can be converted into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED =
+    buildConf("convert.iceberg.partitionEvolution.enabled")
+      .doc("If enabled, support conversion of iceberg tables experienced partition evolution.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
