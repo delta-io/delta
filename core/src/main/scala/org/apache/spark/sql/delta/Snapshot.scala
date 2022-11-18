@@ -217,16 +217,16 @@ class Snapshot(
   def protocol: Protocol = computedState.protocol
   def metadata: Metadata = computedState.metadata
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
-  def setTransactionsOpt: Option[Seq[SetTransaction]] = Some(setTransactions)
   def sizeInBytes: Long = computedState.sizeInBytes
-  def sizeInBytesOpt: Option[Long] = Some(sizeInBytes)
   def numOfFiles: Long = computedState.numOfFiles
-  def numOfFilesOpt: Option[Long] = Some(numOfFiles)
   def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def numOfRemoves: Long = computedState.numOfRemoves
   def numOfSetTransactions: Long = computedState.numOfSetTransactions
+  private[delta] def setTransactionsOpt: Option[Seq[SetTransaction]] = Some(setTransactions)
+  private[delta] def sizeInBytesOpt: Option[Long] = Some(sizeInBytes)
+  private[delta] def numOfFilesOpt: Option[Long] = Some(numOfFiles)
 
   /**
    * Computes all the information that is needed by the checksum for the current snapshot.

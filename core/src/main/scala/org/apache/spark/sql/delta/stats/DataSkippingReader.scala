@@ -174,10 +174,10 @@ trait DataSkippingReaderBase
   def path: Path
   def version: Long
   def metadata: Metadata
-  def sizeInBytesOpt: Option[Long]
+  private[delta] def sizeInBytesOpt: Option[Long]
   def deltaLog: DeltaLog
   def schema: StructType
-  def numOfFilesOpt: Option[Long]
+  private[delta] def numOfFilesOpt: Option[Long]
   def redactedPath: String
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
