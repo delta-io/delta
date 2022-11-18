@@ -42,12 +42,11 @@ abstract class TahoeFileIndex(
     val deltaLog: DeltaLog,
     val path: Path) extends FileIndex {
 
-  def tableVersion: Long = deltaLog.unsafeVolatileSnapshot.version
-  def metadata: Metadata = deltaLog.unsafeVolatileSnapshot.metadata
-
   override def rootPaths: Seq[Path] = path :: Nil
 
   def getSnapshot: Snapshot
+  def tableVersion: Long
+  def metadata: Metadata
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
@@ -154,9 +153,7 @@ case class TahoeLogFileIndex(
     if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.unsafeVolatileSnapshot.version
   }
 
-  override def metadata: Metadata = {
-    if (isTimeTravelQuery) snapshotAtAnalysis.metadata else deltaLog.snapshot.metadata
-  }
+  override def metadata: Metadata = snapshotAtAnalysis.metadata
 
   private def checkSchemaOnRead: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
@@ -218,8 +215,6 @@ case class TahoeLogFileIndex(
   override def hashCode: scala.Int = {
     Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
   }
-
-  override def partitionSchema: StructType = snapshotAtAnalysis.metadata.partitionSchema
 }
 
 object TahoeLogFileIndex {
