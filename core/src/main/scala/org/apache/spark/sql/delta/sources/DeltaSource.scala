@@ -481,9 +481,11 @@ case class DeltaSource(
     }
     options.ignoreFileDeletion
   }
+  /** A check on the source table that allow only append commit */
+  private val onlyAppends = options.onlyAppends
 
   /** A check on the source table that disallows deletes on the source data. */
-  private val ignoreChanges = options.ignoreChanges || ignoreFileDeletion
+  private val ignoreChanges = options.ignoreChanges || ignoreFileDeletion || onlyAppends
 
   /** A check on the source table that disallows commits that only include deletes to the data. */
   private val ignoreDeletes = options.ignoreDeletes || ignoreFileDeletion || ignoreChanges
@@ -523,8 +525,11 @@ case class DeltaSource(
             // entire file can be read into memory
             val actions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
               .map(Action.fromJson)
-            val addFiles = verifyStreamHygieneAndFilterAddFiles(
-              actions, version, verifyMetadataAction)
+
+            val addFiles =
+              if (filterCommit(actions.exists(isBlindAppendCommit))) {
+               verifyStreamHygieneAndFilterAddFiles(actions, version, verifyMetadataAction)
+              } else Seq.empty
 
             (Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
               .map(_.asInstanceOf[AddFile])
@@ -536,14 +541,15 @@ case class DeltaSource(
             var fileIterator = deltaLog.store.readAsIterator(
               filestatus,
               deltaLog.newDeltaHadoopConf())
-            try {
+            val isBlindAppendCommit = try {
               verifyStreamHygiene(fileIterator.map(Action.fromJson), version, verifyMetadataAction)
             } finally {
               fileIterator.close()
             }
-            fileIterator = deltaLog.store.readAsIterator(
-              filestatus.getPath,
-              deltaLog.newDeltaHadoopConf())
+            fileIterator = if (filterCommit(isBlindAppendCommit)) {
+              deltaLog.store.readAsIterator(filestatus.getPath, deltaLog.newDeltaHadoopConf())
+            } else Iterator.empty.toClosable
+
             fileIterator.withClose { it =>
               val addFiles = it.map(Action.fromJson).filter {
                 case a: AddFile if a.dataChange => true
@@ -585,6 +591,14 @@ case class DeltaSource(
       }
     }
     iter
+  }
+
+  private def filterCommit(isBlindAppendCommitExist: Boolean) =
+    if (onlyAppends) isBlindAppendCommitExist else true
+
+  private def isBlindAppendCommit(a: Action): Boolean = a match {
+    case commitInfo: CommitInfo => commitInfo.isBlindAppend.contains(true)
+    case _: Action => false
   }
 
   protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
@@ -676,12 +690,15 @@ case class DeltaSource(
    *
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
    * metadata changes.
+   *
+   * @return true if commit must be skipped
    */
   protected def verifyStreamHygiene(
       actions: Iterator[Action],
       version: Long,
-      verifyMetadataAction: Boolean = true): Unit = {
+      verifyMetadataAction: Boolean = true): Boolean = {
     var seenFileAdd = false
+    var skipCommit = false
     var removeFileActionPath: Option[String] = None
     actions.foreach {
       case a: AddFile if a.dataChange =>
@@ -699,6 +716,8 @@ case class DeltaSource(
         }
       case protocol: Protocol =>
         deltaLog.protocolRead(protocol)
+      case commitInfo: CommitInfo =>
+        skipCommit = commitInfo.isBlindAppend.contains(true)
       case _ => ()
     }
     if (removeFileActionPath.isDefined) {
@@ -716,6 +735,7 @@ case class DeltaSource(
         )
       }
     }
+    skipCommit
   }
 
   /**

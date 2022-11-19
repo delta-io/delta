@@ -37,6 +37,7 @@ import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
@@ -100,6 +101,40 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         AddToReservoir(inputDir, Seq("keep7", "drop8", "keep9").toDF),
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
+      )
+    }
+  }
+
+  test("appendOnly: ignore non append commit") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      val df = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.ONLY_APPENDS_OPTION, true)
+        .load(inputDir.getCanonicalPath)
+
+      testStream(df)(
+        AddToReservoir(inputDir, Seq("keep1", "keep2").toDF),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "keep2"),
+        AddUpdatesToReservoir(
+          inputDir,
+          Map("value" ->  when($"value" === "keep1", "update1").otherwise($"value"))
+        ),
+        AddDeletesToReservoir(inputDir, $"value" === "keep2"),
+        CheckAnswer("keep1", "keep2"),
+        StopStream,
+        AddToReservoir(inputDir, Seq("keep5", "keep6").toDF),
+        AddUpdatesToReservoir(
+          inputDir,
+          Map("value" ->  when($"value" === "keep1", "update1").otherwise($"value"))
+        ),
+        AddDeletesToReservoir(inputDir, $"value" === "keep2"),
+        StartStream(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "keep2", "keep5", "keep6")
       )
     }
   }

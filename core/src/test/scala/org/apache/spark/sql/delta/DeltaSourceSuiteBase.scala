@@ -17,11 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-
 import org.apache.spark.sql.delta.actions.Format
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{Column, DataFrame, SaveMode}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 
@@ -91,6 +89,22 @@ trait DeltaSourceSuiteBase extends StreamTest {
     def apply(path: File, data: DataFrame): AssertOnQuery =
       AssertOnQuery { _ =>
         data.write.format("delta").mode("append").save(path.getAbsolutePath)
+        true
+      }
+  }
+
+  object AddUpdatesToReservoir {
+    def apply(path: File, updateExpression: Map[String, Column]): AssertOnQuery =
+      AssertOnQuery { _ =>
+        io.delta.tables.DeltaTable.forPath(path.getAbsolutePath).update(updateExpression)
+        true
+      }
+  }
+
+  object AddDeletesToReservoir {
+    def apply(path: File, deleteCondition: Column): AssertOnQuery =
+      AssertOnQuery { _ =>
+        io.delta.tables.DeltaTable.forPath(path.getAbsolutePath).delete(deleteCondition)
         true
       }
   }
