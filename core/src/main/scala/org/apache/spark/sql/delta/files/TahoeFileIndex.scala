@@ -20,8 +20,8 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -39,14 +39,10 @@ import org.apache.spark.sql.types.StructType
  */
 abstract class TahoeFileIndex(
     val spark: SparkSession,
-    val deltaLog: DeltaLog,
-    val path: Path) extends FileIndex {
+    override val deltaLog: DeltaLog,
+    val path: Path) extends FileIndex with SnapshotDescriptor {
 
   override def rootPaths: Seq[Path] = path :: Nil
-
-  def getSnapshot: Snapshot
-  def tableVersion: Long
-  def metadata: Metadata
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
@@ -112,7 +108,7 @@ abstract class TahoeFileIndex(
   override def toString: String = {
     // the rightmost 100 characters of the path
     val truncatedPath = truncateRight(path.toString, len = 100)
-    s"Delta[version=$tableVersion, $truncatedPath]"
+    s"Delta[version=$version, $truncatedPath]"
   }
 
   /**
@@ -136,9 +132,24 @@ abstract class TahoeFileIndex(
 
 }
 
+/** A [[TahoeFileIndex]] that works with a specific [[Snapshot]]. */
+abstract class TahoeFileIndexWithSnapshot(
+    spark: SparkSession,
+    deltaLog: DeltaLog,
+    path: Path,
+    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
+
+  override def version: Long = snapshot.version
+  override def metadata: Metadata = snapshot.metadata
+  override def protocol: Protocol = snapshot.protocol
+}
+
 
 /**
  * A [[TahoeFileIndex]] that generates the list of files from DeltaLog with given partition filters.
+ *
+ * NOTE: This is NOT a [[TahoeFileIndexWithSnapshot]] because we only use [[snapshotAtAnalysis]] for
+ * actual data skipping if this is a time travel query.
  */
 case class TahoeLogFileIndex(
     override val spark: SparkSession,
@@ -149,11 +160,16 @@ case class TahoeLogFileIndex(
     isTimeTravelQuery: Boolean = false)
   extends TahoeFileIndex(spark, deltaLog, path) {
 
-  override def tableVersion: Long = {
+
+  // WARNING: Stability of this method is _NOT_ guaranteed!
+  override def version: Long = {
     if (isTimeTravelQuery) snapshotAtAnalysis.version else deltaLog.unsafeVolatileSnapshot.version
   }
 
+  // WARNING: These methods are intentionally pinned to the analysis-time snapshot, which may differ
+  // from the one returned by [[getSnapshot]] that we will eventually scan.
   override def metadata: Metadata = snapshotAtAnalysis.metadata
+  override def protocol: Protocol = snapshotAtAnalysis.protocol
 
   private def checkSchemaOnRead: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
@@ -166,7 +182,7 @@ case class TahoeLogFileIndex(
   /** Provides the version that's being used as part of the scan if this is a time travel query. */
   def versionToUse: Option[Long] = if (isTimeTravelQuery) Some(snapshotAtAnalysis.version) else None
 
-  override def getSnapshot: Snapshot = {
+  def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
     if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
@@ -227,23 +243,19 @@ object TahoeLogFileIndex {
  * that are within a version range of DeltaLog.
  */
 class TahoeBatchFileIndex(
-    override val spark: SparkSession,
+    spark: SparkSession,
     val actionType: String,
     val addFiles: Seq[AddFile],
     deltaLog: DeltaLog,
     path: Path,
     val snapshot: Snapshot,
     val partitionFiltersGenerated: Boolean = false)
-  extends TahoeFileIndex(spark, deltaLog, path) {
-
-  override val tableVersion: Long = snapshot.version
-  override val metadata: Metadata = snapshot.metadata
+  extends TahoeFileIndexWithSnapshot(spark, deltaLog, path, snapshot) {
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
-    DeltaLog.filterFileList(
-      metadata.partitionSchema, addFiles.toDF(spark), partitionFilters)
+    DeltaLog.filterFileList(partitionSchema, addFiles.toDF(spark), partitionFilters)
       .as[AddFile]
       .collect()
   }
@@ -253,8 +265,5 @@ class TahoeBatchFileIndex(
   }
 
   override def refresh(): Unit = {}
-  override val sizeInBytes: Long = addFiles.map(_.size).sum
-
-  override def getSnapshot: Snapshot = snapshot
-
+  override lazy val sizeInBytes: Long = addFiles.map(_.size).sum
 }

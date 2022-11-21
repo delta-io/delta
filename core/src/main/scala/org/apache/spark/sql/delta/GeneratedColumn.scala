@@ -436,7 +436,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    */
   def generatePartitionFilters(
       spark: SparkSession,
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       dataFilters: Seq[Expression],
       delta: LogicalPlan): Seq[Expression] = {
     if (!satisfyGeneratedColumnProtocol(snapshot.protocol)) {

@@ -21,8 +21,8 @@ import java.util.Objects
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshot, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -97,7 +97,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       fileIndex.deltaLog,
       fileIndex.path,
       preparedScan,
-      fileIndex.partitionSchema,
       fileIndex.versionToUse)
   }
 
@@ -154,15 +153,13 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
           val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
               filesForScan(scanGenerator, limit, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
-          optimizeGeneratedColumns(
-            preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
+          optimizeGeneratedColumns(scan, preparedIndex, filters, limit, delta)
       }
 
     transform(plan)
   }
 
   protected def optimizeGeneratedColumns(
-      scannedSnapshot: Snapshot,
       scan: LogicalPlan,
       preparedIndex: PreparedDeltaFileIndex,
       filters: Seq[Expression],
@@ -172,7 +169,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
     } else {
       val generatedPartitionFilters =
-        GeneratedColumn.generatePartitionFilters(spark, scannedSnapshot, filters, delta)
+        GeneratedColumn.generatePartitionFilters(spark, preparedIndex, filters, delta)
       val scanWithFilters =
         if (generatedPartitionFilters.nonEmpty) {
           scan transformUp {
@@ -322,13 +319,9 @@ case class PreparedDeltaFileIndex(
     override val deltaLog: DeltaLog,
     override val path: Path,
     preparedScan: DeltaScan,
-    override val partitionSchema: StructType,
     versionScanned: Option[Long])
-  extends TahoeFileIndex(spark, deltaLog, path) with DeltaLogging {
-
-  override def tableVersion: Long = preparedScan.version
-  override def metadata: Metadata = preparedScan.scannedSnapshot.metadata
-  override def getSnapshot: Snapshot = preparedScan.scannedSnapshot
+  extends TahoeFileIndexWithSnapshot(spark, deltaLog, path, preparedScan.scannedSnapshot)
+  with DeltaLogging {
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`

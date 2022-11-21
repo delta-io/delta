@@ -16,13 +16,13 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{Snapshot, SnapshotDescriptor}
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 
 /** Trait representing a class that can generate [[DeltaScan]] given filters, etc. */
-trait DeltaScanGeneratorBase {
+trait DeltaScanGenerator {
   /** The snapshot that the scan is being generated on. */
   val snapshotToScan: Snapshot
 
@@ -35,6 +35,3 @@ trait DeltaScanGeneratorBase {
   /** Returns a [[DeltaScan]] based on the given filters. */
   def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean = false): DeltaScan
 }
-
-
-trait DeltaScanGenerator extends DeltaScanGeneratorBase

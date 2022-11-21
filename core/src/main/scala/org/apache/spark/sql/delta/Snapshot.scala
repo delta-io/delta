@@ -36,6 +36,19 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 /**
+ * A description of a Delta [[Snapshot]], including basic information such its [[DeltaLog]]
+ * metadata, protocol, and version.
+ */
+trait SnapshotDescriptor {
+  def deltaLog: DeltaLog
+  def version: Long
+  def metadata: Metadata
+  def protocol: Protocol
+
+  def schema: StructType = metadata.schema
+}
+
+/**
  * An immutable snapshot of the state of the log at some delta version. Internally
  * this class manages the replay of actions stored in checkpoint or delta files.
  *
@@ -52,15 +65,16 @@ import org.apache.spark.util.Utils
  */
 class Snapshot(
     val path: Path,
-    val version: Long,
+    override val version: Long,
     val logSegment: LogSegment,
     val minFileRetentionTimestamp: Long,
-    val deltaLog: DeltaLog,
+    override val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
     val minSetTransactionRetentionTimestamp: Option[Long] = None,
     checkpointMetadataOpt: Option[CheckpointMetaData] = None)
-  extends StateCache
+  extends SnapshotDescriptor
+  with StateCache
   with StatisticsCollection
   with DataSkippingReader
   with DeltaLogging {
@@ -214,8 +228,8 @@ class Snapshot(
     }
   }
 
-  def protocol: Protocol = computedState.protocol
-  def metadata: Metadata = computedState.metadata
+  override def protocol: Protocol = computedState.protocol
+  override def metadata: Metadata = computedState.metadata
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
   def sizeInBytes: Long = computedState.sizeInBytes
   def numOfFiles: Long = computedState.numOfFiles
@@ -261,9 +275,6 @@ class Snapshot(
   def tombstones: Dataset[RemoveFile] = {
     stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
   }
-
-  /** Returns the schema of the table. */
-  def schema: StructType = metadata.schema
 
   /** Returns the data schema of the table, used for reading stats */
   def tableDataSchema: StructType = metadata.dataSchema
