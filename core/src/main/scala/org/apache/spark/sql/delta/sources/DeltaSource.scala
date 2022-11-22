@@ -130,9 +130,6 @@ trait DeltaSourceBase extends Source
     }
   }
 
-  private val enableAvailableNowOffsetInitializationFix =
-    spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX)
-
   /**
    * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
    * will process up. We may run multiple micro batches, but the query will stop itself when it
@@ -145,13 +142,8 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
+    logInfo("The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
-    if (!enableAvailableNowOffsetInitializationFix) {
-      val offset = latestOffsetInternal(ReadLimit.allAvailable())
-      if (offset != null) {
-        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
-      }
-    }
   }
 
   /**
@@ -159,13 +151,18 @@ trait DeltaSourceBase extends Source
    * `prepareForTriggerAvailableNow`.
    */
   protected def initForTriggerAvailableNowIfNeeded(): Unit = {
-    if (enableAvailableNowOffsetInitializationFix && isTriggerAvailableNow &&
-        !isLastOffsetForTriggerAvailableNowInitialized) {
+    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
       isLastOffsetForTriggerAvailableNowInitialized = true
-      val offset = latestOffsetInternal(ReadLimit.allAvailable())
-      if (offset != null) {
-        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
-      }
+      initLastOffsetForTriggerAvailableNow()
+    }
+  }
+
+  private def initLastOffsetForTriggerAvailableNow(): Unit = {
+    val offset = latestOffsetInternal(ReadLimit.allAvailable())
+    if (offset != null) {
+      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+      logInfo("lastOffset for Trigger.AvailableNow has set to " +
+        s"${lastOffsetForTriggerAvailableNow.json}")
     }
   }
 
@@ -500,6 +497,8 @@ case class DeltaSource(
   // A metadata snapshot when starting the query.
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
+
+  logInfo(s"Filters being pushed down: $filters")
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
