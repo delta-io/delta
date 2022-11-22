@@ -21,8 +21,8 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 
-/** Trait representing a class that can generate [[DeltaScan]] given filters, etc. */
-trait DeltaScanGeneratorBase {
+/** Trait representing a class that can generate [[DeltaScan]] given filters and a limit. */
+trait DeltaScanGenerator {
   /** The snapshot that the scan is being generated on. */
   val snapshotToScan: Snapshot
 
@@ -34,7 +34,11 @@ trait DeltaScanGeneratorBase {
 
   /** Returns a [[DeltaScan]] based on the given filters. */
   def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean = false): DeltaScan
+
+  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
+  def filesForScan(limit: Long): DeltaScan
+
+  /** Returns a [[DeltaScan]] based on the given partition filters and limits. */
+  def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan
 }
 
-
-trait DeltaScanGenerator extends DeltaScanGeneratorBase

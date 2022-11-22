@@ -519,6 +519,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     scan
   }
 
+  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
+  override def filesForScan(limit: Long): DeltaScan = {
+    val scan = snapshot.filesForScan(limit)
+    readFiles ++= scan.files
+    scan
+  }
+
+  /** Returns a[[DeltaScan]] based on the given partition filters, projections and limits. */
+  override def filesForScan(
+      limit: Long,
+      partitionFilters: Seq[Expression]): DeltaScan = {
+    partitionFilters.foreach { f =>
+      assert(
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark),
+        s"Only filters on partition columns [${metadata.partitionColumns.mkString(", ")}]" +
+          s" expected, found $f")
+    }
+    val scan = snapshot.filesForScan(limit, partitionFilters)
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan
+  }
+
   override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
     val metadata = snapshot.filesWithStatsForScan(partitionFilters)
     readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
