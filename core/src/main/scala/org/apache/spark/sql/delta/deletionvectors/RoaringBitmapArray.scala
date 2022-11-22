@@ -247,51 +247,34 @@ final class RoaringBitmapArray extends Equals {
    *
    * This is the number of bytes written out when using the [[serialize]] method.
    */
-  def serializedSizeInBytes: Long = {
+  def serializedSizeInBytes(format: RoaringBitmapArrayFormat.Value): Long = {
     val magicNumberSize = 4
-    val bitmapCountSize = 4
 
-    val individualBitmapLengthSize = 4
-    val bitmapSizes = bitmaps.foldLeft(0L) { (sum, bitmap) =>
-      sum + bitmap.serializedSizeInBytes() + individualBitmapLengthSize
-    }
+    val serializedBitmapsSize = format.formatImpl.serializedSizeInBytes(bitmaps)
 
-    magicNumberSize + bitmapCountSize + bitmapSizes
+    magicNumberSize + serializedBitmapsSize
   }
 
   /**
    * Serialize this [[RoaringBitmapArray]] into the `buffer`.
    *
    * == Format ==
-   * - Magic Number (4 bytes)
-   * - Number of bitmaps (4 bytes)
-   * - The data for each individual bitmap using the standard format
-   *   (see https://github.com/RoaringBitmap/RoaringFormatSpec)
+   * - A Magic Number indicating the format used (4 bytes)
+   * - The actual data as specified by the format.
    *
    */
-  def serialize(buffer: ByteBuffer): Unit = {
+  def serialize(buffer: ByteBuffer, format: RoaringBitmapArrayFormat.Value): Unit = {
     require(ByteOrder.LITTLE_ENDIAN == buffer.order(),
       "RoaringBitmapArray has to be serialized using a little endian buffer")
-
-    // Magic number to make sure we don't try to deserialize a simple RoaringBitmap later.
-    buffer.putInt(MAGIC_NUMBER)
-    buffer.putInt(bitmaps.length)
-    for (bitmap <- bitmaps) {
-      val placeholderPos = buffer.position()
-      buffer.putInt(-1) // Placeholder for the serialized size
-      val startPos = placeholderPos + 4
-      bitmap.serialize(buffer)
-      val endPos = buffer.position()
-      val writtenBytes = endPos - startPos
-      buffer.putInt(placeholderPos, writtenBytes)
-    }
+    // Magic number to make sure we don't try to deserialize a simple RoaringBitmap or the wrong
+    // format later.
+    buffer.putInt(format.formatImpl.MAGIC_NUMBER)
+    format.formatImpl.serialize(bitmaps, buffer)
   }
 
   /** Serializes this [[RoaringBitmapArray]] and returns the serialized form as a byte array. */
-  def serializeAsByteArray: Array[Byte] = {
-    // reduce the serialized size via RLE optimisation
-    runOptimize()
-    val size = serializedSizeInBytes
+  def serializeAsByteArray(format: RoaringBitmapArrayFormat.Value): Array[Byte] = {
+    val size = serializedSizeInBytes(format)
     if (!size.isValidInt) {
       throw new IOException(
         s"A bitmap was too big to be serialized into an array ($size bytes)")
@@ -300,7 +283,7 @@ final class RoaringBitmapArray extends Equals {
     buffer.order(ByteOrder.LITTLE_ENDIAN)
     // This is faster than Java serialization.
     // See: https://richardstartin.github.io/posts/roaringbitmap-performance-tricks#serialisation
-    serialize(buffer)
+    serialize(buffer, format)
     buffer.array()
   }
 
@@ -316,26 +299,13 @@ final class RoaringBitmapArray extends Equals {
       "RoaringBitmapArray has to be deserialized using a little endian buffer")
 
     val magicNumber = buffer.getInt
-    if (magicNumber != MAGIC_NUMBER) {
-      throw new IOException(s"Unexpected RoaringBitmapArray magic number" +
-        s" ($magicNumber != $MAGIC_NUMBER)")
+    val serializationFormat = magicNumber match {
+      case NativeRoaringBitmapArraySerializationFormat.MAGIC_NUMBER =>
+        NativeRoaringBitmapArraySerializationFormat
+      case _ =>
+        throw new IOException(s"Unexpected RoaringBitmapArray magic number $magicNumber")
     }
-    val newLength = buffer.getInt
-    if (newLength < 0) {
-      throw new IOException(s"Invalid RoaringBitmapArray length" +
-        s" ($newLength < 0)")
-    }
-    if (newLength < bitmaps.length) {
-      shrinkBitmaps(newLength)
-    } else if (newLength > bitmaps.length) {
-      extendBitmaps(newLength)
-    }
-    for (index <- 0 until newLength) {
-      val bitmapSize = buffer.getInt
-      bitmaps(index).deserialize(buffer)
-      // RoaringBitmap.deserialize doesn't move the buffer's pointer
-      buffer.position(buffer.position() + bitmapSize)
-    }
+    bitmaps = serializationFormat.deserialize(buffer)
   }
 
   /**
@@ -433,9 +403,6 @@ final class RoaringBitmapArray extends Equals {
 
 object RoaringBitmapArray {
 
-  /** Magic number prefix for serialization of this type. */
-  final val MAGIC_NUMBER = 1681511376
-
   /** The largest value a [[RoaringBitmapArray]] can possibly represent. */
   final val MAX_REPRESENTABLE_VALUE = composeFromHighLowBytes(Int.MaxValue - 1, Int.MinValue)
 
@@ -482,5 +449,89 @@ object RoaringBitmapArray {
     val bitmap = new RoaringBitmapArray()
     bitmap.deserialize(buffer)
     bitmap
+  }
+}
+
+/**
+ * Abstracts out how to (de-)serialize the array.
+ *
+ * All formats are indicated by a magic number in the first 4-bytes,
+ * which must be add/stripped by the *caller*.
+ */
+private[deletionvectors] sealed trait RoaringBitmapArraySerializationFormat {
+  /** Magic number prefix for serialization with this format. */
+  val MAGIC_NUMBER: Int
+  /** The number of bytes written out when using the [[serialize]] method. */
+  def serializedSizeInBytes(bitmaps: Array[RoaringBitmap]): Long
+  /** Serialize `bitmaps` into `buffer`. */
+  def serialize(bitmaps: Array[RoaringBitmap], buffer: ByteBuffer): Unit
+  /** Deserialize all bitmaps from the `buffer` into a fresh array. */
+  def deserialize(buffer: ByteBuffer): Array[RoaringBitmap]
+}
+
+/** Legal values for the serialization format for [[RoaringBitmapArray]]. */
+object RoaringBitmapArrayFormat extends Enumeration {
+  protected case class Format(formatImpl: RoaringBitmapArraySerializationFormat)
+    extends super.Val
+
+  import scala.language.implicitConversions
+  implicit def valueToFormat(x: Value): Format = x.asInstanceOf[Format]
+
+  val Native = Format(NativeRoaringBitmapArraySerializationFormat)
+}
+
+private[deletionvectors] object NativeRoaringBitmapArraySerializationFormat
+  extends RoaringBitmapArraySerializationFormat {
+
+  override val MAGIC_NUMBER: Int = 1681511376
+
+  override def serializedSizeInBytes(bitmaps: Array[RoaringBitmap]): Long = {
+    val roaringBitmapsCountSize = 4
+
+    val roaringBitmapLengthSize = 4
+    val roaringBitmapsSize = bitmaps.foldLeft(0L) { (sum, bitmap) =>
+      sum + bitmap.serializedSizeInBytes() + roaringBitmapLengthSize
+    }
+
+    roaringBitmapsCountSize + roaringBitmapsSize
+  }
+
+  /**
+   * Serialize `bitmaps` into the `buffer`.
+   *
+   * == Format ==
+   * - Number of bitmaps (4 bytes)
+   * - For each individual bitmap:
+   *    - Length of the serialized bitmap
+   *    - Serialized bitmap data using the standard format
+   *      (see https://github.com/RoaringBitmap/RoaringFormatSpec)
+   */
+  override def serialize(bitmaps: Array[RoaringBitmap], buffer: ByteBuffer): Unit = {
+    buffer.putInt(bitmaps.length)
+    for (bitmap <- bitmaps) {
+      val placeholderPos = buffer.position()
+      buffer.putInt(-1) // Placeholder for the serialized size
+      val startPos = placeholderPos + 4
+      bitmap.serialize(buffer)
+      val endPos = buffer.position()
+      val writtenBytes = endPos - startPos
+      buffer.putInt(placeholderPos, writtenBytes)
+    }
+  }
+
+  override def deserialize(buffer: ByteBuffer): Array[RoaringBitmap] = {
+    val numberOfBitmaps = buffer.getInt
+    if (numberOfBitmaps < 0) {
+      throw new IOException(s"Invalid RoaringBitmapArray length" +
+        s" ($numberOfBitmaps < 0)")
+    }
+    val bitmaps = Array.fill(numberOfBitmaps)(new RoaringBitmap())
+    for (index <- 0 until numberOfBitmaps) {
+      val bitmapSize = buffer.getInt
+      bitmaps(index).deserialize(buffer)
+      // RoaringBitmap.deserialize doesn't move the buffer's pointer
+      buffer.position(buffer.position() + bitmapSize)
+    }
+    bitmaps
   }
 }

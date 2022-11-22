@@ -122,32 +122,36 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
     bitmap
   }
 
-  test("serialization") {
-    checkSerializeDeserialize(RoaringBitmapArray())
-    checkSerializeDeserialize(RoaringBitmapArray(1L))
-    checkSerializeDeserialize(RoaringBitmapArray(BITMAP2_NUMBER))
-    checkSerializeDeserialize(RoaringBitmapArray(1L, BITMAP2_NUMBER))
-    checkSerializeDeserialize(allContainerTypesBitmap)
+  for (serializationFormat <- RoaringBitmapArrayFormat.values)
+  test(s"serialization - $serializationFormat") {
+    checkSerializeDeserialize(RoaringBitmapArray(), serializationFormat)
+    checkSerializeDeserialize(RoaringBitmapArray(1L), serializationFormat)
+    checkSerializeDeserialize(RoaringBitmapArray(BITMAP2_NUMBER), serializationFormat)
+    checkSerializeDeserialize(RoaringBitmapArray(1L, BITMAP2_NUMBER), serializationFormat)
+    checkSerializeDeserialize(allContainerTypesBitmap, serializationFormat)
   }
 
-  private def checkSerializeDeserialize(input: RoaringBitmapArray): Unit = {
-    val serializedSize = Ints.checkedCast(input.serializedSizeInBytes)
+  private def checkSerializeDeserialize(
+      input: RoaringBitmapArray,
+      format: RoaringBitmapArrayFormat.Value): Unit = {
+    val serializedSize = Ints.checkedCast(input.serializedSizeInBytes(format))
     val buffer = ByteBuffer.allocate(serializedSize).order(ByteOrder.LITTLE_ENDIAN)
-    input.serialize(buffer)
+    input.serialize(buffer, format)
     val output = RoaringBitmapArray()
     buffer.flip()
     output.deserialize(buffer)
     assert(input === output)
   }
 
-  test("serialization and deserialization with big endian buffers throws") {
+  for (serializationFormat <- RoaringBitmapArrayFormat.values)
+  test(s"serialization and deserialization with big endian buffers throws - $serializationFormat") {
     val roaringBitmapArray = RoaringBitmapArray(1L)
     val bigEndianBuffer = ByteBuffer
-      .allocate(roaringBitmapArray.serializedSizeInBytes.toInt)
+      .allocate(roaringBitmapArray.serializedSizeInBytes(serializationFormat).toInt)
       .order(ByteOrder.BIG_ENDIAN)
 
     assertThrows[IllegalArgumentException] {
-      roaringBitmapArray.serialize(bigEndianBuffer)
+      roaringBitmapArray.serialize(bigEndianBuffer, serializationFormat)
     }
 
     assertThrows[IllegalArgumentException] {
