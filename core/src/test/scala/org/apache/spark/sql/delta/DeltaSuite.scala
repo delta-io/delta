@@ -1533,7 +1533,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("deleted files cause failure by default") {
+  testQuietly("deleted files cause failure by default") {
     withTempDir { tempDir =>
       val tempDirPath = new Path(tempDir.getCanonicalPath)
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)

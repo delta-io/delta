@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.optimizer
+package org.apache.spark.sql.delta.perf
 
-import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Alias, Literal}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
@@ -25,7 +24,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
-import org.apache.spark.sql.functions.{count, sum}
+import org.apache.spark.sql.functions.{col, count, sum, when}
 
 trait OptimizeMetadataOnlyDeltaQuery {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
@@ -38,38 +37,30 @@ trait OptimizeMetadataOnlyDeltaQuery {
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
 
   object CountStarDeltaTable {
-    def unapply(plan: Aggregate): Option[Long] = {
-      plan match {
-        case Aggregate(
-        Nil,
-        Seq(Alias(AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _), _)),
-        PhysicalOperation(_, Nil, DeltaTable(tahoeLogFileIndex: TahoeLogFileIndex))) =>
-          extractGlobalCount(tahoeLogFileIndex)
-        case _ => None
-      }
+    def unapply(plan: Aggregate): Option[Long] = plan match {
+      case Aggregate(
+          Nil,
+          Seq(Alias(AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _), _)),
+          PhysicalOperation(_, Nil, DeltaTable(i: TahoeLogFileIndex))) if i.partitionFilters.isEmpty
+        => extractGlobalCount(i)
+      case _ => None
     }
 
+    /** Return the number of rows in the table or `None` if we cannot calculate it from stats */
     private def extractGlobalCount(tahoeLogFileIndex: TahoeLogFileIndex): Option[Long] = {
+      // TODO Update this to work with DV (https://github.com/delta-io/delta/issues/1485)
       val row = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
         .agg(
           sum("stats.numRecords"),
-          count(new Column("*")),
-          count(new Column("stats.numRecords")))
+          // Calculate the number of files missing `numRecords`
+          count(when(col("stats.numRecords").isNull, 1)))
         .first
 
-      val numOfFiles = row.getLong(1)
-      val numOfFilesWithStats = row.getLong(2)
-
-      if (numOfFiles == numOfFilesWithStats) {
-        val numRecords = if (row.isNullAt(0)) {
-          0 // It is Null if deltaLog.snapshot.allFiles is empty
-        } else { row.getLong(0) }
-
-        Some(numRecords)
-      } else {
-        // If COUNT(*) is greater than COUNT(numRecords) means not every AddFile records has stats
-        None
-      }
+      // The count agg is never null. A non-zero value means we have incomplete stats; otherwise,
+      // the sum agg is either null (for an empty table) or gives an accurate record count.
+      if (row.getLong(1) > 0) return None
+      val numRecords = if (row.isNullAt(0)) 0 else row.getLong(0)
+      Some(numRecords)
     }
   }
 }

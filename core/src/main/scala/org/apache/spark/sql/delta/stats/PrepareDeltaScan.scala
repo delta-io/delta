@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshot, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.optimizer.OptimizeMetadataOnlyDeltaQuery
+import org.apache.spark.sql.delta.perf.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -199,10 +199,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         return plan
       }
 
-      val optimizeMetadataQueryEnabled =
-        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)
-
-      if (optimizeMetadataQueryEnabled) {
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)) {
         plan = optimizeQueryWithMetadata(plan)
       }
 

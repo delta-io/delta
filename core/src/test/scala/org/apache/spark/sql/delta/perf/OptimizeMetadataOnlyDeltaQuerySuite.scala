@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.optimizer
+package org.apache.spark.sql.delta.perf
+
+import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -154,6 +156,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     sql(s"CREATE TABLE TestSnapshotIsolation (c1 int) USING DELTA")
     spark.sql("INSERT INTO TestSnapshotIsolation VALUES (1)")
 
+    val scannedVersions = mutable.ArrayBuffer[Long]()
     val query = "SELECT (SELECT COUNT(*) FROM TestSnapshotIsolation), " +
       "(SELECT COUNT(*) FROM TestSnapshotIsolation)"
 
@@ -165,7 +168,10 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         ":  +- LocalRelation [none#0L]\n" +
         "+- OneRowRelation")
 
-    PrepareDeltaScanBase.withCallbackOnGetDeltaScanGenerator(_ => {
+    PrepareDeltaScanBase.withCallbackOnGetDeltaScanGenerator(scanGenerator => {
+      // Record the scanned version and make changes to the table. We will verify changes in the
+      // middle of the query are not visible to the query.
+      scannedVersions += scanGenerator.snapshotToScan.version
       // Insert a row after each call to get scanGenerator
       // to test if the count doesn't change in the same query
       spark.sql("INSERT INTO TestSnapshotIsolation VALUES (1)")
@@ -174,6 +180,9 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       val c1 = result.getLong(0)
       val c2 = result.getLong(1)
       assertResult(c1, "Snapshot isolation should guarantee the results are always the same")(c2)
+      assert(
+        scannedVersions.toSet.size == 1,
+        s"Scanned multiple versions of the same table in one query: ${scannedVersions.toSet}")
     }
   }
 
@@ -187,7 +196,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       s"SELECT COUNT(*) FROM $noStatsTableName",
       Seq(Row(totalRows)))
   }
-
 
   // Tests to validate the optimizer won't incorrectly change queries it can't correctly handle
   test("Select Count: multiple aggregations") {
