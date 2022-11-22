@@ -295,7 +295,8 @@ case class AddFile(
 
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
-      dataChange: Boolean = true): RemoveFile = {
+      dataChange: Boolean = true
+    ): RemoveFile = {
     var newTags = tags
     // scalastyle:off
     val removedFile = RemoveFile(
