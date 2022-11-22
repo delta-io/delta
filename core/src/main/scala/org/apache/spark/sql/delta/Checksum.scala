@@ -53,9 +53,9 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
-    protocol: Protocol,
-    metadata: Metadata,
     setTransactions: Option[Seq[SetTransaction]],
+    metadata: Metadata,
+    protocol: Protocol,
     histogramOpt: Option[FileSizeHistogram],
     allFiles: Option[Seq[AddFile]])
 
