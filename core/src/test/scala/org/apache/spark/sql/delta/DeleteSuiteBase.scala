@@ -396,6 +396,7 @@ abstract class DeleteSuiteBase extends QueryTest
     // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
     // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
     // after upgrading
+    // TODO: should be "nested STRUCT<key: int>" after Spark 3.4.
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
   }
 
