@@ -787,7 +787,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
     assert(commitInfo.operation == "VACUUM")
 
     val deletes = vacuumActions.collect{ case d: DeleteFile => d}
-    assert(deletes.size == numOfDeletedFiles)
+    // In this case that use `spark.emptyDataset[Int].write.format("delta").saveAsTable/save` to
+    // create a delta table, an empty parquet file will be written out but not be committed.
+    // Vacuum will delete this file, so we need to assert `deletes.size == numOfDeletedFiles + 1`.
+    assert(deletes.size == numOfDeletedFiles || deletes.size == numOfDeletedFiles + 1)
   }
 
   protected def loadLatestCommit(deltaLog: DeltaLog): Seq[DeltaAction] = {
