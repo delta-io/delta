@@ -102,6 +102,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
   /**
    * Scan files using the given `filters` and return `DeltaScan`.
+   *
+   * Note: when `limitOpt` is non empty, `filters` must contain only partition filters. Otherwise,
+   * it can contain arbitrary filters. See `DeltaTableScan` for more details.
    */
   protected def filesForScan(
       scanGenerator: DeltaScanGenerator,
@@ -109,6 +112,12 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       filters: Seq[Expression],
       delta: LogicalRelation): DeltaScan = {
     withStatusCode("DELTA", "Filtering files for query") {
+      if (limitOpt.nonEmpty) {
+        // If we trigger limit push down, the filters must be partition filters. Since
+        // there are no data filters, we don't need to apply Generated Columns
+        // optimization. See `DeltaTableScan` for more details.
+        return scanGenerator.filesForScan(limitOpt.get, filters)
+      }
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
           filters
@@ -165,6 +174,12 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       filters: Seq[Expression],
       limit: Option[Int],
       delta: LogicalRelation): LogicalPlan = {
+    if (limit.nonEmpty) {
+      // If we trigger limit push down, the filters must be partition filters. Since
+      // there are no data filters, we don't need to apply Generated Columns
+      // optimization. See `DeltaTableScan` for more details.
+      return DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
+    }
     if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
       DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
     } else {
@@ -242,6 +257,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
      * object `plan` and tries to give back the arguments as a [[DeltaTableScanType]].
      */
     def unapply(plan: LogicalPlan): Option[DeltaTableScanType] = {
+      val limitPushdownEnabled = spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)
 
       // Remove projections as a plan differentiator because it does not affect file listing
       // results. Plans with the same filters but different projections therefore will not have
@@ -254,6 +270,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       }
 
       plan match {
+        case LocalLimit(IntegerLiteral(limit),
+          PhysicalOperation(_, filters, delta @ DeltaTable(fileIndex: TahoeLogFileIndex)))
+            if limitPushdownEnabled && containsPartitionFiltersOnly(filters, fileIndex) =>
+          Some((canonicalizePlanForDeltaFileListing(plan), filters, fileIndex, Some(limit), delta))
         case PhysicalOperation(
             _,
             filters,
