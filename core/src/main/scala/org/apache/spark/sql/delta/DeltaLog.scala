@@ -340,7 +340,7 @@ class DeltaLog private(
   def protocolRead(protocol: Protocol): Unit = {
     val supportedReaderVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
-    if (protocol != null && supportedReaderVersion < protocol.minReaderVersion) {
+    if (supportedReaderVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
@@ -358,7 +358,7 @@ class DeltaLog private(
   def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
     val supportedWriterVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
-    if (protocol != null && supportedWriterVersion < protocol.minWriterVersion) {
+    if (supportedWriterVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
