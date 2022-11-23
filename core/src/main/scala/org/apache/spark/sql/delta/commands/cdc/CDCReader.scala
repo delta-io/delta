@@ -510,7 +510,7 @@ trait CDCReaderImpl extends DeltaLogging {
       index.partitionSchema,
       cdcReadSchema(metadata.schema),
       bucketSpec = None,
-      new DeltaParquetFileFormat(metadata.columnMappingMode, metadata.schema),
+      new DeltaParquetFileFormat(metadata),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
     Dataset.ofRows(spark, plan)

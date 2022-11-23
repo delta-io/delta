@@ -35,5 +35,5 @@ trait DeltaFileFormat {
    * instead of one from a past snapshot.
    */
   def fileFormat(metadata: Metadata = metadata): FileFormat =
-    new DeltaParquetFileFormat(metadata.columnMappingMode, metadata.schema)
+    new DeltaParquetFileFormat(metadata)
 }
