@@ -302,6 +302,8 @@ final class RoaringBitmapArray extends Equals {
     val serializationFormat = magicNumber match {
       case NativeRoaringBitmapArraySerializationFormat.MAGIC_NUMBER =>
         NativeRoaringBitmapArraySerializationFormat
+      case PortableRoaringBitmapArraySerializationFormat.MAGIC_NUMBER =>
+        PortableRoaringBitmapArraySerializationFormat
       case _ =>
         throw new IOException(s"Unexpected RoaringBitmapArray magic number $magicNumber")
     }
@@ -478,6 +480,7 @@ object RoaringBitmapArrayFormat extends Enumeration {
   implicit def valueToFormat(x: Value): Format = x.asInstanceOf[Format]
 
   val Native = Format(NativeRoaringBitmapArraySerializationFormat)
+  val Portable = Format(PortableRoaringBitmapArraySerializationFormat)
 }
 
 private[deletionvectors] object NativeRoaringBitmapArraySerializationFormat
@@ -535,3 +538,83 @@ private[deletionvectors] object NativeRoaringBitmapArraySerializationFormat
     bitmaps
   }
 }
+
+/**
+ * This is the "official" portable format defined in the spec.
+ *
+ * See [[https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations]]
+ */
+private[sql] object PortableRoaringBitmapArraySerializationFormat
+  extends RoaringBitmapArraySerializationFormat {
+
+  override val MAGIC_NUMBER: Int = 1681511377
+
+  override def serializedSizeInBytes(bitmaps: Array[RoaringBitmap]): Long = {
+    val bitmapCountSize = 8
+
+    val individualBitmapKeySize = 4
+    val bitmapSizes = bitmaps.foldLeft(0L) { (sum, bitmap) =>
+      sum + bitmap.serializedSizeInBytes() + individualBitmapKeySize
+    }
+
+    bitmapCountSize + bitmapSizes
+  }
+
+  /**
+   * Serialize `bitmaps` into the `buffer`.
+   *
+   * ==Format==
+   *   - Number of bitmaps (8 bytes, upper 4 are basically padding)
+   *   - For each individual bitmap, in increasing key order (unsigned, technically, but
+   *     RoaringBitmapArray doesn't support negative keys anyway.):
+   *     - key of the bitmap (upper 32 bit)
+   *     - Serialized bitmap data using the standard format (see
+   *       https://github.com/RoaringBitmap/RoaringFormatSpec)
+   */
+  override def serialize(bitmaps: Array[RoaringBitmap], buffer: ByteBuffer): Unit = {
+    buffer.putLong(bitmaps.length.toLong)
+    // Iterate in index-order, so that the keys are ascending as required by spec.
+    for ((bitmap, index) <- bitmaps.zipWithIndex) {
+      // In our array-based implementation the index is the key.
+      buffer.putInt(index)
+      bitmap.serialize(buffer)
+    }
+  }
+  override def deserialize(buffer: ByteBuffer): Array[RoaringBitmap] = {
+    val numberOfBitmaps = buffer.getLong
+    // These cases are allowed by the format, but out implementation doesn't support them.
+    if (numberOfBitmaps < 0L) {
+      throw new IOException(s"Invalid RoaringBitmapArray length ($numberOfBitmaps < 0)")
+    }
+    if (numberOfBitmaps > Int.MaxValue) {
+      throw new IOException(
+        s"Invalid RoaringBitmapArray length ($numberOfBitmaps > ${Int.MaxValue})")
+    }
+    // This format is designed for sparse bitmaps, so numberOfBitmaps is only a lower bound for the
+    // actual size of the array.
+    val minimumArraySize = numberOfBitmaps.toInt
+    val bitmaps = Array.newBuilder[RoaringBitmap]
+    bitmaps.sizeHint(minimumArraySize)
+    var lastIndex = 0
+    for (_ <- 0L until numberOfBitmaps) {
+      val key = buffer.getInt
+      if (key < 0L) {
+        throw new IOException(s"Invalid unsigned entry in RoaringBitmapArray ($key)")
+      }
+      assert(key >= lastIndex, "Keys are required to be sorted in ascending order.")
+      // Fill gaps in sparse data.
+      while (lastIndex < key) {
+        bitmaps += new RoaringBitmap()
+        lastIndex += 1
+      }
+      val bitmap = new RoaringBitmap()
+      bitmap.deserialize(buffer)
+      bitmaps += bitmap
+      lastIndex += 1
+      // RoaringBitmap.deserialize doesn't move the buffer's pointer
+      buffer.position(buffer.position() + bitmap.serializedSizeInBytes())
+    }
+    bitmaps.result()
+  }
+}
+
