@@ -760,15 +760,18 @@ Deletion Vectors are basically sets of row indexes, that is 64-bit integers that
 
 The serialization format is standardized, and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
 
-Since RoaringBitmap only covers 32-bit integers, we extend the format in a simple manner by keeping an array of 32-bit RoaringBitmaps and using the upper 31-bits (the highest bit is required to be 0) to index into the array.
-It is possible for implementations to use another 64-bit implementation of RoaringBitmaps as long as it supports the portable serialization format defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations).
+The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the upper 32-bit "keys" indexing the lower 32-bit RoaringBitmaps.
+We use this format with two additions:
 
-The serialization format for such a `RoaringBitmapArray` is as follows (all numerical values are written in little endian byte order):
+1. We prepend a "magic number", which can be used to make sure we are reading the correct format and also retains the ability to evolve the format in the future.
+2. We require that every "key" (s. above) in the bitmap has a 0 as its highest order bit. This ensures that in Java, where values are read signed, we never read negative keys. 
+
+The concrete serialization format is as follows (all numerical values are written in little endian byte order):
 
 Bytes | Name | Description
 -|-|-
 0 — 3 | magicNumber | 1681511377; Indicates that the following bytes are serialised in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
-4 — end | bitmap | A serialized 64 bit bitmap in the portable standard format as defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations).
+4 — end | bitmap | A serialized 64-bit bitmap in the portable standard format as defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations).
 
 The format for storing DVs in file storage is one (or more) of these `RoaringBitmapArray`s per file, together with a checksum for each DV:
 
