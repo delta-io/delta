@@ -76,7 +76,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
               val usedPartitionColumns =
               preparedScan.partitionFilters.map(_.references.map(_.name)).flatten.toSet.toSeq
               val report = ScanReport(
-                tableId = deltaTable.deltaLog.snapshot.metadata.id,
+                tableId = deltaTable.metadata.id,
                 path = deltaTable.path.toString,
                 scanType = "delta-query",
                 deltaDataSkippingType = preparedScan.dataSkippingType.toString,
@@ -93,9 +93,8 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 versionScanned = deltaTable.versionScanned,
                 usedPartitionColumns = usedPartitionColumns,
                 numUsedPartitionColumns = usedPartitionColumns.size,
-                allPartitionColumns = deltaTable.deltaLog.snapshot.metadata.partitionColumns,
-                numAllPartitionColumns =
-                  deltaTable.deltaLog.snapshot.metadata.partitionColumns.size,
+                allPartitionColumns = deltaTable.metadata.partitionColumns,
+                numAllPartitionColumns = deltaTable.metadata.partitionColumns.size,
                 parentFilterOutputRows = None
               )
 
@@ -103,7 +102,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
 
             case deltaTable: TahoeFileIndex =>
               val report = ScanReport(
-                tableId = deltaTable.deltaLog.snapshot.metadata.id,
+                tableId = deltaTable.metadata.id,
                 path = deltaTable.path.toString,
                 scanType = "delta-unknown",
                 partitionFilters = Nil,
@@ -111,7 +110,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 unusedFilters = Nil,
                 size = Map(
                   "total" -> DataSize(
-                    bytesCompressed = Some(deltaTable.deltaLog.snapshot.sizeInBytes))
+                    bytesCompressed = Some(deltaTable.deltaLog.unsafeVolatileSnapshot.sizeInBytes))
                 ),
                 metrics = scanExec.metrics.mapValues(_.value).toMap,
                 versionScanned = None,

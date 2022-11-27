@@ -107,9 +107,11 @@ class OptimisticTransaction
   /** Creates a new OptimisticTransaction.
    *
    * @param deltaLog The Delta Log for the table this transaction is modifying.
+   * @param snapshotOpt The most recent snapshot of the table, if available.
    */
-  def this(deltaLog: DeltaLog)(implicit clock: Clock) {
-    this(deltaLog, deltaLog.update())
+  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
+  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
+    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
   }
 }
 
@@ -528,8 +530,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
   /** Returns files matching the given predicates. */
-  def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(filters)
+  def filterFiles(filters: Seq[Expression], keepNumRecords: Boolean = false): Seq[AddFile] = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
@@ -1364,23 +1366,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach { hook =>
-        try {
-          hook.run(spark, this, version, postCommitSnapshot, committedActions)
-        } catch {
-          case NonFatal(e) =>
-            logWarning(s"Error when executing post-commit hook ${hook.name} " +
-              s"for commit $version", e)
-            recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
-              "hook" -> hook.name,
-              "version" -> version,
-              "exception" -> e.toString
-            ))
-            hook.handleError(e, version)
-        }
-      }
+      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
+    }
+  }
+
+  protected def runPostCommitHook(
+      hook: PostCommitHook,
+      version: Long,
+      postCommitSnapshot: Snapshot,
+      committedActions: Seq[Action]): Unit = {
+    try {
+      hook.run(spark, this, version, postCommitSnapshot, committedActions)
+    } catch {
+      case NonFatal(e) =>
+        logWarning(s"Error when executing post-commit hook ${hook.name} " +
+          s"for commit $version", e)
+        recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
+          "hook" -> hook.name,
+          "version" -> version,
+          "exception" -> e.toString
+        ))
+        hook.handleError(e, version)
     }
   }
 

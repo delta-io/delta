@@ -85,7 +85,7 @@ public class JavaDeltaTableBuilderSuite implements DeltaSQLCommandJavaTest {
             DeltaLog.forTable(spark, location).clearCache();
         } else {
             builder = builder.tableName(tableName);
-            DeltaLog.forTable(spark, tableName).clearCache();
+            DeltaLog.forTable(spark, new Path(tableName)).clearCache();
         }
         return buildTable(builder);
     }
@@ -170,7 +170,7 @@ public class JavaDeltaTableBuilderSuite implements DeltaSQLCommandJavaTest {
             List<String> data = Arrays.asList("hello", "world");
             Dataset<Row> dataDF = spark.createDataset(data, Encoders.STRING()).toDF();
 
-            DeltaLog.forTable(spark, "deltaTable").clearCache();
+            DeltaLog.forTable(spark, new Path("deltaTable")).clearCache();
             DeltaTable table = DeltaTable.create().tableName("deltaTable")
                 .addColumns(dataDF.schema())
                 .execute();

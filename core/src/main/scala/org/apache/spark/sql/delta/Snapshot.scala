@@ -17,8 +17,6 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.net.URI
-
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
@@ -30,14 +28,12 @@ import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.{SerializableConfiguration, Utils}
+import org.apache.spark.util.Utils
 
 /**
  * An immutable snapshot of the state of the log at some delta version. Internally
@@ -98,15 +94,8 @@ class Snapshot(
       // for serializability
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
-      val localLogPath = path.toUri
 
-      val hadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
-      var wrapPath = false
-
-      val canonicalizePath = DeltaUDF.stringFromString { filePath =>
-          Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
-      }
+      val canonicalPath = deltaLog.getCanonicalPathUdf()
 
       // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
       // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
@@ -119,9 +108,9 @@ class Snapshot(
       val REMOVE_PATH_CANONICAL_COL_NAME = "remove_path_canonical"
       loadActions
         .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(
-          col("add.path").isNotNull, canonicalizePath(col("add.path"))))
+          col("add.path").isNotNull, canonicalPath(col("add.path"))))
         .withColumn(REMOVE_PATH_CANONICAL_COL_NAME, when(
-          col("remove.path").isNotNull, canonicalizePath(col("remove.path"))))
+          col("remove.path").isNotNull, canonicalPath(col("remove.path"))))
         .repartition(
           getNumPartitions,
           coalesce(col(ADD_PATH_CANONICAL_COL_NAME), col(REMOVE_PATH_CANONICAL_COL_NAME)))
@@ -155,7 +144,9 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  @volatile private[delta] var stateReconstructionTriggered = false
   private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+    stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
 
@@ -167,16 +158,6 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]] as plain Rows */
   def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
     cachedState.getDF
-  }
-
-  /** Helper method to log missing actions when state reconstruction checks are not enabled */
-  protected def logMissingActionWarning(action: String): Unit = {
-    logWarning(
-      s"""
-         |Found no $action in computed state, setting it to defaults. State reconstruction
-         |validation was turned off. To turn it back on set
-         |${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "true"
-        """.stripMargin)
   }
 
   /**
@@ -211,17 +192,13 @@ class Snapshot(
         val _computedState = recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
           stateDF.select(aggregations: _*).as[State].first()
         }
-        val stateReconstructionCheck = spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
         if (_computedState.protocol == null) {
           recordDeltaEvent(
             deltaLog,
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("protocol", version)
-          }
+          throw DeltaErrors.actionNotFoundException("protocol", version)
         }
         if (_computedState.metadata == null) {
           recordDeltaEvent(
@@ -229,11 +206,7 @@ class Snapshot(
             opType = "delta.assertions.missingAction",
             data = Map(
               "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("metadata", version)
-          }
-          logMissingActionWarning("metadata")
-          _computedState.copy(metadata = Metadata())
+          throw DeltaErrors.actionNotFoundException("metadata", version)
         } else {
           _computedState
         }
@@ -266,14 +239,17 @@ class Snapshot(
     protocol = protocol,
     metadata = metadata,
     histogramOpt = fileSizeHistogram,
-    txnId = None)
+    txnId = None,
+    allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
-  def allFiles: Dataset[AddFile] = {
+  def allFiles: Dataset[AddFile] = allFilesViaStateReconstruction
+
+  private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
     stateDS.where("add IS NOT NULL").select(col("add").as[AddFile])
   }
 
@@ -285,7 +261,10 @@ class Snapshot(
   /** Returns the schema of the table. */
   def schema: StructType = metadata.schema
 
-  /** Returns the data schema of the table, the schema of the columns written out to file. */
+  /** Returns the data schema of the table, used for reading stats */
+  def tableDataSchema: StructType = metadata.dataSchema
+
+  /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
@@ -326,20 +305,6 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
-  /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
-  protected def indexToRelation(
-      index: DeltaLogFileIndex,
-      schema: StructType = logSchema): LogicalRelation = {
-    val fsRelation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      schema,
-      None,
-      index.format,
-      deltaLog.options)(spark)
-    LogicalRelation(fsRelation)
-  }
-
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.
    *
@@ -350,7 +315,7 @@ class Snapshot(
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
-    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, deltaLog.indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
       .withColumn(ACTION_SORT_COL_NAME, input_file_name())
       .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
@@ -395,21 +360,6 @@ object Snapshot extends DeltaLogging {
   val ADD_STATS_TO_USE_COL_NAME = "add_stats_to_use"
 
   private val defaultNumSnapshotPartitions: Int = 50
-
-
-  /** Canonicalize the paths for Actions */
-  private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
-    val hadoopPath = new Path(new URI(path))
-    if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
-      // scalastyle:off FileSystemGet
-      val fs = FileSystem.get(hadoopConf)
-      // scalastyle:on FileSystemGet
-      fs.makeQualified(hadoopPath).toUri.toString
-    } else {
-      // return untouched if it is a relative path or is already fully qualified
-      hadoopPath.toUri.toString
-    }
-  }
 
   /** Verifies that a set of delta or checkpoint files to be read actually belongs to this table. */
   private def assertLogFilesBelongToTable(logBasePath: Path, files: Seq[FileStatus]): Unit = {

@@ -116,6 +116,11 @@ case class Protocol(
   override def wrap: SingleAction = SingleAction(protocol = this)
   @JsonIgnore
   def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
+
+  def max(other: Protocol): Protocol = Protocol(
+    minReaderVersion = this.minReaderVersion.max(other.minReaderVersion),
+    minWriterVersion = this.minWriterVersion.max(other.minWriterVersion)
+  )
 }
 
 object Protocol {
@@ -255,8 +260,6 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def numLogicalRecords: Option[Long]
   @JsonIgnore
-  def getNumLogicalRecords: Long = numLogicalRecords.getOrElse(0L)
-  @JsonIgnore
   val partitionValues: Map[String, String]
   @JsonIgnore
   def getFileSize: Long
@@ -325,21 +328,32 @@ case class AddFile(
   @JsonIgnore
   override def getFileSize: Long = size
 
+  private case class ParsedStatsFields(
+      numLogicalRecords: Option[Long]
+  )
+
   @JsonIgnore
   @transient
-  override lazy val numLogicalRecords: Option[Long] = {
+  private lazy val parsedStatsFields: Option[ParsedStatsFields] = {
     if (stats == null || stats.isEmpty) {
       None
     } else {
       val node = new ObjectMapper().readTree(stats)
-      if (node.has("numRecords") && !node.get("numRecords").isNull) {
-        var numRecordsInFile = node.get("numRecords").asLong()
-        Some(numRecordsInFile)
-      } else {
-        None
-      }
+
+      val numLogicalRecords = if (node.has("numRecords")) {
+        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+      } else None
+
+      Some(ParsedStatsFields(
+        numLogicalRecords
+      ))
     }
   }
+
+  @JsonIgnore
+  @transient
+  override lazy val numLogicalRecords: Option[Long] =
+    parsedStatsFields.flatMap(_.numLogicalRecords)
 
 }
 

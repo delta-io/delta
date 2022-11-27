@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.TimeoutException
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
@@ -983,15 +984,32 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("Delta source advances with non-data inserts") {
+  test("Delta source advances with non-data inserts and generates empty dataframe for " +
+    "non-data operations") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
       val df = spark.readStream.format("delta").load(inputDir.toString)
-      val stream = df.writeStream
+
+      val stream = df
+        .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
+        .foreachBatch(
+          (outputDf: DataFrame, bid: Long) => {
+              // Apart from first batch, rest of batches work with non-data operations
+              // for which we expect an empty dataframe to be generated.
+              if (bid > 0) {
+                assert(outputDf.isEmpty)
+              }
+              outputDf
+                .write
+                .format("delta")
+                .mode("append")
+                .save(outputDir.toString)
+            }
+        )
+        .start()
       try {
         stream.processAllAvailable()
 
@@ -1692,6 +1710,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the first file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
 
@@ -1725,6 +1745,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the second file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
 
@@ -1759,6 +1781,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the first file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
 
@@ -1793,6 +1817,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
       // Delete the second file
       assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
 
@@ -1878,6 +1904,198 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         q.processAllAvailable()
       } finally {
         q.stop()
+      }
+    }
+  }
+
+  test("DeltaSourceOffset.validateOffsets") {
+    DeltaSourceOffset.validateOffsets(
+      previousOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false),
+      currentOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false)
+    )
+    DeltaSourceOffset.validateOffsets(
+      previousOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 4,
+        index = 10,
+        isStartingVersion = false),
+      currentOffset = DeltaSourceOffset(
+        sourceVersion = 1,
+        reservoirId = "foo",
+        reservoirVersion = 5,
+        index = 1,
+        isStartingVersion = false)
+    )
+
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = true)
+      )
+    }.getMessage.contains("Found invalid offsets: 'isStartingVersion' fliped incorrectly."))
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 1,
+          index = 10,
+          isStartingVersion = false)
+      )
+    }.getMessage.contains("Found invalid offsets: 'reservoirVersion' moved back."))
+    assert(intercept[IllegalStateException] {
+      DeltaSourceOffset.validateOffsets(
+        previousOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 10,
+          isStartingVersion = false),
+        currentOffset = DeltaSourceOffset(
+          sourceVersion = 1,
+          reservoirId = "foo",
+          reservoirVersion = 4,
+          index = 9,
+          isStartingVersion = false)
+      )
+    }.getMessage.contains("Found invalid offsets. 'index' moved back."))
+  }
+
+  test("self union a Delta table should pass the catalog table assert") {
+    withTable("self_union_delta") {
+      spark.range(10).write.format("delta").saveAsTable("self_union_delta")
+      val df = spark.readStream.format("delta").table("self_union_delta")
+      val q = df.union(df).writeStream.format("noop").start()
+      try {
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("ES-445863: delta source should not hang or reprocess data when using AvailableNow") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      def runQuery(): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+          // Require a partition filter. The max index of files matching the partition filter must
+          // be less than the number of files in the second commit.
+          .where("part = 0")
+          .writeStream
+          .format("delta")
+          .trigger(Trigger.AvailableNow)
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+        try {
+          if (!q.awaitTermination(60000)) {
+            throw new TimeoutException("the query didn't stop in 60 seconds")
+          }
+        } finally {
+          q.stop()
+        }
+      }
+
+      spark.range(0, 1)
+        .selectExpr("id", "id as part")
+        .repartition(10)
+        .write
+        .partitionBy("part")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+      runQuery()
+
+      spark.range(1, 10)
+        .selectExpr("id", "id as part")
+        .repartition(9)
+        .write
+        .partitionBy("part")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+      runQuery()
+
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        Row(0, 0) :: Nil)
+    }
+  }
+
+  test("restarting a query should pick up latest table schema and recover") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        spark.range(10)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(inputDir.getCanonicalPath)
+
+        // Store a `DeltaLog` instance outside the cache.
+        val deltaLog = DeltaLog.forTable(spark, inputDir.getCanonicalPath)
+        DeltaLog.clearCache()
+
+        def startQuery(): StreamingQuery = {
+          spark.readStream.format("delta")
+            .load(inputDir.getCanonicalPath)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
+          // table schema change happens on a different cluster
+          val txn = deltaLog.startTransaction()
+          val oldSchema = deltaLog.snapshot.metadata.schema
+          val newSchema = StructType(Seq(oldSchema(0).copy(nullable = false)))
+          val newMetadata = deltaLog.snapshot.metadata.copy(schemaString = newSchema.json)
+          txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query should recover from the schema change error
+          q = startQuery()
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
       }
     }
   }

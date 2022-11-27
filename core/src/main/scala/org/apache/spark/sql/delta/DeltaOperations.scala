@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -153,11 +154,14 @@ object DeltaOperations {
       numFiles: Long,
       partitionBy: Seq[String],
       collectStats: Boolean,
-      catalogTable: Option[String]) extends Operation("CONVERT") {
+      catalogTable: Option[String],
+      sourceFormat: Option[String]) extends Operation("CONVERT") {
     override val parameters: Map[String, Any] = Map(
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
-      "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
+      "collectStats" -> collectStats) ++
+        catalogTable.map("catalogTable" -> _) ++
+        sourceFormat.map("sourceFormat" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
     override def changesData: Boolean = true
   }
@@ -407,6 +411,8 @@ object DeltaOperations {
 
   /** operation name for OPTIMIZE command */
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
+  /** parameter key to indicate which columns to z-order by */
+  val ZORDER_PARAMETER_KEY = "zOrderBy"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
@@ -415,7 +421,7 @@ object DeltaOperations {
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "predicate" -> JsonUtils.toJson(predicate),
-      "zOrderBy" -> JsonUtils.toJson(zOrderBy)
+      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy)
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
@@ -486,20 +492,82 @@ private[delta] object DeltaOperationMetrics {
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows", // number of rows written
     "numAddedChangeFiles", // number of CDC files
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
+    "numCopiedRows", // number of rows copied
+    "numDeletedRows" // number of rows deleted
   )
 
   /**
-   * Deleting the entire table or partition would prevent row level metrics from being recorded.
-   * This is used only in test to verify specific delete cases.
+   * Deleting the entire table or partition will record row level metrics when
+   * DELTA_DML_METRICS_FROM_METADATA is enabled
+   * * DELETE_PARTITIONS is used only in test to verify specific delete cases.
    */
   val DELETE_PARTITIONS = Set(
     "numRemovedFiles", // number of files removed
     "numAddedChangeFiles", // number of CDC files generated - generally 0 in this case
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
+    "numCopiedRows", // number of rows copied
+    "numDeletedRows", // number of rows deleted
+    "numAddedFiles" // number of files added
   )
+
+
+  trait MetricsTransformer {
+    /**
+     * Produce the output metric `metricName`, given all available metrics.
+     *
+     * If one or more input metrics are missing, the output metrics may be skipped by
+     * returning `None`.
+     */
+    def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)]
+
+    def transformToString(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, String)] = {
+      this.transform(metricName, allMetrics).map { case (name, metric) =>
+        name -> metric.toString
+      }
+    }
+  }
+
+  /** Pass metric on unaltered. */
+  final object PassMetric extends MetricsTransformer {
+    override def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)] =
+      allMetrics.get(metricName).map(metric => metricName -> metric.value)
+  }
+
+  /**
+   * Produce a new metric by summing up the values of `inputMetrics`.
+   *
+   * Treats missing metrics at 0.
+   */
+  final case class SumMetrics(inputMetrics: String*)
+    extends MetricsTransformer {
+
+    override def transform(
+        metricName: String,
+        allMetrics: Map[String, SQLMetric]): Option[(String, Long)] = {
+      var atLeastOneMetricExists = false
+      val total = inputMetrics.map { name =>
+        val metricValueOpt = allMetrics.get(name)
+        atLeastOneMetricExists |= metricValueOpt.isDefined
+        metricValueOpt.map(_.value).getOrElse(0L)
+      }.sum
+      if (atLeastOneMetricExists) {
+        Some(metricName -> total)
+      } else {
+        None
+      }
+    }
+  }
 
   val TRUNCATE = Set(
     "numRemovedFiles", // number of files removed
@@ -524,7 +592,6 @@ private[delta] object DeltaOperationMetrics {
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
-
 
   val UPDATE = Set(
     "numAddedFiles", // number of files added

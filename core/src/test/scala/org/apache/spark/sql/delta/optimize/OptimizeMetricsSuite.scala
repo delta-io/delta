@@ -230,7 +230,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           .getMap(0)
           .asInstanceOf[Map[String, String]]
 
-        val expMetrics =
+        val expMetricsJson =
           s"""{
             |  "numRemovedFiles" : "37",
             |  "numAddedFiles" : "10",
@@ -243,7 +243,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
             |  "p75FileSize" : "${finalSizes(3 * finalSizes.length / 4)}"
             |}""".stripMargin.trim
 
-        assert(actualMetrics === JsonUtils.fromJson[Map[String, String]](expMetrics))
+        val expMetrics = JsonUtils.fromJson[Map[String, String]](expMetricsJson)
+        assert(actualMetrics === expMetrics)
       }
     }
   }

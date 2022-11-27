@@ -138,7 +138,8 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
       assert(ae.getMessage.contains("Converting a view to a Delta table") ||
         ae.getMessage.contains("Table default.v not found") ||
-        ae.getMessage.contains("Table or view 'v' not found in database 'default'"))
+        ae.getMessage.contains("Table or view 'v' not found in database 'default'") ||
+        ae.getMessage.contains("table or view `default`.`v` cannot be found"))
     }
   }
 
@@ -814,7 +815,8 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         convertToDelta(s"$dbName.faketable", Some("key1 long, key2 string"))
       }
 
-      assert(ae.getMessage.contains("Table or view 'faketable' not found"))
+      assert(ae.getMessage.contains("Table or view 'faketable' not found") ||
+        ae.getMessage.contains(s"table or view `$dbName`.`faketable` cannot be found"))
     }
   }
 

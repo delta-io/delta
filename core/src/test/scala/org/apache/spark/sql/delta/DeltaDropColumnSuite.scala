@@ -32,8 +32,11 @@ class DeltaDropColumnSuite extends QueryTest
   override protected val sparkConf: SparkConf =
     super.sparkConf.set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
 
-  protected def dropTest(testName: String)(f: ((String, Seq[String]) => Unit) => Unit): Unit = {
-    test(testName) {
+  protected def dropTest(
+      testName: String,
+      testTags: org.scalatest.Tag*)(
+      f: ((String, Seq[String]) => Unit) => Unit): Unit = {
+    test(testName, testTags: _*) {
       def drop(table: String, columns: Seq[String]): Unit =
         sql(s"alter table $table drop column (${columns.mkString(",")})")
       f(drop)

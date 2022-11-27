@@ -282,16 +282,25 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         numFiles = 23L,
         partitionBy = Seq("a", "b"),
         collectStats = false,
-        catalogTable = Some("t1"))
+        catalogTable = Some("t1"),
+        sourceFormat = Some("parquet"))
       val commitInfo1 = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
-
-      val expectedCommitInfoJson1 =
-        """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-          """"operationParameters":{"numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
-          """"collectStats":false,"catalogTable":"t1"},"clusterId":"23","readVersion":23,""" +
-          """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-          """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin
+      val expectedCommitInfoJson1 = // TODO JSON ordering differs between 2.12 and 2.13
+        if (scala.util.Properties.versionNumberString.startsWith("2.13")) {
+          """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
+            """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+        } else {
+          """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
+            """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+        }
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
       // TODO: operationParameters serialization/deserialization is broken as it uses a custom
@@ -325,20 +334,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       name: String,
       action: => Action,
       expectedJson: String,
-    extraSettings: Seq[(String, String)] = Seq.empty): Unit = {
-    test(name) {
+      extraSettings: Seq[(String, String)] = Seq.empty,
+      testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+    test(name, testTags: _*) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         val settings = Seq(
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
-          deltaLog.startTransaction().commit(Seq(), ManualUpdate)
+          val protocol = Protocol(
+            minReaderVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
+            minWriterVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+          deltaLog.startTransaction().commit(Seq(protocol, Metadata()), ManualUpdate)
 
           // Commit the actual action.
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)

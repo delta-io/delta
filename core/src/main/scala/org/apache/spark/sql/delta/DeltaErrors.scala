@@ -98,7 +98,8 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage"
+    "columnMappingAdviceMessage",
+    "icebergClassMissing"
   )
 }
 
@@ -912,8 +913,7 @@ trait DeltaErrorsBase
   def actionNotFoundException(action: String, version: Long): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_STATE_RECOVER_ERROR",
-      messageParameters = Array(action, version.toString,
-        DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key))
+      messageParameters = Array(action, version.toString))
   }
 
   def schemaChangedException(
@@ -1887,6 +1887,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
   }
 
+  def convertToDeltaNoPartitionFound(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONVERSION_NO_PARTITION_FOUND",
+      messageParameters = Array(tableName)
+    )
+  }
+
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING",
@@ -2453,6 +2460,19 @@ trait DeltaErrorsBase
         unsupportedOptions.mkString(","))
     )
   }
+
+  def partitionSchemaInIcebergTables: Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
+  }
+
+  def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_ICEBERG_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -2704,7 +2724,7 @@ class DeltaSparkException(
 class DeltaNoSuchTableException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
-  extends NoSuchTableException(
+  extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass

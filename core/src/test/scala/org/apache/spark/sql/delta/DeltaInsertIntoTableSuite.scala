@@ -676,7 +676,9 @@ trait InsertIntoSQLOnlyTests
           sql(s"INSERT INTO $t2 VALUES (2L, 'dummy')")
         }
         assert(e.getMessage.contains(t2))
-        assert(e.getMessage.contains("Table not found"))
+        assert(e.getMessage.contains("Table not found") ||
+          e.getMessage.contains(s"table or view `$t2` cannot be found")
+        )
       }
     }
 

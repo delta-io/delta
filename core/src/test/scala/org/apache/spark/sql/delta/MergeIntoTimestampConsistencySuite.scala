@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.expressions.{CurrentTimestamp, Now}
 import org.apache.spark.sql.functions.{current_timestamp, lit, timestamp_seconds}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -140,6 +141,7 @@ abstract class MergeIntoTimestampConsistencySuiteBase extends QueryTest
       }
     }
   }
+
 
   private def assertAllRowsAreUpdated(): Unit = {
     val nonUpdatedRowsCount = sql("SELECT * FROM target WHERE updated = FALSE").count()

@@ -133,7 +133,9 @@ class DeltaAnalysis(session: SparkSession)
                 tUnstable.commitTs.toString
               )
           }
-          if (sourceSnapshot.version == traveledTable.deltaLog.snapshot.version) {
+          // TODO: Fetch the table version from deltaLog.update().version to guarantee freshness.
+          //  This can also be used by RestoreTableCommand
+          if (sourceSnapshot.version == traveledTable.deltaLog.unsafeVolatileSnapshot.version) {
             return LocalRelation(restoreStatement.output)
           }
 
@@ -183,37 +185,41 @@ class DeltaAnalysis(session: SparkSession)
         }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
-    case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
-      val matchedActions = matched.map {
+    case merge: MergeIntoTable if merge.childrenResolved =>
+      val matchedActions = merge.matchedActions.map {
         case update: UpdateAction =>
-          DeltaMergeIntoUpdateClause(
+          DeltaMergeIntoMatchedUpdateClause(
             update.condition,
             DeltaMergeIntoClause.toActions(update.assignments))
         case update: UpdateStarAction =>
-          DeltaMergeIntoUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
+          DeltaMergeIntoMatchedUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
         case delete: DeleteAction =>
-          DeltaMergeIntoDeleteClause(delete.condition)
+          DeltaMergeIntoMatchedDeleteClause(delete.condition)
         case other =>
           throw new AnalysisException(
             s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
-      val notMatchedActions = notMatched.map {
+      val notMatchedActions = merge.notMatchedActions.map {
         case insert: InsertAction =>
-          DeltaMergeIntoInsertClause(
+          DeltaMergeIntoNotMatchedInsertClause(
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
         case insert: InsertStarAction =>
-          DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
+          DeltaMergeIntoNotMatchedInsertClause(
+            insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
           throw DeltaErrors.invalidMergeClauseWhenNotMatched(s"${other.prettyName}")
       }
       // rewrites Delta from V2 to V1
       val newTarget =
-        stripTempViewForMergeWrapper(target).transformUp { case DeltaRelation(lr) => lr }
+        stripTempViewForMergeWrapper(merge.targetTable).transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
-      val deltaMerge =
-        DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
+      val deltaMerge = DeltaMergeInto(
+        newTarget,
+        merge.sourceTable,
+        merge.mergeCondition,
+        matchedActions ++ notMatchedActions)
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
@@ -508,12 +514,14 @@ case class DeltaDynamicPartitionOverwriteCommand(
           DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC)),
       sparkSession.sessionState.conf)
 
+    // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
+    //  in the default snapshot's metadata config here.
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,
       deltaOptions,
       partitionColumns = Nil,
-      deltaTable.deltaLog.snapshot.metadata.configuration,
+      deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
       Dataset.ofRows(sparkSession, query)
     ).run(sparkSession)
   }

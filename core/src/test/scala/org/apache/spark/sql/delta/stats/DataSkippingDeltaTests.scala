@@ -32,6 +32,7 @@ import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
@@ -51,6 +52,25 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   import testImplicits._
 
   protected def checkpointAndCreateNewLogIfNecessary(log: DeltaLog): DeltaLog = log
+
+  protected val tableSchemaOnlyTag = org.scalatest.Tag("StatsCollectionWithTableSchemaOnly")
+
+  /**
+   * Test stats collection using both the table schema and DataFrame schema (if applicable)
+   * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
+   */
+  protected override def test(testName: String, testTags: org.scalatest.Tag*)
+                             (testFun: => Any)
+                             (implicit pos: org.scalactic.source.Position): Unit = {
+    super.test(testName, testTags : _*)(testFun)(pos)
+    if (!testTags.contains(tableSchemaOnlyTag)) {
+      super.test(testName + " - old behavior with DataFrame schema", testTags: _*) {
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA.key -> "false") {
+          testFun
+        }
+      }
+    }
+  }
 
   testSkipping(
     "top level, single 1",
@@ -749,23 +769,25 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   test("Test file pruning metrics with data skipping") {
     withTempDir { tempDir =>
-      val data = spark.range(10).toDF("col1")
-        .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
-      data.write.format("delta").partitionBy("col1")
-        .save(tempDir.getCanonicalPath)
-      spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
-      val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
+      withTempView("t1", "t2") {
+        val data = spark.range(10).toDF("col1")
+          .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
+        data.write.format("delta").partitionBy("col1")
+          .save(tempDir.getCanonicalPath)
+        spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
+        val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
 
-      val query = "SELECT * from t1 where col1 > 5"
-      val Seq(r1) = getScanReport {
-        assert(sql(query).collect().length == 4)
-      }
-      val inputFiles = spark.sql(query).inputFiles
-      assert(deltaLog.snapshot.numOfFiles - inputFiles.length == 6)
+        val query = "SELECT * from t1 where col1 > 5"
+        val Seq(r1) = getScanReport {
+          assert(sql(query).collect().length == 4)
+        }
+        val inputFiles = spark.sql(query).inputFiles
+        assert(deltaLog.snapshot.numOfFiles - inputFiles.length == 6)
 
-      val allQuery = "SELECT * from t1"
-      val Seq(r2) = getScanReport {
-        assert(sql(allQuery).collect().length == 10)
+        val allQuery = "SELECT * from t1"
+        val Seq(r2) = getScanReport {
+          assert(sql(allQuery).collect().length == 10)
+        }
       }
     }
   }
@@ -786,6 +808,442 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         assert(
           scans.head.size("scanned").bytesCompressed != scans.head.size("total").bytesCompressed)
       }
+    }
+  }
+
+  test("data skipping with a different DataFrame schema order", tableSchemaOnlyTag) {
+    withTable("table") {
+      sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first two columns
+      setNumIndexedColumns(r.dataPath.toString, 2)
+      val dataSeq = Seq((1, 2, 3))
+      // We should use the table schema to create stats and the DataFrame schema should be ignored
+      dataSeq.toDF("col1", "col2", "col3")
+        .select("col2", "col3", "col1") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      var hits = Seq(
+        "col3 = 10",
+        "col1 = 1",
+        "col2 = 2",
+        "col3 = 3"
+      )
+      var misses = Seq(
+        "col1 = 5",
+        "col1 = 5 AND col2 = 10",
+        "col1 = 5 and col3 = 10",
+        "col2 = 10",
+        "col2 = 5 and col3 = 10",
+        "col1 = 5 and col2 = 10 and col3 = 10"
+      )
+
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+
+      // Change the statsSchema to 3 columns. But there are only two columns in the stats from
+      // the file
+      setNumIndexedColumns(r.dataPath.toString, 3)
+      hits = Seq(
+        "col3 = 3",  // 3 is in col3, but no stats
+        "col3 = 10",  // No stats on col3
+        // The data skipping filters will be generated but verifyStatsForFilter will invalidate
+        // the entire predicate
+        "col1 = 5 and col3 = 10"
+      )
+      misses = Seq(
+        "col1 = 5",
+        "col1 = 5 AND col2 = 10"
+      )
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  test("data skipping with a different DataFrame schema and column name case", tableSchemaOnlyTag) {
+    withTable("table") {
+      sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first two columns
+      setNumIndexedColumns(r.dataPath.toString, 2)
+      val dataSeq = Seq((1, 2, 3))
+      // We should use the table schema to create stats and the DataFrame schema should be ignored
+      dataSeq.toDF("col1", "col2", "col3")
+        .select("COL2", "Col3", "coL1") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      val hits = Seq(
+        "col3 = 10",  // No stats for col3
+        // These values should be in the columns
+        "col1 = 1",
+        "col2 = 2",
+        "col3 = 3"
+      )
+      val misses = Seq(
+        "col1 = 5",
+        "col1 = 5 AND col2 = 10",
+        "col1 = 5 and col3 = 10",
+        "col2 = 10",
+        "col2 = 5 and col3 = 10",
+        "col1 = 5 and col2 = 10 and col3 = 10"
+      )
+
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  test("data skipping with a different DataFrame schema order and nested columns",
+    tableSchemaOnlyTag) {
+    withTempDir { dir =>
+      val structureData = Seq(
+        Row(Row("James ", "", "Smith"), "36636", "M", 3100)
+      )
+
+      val structureDataSchema = new StructType()
+        .add("name", new StructType()
+          .add("firstname", StringType)
+          .add("middlename", StringType)
+          .add("lastname", StringType))
+        .add("id", StringType)
+        .add("gender", StringType)
+        .add("salary", IntegerType)
+
+      val data = spark.createDataFrame(
+        spark.sparkContext.parallelize(structureData), structureDataSchema)
+
+      data.write.partitionBy("id").format("delta").save(dir.getAbsolutePath)
+      // Only index the first three columns (unnested), excluding partition column id
+      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+      setNumIndexedColumns(deltaLog.dataPath.toString, 3)
+
+      val structureDfData = Seq(
+        // The same content as previous row but different DataFrame schema order
+        Row(3100, "M", Row("James ", "", "Smith"), "36636")
+      )
+      val structureDfSchema = new StructType()
+        .add("salary", IntegerType)
+        .add("gender", StringType)
+        .add("name", new StructType()
+          .add("firstname", StringType)
+          .add("middlename", StringType)
+          .add("lastname", StringType))
+        .add("id", StringType)
+
+      // middlename is missing, but we collect NULL_COUNT for it
+      val df = spark.createDataFrame(
+        spark.sparkContext.parallelize(structureDfData), structureDfSchema)
+      df.write.mode("append").format("delta").save(dir.getAbsolutePath)
+
+      val hits = Seq(
+        // Can't skip them since stats schema only has three columns now
+        "gender = 'M'",
+        "salary = 3100"
+      )
+      val misses = Seq(
+        "name.firstname = 'Michael'",
+        "name.middlename = 'L'",
+        "name.lastname = 'Miller'",
+        "id = '10000'",
+        "name.firstname = 'Robert' and name.middlename = ''",
+        "name.firstname = 'Robert' and salary = 3100"
+      )
+      checkSkipping(deltaLog, hits, misses, structureDfData.toString(), false)
+    }
+  }
+
+  test("compatibility with the old behavior that collect stats based on DataFrame schema",
+    tableSchemaOnlyTag) {
+    withTable("table") {
+      sql("CREATE TABLE table (col2 Int, col3 Int, col1 Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first two columns
+      setNumIndexedColumns(r.dataPath.toString, 2)
+      val dataSeq = Seq((1, 2, 3))
+      // Only collect stats for col2 and col3
+      dataSeq.toDF("col1", "col2", "col3")
+        .select("col2", "col3", "col1") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      // Change the schema to (col1, col2, col3). The final result would be the same as using the
+      // old approach to collect stats based on the DataFrame schema
+      sql("ALTER TABLE table ALTER COLUMN col1 FIRST")
+
+      // Since the stats schema is (col1, col2), and we only have stats on col2 and col3, only
+      // the predicate on col2 can be used for filters
+      val hits = Seq(
+        "col1 = 1",
+        "col2 = 2",
+        "col3 = 3",
+        "col1 = 5",
+        "col3 = 10",
+        "col1 = 5 AND col2 = 10",
+        "col1 = 5 and col3 = 10",
+        "col1 = 5 and col2 = 10 and col3 = 10"
+      )
+      val misses = Seq(
+        "col2 = 10",
+        "col2 = 5 and col3 = 10"  // This can pass because stats also exists on col3
+      )
+
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  // TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
+  test("old behavior with DELTA_COLLECT_STATS_USING_TABLE_SCHEMA set to false") {
+    // This force the system restore the old stats collection behavior based on the DataFrame schema
+    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA.key -> "false") {
+      withTable("table") {
+        sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
+        val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+        // Only index the first two columns
+        setNumIndexedColumns(r.dataPath.toString, 2)
+        val dataSeq = Seq((1, 2, 3))
+        // Only collect stats for col2 and col3
+        dataSeq.toDF("col1", "col2", "col3")
+          .select("col2", "col3", "col1") // DataFrame schema order
+          .write.mode("append").format("delta")
+          .save(r.dataPath.toString)
+
+        // Since the stats schema is (col1, col2), and we only have stats on col2 and col3, only
+        // the predicate on col2 can be used for filters
+        val hits = Seq(
+          "col1 = 1",
+          "col2 = 2",
+          "col3 = 3",
+          "col1 = 5",
+          "col3 = 10",
+          "col1 = 5 AND col2 = 10",
+          "col1 = 5 and col3 = 10",
+          "col1 = 5 and col2 = 10 and col3 = 10"
+        )
+        val misses = Seq(
+          "col2 = 10",
+          "col2 = 5 and col3 = 10" // This can pass because stats also exists on col3
+        )
+
+        checkSkipping(r, hits, misses, dataSeq.toString(), false)
+      }
+    }
+  }
+
+  test("data skipping with missing columns in DataFrame", tableSchemaOnlyTag) {
+    // case-1: dataframe schema has less columns than the dataSkippingNumIndexedCols
+    withTable("table") {
+      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first three columns, excluding partition column b
+      setNumIndexedColumns(r.dataPath.toString, 3)
+      val dataSeq = Seq((1, 2, 3, 4, 5))
+
+      dataSeq.toDF("a", "b", "c", "d", "e")
+        .select("a", "b") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      val hits = Seq(
+        // These values are in the table
+        "a = 1",
+        "b = 2",
+        "c <=> null",
+        "d is null",
+        // No stats for e
+        "e = 10"
+      )
+      val misses = Seq(
+        "a = 10",
+        "b = 10",
+        "c = 10",
+        "c is not null",
+        "d = 10",
+        "isnotnull(d)"
+      )
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+
+    // case-2: dataframe schema lacks columns that are supposed to be part of the stats schema,
+    // but has an additional column that should not collect stats on
+    withTable("table") {
+      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first three columns, excluding partition column b
+      setNumIndexedColumns(r.dataPath.toString, 3)
+      val dataSeq = Seq((1, 2, 3, 4, 5))
+
+      dataSeq.toDF("a", "b", "c", "d", "e")
+        .select("a", "b", "d", "e") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      val hits = Seq(
+        "a = 1",  // In table
+        "isnull(c)",  // In table
+        "e = 20"  // No stats
+      )
+      val misses = Seq(
+        "a = 20",
+        "b = 20",
+        "c = 20",
+        "d = 20",
+        "a = 20 and c = 20",
+        "a = 20 and e = 20"
+      )
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+
+    // case-3: Structured data with some columns missing and some additional columns
+    withTempDir { dir =>
+      val structureData = Seq(
+        Row(Row("James ", "", "Smith"), "36636", "M", 3100)
+      )
+
+      val structureDataSchema = new StructType()
+        .add("name", new StructType()
+          .add("firstname", StringType)
+          .add("middlename", StringType)
+          .add("lastname", StringType))
+        .add("id", StringType)
+        .add("gender", StringType)
+        .add("salary", IntegerType)
+
+      val data = spark.createDataFrame(
+        spark.sparkContext.parallelize(structureData), structureDataSchema)
+
+      data.write.partitionBy("id").format("delta").save(dir.getAbsolutePath)
+      // Only index the first three columns (unnested), excluding partition column id
+      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+      setNumIndexedColumns(deltaLog.dataPath.toString, 3)
+
+      val structureDfData = Seq(
+        Row(2000, Row("Robert ", "Johnson"), "40000")
+      )
+      val structureDfSchema = new StructType()
+        .add("salary", IntegerType)
+        .add("name", new StructType()
+          .add("firstname", StringType)
+          .add("lastname", StringType))
+        .add("id", StringType)
+
+      // middlename is missing, but we collect NULL_COUNT for it
+      val df = spark.createDataFrame(
+        spark.sparkContext.parallelize(structureDfData), structureDfSchema)
+      df.write.mode("append").format("delta").save(dir.getAbsolutePath)
+
+      val hits = Seq(
+        "gender = 'M'",  // No stats
+        "salary = 1000"  // No stats
+      )
+      val misses = Seq(
+        "name.firstname = 'Michael'",
+        "name.middlename = 'L'",
+        "name.lastname = 'Miller'",
+        "id = '10000'",
+        "name.firstname = 'Robert' and name.middlename = 'L'"
+      )
+      checkSkipping(deltaLog, hits, misses, structureDfData.toString(), false)
+    }
+
+    // case-4: dataframe schema does not have any columns within the first
+    // dataSkippingNumIndexedCols columns of the table schema
+    withTable("table") {
+      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first three columns
+      setNumIndexedColumns(r.dataPath.toString, 3)
+      val dataSeq = Seq((1, 2, 3, 4, 5))
+
+      dataSeq.toDF("a", "b", "c", "d", "e")
+        .select("d", "e") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      val hits = Seq(
+        "d = 40",  // No stats
+        "e = 40"  // No stats
+      )
+      // We can still collect NULL_COUNT for a, b, and c
+      val misses = Seq(
+        "a = 40",
+        "b = 40",
+        "c = 40"
+      )
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+
+    // case-5: The first dataSkippingNumIndexedCols columns of the table schema has map or array
+    // types, which we only collect NULL_COUNT
+    withTable("table") {
+      sql("CREATE TABLE table (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      // Only index the first three columns
+      setNumIndexedColumns(r.dataPath.toString, 3)
+      val dataSeq = Seq((1, Map("key" -> 2), Seq(3, 3, 3), 4, 5))
+
+      dataSeq.toDF("a", "b", "c", "d", "e")
+        .select("b", "c", "d") // DataFrame schema order
+        .write.mode("append").format("delta")
+        .save(r.dataPath.toString)
+
+      val hits = Seq(
+        "d = 50",  // No stats
+        "e = 50",  // No stats
+        // No min/max stats for c. We couldn't check = for b since EqualTo does not support
+        // ordering on type maP
+        "c = array(50, 50)",
+        // b and c should have NULL_COUNT stats, but currently they're not SkippingEligibleColumn
+        // (since they're not AtomicType), we couldn't skip for them
+        "isnull(b)",
+        "c is null"
+      )
+      val misses = Seq(
+        // a has NULL_COUNT stats since it's missing from DataFrame schema
+        "a = 50"
+      )
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+
+  test("data skipping with generated column") {
+    withTable("table") {
+      // OSS does not support the generated column syntax in SQL so we have to use table builder
+      val tableBuilder = io.delta.tables.DeltaTable.create(spark).tableName("table")
+      // add regular columns
+      val col1 = io.delta.tables.DeltaTable.columnBuilder(spark, "col1")
+        .dataType("int")
+        .build()
+      val col2 = io.delta.tables.DeltaTable.columnBuilder(spark, "col2")
+        .dataType("string")
+        .build()
+      // add generated column
+      val genCol3 = io.delta.tables.DeltaTable.columnBuilder(spark, "genCol3")
+        .dataType("string")
+        .generatedAlwaysAs("substring(col2, 3, 2)")
+        .build()
+
+      tableBuilder
+        .addColumn(col1)
+        .addColumn(col2)
+        .addColumn(genCol3)
+        .execute()
+      // Only pass in two columns, and col3 will be generated as "st"
+      val tableData = Seq((1, "test string"))
+      tableData.toDF("col1", "col2")
+        .write.format("delta").mode("append")
+        .saveAsTable("table")
+
+      val hits = Seq(
+        "genCol3 = 'st'"
+      )
+      val misses = Seq(
+        "col1 = 10",
+        "col2 = 'test'",
+        "genCol3 = 'test'"
+      )
+
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      checkSkipping(r, hits, misses, tableData.toString(), false)
     }
   }
 
@@ -1005,9 +1463,10 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String =
-    s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
-      s""""nullCount":{"$colName":0}}""".stripMargin
+  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0}}""".stripMargin
+  }
 
   test("data skipping get specific files with Stats API") {
     withTempDir { tempDir =>
@@ -1176,7 +1635,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       checkEmptyUnusedFiltersForHits: Boolean): Unit = {
     hits.foreach { predicate =>
       Given(predicate)
-      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) != 1) {
+      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) == 0) {
         failPretty(s"Expected hit but got miss for $predicate", predicate, data)
       }
     }
@@ -1264,14 +1723,30 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
   }
 }
 
+/**
+ * Used to disable the tests with the old stats collection behavior on long-running suites to
+ * avoid time-out
+ * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
+ */
+trait DataSkippingDisableOldStatsSchemaTests extends DataSkippingDeltaTests {
+
+  protected override def test(testName: String, testTags: org.scalatest.Tag*)
+                             (testFun: => Any)
+                             (implicit pos: org.scalactic.source.Position): Unit = {
+    // Adding the null check in case tableSchemaOnlyTag has not been initialized in base traits
+    val newTestTags = if (tableSchemaOnlyTag == null) testTags else tableSchemaOnlyTag +: testTags
+    super.test(testName, newTestTags: _*)(testFun)(pos)
+  }
+}
+
 /** DataSkipping tests under id column mapping */
 trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
   with DeltaColumnMappingTestUtils {
 
   override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
     val x = colName.phy(deltaLog)
-    s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
-      s""""nullCount":{"$x":0}}""".stripMargin
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0}}""".stripMargin
   }
 }
 

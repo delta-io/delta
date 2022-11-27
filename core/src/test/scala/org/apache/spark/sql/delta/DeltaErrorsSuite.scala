@@ -82,7 +82,8 @@ trait DeltaErrorsSuiteBase
     "sourceNotDeterministicInMergeException" ->
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
     "columnMappingAdviceMessage" ->
-      DeltaErrors.columnRenameNotSupported
+      DeltaErrors.columnRenameNotSupported,
+    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable())
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -471,6 +472,15 @@ trait DeltaErrorsSuiteBase
         "documentation for more details.")
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertToDeltaNoPartitionFound("testTable")
+      }
+      assert(e.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Found no partition information in the catalog for table testTable." +
+        " Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?")
+    }
+    {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(IdMapping)
       }
@@ -585,9 +595,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.actionNotFoundException("action", 0)
       }
       val msg = s"""The action of your Delta table could not be recovered while Reconstructing
-        |version: 0. Did you manually delete files in the _delta_log directory?
-        |Set ${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "false"
-        |to skip validation.""".stripMargin
+        |version: 0. Did you manually delete files in the _delta_log directory?""".stripMargin
       assert(e.getMessage == msg)
     }
     {

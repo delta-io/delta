@@ -23,10 +23,11 @@ import scala.collection.mutable
 import scala.reflect.ClassTag
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, CurrentDate, CurrentTimestamp, CurrentTimeZone, Expression, Literal, LocalTimestamp, Now, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -93,7 +94,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     var additionalColumns = Seq[StructField]()
 
     val processedMatched = matched.map {
-      case m: DeltaMergeIntoUpdateClause =>
+      case m: DeltaMergeIntoMatchedUpdateClause =>
         // Get any new columns which are in the update/insert clauses, but not the target output
         val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
           target.output.map(_.name)
@@ -167,10 +168,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
         m.copy(m.condition, alignedActions)
 
-      case m: DeltaMergeIntoDeleteClause => m    // Delete does not need reordering
+      case m: DeltaMergeIntoMatchedDeleteClause => m    // Delete does not need reordering
     }
 
-    val processedNotMatched = notMatched.map { m =>
+    val processedNotMatched = notMatched.map { case m: DeltaMergeIntoNotMatchedInsertClause =>
       // Check if columns are distinct. All actions should have targetColNameParts.size = 1.
       m.resolvedActions.foreach { a =>
         if (a.targetColNameParts.size > 1) {

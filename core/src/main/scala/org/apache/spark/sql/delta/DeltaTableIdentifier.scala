@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
@@ -45,6 +46,10 @@ case class DeltaTableIdentifier(
     DeltaLog.forTable(spark, getPath(spark))
   }
 
+  def getDeltaLogWithSnapshot(spark: SparkSession): (DeltaLog, Snapshot) = {
+    DeltaLog.forTableWithSnapshot(spark, getPath(spark))
+  }
+
   /**
    * Escapes back-ticks within the identifier name with double-back-ticks.
    */
@@ -69,7 +74,7 @@ case class DeltaTableIdentifier(
  * TODO(burak): Get rid of these utilities. DeltaCatalog should be the skinny-waist for figuring
  * these things out.
  */
-object DeltaTableIdentifier extends Logging {
+object DeltaTableIdentifier extends DeltaLogging {
 
   /**
    * Check the specified table identifier represents a Delta path.
@@ -99,7 +104,9 @@ object DeltaTableIdentifier extends Logging {
    * Creates a [[DeltaTableIdentifier]] if the specified table identifier represents a Delta table,
    * otherwise returns [[None]].
    */
-  def apply(spark: SparkSession, identifier: TableIdentifier): Option[DeltaTableIdentifier] = {
+  def apply(spark: SparkSession, identifier: TableIdentifier)
+      : Option[DeltaTableIdentifier] = recordFrameProfile(
+          "DeltaAnalysis", "DeltaTableIdentifier.resolve") {
     if (isDeltaPath(spark, identifier)) {
       Some(DeltaTableIdentifier(path = Option(identifier.table)))
     } else if (DeltaTableUtils.isDeltaTable(spark, identifier)) {

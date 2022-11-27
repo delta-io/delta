@@ -219,7 +219,8 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("not found"))
+        assert(e.getMessage.contains("not found") ||
+          e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
       }
     }
   }
@@ -1157,8 +1158,10 @@ trait DescribeDeltaHistorySuiteBase
                   "numFiles" -> "2",
                   "numOutputRows" -> "20",
                   "numAddedChangeFiles" -> "0",
-                  "numRemovedFiles" -> "1"
-                ),
+                  "numRemovedFiles" -> "1",
+                  "numCopiedRows" -> "0",
+                  "numDeletedRows" -> "10"
+              ),
                 getOperationMetrics(deltaTable.history(1)),
                 DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS
               )

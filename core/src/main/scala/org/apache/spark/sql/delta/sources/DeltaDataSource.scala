@@ -88,8 +88,8 @@ class DeltaDataSource
       throw DeltaErrors.timeTravelNotSupportedException
     }
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.schema)
+    val snapshot = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)._2
+    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -113,12 +113,12 @@ class DeltaDataSource
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    if (deltaLog.snapshot.schema.isEmpty) {
+    val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
+    if (snapshot.schema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    DeltaSource(sqlContext.sparkSession, deltaLog, options)
+    DeltaSource(sqlContext.sparkSession, deltaLog, options, snapshot)
   }
 
   override def createSink(
@@ -148,7 +148,7 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, new Path(path), parameters)
+    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path, parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,

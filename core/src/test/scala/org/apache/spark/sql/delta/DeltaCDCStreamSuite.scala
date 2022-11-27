@@ -25,10 +25,10 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
@@ -417,6 +417,77 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  Seq(true, false).foreach { readChangeFeed =>
+    test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
+      withTempDirs { (inputDir, checkpointDir, outputDir) =>
+        withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+
+          // save some rows to input table.
+          spark.range(10).withColumn("value", lit("a"))
+            .write.format("delta").mode("overwrite")
+            .option("enableChangeDataFeed", "true").save(inputDir.getAbsolutePath)
+
+          // process the input table in a CDC manner
+          val df = spark.readStream
+            .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query = df
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query.processAllAvailable()
+          query.stop()
+          query.awaitTermination()
+
+          // Create a temp view and write to input table as a no-op merge
+          spark.range(20, 30).withColumn("value", lit("b"))
+            .createOrReplaceTempView("source_table")
+
+          for (i <- 0 to 10) {
+            sql(s"MERGE INTO delta.`${inputDir.getAbsolutePath}` AS tgt " +
+              s"USING source_table src ON tgt.id = src.id " +
+              s"WHEN MATCHED THEN UPDATE SET * " +
+              s"WHEN NOT MATCHED AND src.id < 10 THEN INSERT *")
+          }
+
+          // Read again from input table and no new data should be generated
+          val df1 = spark.readStream
+            .option("readChangeFeed", readChangeFeed)
+            .format("delta")
+            .load(inputDir.getAbsolutePath)
+
+          val query1 = df1
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+
+          query1.processAllAvailable()
+          query1.stop()
+          query1.awaitTermination()
+
+          // check that the last batch was committed and that the
+          // reservoirVersion for the table was updated to latest
+          // in both cdf and non-cdf cases.
+          assert(query1.lastProgress.batchId === 1)
+          val endOffset = JsonUtils.mapper.readValue[DeltaSourceOffset](
+            query1.lastProgress.sources.head.endOffset
+          )
+          assert(endOffset.reservoirVersion === 11)
+          assert(endOffset.index === -1)
+        }
+      }
+    }
+  }
+
   test("cdc streams should be able to get offset when there only RemoveFiles") {
     withTempDir { inputDir =>
       // version 0
@@ -559,7 +630,23 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(q) (
         ProcessAllAvailable(),
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, "insert", 0),
+          (1, 1, "insert", 0),
+          (2, 0, "insert", 0),
+          (3, 1, "insert", 0),
+          (4, -1, "insert", 1),
+          (4, -1, "delete", 2),
+          (0, 0, "update_preimage", 3),
+          (0, 0, "update_postimage", 3),
+          (1, 1, "update_preimage", 3),
+          (0, 1, "update_postimage", 3),
+          (2, 0, "update_preimage", 4),
+          (0, 0, "update_postimage", 4),
+          (3, 1, "update_preimage", 4),
+          (0, 1, "update_postimage", 4)
+        )
       )
     }
   }
@@ -639,7 +726,17 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(df)(
         ProcessAllAvailable(),
-        CheckProgress(Seq(4, 4)) // 4 rows(pre and post image) from the 2 AddCDCFiles
+        CheckProgress(Seq(4, 4)),// 4 rows(2 pre- and 2 post-images) for each version
+        CheckAnswer(
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
@@ -669,6 +766,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .option(DeltaOptions.CDC_READ_OPTION, "true")
         .option("startingVersion", "0")
         .load(inputDir.getCanonicalPath)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -679,7 +777,19 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       testStream(df)(
         ProcessAllAvailable(),
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
@@ -709,6 +819,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .option(DeltaOptions.CDC_READ_OPTION, "true")
         .option("startingVersion", "0")
         .load(inputDir.getCanonicalPath)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -722,7 +833,19 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         Execute { query =>
           assert(query.awaitTermination(10000))
         },
-        CheckProgress(rowsPerBatch)
+        CheckProgress(rowsPerBatch),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 0, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 0, "update_postimage", 1),
+          (0, 0, 0, "update_preimage", 2),
+          (0, 0, 1, "update_postimage", 2),
+          (1, 1, 0, "update_preimage", 2),
+          (1, 1, 1, "update_postimage", 2)
+        )
       )
     }
   }
@@ -903,6 +1026,10 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
 
 }
 
+class DeltaCDCStreamIdColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode {
+}
 
 class DeltaCDCStreamNameColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode
+  with DeltaColumnMappingEnableNameMode {
+}

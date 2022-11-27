@@ -54,6 +54,31 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
+
+  // test created to validate a fix for a bug where merge command was
+  // resulting in a empty target table when statistics collection is disabled
+  test("basic scala API - without stats") {
+    withSQLConf((DeltaSQLConf.DELTA_COLLECT_STATS.key, "false")) {
+      withTable("source") {
+        append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil) // target
+        val source = Seq((1, 100), (3, 30)).toDF("key2", "value2") // source
+
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 100) :: // Update
+            Row(2, 20) :: // No change
+            Row(3, 30) :: // Insert
+            Nil)
+      }
+    }
+  }
+
   test("extended scala API") {
     withTable("source") {
       append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
@@ -561,8 +586,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       tgt = target,
       src = source,
       cond = condition,
-      MergeClause(isMatched = true, condition = null, action = s"UPDATE SET $update"),
-      MergeClause(isMatched = false, condition = null, action = s"INSERT $insert"))
+      this.update(set = update),
+      this.insert(values = insert))
   }
 
   override protected def executeMerge(
@@ -590,11 +615,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       }
     }
 
-    def buildClause(
-      clause: MergeClause,
-      mergeBuilder: DeltaMergeBuilder): DeltaMergeBuilder = {
-
-      if (clause.isMatched) {
+    def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
+      : DeltaMergeBuilder = clause match {
+      case _: MatchedClause =>
         val actionBuilder: DeltaMergeMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenMatched(clause.condition)
           else mergeBuilder.whenMatched()
@@ -612,7 +635,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
             actionBuilder.updateExpr(setColExprPairs)
           }
         }
-      } else {                                        // INSERT clause
+      case _: NotMatchedClause =>                     // INSERT clause
         val actionBuilder: DeltaMergeNotMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
           else mergeBuilder.whenNotMatched()
@@ -624,7 +647,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           actionBuilder.insertExpr(valueColExprsPairs)
         }
       }
-    }
 
     val deltaTable = {
       val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)

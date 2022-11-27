@@ -21,11 +21,13 @@ import java.util.{HashMap, Locale}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DataSkippingReader
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.util.Utils
 
 case class DeltaConfig[T](
     key: String,
@@ -402,7 +404,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    "32",
+    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
@@ -458,7 +460,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.",
-    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY))
+    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY),
+    minimumProtocolVersion = Some(Protocol(0, minWriterVersion = 4)))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",

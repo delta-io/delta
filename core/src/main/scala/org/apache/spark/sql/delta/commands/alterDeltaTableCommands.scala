@@ -54,6 +54,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
     txn
   }
 
+
   /**
    * Check if the column to change has any dependent expressions:
    *   - generated column expressions

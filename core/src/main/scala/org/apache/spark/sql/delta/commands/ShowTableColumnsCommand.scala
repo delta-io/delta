@@ -45,12 +45,12 @@ case class ShowTableColumnsCommand(tableID: DeltaTableIdentifier)
   override def run(sparkSession: SparkSession): Seq[Row] = {
     // Return the schema from snapshot if it is an Delta table. Or raise
     // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
-    val deltaLog = DeltaLog.forTable(sparkSession, tableID)
+    val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sparkSession, tableID)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
-      if (deltaLog.snapshot.version < 0) {
+      if (snapshot.version < 0) {
         throw DeltaErrors.notADeltaTableException("SHOW COLUMNS")
       } else {
-        deltaLog.snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
+        snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
       }
     }
   }
