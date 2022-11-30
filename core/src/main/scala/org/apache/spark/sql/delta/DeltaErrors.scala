@@ -2472,6 +2472,47 @@ trait DeltaErrorsBase
     )
   }
 
+  def shallowCloneFileNotFoundHint(path: String): String = {
+    "A file referenced in the transaction log cannot be found. This can occur when data has been " +
+      "manually deleted from the file system rather than using the table `DELETE` statement. " +
+      "This table appears to be a shallow clone, if that is the case, this error can occur when " +
+      "the original table from which this table was cloned has deleted a file that the clone is " +
+      "still using. "
+  }
+
+  def cloneOnRelativePath(path: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_CLONE_PATH",
+      messageParameters = Array(path))
+  }
+
+  def cloneAmbiguousTarget(externalLocation: String, targetIdent: TableIdentifier): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CLONE_AMBIGUOUS_TARGET",
+      messageParameters = Array(externalLocation, s"$targetIdent")
+    )
+  }
+
+  def cloneFromUnsupportedSource(name: String, format: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_UNSUPPORTED_SOURCE",
+      messageParameters = Array(name, format)
+    )
+  }
+
+  def cloneReplaceUnsupported(tableIdentifier: TableIdentifier): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE",
+      messageParameters = Array(s"$tableIdentifier")
+    )
+  }
+
+  def cloneReplaceNonEmptyTable: Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNSUPPORTED_NON_EMPTY_CLONE"
+    )
+  }
+
   def partitionSchemaInIcebergTables: Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
   }

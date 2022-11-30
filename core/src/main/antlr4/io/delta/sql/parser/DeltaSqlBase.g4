@@ -60,6 +60,11 @@ grammar DeltaSqlBase;
       return true;
     }
   }
+
+  /**
+   * When true, double quoted literals are identifiers rather than STRINGs.
+   */
+  public boolean double_quoted_identifiers = false;
 }
 
 tokens {
@@ -91,7 +96,23 @@ statement
         (zorderSpec)?                                                   #optimizeTable
     | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
         ((IN | FROM) schemaName=identifier)?                            #showColumns
+    | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
+       (TBLPROPERTIES tableProps=propertyList)?
+       (LOCATION location=stringLit)?                                   #clone
     | .*?                                                               #passThrough
+    ;
+
+createTableHeader
+    : CREATE TABLE (IF NOT EXISTS)? table=qualifiedName
+    ;
+
+replaceTableHeader
+    : (CREATE OR)? REPLACE TABLE table=qualifiedName
+    ;
+
+cloneTableHeader
+    : createTableHeader
+    | replaceTableHeader
     ;
 
 zorderSpec
@@ -106,6 +127,36 @@ temporalClause
 
 qualifiedName
     : identifier ('.' identifier)*
+    ;
+
+propertyList
+    : LEFT_PAREN property (COMMA property)* RIGHT_PAREN
+    ;
+
+property
+    : key=propertyKey (EQ? value=propertyValue)?
+    ;
+
+propertyKey
+    : identifier (DOT identifier)*
+    | stringLit
+    ;
+
+propertyValue
+    : INTEGER_VALUE
+    | DECIMAL_VALUE
+    | booleanValue
+    | identifier LEFT_PAREN stringLit COMMA stringLit RIGHT_PAREN
+    | value=stringLit
+    ;
+
+stringLit
+    : STRING
+    | {!double_quoted_identifiers}? DOUBLEQUOTED_STRING
+    ;
+
+booleanValue
+    : TRUE | FALSE
     ;
 
 identifier
@@ -167,6 +218,7 @@ nonReserved
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
+    | CLONE | SHALLOW
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -175,18 +227,22 @@ ALTER: 'ALTER';
 AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
+CLONE: 'CLONE';
 COLUMNS: 'COLUMNS';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
 CONVERT: 'CONVERT';
+CREATE: 'CREATE';
 DELTA: 'DELTA';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
 DETAIL: 'DETAIL';
+DOT: '.';
 DROP: 'DROP';
 DRY: 'DRY';
 EXISTS: 'EXISTS';
+FALSE: 'FALSE';
 FOR: 'FOR';
 FROM: 'FROM';
 GENERATE: 'GENERATE';
@@ -196,23 +252,29 @@ IF: 'IF';
 IN: 'IN';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
+LOCATION: 'LOCATION';
 MINUS: '-';
 NO: 'NO';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
 OF: 'OF';
+OR: 'OR';
 OPTIMIZE: 'OPTIMIZE';
 PARTITIONED: 'PARTITIONED';
+REPLACE: 'REPLACE';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
+SHALLOW: 'SHALLOW';
 SHOW: 'SHOW';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';
+TBLPROPERTIES: 'TBLPROPERTIES';
 TIMESTAMP: 'TIMESTAMP';
 TO: 'TO';
+TRUE: 'TRUE';
 VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';
@@ -234,6 +296,10 @@ CONCAT_PIPE: '||';
 STRING
     : '\'' ( ~('\''|'\\') | ('\\' .) )* '\''
     | '"' ( ~('"'|'\\') | ('\\' .) )* '"'
+    ;
+
+DOUBLEQUOTED_STRING
+    :'"' ( ~('"'|'\\') | ('\\' .) )* '"'
     ;
 
 BIGINT_LITERAL
