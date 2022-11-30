@@ -908,7 +908,7 @@ A column metadata stores various information about the column.
 For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
 Field Name | Description
 -|-
-delta.columnMapping| This is to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. The more information is [Column Mapping](#column-mapping)
+delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
 delta.identity.xxx| This is for defining identity columns. The more information is [Identity Columns](#identity-columns)
 delta.invariants| Always JSON string. The more information is [Column Invariants](#column-invariants)
 delta.generationExpression| Always parsed as SQL expression. The more information is [Generated Columns](#generated-columns)
