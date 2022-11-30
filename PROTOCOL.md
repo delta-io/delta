@@ -911,7 +911,7 @@ Field Name | Description
 delta.columnMapping| This is to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. The more information is [Column Mapping](#column-mapping)
 delta.identity.xxx| This is for defining identity columns. The more information is [Identity Columns](#identity-columns)
 delta.invariants| Always JSON string. The more information is [Column Invariants](#column-invariants)
-delta.generationExpression| Alaways parsed as SQL expression. The more information is [Generated Columns](#generated-columns)
+delta.generationExpression| Always parsed as SQL expression. The more information is [Generated Columns](#generated-columns)
 
 
 ### Example
