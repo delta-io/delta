@@ -21,7 +21,6 @@ import java.io.{File, FileNotFoundException}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -41,11 +40,15 @@ import org.apache.spark.util.Utils
  */
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
+  protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
+    .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
+
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
     .withColumn("key2", col("id") % 3 cast "String")
 
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None,
+      collectStats: Boolean = true): Unit
 
   protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
@@ -94,6 +97,47 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
           DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE.key -> batchSize) {
           block
         }
+      }
+    }
+  }
+
+  test("convert with collectStats true") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF)
+      convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+      checkAnswer(
+        spark.read.format("delta").load(tempDir),
+        simpleDF
+      )
+      assert(history.count == 1)
+      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+          .as("stats")).select("stats.*")
+      assert(statsDf.filter($"numRecords".isNull).count == 0)
+      assert(statsDf.agg(sum("numRecords")).as[Long].head() == simpleDF.count)
+    }
+  }
+
+  test("convert with collectStats true but config set to false -> Do not collect stats") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF)
+        convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+        checkAnswer(
+          spark.read.format("delta").load(tempDir),
+          simpleDF
+        )
+        assert(history.count == 1)
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+            .as("stats")).select("stats.*")
+        assert(statsDf.filter($"numRecords".isNotNull).count == 0)
       }
     }
   }

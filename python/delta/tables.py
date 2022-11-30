@@ -303,7 +303,7 @@ class DeltaTable(object):
         cls,
         sparkSession: SparkSession,
         identifier: str,
-        partitionSchema: Optional[Union[str, StructType]] = None,
+        partitionSchema: Optional[Union[str, StructType]] = None
     ) -> "DeltaTable":
         """
         Create a DeltaTable from the given parquet table. Takes an existing parquet table and
