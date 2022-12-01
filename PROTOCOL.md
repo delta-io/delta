@@ -909,9 +909,9 @@ For example, this MAY contain some keys like [`delta.columnMapping`](#column-map
 Field Name | Description
 -|-
 delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
-delta.identity.xxx| This is for defining identity columns. The more information is [Identity Columns](#identity-columns)
-delta.invariants| Always JSON string. The more information is [Column Invariants](#column-invariants)
-delta.generationExpression| Always parsed as SQL expression. The more information is [Generated Columns](#generated-columns)
+delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
+delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
+delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
 
 
 ### Example
