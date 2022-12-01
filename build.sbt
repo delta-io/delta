@@ -201,7 +201,13 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     name := "delta-iceberg",
     commonSettings,
     scalaStyleSettings,
-    Seq(publishArtifact := false, Test / publishArtifact := false),
+    Seq(
+      publishArtifact := false,  // Don't release the delta-iceberg project
+      publish / skip := true,
+      publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"),
+      releaseCrossBuild := false,
+      Test / publishArtifact := false
+    ),
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
         ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
