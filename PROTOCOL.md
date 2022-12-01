@@ -760,34 +760,7 @@ Deletion Vectors are basically sets of row indexes, that is 64-bit integers that
 
 The serialization format is [standardized](https://github.com/RoaringBitmap/RoaringFormatSpec), and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
 
-The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the upper 32-bit "keys" indexing the lower 32-bit RoaringBitmaps.
-We use this format with two additions:
-
-1. We prepend a "magic number", which can be used to make sure we are reading the correct format and also retains the ability to evolve the format in the future.
-2. We require that every "key" (s. above) in the bitmap has a 0 as its highest order bit. This ensures that in Java, where values are read signed, we never read negative keys. 
-
-The concrete serialization format is as follows (all numerical values are written in little endian byte order):
-
-Bytes | Name | Description
--|-|-
-0 — 3 | magicNumber | 1681511377; Indicates that the following bytes are serialized in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
-4 — end | bitmap | A serialized 64-bit bitmap in the portable standard format as defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This can be treated as a black box by any Delta implementation that has a native, standard-compliant RoaringBitmap library available to pass these bytes to.
-
-For a summary on RoaringBitmap's serialization format see [Roaring Bitmap Format Summary](#roaring-bitmap-format-summary).
-
-The format for storing DVs in file storage is one (or more) of these `RoaringBitmapArray`s per file, together with a checksum for each DV:
-
-Bytes | Name | Description
--|-|-
-0 — 1 | version | The format version of this file: `1` for the format described here.
-`repeat for each DV i` | | For each DV
-`<start of i>` — `<start of i> + 3` | dataSize | Size of this DV’s data (without the checksum)
-`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One `RoaringBitmapArray` serialised as described above.
-`<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
-
-### Roaring Bitmap Format Summary
-
-The [64-bit "portable" Roaring format](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations) basically works by storing multiple serialized 32-bit RoaringBitmaps together with their most significant 32-bit "keys" in ascending sequence. The spec calls these least signficant 32-bit RoaringBitmaps "buckets".
+The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the most significant 32-bit "keys" indexing the least significant 32-bit RoaringBitmaps in ascending sequence. The spec calls these least signficant 32-bit RoaringBitmaps "buckets".
 
 Bytes | Name | Description
 -|-|-
@@ -799,10 +772,35 @@ Bytes | Name | Description
 The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
 This is followed by the data for each individual container in a container-specific format.
 
-#### Reference Implementations
+Reference Implementations of the Roaring format:
 
 - [32-bit Java RoaringBitmap](https://github.com/RoaringBitmap/RoaringBitmap/blob/c7993318d7224cd3cc0244dcc99c8bbc5ddb0c87/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringArray.java#L905-L949)
 - [64-bit Java RoaringNavigableBitmap](https://github.com/RoaringBitmap/RoaringBitmap/blob/c7993318d7224cd3cc0244dcc99c8bbc5ddb0c87/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/Roaring64NavigableMap.java#L1253-L1260)
+
+Delta uses the format described above as a black box, but with two additions:
+
+1. We prepend a "magic number", which can be used to make sure we are reading the correct format and also retains the ability to evolve the format in the future.
+2. We require that every "key" (s. above) in the bitmap has a 0 as its most significant bit. This ensures that in Java, where values are read signed, we never read negative keys. 
+
+The concrete serialization format is as follows (all numerical values are written in little endian byte order):
+
+Bytes | Name | Description
+-|-|-
+0 — 3 | magicNumber | 1681511377; Indicates that the following bytes are serialized in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
+4 — end | bitmap | A serialized 64-bit bitmap in the portable standard format as defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This can be treated as a black box by any Delta implementation that has a native, standard-compliant RoaringBitmap library available to pass these bytes to.
+
+### Deletion Vector File Storage Format
+
+Deletion Vectors can be stored in files in cloud storage or inline in the Delta log.
+The format for storing DVs in file storage is one (or more) of DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV:
+
+Bytes | Name | Description
+-|-|-
+0 — 1 | version | The format version of this file: `1` for the format described here.
+`repeat for each DV i` | | For each DV
+`<start of i>` — `<start of i> + 3` | dataSize | Size of this DV’s data (without the checksum)
+`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One `RoaringBitmapArray` serialised as described above.
+`<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
 
 ## Per-file Statistics
 `add` actions can optionally contain statistics about the data in the file being added to the table.
