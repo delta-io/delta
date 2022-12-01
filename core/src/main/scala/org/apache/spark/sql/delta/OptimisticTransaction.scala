@@ -973,7 +973,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // metadata was set via `updateMetadata` or `actions`.
       newMetadata = Some(m)
     }
+
+    // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
+    // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
+    // new table properties that enable features that require a protocol upgrade. These implicit
+    // changes are usually captured in newProtocol. In case there is more than one protocol action,
+    // it is likely that it is due to a mix of explicit and implicit changes.
     finalActions = newProtocol.toSeq ++ finalActions
+    val protocolChanges = finalActions.collect { case p: Protocol => p }
+    if (protocolChanges.length > 1) {
+      recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
+        "protocolChanges" -> protocolChanges
+      ))
+      assert(protocolChanges.length <= 1, "Cannot change the protocol more than once in a " +
+        "transaction. More than one protocol change in a transaction is likely due to an " +
+        "explicitly specified Protocol action and an implicit protocol upgrade triggered by " +
+        "a table property.")
+    }
+    // Update newProtocol so that the behaviour later is consistent irrespective of whether
+    // the protocol was set via update/verifyMetadata or actions.
+    // NOTE: There is at most one protocol change at this point.
+    protocolChanges.foreach { p =>
+      newProtocol = Some(p)
+    }
 
 
     // Block future cases of CDF + Column Mapping changes + file changes

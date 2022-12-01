@@ -458,4 +458,39 @@ class OptimisticTransactionSuite
       assert(snapshot.metadata.partitionColumns.sameElements(partitionColumns))
     }
   }
+
+  test("only single Protocol action per commit - implicit") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType()
+        .add("id", "long")
+        .add("col", "string")
+      val e = intercept[java.lang.AssertionError] {
+        deltaLog.withNewTransaction { txn =>
+          val protocol = Protocol(2, 3)
+          val metadata = Metadata(
+            schemaString = schema.json,
+            configuration = Map("delta.enableChangeDataFeed" -> "true"))
+          txn.commit(Seq(protocol, metadata), DeltaOperations.ManualUpdate)
+        }
+      }
+      assert(e.getMessage.contains(
+        "assertion failed: Cannot change the protocol more than once in a transaction."))
+    }
+  }
+
+  test("only single Protocol action per commit - explicit") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val e = intercept[java.lang.AssertionError] {
+        deltaLog.withNewTransaction { txn =>
+          val protocol1 = Protocol(2, 3)
+          val protocol2 = Protocol(1, 4)
+          txn.commit(Seq(protocol1, protocol2), DeltaOperations.ManualUpdate)
+        }
+      }
+      assert(e.getMessage.contains(
+        "assertion failed: Cannot change the protocol more than once in a transaction."))
+    }
+  }
 }

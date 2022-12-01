@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{SaveMode, SparkSession}
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -32,8 +32,21 @@ object DeltaTestImplicits {
     def commitActions(op: Operation, actions: Action*): Long = {
       if (txn.readVersion == -1) {
         val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
-        val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) Some(Protocol()) else None
-        txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
+        val metadata = metadataOpt.getOrElse(actions.collectFirst { case m: Metadata => m }.get)
+        val needsProtocolUpdate = Protocol.checkProtocolRequirements(
+          SparkSession.active, metadata, txn.protocol)
+        if (needsProtocolUpdate.isDefined) {
+          // if the metadata triggers a protocol upgrade, commit without an explicit protocol
+          // action as otherwise, we will create two (potentially different) protocol actions
+          // for this commit
+          txn.commit(actions ++ metadataOpt, op)
+        } else {
+          // if we don't have an implicit protocol action, make sure the first commit
+          // contains one explicitly
+          val protocolOpt =
+            if (!actions.exists(_.isInstanceOf[Protocol])) Some(Protocol()) else None
+          txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
+        }
       } else {
         txn.commit(actions, op)
       }
