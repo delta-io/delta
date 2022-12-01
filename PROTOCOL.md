@@ -799,7 +799,7 @@ Bytes | Name | Description
 0 — 1 | version | The format version of this file: `1` for the format described here.
 `repeat for each DV i` | | For each DV
 `<start of i>` — `<start of i> + 3` | dataSize | Size of this DV’s data (without the checksum)
-`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One `RoaringBitmapArray` serialised as described above.
+`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One 64-bit RoaringBitmap serialised as described above.
 `<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
 
 ## Per-file Statistics
