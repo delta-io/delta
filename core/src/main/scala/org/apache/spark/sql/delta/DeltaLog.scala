@@ -139,7 +139,12 @@ class DeltaLog private(
    * Tombstones before this timestamp will be dropped from the state and the files can be
    * garbage collected.
    */
-  def minFileRetentionTimestamp: Long = clock.getTimeMillis() - tombstoneRetentionMillis
+  def minFileRetentionTimestamp: Long = {
+    // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
+    recordFrameProfile("Delta", "DeltaLog.minFileRetentionTimestamp") {
+      clock.getTimeMillis() - tombstoneRetentionMillis
+    }
+  }
 
   /**
    * [[SetTransaction]]s before this timestamp will be considered expired and dropped from the
@@ -456,8 +461,8 @@ class DeltaLog private(
     // data.
     if (!cdcOptions.isEmpty) {
       recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
-      return CDCReader.getCDCRelation(spark,
-        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+      return CDCReader.getCDCRelation(
+        spark, snapshotToUse, isTimeTravelQuery, spark.sessionState.conf, cdcOptions)
     }
 
     val fileIndex = TahoeLogFileIndex(

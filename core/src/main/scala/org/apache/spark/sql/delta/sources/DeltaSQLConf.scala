@@ -901,6 +901,26 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
+    buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
+      .doc(
+        "Reading batch CDF on column mapping enabled table requires schema mode to be set to " +
+          "`endVersion` so the ending version's schema will be used." +
+          "Set this to `latest` to use the schema of the latest available table version," +
+          "or to `legacy` to fallback to the non column-mapping default behavior, in which" +
+          "the time travel option can be used to select the version of the schema.")
+      .internal()
+      .stringConf
+      .createWithDefault("endVersion")
+
+  val DELTA_CDF_ENABLE_TIME_TRAVEL =
+    buildConf("changeDataFeed.timeTravel.enabled")
+      .doc(
+        "If enabled, user can specify time-travel reader options while reading change data feed.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +

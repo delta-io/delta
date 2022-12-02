@@ -76,7 +76,9 @@
   },
   "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" : {
     "message" : [
-      "<opName> is not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <readSchema>. Incompatible schema: <incompatibleSchema>. You may force enable streaming read at your own risk by turning on <config>."
+      "<opName> is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>.",
+      "Although strongly not recommended, you may also force ignore the schema checks during <opName> at your own risk of potentially incorrect results by turning on the SQL conf <escapeConfig>."
     ],
     "sqlState" : "0A000"
   },
@@ -257,6 +259,22 @@
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
       "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
+    "message" : [
+      "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
+      "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible data schema at version <incompatibleVersion>.",
+      "If possible, please retrieve the table changes using the end version's schema by setting <config> to `endVersion`, or contact support."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE" : {
+    "message" : [
+      "Retrieving table changes between version <start> and <end> failed because of an incompatible schema change.",
+      "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible schema change at version <incompatibleVersion>.",
+      "If possible, please query table changes separately from version <start> to <incompatibleVersion> - 1, and from version <incompatibleVersion> to <end>."
     ],
     "sqlState" : "0A000"
   },
@@ -1846,7 +1864,7 @@
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [
-      "Cannot time travel views, subqueries or streams."
+      "Cannot time travel views, subqueries, streams or change data feed queries."
     ],
     "sqlState" : "0A000"
   },

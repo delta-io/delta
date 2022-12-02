@@ -1405,7 +1405,8 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage == "Cannot time travel views, subqueries or streams.")
+      assert(e.getMessage ==
+        "Cannot time travel views, subqueries, streams or change data feed queries.")
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2697,22 +2698,6 @@ trait DeltaErrorsSuiteBase
       assert(e.escapeConfigName ==
         DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
       assert(!e.additionalProperties("detectedDuringStreaming").toBoolean)
-    }
-    {
-      val e = intercept[DeltaColumnMappingUnsupportedSchemaIncompatibleException] {
-        throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
-          readSchema = StructType.fromDDL("id int"),
-          incompatibleSchema = StructType.fromDDL("id2 int"))
-      }
-      assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION")
-      assert(e.getSqlState == "0A000")
-      assert(e.opName == "Change Data Feed (CDF) read")
-      assert(e.readSchema == StructType.fromDDL("id int"))
-      assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
-      assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
-      assert(e.additionalProperties.isEmpty)
-
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {

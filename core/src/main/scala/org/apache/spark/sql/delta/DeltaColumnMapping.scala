@@ -569,6 +569,33 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       true
     }
   }
+
+  /**
+   * Check if a metadata we are scanning is read compatible with another one, considering
+   * both column mapping changes (rename or drop) as well as other standard checks.
+   */
+  def isMetadataSchemaReadCompatible(
+      curVersion: Long,
+      curMetadata: Metadata,
+      readVersion: Long,
+      readMetadata: Metadata): Boolean = {
+    val (oldMetadata, newMetadata) = if (curVersion < readVersion) {
+      // Snapshot version is newer, ensure there's no read-incompatible CM schema changes
+      // from current version to snapshot version.
+      (curMetadata, readMetadata)
+    } else {
+      // Current metadata action version is newer, ensure there's no read-incompatible CM
+      // schema changes from snapshot version to current version.
+      (readMetadata, curMetadata)
+    }
+    // For column-mapping checks, we need to consider version order so we don't accidentally treat
+    // ADD COLUMN (Ok) as a reverse DROP COLUMN (Not ok).
+    // For non column-mapping checks, usually we don't need to consider version order, but in CDC
+    // case, as the current semantics is to ignore ADD COLUMN schema change post the analyzed schema
+    // version to match non-CDC batch behavior, considering the order can help with that.
+    DeltaColumnMapping.isColumnMappingReadCompatible(newMetadata, oldMetadata) &&
+      SchemaUtils.isReadCompatible(oldMetadata.schema, newMetadata.schema)
+  }
 }
 
 object DeltaColumnMapping extends DeltaColumnMappingBase
