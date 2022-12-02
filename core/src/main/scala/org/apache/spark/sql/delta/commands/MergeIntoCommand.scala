@@ -23,6 +23,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSource
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -121,7 +122,12 @@ case class MergeStats(
     targetRowsCopied: Long,
     targetRowsUpdated: Long,
     targetRowsInserted: Long,
-    targetRowsDeleted: Long
+    targetRowsDeleted: Long,
+
+    // MergeMaterializeSource stats
+    materializeSourceReason: Option[String] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    materializeSourceAttempts: Option[Long] = None
 )
 
 object MergeStats {
@@ -130,7 +136,7 @@ object MergeStats {
       metrics: Map[String, SQLMetric],
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       isPartitioned: Boolean): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
@@ -218,9 +224,13 @@ case class MergeIntoCommand(
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+    notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
-  with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
+  with DeltaCommand
+  with PredicateHelper
+  with AnalysisHelper
+  with ImplicitMetadataOperation
+  with MergeIntoMaterializeSource {
 
   import MergeIntoCommand._
 
@@ -313,7 +323,18 @@ case class MergeIntoCommand(
         )
       }
     }
+    val (materializeSource, _) = shouldMaterializeSource(spark, source, isSingleInsertOnly)
+    if (!materializeSource) {
+      runMerge(spark)
+    } else {
+      // If it is determined that source should be materialized, wrap the execution with retries,
+      // in case the data of the materialized source is lost.
+      runWithMaterializedSourceLostRetries(
+        spark, targetFileIndex.deltaLog, metrics, runMerge)
+    }
+  }
 
+  protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>
@@ -328,6 +349,16 @@ case class MergeIntoCommand(
             deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
             isOverwriteMode = false, rearrangeOnly = false)
         }
+
+        // If materialized, prepare the DF reading the materialize source
+        // Otherwise, prepare a regular DF from source plan.
+        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+          spark,
+          source,
+          condition,
+          matchedClauses,
+          notMatchedClauses,
+          isSingleInsertOnly)
 
         val deltaActions = {
           if (isSingleInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
@@ -363,9 +394,13 @@ case class MergeIntoCommand(
             notMatchedClauses.map(DeltaOperations.MergePredicate(_))))
 
         // Record metrics
-        val stats = MergeStats.fromMergeSQLMetrics(
+        var stats = MergeStats.fromMergeSQLMetrics(
           metrics, condition, matchedClauses, notMatchedClauses,
           deltaTxn.metadata.partitionColumns.nonEmpty)
+        stats = stats.copy(
+          materializeSourceReason = Some(materializeSourceReason.toString),
+          materializeSourceAttempts = Some(attempt))
+
         recordDeltaEvent(targetFileIndex.deltaLog, "delta.dml.merge.stats", data = stats)
 
       }
@@ -407,7 +442,7 @@ case class MergeIntoCommand(
 
     // UDF to increment metrics
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
-    val sourceDF = Dataset.ofRows(spark, source)
+    val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
 
     // Apply inner join to between source and target using the merge condition to find matches
@@ -445,7 +480,7 @@ case class MergeIntoCommand(
       // Multiple matches are not ambiguous when there is only one unconditional delete as
       // all the matched row pairs in the 2nd join in `writeAllChanges` will get deleted.
       val isUnconditionalDelete = matchedClauses.headOption match {
-        case Some(DeltaMergeIntoDeleteClause(None)) => true
+        case Some(DeltaMergeIntoMatchedDeleteClause(None)) => true
         case _ => false
       }
       matchedClauses.size == 1 && isUnconditionalDelete
@@ -520,7 +555,7 @@ case class MergeIntoCommand(
     }
 
     // source DataFrame
-    val sourceDF = Dataset.ofRows(spark, source)
+    val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
       .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal.TrueLiteral)))
 
@@ -641,7 +676,7 @@ case class MergeIntoCommand(
     // We add row IDs to the targetDF if we have a delete-when-matched clause with duplicate
     // matches and CDC is enabled, and additionally add row IDs to the source if we also have an
     // insert clause. See above at isDeleteWithDuplicateMatchesAndCdc definition for more details.
-    var sourceDF = Dataset.ofRows(spark, source)
+    var sourceDF = getSourceDF()
       .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
     var targetDF = Dataset.ofRows(spark, newTarget)
       .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
@@ -674,7 +709,7 @@ case class MergeIntoCommand(
     // and rows for the CDC data which will be output to CDCReader.CDC_LOCATION.
     // See [[CDCReader]] for general details on how partitioning on the CDC type column works.
 
-    // In the following two functions `matchedClauseOutput` and `notMatchedClauseOutput`, we
+    // In the following functions `updateOutput`, `deleteOutput` and `insertOutput`, we
     // produce a Seq[Expression] for each intended output row.
     // Depending on the clause and whether CDC is enabled, we output between 0 and 3 rows, as a
     // Seq[Seq[Expression]]
@@ -704,50 +739,54 @@ case class MergeIntoCommand(
         .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
     }
 
-    def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
-      val exprs = clause match {
-        case u: DeltaMergeIntoUpdateClause =>
-          // Generate update expressions and set ROW_DELETED_COL = false and
-          // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
-          val mainDataOutput = u.resolvedActions.map(_.expr) :+ FalseLiteral :+
-            incrUpdatedCountExpr :+ CDC_TYPE_NOT_CDC
-          if (cdcEnabled) {
-            // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
-            // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
-            // (because the metric will be incremented in `mainDataOutput`)
-            val preImageOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
-              Literal(CDC_TYPE_UPDATE_PREIMAGE)
-            // For update postimage, we have the same expressions as for mainDataOutput but with
-            // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
-            // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
-            val postImageOutput = mainDataOutput.dropRight(2) :+ TrueLiteral :+
-              Literal(CDC_TYPE_UPDATE_POSTIMAGE)
-            Seq(mainDataOutput, preImageOutput, postImageOutput)
-          } else {
-            Seq(mainDataOutput)
-          }
-        case _: DeltaMergeIntoDeleteClause =>
-          // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
-          // CDC_TYPE_NOT_CDC
-          val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
-            CDC_TYPE_NOT_CDC
-          if (cdcEnabled) {
-            // For delete we do a no-op copy with ROW_DELETED_COL = false, INCR_ROW_COUNT_COL as a
-            // no-op (because the metric will be incremented in `mainDataOutput`) and
-            // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
-            val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+ CDC_TYPE_DELETE
-            Seq(mainDataOutput, deleteCdcOutput)
-          } else {
-            Seq(mainDataOutput)
-          }
+    def updateOutput(resolvedActions: Seq[DeltaMergeAction]): Seq[Seq[Expression]] = {
+      val updateExprs = {
+        // Generate update expressions and set ROW_DELETED_COL = false and
+        // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
+        val mainDataOutput = resolvedActions.map(_.expr) :+ FalseLiteral :+
+          incrUpdatedCountExpr :+ CDC_TYPE_NOT_CDC
+        if (cdcEnabled) {
+          // For update preimage, we have do a no-op copy with ROW_DELETED_COL = false and
+          // CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_PREIMAGE and INCR_ROW_COUNT_COL as a no-op
+          // (because the metric will be incremented in `mainDataOutput`)
+          val preImageOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+
+            Literal(CDC_TYPE_UPDATE_PREIMAGE)
+          // For update postimage, we have the same expressions as for mainDataOutput but with
+          // INCR_ROW_COUNT_COL as a no-op (because the metric will be incremented in
+          // `mainDataOutput`), and CDC_TYPE_COLUMN_NAME = CDC_TYPE_UPDATE_POSTIMAGE
+          val postImageOutput = mainDataOutput.dropRight(2) :+ TrueLiteral :+
+            Literal(CDC_TYPE_UPDATE_POSTIMAGE)
+          Seq(mainDataOutput, preImageOutput, postImageOutput)
+        } else {
+          Seq(mainDataOutput)
+        }
       }
-      exprs.map(resolveOnJoinedPlan)
+      updateExprs.map(resolveOnJoinedPlan)
     }
 
-    def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Seq[Expression]] = {
+    def deleteOutput(): Seq[Seq[Expression]] = {
+      val deleteExprs = {
+        // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
+        // CDC_TYPE_NOT_CDC
+        val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
+          CDC_TYPE_NOT_CDC
+        if (cdcEnabled) {
+          // For delete we do a no-op copy with ROW_DELETED_COL = false, INCR_ROW_COUNT_COL as a
+          // no-op (because the metric will be incremented in `mainDataOutput`) and
+          // CDC_TYPE_COLUMN_NAME = CDC_TYPE_DELETE
+          val deleteCdcOutput = targetOutputCols :+ FalseLiteral :+ TrueLiteral :+ CDC_TYPE_DELETE
+          Seq(mainDataOutput, deleteCdcOutput)
+        } else {
+          Seq(mainDataOutput)
+        }
+      }
+      deleteExprs.map(resolveOnJoinedPlan)
+    }
+
+    def insertOutput(resolvedActions: Seq[DeltaMergeAction]): Seq[Seq[Expression]] = {
       // Generate insert expressions and set ROW_DELETED_COL = false and
       // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
-      val insertExprs = clause.resolvedActions.map(_.expr)
+      val insertExprs = resolvedActions.map(_.expr)
       val mainDataOutput = resolveOnJoinedPlan(
         if (isDeleteWithDuplicateMatchesAndCdc) {
           // Must be delete-when-matched merge with duplicate matches + insert clause
@@ -772,6 +811,12 @@ case class MergeIntoCommand(
       }
     }
 
+    def clauseOutput(clause: DeltaMergeIntoClause): Seq[Seq[Expression]] = clause match {
+      case u: DeltaMergeIntoMatchedUpdateClause => updateOutput(u.resolvedActions)
+      case _: DeltaMergeIntoMatchedDeleteClause => deleteOutput()
+      case i: DeltaMergeIntoNotMatchedInsertClause => insertOutput(i.resolvedActions)
+    }
+
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
       // if condition is None, then expression always evaluates to true
       val condExpr = clause.condition.getOrElse(TrueLiteral)
@@ -785,9 +830,9 @@ case class MergeIntoCommand(
       targetRowHasNoMatch = resolveOnJoinedPlan(Seq(col(SOURCE_ROW_PRESENT_COL).isNull.expr)).head,
       sourceRowHasNoMatch = resolveOnJoinedPlan(Seq(col(TARGET_ROW_PRESENT_COL).isNull.expr)).head,
       matchedConditions = matchedClauses.map(clauseCondition),
-      matchedOutputs = matchedClauses.map(matchedClauseOutput),
+      matchedOutputs = matchedClauses.map(clauseOutput),
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
-      notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
+      notMatchedOutputs = notMatchedClauses.map(clauseOutput),
       noopCopyOutput =
         resolveOnJoinedPlan(targetOutputCols :+ FalseLiteral :+ incrNoopCountExpr :+
           CDC_TYPE_NOT_CDC),
@@ -827,14 +872,6 @@ case class MergeIntoCommand(
     // Write to Delta
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
-      .filter {
-        // In some cases (e.g. delete with empty source, or empty target, or on disjoint tables)
-        // we can write out an empty outputDF. This is hard to catch before the write without
-        // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
-        // actually add rows or when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
-        case _ => true
-      }
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)

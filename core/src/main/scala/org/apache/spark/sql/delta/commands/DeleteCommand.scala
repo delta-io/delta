@@ -17,10 +17,11 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -63,6 +64,26 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numTouchedRows" -> createMetric(sc, "number of rows touched")
   )
+
+  def getDeletedRowsFromAddFilesAndUpdateMetrics(files: Seq[AddFile]) : Option[Long] = {
+    if (!conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)) {
+      return None;
+    }
+    // No file to get metadata, return none to be consistent with metadata stats disabled
+    if (files.isEmpty) {
+      return None
+    }
+    // Return None if any file does not contain numLogicalRecords status
+    var count: Long = 0
+    for (file <- files) {
+      if (file.numLogicalRecords.isEmpty) {
+        return None
+      }
+      count += file.numLogicalRecords.get
+    }
+    metrics("numDeletedRows").set(count)
+    return Some(count)
+  }
 }
 
 /**
@@ -142,7 +163,8 @@ case class DeleteCommand(
     val deleteActions: Seq[Action] = condition match {
       case None =>
         // Case 1: Delete the whole table if the condition is true
-        val allFiles = txn.filterFiles(Nil)
+        val reportRowLevelMetrics = conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)
+        val allFiles = txn.filterFiles(Nil, keepNumRecords = reportRowLevelMetrics)
 
         numRemovedFiles = allFiles.size
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
@@ -152,6 +174,8 @@ case class DeleteCommand(
         numBytesBeforeSkipping = numBytes
         numFilesAfterSkipping = numRemovedFiles
         numBytesAfterSkipping = numBytes
+        numDeletedRows = getDeletedRowsFromAddFilesAndUpdateMetrics(allFiles)
+
         if (txn.metadata.partitionColumns.nonEmpty) {
           numPartitionsAfterSkipping = Some(numPartitions)
           numPartitionsRemovedFrom = Some(numPartitions)
@@ -171,7 +195,9 @@ case class DeleteCommand(
           // Case 2: The condition can be evaluated using metadata only.
           //         Delete a set of files without the need of scanning any data files.
           val operationTimestamp = System.currentTimeMillis()
-          val candidateFiles = txn.filterFiles(metadataPredicates)
+          val reportRowLevelMetrics = conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)
+          val candidateFiles =
+            txn.filterFiles(metadataPredicates, keepNumRecords = reportRowLevelMetrics)
 
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numRemovedFiles = candidateFiles.size
@@ -180,6 +206,8 @@ case class DeleteCommand(
           val (numCandidateBytes, numCandidatePartitions) =
             totalBytesAndDistinctPartitionValues(candidateFiles)
           numBytesAfterSkipping = numCandidateBytes
+          numDeletedRows = getDeletedRowsFromAddFilesAndUpdateMetrics(candidateFiles)
+
           if (txn.metadata.partitionColumns.nonEmpty) {
             numPartitionsAfterSkipping = Some(numCandidatePartitions)
             numPartitionsRemovedFrom = Some(numCandidatePartitions)

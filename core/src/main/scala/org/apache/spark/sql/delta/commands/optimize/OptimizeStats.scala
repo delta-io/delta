@@ -224,7 +224,8 @@ case class OptimizeMetrics(
     endTimeMs: Long = 0,
     totalClusterParallelism: Long = 0,
     totalScheduledTasks: Long = 0,
-    autoCompactParallelismStats: Option[ParallelismMetrics] = None)
+    autoCompactParallelismStats: Option[ParallelismMetrics] = None
+  )
 
 /**
  * Basic Stats on file sizes.

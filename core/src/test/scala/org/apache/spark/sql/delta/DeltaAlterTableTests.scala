@@ -1650,10 +1650,10 @@ class DeltaAlterTableByNameSuite
         Map("delta.randomPrefixLength" -> "5", "key" -> "value"))
     }
   }
+
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
-
 
 
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {
@@ -1662,6 +1662,14 @@ trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelect
     "CHANGE COLUMN - move to first (nested)",
     "CHANGE COLUMN - case insensitive")
 }
+
+class DeltaAlterTableByNameIdColumnMappingSuite extends DeltaAlterTableByNameSuite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaAlterTableColumnMappingSelectedTests
+
+class DeltaAlterTableByPathIdColumnMappingSuite extends DeltaAlterTableByPathSuite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaAlterTableColumnMappingSelectedTests
 
 class DeltaAlterTableByNameNameColumnMappingSuite extends DeltaAlterTableByNameSuite
   with DeltaColumnMappingEnableNameMode

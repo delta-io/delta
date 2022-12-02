@@ -25,12 +25,10 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LeafNode, LogicalPlan, ReplaceTable}
+import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LogicalPlan, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /**
@@ -365,9 +363,9 @@ class DeltaTableBuilder private[tables](
 
     // Return DeltaTable Object.
     if (DeltaTableUtils.isValidPath(tableId)) {
-        DeltaTable.forPath(location.get)
+      DeltaTable.forPath(spark, location.get)
     } else {
-      DeltaTable.forName(this.identifier)
+      DeltaTable.forName(spark, this.identifier)
     }
   }
 }

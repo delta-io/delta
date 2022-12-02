@@ -17,10 +17,12 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -55,6 +57,16 @@ trait DeltaSQLConfBase {
     buildConf("stats.collect")
       .internal()
       .doc("When true, statistics are collected while writing files into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DML_METRICS_FROM_METADATA =
+    buildConf("dmlMetricsFromMetadata.enabled")
+      .internal()
+      .doc(
+        """ When enabled, metadata only Delete, ReplaceWhere and Truncate operations will report row
+        | level operation metrics by reading the file statistics for number of rows.
+        | """.stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -230,14 +242,6 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("If true, use the limit clause and file statistics to prune files before " +
         "they are collected to the driver. ")
-      .booleanConf
-      .createWithDefault(true)
-
-  val DELTA_SNAPSHOT_ISOLATION =
-    buildConf("snapshotIsolation.enabled")
-      .internal()
-      .doc("Controls whether queries on Delta tables are guaranteed to have " +
-        "snapshot isolation.")
       .booleanConf
       .createWithDefault(true)
 
@@ -428,6 +432,68 @@ trait DeltaSQLConfBase {
       """.stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  final object MergeMaterializeSource {
+    // See value explanations in the doc below.
+    final val NONE = "none"
+    final val ALL = "all"
+    final val AUTO = "auto"
+
+    final val list = Set(NONE, ALL, AUTO)
+  }
+
+  val MERGE_MATERIALIZE_SOURCE =
+    buildConf("merge.materializeSource")
+      .internal()
+      .doc("When to materializes source plan during MERGE execution. " +
+        "The value 'none' means source will never be materialized. " +
+        "The value 'all' means source will always be materialized. " +
+        "The value 'auto' means sources will not be materialized when they are certain to be " +
+        "deterministic."
+      )
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(MergeMaterializeSource.list)
+      .createWithDefault(MergeMaterializeSource.AUTO)
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
+    buildConf("merge.materializeSource.rddStorageLevel")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevel" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY")
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+        "Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
+  val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
+    buildStaticConf("merge.materializeSource.maxAttempts")
+      .doc("How many times to try MERGE with in case of lost RDD materialized source data")
+      .intConf
+      .createWithDefault(4)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
@@ -627,16 +693,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX =
-    buildConf("streaming.availableNow.offsetInitializationFix.enabled")
-      .internal()
-      .doc(
-        """Whether to enable the offset initializaion fix for AvailableNow.
-          |This is just a flag to provide the mitigation option if the fix introduces
-          |any bugs.""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()
@@ -730,6 +786,19 @@ trait DeltaSQLConfBase {
         "to write data without providing values for a nullable column via DataFrame.write")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_ENABLED =
+    buildConf("convert.iceberg.enabled")
+      .internal()
+      .doc("If enabled, Iceberg tables can be converted into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED =
+    buildConf("convert.iceberg.partitionEvolution.enabled")
+      .doc("If enabled, support conversion of iceberg tables experienced partition evolution.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
@@ -888,6 +957,14 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
+    buildConf("optimizeMetadataQuery.enabled")
+      .internal()
+      .doc("Whether we can use the metadata in the DeltaLog to" +
+        " optimize queries that can be run purely on metadata.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

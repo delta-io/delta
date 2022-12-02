@@ -21,7 +21,6 @@ import java.io.{File, FileNotFoundException}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -41,11 +40,15 @@ import org.apache.spark.util.Utils
  */
 trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
+  protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
+    .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
+
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
     .withColumn("key2", col("id") % 3 cast "String")
 
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None,
+      collectStats: Boolean = true): Unit
 
   protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
@@ -98,6 +101,47 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
     }
   }
 
+  test("convert with collectStats true") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF)
+      convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+      checkAnswer(
+        spark.read.format("delta").load(tempDir),
+        simpleDF
+      )
+      assert(history.count == 1)
+      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+          .as("stats")).select("stats.*")
+      assert(statsDf.filter($"numRecords".isNull).count == 0)
+      assert(statsDf.agg(sum("numRecords")).as[Long].head() == simpleDF.count)
+    }
+  }
+
+  test("convert with collectStats true but config set to false -> Do not collect stats") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF)
+        convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+        checkAnswer(
+          spark.read.format("delta").load(tempDir),
+          simpleDF
+        )
+        assert(history.count == 1)
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json($"stats", deltaLog.unsafeVolatileSnapshot.statsSchema)
+            .as("stats")).select("stats.*")
+        assert(statsDf.filter($"numRecords".isNotNull).count == 0)
+      }
+    }
+  }
+
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>
       withTempDir { dir =>
@@ -138,7 +182,8 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
       assert(ae.getMessage.contains("Converting a view to a Delta table") ||
         ae.getMessage.contains("Table default.v not found") ||
-        ae.getMessage.contains("Table or view 'v' not found in database 'default'"))
+        ae.getMessage.contains("Table or view 'v' not found in database 'default'") ||
+        ae.getMessage.contains("table or view `default`.`v` cannot be found"))
     }
   }
 
@@ -814,7 +859,8 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         convertToDelta(s"$dbName.faketable", Some("key1 long, key2 string"))
       }
 
-      assert(ae.getMessage.contains("Table or view 'faketable' not found"))
+      assert(ae.getMessage.contains("Table or view 'faketable' not found") ||
+        ae.getMessage.contains(s"table or view `$dbName`.`faketable` cannot be found"))
     }
   }
 
@@ -1243,6 +1289,41 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       checkAnswer(
         sql(s"select id from delta.`$basePath` where key2 = '1'"),
         simpleDF.filter("id % 2 == 1").filter("id % 3 == 1").select("id"))
+    }
+  }
+
+  test("can convert table with partition overwrite") {
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      // Create table with original partitions of "key1=0" and "key1=1".
+      val df = spark.range(0, 100)
+        .withColumn("key1", col("id") % 2)
+        .withColumn("key2", col("id") % 3 cast "String")
+      df.write.format("parquet").partitionBy("key1").mode("append").saveAsTable(tableName)
+      checkAnswer(sql(s"SELECT id FROM $tableName"), df.select("id"))
+
+      val dataDir =
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location.toString
+
+      // Create orphan partition "key1=0;key2=3" with additional column.
+      val df1 = spark.range(100, 120, 2)
+        .withColumn("key1", col("id") % 2)
+        .withColumn("key2", lit("3"))
+      df1.write.format("parquet").partitionBy("key1", "key2").mode("append").save(dataDir)
+
+      // Point table partition "key1=0" to the path of orphan partition "key1=0;key2=3"
+      sql(s"ALTER TABLE $tableName PARTITION (key1=0) SET LOCATION '$dataDir/key1=0/key2=3/'")
+      checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
+
+      // ConvertToDelta should work without inferring the partition values from partition path.
+      convertToDelta(tableName)
+
+      // Verify that table is converted to delta
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
+
+      // Check data in the converted delta table.
+      checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
     }
   }
 }

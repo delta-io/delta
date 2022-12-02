@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileNotFoundException}
+import java.io.{BufferedReader, File, InputStreamReader}
+import java.nio.charset.StandardCharsets
 
 import scala.language.postfixOps
 
@@ -26,11 +27,16 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -490,6 +496,110 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("forTableWithSnapshot should always return the latest snapshot") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      assert(deltaLog.snapshot.version === 0)
+
+      val (_, snapshot) = DeltaLog.withFreshSnapshot { _ =>
+        // This update is necessary to advance the lastUpdatedTs beyond the start time of
+        // withFreshSnapshot call.
+        deltaLog.update()
+        // Manually add a commit. However, the deltaLog should now be fresh enough
+        // that we don't trigger another update, and thus don't find the commit.
+        val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
+        deltaLog.store.write(
+          FileNames.deltaFile(deltaLog.logPath, 1L),
+          Iterator(JsonUtils.toJson(add.wrap)),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
+        deltaLog
+      }
+      assert(snapshot.version === 0)
+
+      val deltaLog2 = DeltaLog.forTable(spark, path)
+      assert(deltaLog2.snapshot.version === 0) // This shouldn't update
+      val (_, snapshot2) = DeltaLog.forTableWithSnapshot(spark, path)
+      assert(snapshot2.version === 1) // This should get the latest snapshot
+    }
+  }
+
+  test("Delta log should handle malformed json") {
+    val mapper = new ObjectMapper()
+    mapper.registerModule(DefaultScalaModule)
+    def testJsonCommitParser(
+        path: String, func: Map[String, Map[String, String]] => String): Unit = {
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(1).write.format("delta").mode("append").save(path)
+
+      val log = DeltaLog.forTable(spark, path)
+      val commitFilePath = FileNames.deltaFile(log.logPath, 1L)
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val stream = fs.open(commitFilePath)
+      val reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
+      val commitInfo = reader.readLine() + "\n"
+      val addFile = reader.readLine()
+      stream.close()
+
+      val map = mapper.readValue(addFile, classOf[Map[String, Map[String, String]]])
+      val output = fs.create(commitFilePath, true)
+      output.write(commitInfo.getBytes(StandardCharsets.UTF_8))
+      output.write(func(map).getBytes(StandardCharsets.UTF_8))
+      output.close()
+      DeltaLog.clearCache()
+
+      val parser = JsonToStructs(
+        schema = Action.logSchema,
+        options = DeltaLog.jsonCommitParseOption,
+        child = null,
+        timeZoneId = Some(spark.sessionState.conf.sessionLocalTimeZone))
+
+      val it = log.store.readAsIterator(commitFilePath, log.newDeltaHadoopConf())
+      try {
+        it.foreach { json =>
+          val utf8json = UTF8String.fromString(json)
+          parser.nullSafeEval(utf8json).asInstanceOf[InternalRow]
+        }
+      } finally {
+        it.close()
+      }
+    }
+
+    // Parser should succeed when AddFile in json commit has missing fields
+    withTempDir { dir =>
+      testJsonCommitParser(dir.toString, (content: Map[String, Map[String, String]]) => {
+        mapper.writeValueAsString(Map("add" -> content("add").-("path").-("size"))) + "\n"
+      })
+    }
+
+    // Parser should succeed when AddFile in json commit has extra fields
+    withTempDir { dir =>
+      testJsonCommitParser(dir.toString, (content: Map[String, Map[String, String]]) => {
+        mapper.writeValueAsString(Map("add" -> content("add"). +("random" -> "field"))) + "\n"
+      })
+    }
+
+    // Parser should succeed when AddFile in json commit has mismatched schema
+    withTempDir { dir =>
+      val json = """{"x": 1, "y": 2, "z": [10, 20]}"""
+      testJsonCommitParser(dir.toString, (content: Map[String, Map[String, String]]) => {
+        mapper.writeValueAsString(Map("add" -> content("add").updated("path", json))) + "\n"
+      })
+    }
+
+    // Parser should throw exception when AddFile is a bad json
+    withTempDir { dir =>
+      val e = intercept[Throwable] {
+        testJsonCommitParser(dir.toString, (content: Map[String, Map[String, String]]) => {
+          "bad json{{{"
+        })
+      }
+      assert(e.getMessage.contains("FAILFAST"))
     }
   }
 }

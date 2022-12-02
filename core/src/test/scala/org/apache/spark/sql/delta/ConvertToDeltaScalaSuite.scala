@@ -21,7 +21,7 @@ import org.apache.spark.sql.types.StructType
 class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteBase {
   override protected def convertToDelta(
       identifier: String,
-      partitionSchema: Option[String] = None): Unit = {
+      partitionSchema: Option[String] = None, collectStats: Boolean = true): Unit = {
     if (partitionSchema.isDefined) {
       io.delta.tables.DeltaTable.convertToDelta(
         spark,

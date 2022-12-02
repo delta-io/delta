@@ -52,7 +52,8 @@ class RestoreTableSQLSuite extends RestoreTableSuiteBase {
     val ex = intercept[AnalysisException] {
       sql(s"RESTORE TABLE not_exists VERSION AS OF 0")
     }
-    assert(ex.getMessage.contains("Table not found"))
+    assert(ex.getMessage.contains("Table not found")
+      || ex.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
   }
 
   test("restoring a view") {

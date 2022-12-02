@@ -17,8 +17,12 @@
 package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.Closeable
+
+import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,6 +40,24 @@ import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+
+/**
+ * Used to hold the list of files and scan stats after pruning files using the limit.
+ */
+case class ScanAfterLimit(
+    files: Seq[AddFile],
+    byteSize: Option[Long],
+    numPhysicalRecords: Option[Long],
+    numLogicalRecords: Option[Long])
+
+/**
+ * Used in deduplicateAndFilterRemovedLocally/getFilesAndNumRecords iterator for grouping
+ * physical and logical number of records.
+ *
+ * @param numPhysicalRecords The number of records physically present in the file.
+ * @param numLogicalRecords The physical number of records minus the Deletion Vector cardinality.
+ */
+case class NumRecords(numPhysicalRecords: java.lang.Long, numLogicalRecords: java.lang.Long)
 
 /**
  * Represents a stats column (MIN, MAX, etc) for a given (nested) user table column name. Used to
@@ -174,10 +196,10 @@ trait DataSkippingReaderBase
   def path: Path
   def version: Long
   def metadata: Metadata
-  def sizeInBytes: Long
+  private[delta] def sizeInBytesOpt: Option[Long]
   def deltaLog: DeltaLog
   def schema: StructType
-  def numOfFiles: Long
+  private[delta] def numOfFilesOpt: Option[Long]
   def redactedPath: String
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
@@ -722,15 +744,14 @@ trait DataSkippingReaderBase
    */
   protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = recordFrameProfile(
       "Delta", "DataSkippingReader.getAllFiles") {
-    if (keepNumRecords) {
+    val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
         .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
-        .as[AddFile]
-        .collect().toSeq
     } else {
-      allFiles.withColumn("stats", nullStringLiteral).as[AddFile].collect().toSeq
+      allFiles.withColumn("stats", nullStringLiteral)
     }
+    convertDataFrameToAddFiles(ds.toDF())
   }
 
   /**
@@ -756,23 +777,20 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val files = if (keepNumRecords) {
+    val df = if (keepNumRecords) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
         .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
-        .as[AddFile]
-        .collect()
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
       filteredFiles
         .withColumn("stats", nullStringLiteral)
-        .as[AddFile]
-        .collect()
     }
+    val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
     files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
   }
@@ -808,7 +826,8 @@ trait DataSkippingReaderBase
 
     val files =
       recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
-      filteredFiles.withColumn("stats", statsColumn).as[AddFile].collect()
+      val df = filteredFiles.withColumn("stats", statsColumn)
+      convertDataFrameToAddFiles(df)
     }
 
     files.toSeq -> Seq(DataSize(totalSize), DataSize(partitionSize), DataSize(scanSize))
@@ -829,9 +848,9 @@ trait DataSkippingReaderBase
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
         val dataSize = DataSize(
-          bytesCompressed = Some(sizeInBytes),
+          bytesCompressed = sizeInBytesOpt,
           rows = None,
-          files = Some(numOfFiles))
+          files = numOfFilesOpt)
         return DeltaScan(
           version = version,
           files = getAllFiles(keepNumRecords),
@@ -867,7 +886,7 @@ trait DataSkippingReaderBase
       DeltaScan(
         version = version,
         files = files,
-        total = DataSize(Some(sizeInBytes), None, Some(numOfFiles)),
+        total = DataSize(sizeInBytesOpt, None, numOfFilesOpt),
         partition = scanSize,
         scanned = scanSize)(
         scannedSnapshot = snapshotToScan,
@@ -922,6 +941,84 @@ trait DataSkippingReaderBase
   }
 
   /**
+   * Gathers files that should be included in a scan based on the limit clause, when there is
+   * no filter or projection present. Statistics about the amount of data that will be read
+   * are gathered and returned.
+   */
+  override def filesForScan(limit: Long): DeltaScan =
+    recordDeltaOperation(deltaLog, "delta.skipping.limit") {
+      val startTime = System.currentTimeMillis()
+      val scan = pruneFilesByLimit(withStats, limit)
+
+      val totalDataSize = new DataSize(
+        sizeInBytesOpt,
+        None,
+        numOfFilesOpt
+      )
+
+      val scannedDataSize = new DataSize(
+        scan.byteSize,
+        scan.numPhysicalRecords,
+        Some(scan.files.size)
+      )
+
+      DeltaScan(
+        version = version,
+        files = scan.files,
+        total = totalDataSize,
+        partition = null,
+        scanned = scannedDataSize)(
+        scannedSnapshot = snapshotToScan,
+        partitionFilters = ExpressionSet(Nil),
+        dataFilters = ExpressionSet(Nil),
+        unusedFilters = ExpressionSet(Nil),
+        scanDurationMs = System.currentTimeMillis() - startTime,
+        dataSkippingType = DeltaDataSkippingType.limit
+      )
+    }
+
+  /**
+   * Gathers files that should be included in a scan based on the given predicates and limit.
+   * This will be called only when all predicates are on partitioning columns.
+   * Statistics about the amount of data that will be read are gathered and returned.
+   */
+  override def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan =
+    recordDeltaOperation(deltaLog, "delta.skipping.filteredLimit") {
+      val startTime = System.currentTimeMillis()
+      val finalPartitionFilters = constructPartitionFilters(partitionFilters)
+
+      val scan = {
+        pruneFilesByLimit(withStats.where(finalPartitionFilters), limit)
+      }
+
+      val totalDataSize = new DataSize(
+        sizeInBytesOpt,
+        None,
+        numOfFilesOpt
+      )
+
+      val scannedDataSize = new DataSize(
+        scan.byteSize,
+        scan.numPhysicalRecords,
+        Some(scan.files.size)
+      )
+
+      DeltaScan(
+        version = version,
+        files = scan.files,
+        total = totalDataSize,
+        partition = null,
+        scanned = scannedDataSize)(
+        scannedSnapshot = snapshotToScan,
+        partitionFilters = ExpressionSet(partitionFilters),
+        dataFilters = ExpressionSet(Nil),
+        unusedFilters = ExpressionSet(Nil),
+        scanDurationMs = System.currentTimeMillis() - startTime,
+        dataSkippingType = DeltaDataSkippingType.filteredLimit
+      )
+    }
+
+  /**
    * Get AddFile (with stats) actions corresponding to given set of paths in the Snapshot.
    * If a path doesn't exist in snapshot, it will be ignored and no [[AddFile]] will be returned
    * for it.
@@ -931,7 +1028,89 @@ trait DataSkippingReaderBase
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
     recordFrameProfile("Delta", "DataSkippingReader.getSpecificFilesWithStats") {
       val right = paths.toDF(spark, "path")
-      allFiles.join(right, Seq("path"), "leftsemi").as[AddFile].collect()
+      val df = allFiles.join(right, Seq("path"), "leftsemi")
+      convertDataFrameToAddFiles(df)
+    }
+  }
+
+  /** Get the files and number of records within each file, to perform limit pushdown. */
+  def getFilesAndNumRecords(
+      df: DataFrame): Iterator[(AddFile, NumRecords)] with Closeable = recordFrameProfile(
+    "Delta", "DataSkippingReaderEdge.getFilesAndNumRecords") {
+    import org.apache.spark.sql.delta.implicits._
+
+    val numLogicalRecords = col("stats.numRecords")
+
+    val result = df.withColumn("numPhysicalRecords", col("stats.numRecords")) // Physical
+      .withColumn("numLogicalRecords", numLogicalRecords) // Logical
+      .withColumn("stats", nullStringLiteral)
+      .select(struct(col("*")).as[AddFile],
+        col("numPhysicalRecords").as[java.lang.Long], col("numLogicalRecords").as[java.lang.Long])
+      .collectAsList()
+
+    new Iterator[(AddFile, NumRecords)] with Closeable {
+      private val underlying = result.iterator
+      override def hasNext: Boolean = underlying.hasNext
+      override def next(): (AddFile, NumRecords) = {
+        val next = underlying.next()
+        (next._1, NumRecords(numPhysicalRecords = next._2, numLogicalRecords = next._3))
+      }
+
+      override def close(): Unit = {
+      }
+
+    }
+  }
+
+  protected def convertDataFrameToAddFiles(df: DataFrame): Array[AddFile] = {
+    df.as[AddFile].collect()
+  }
+
+  protected def pruneFilesByLimit(df: DataFrame, limit: Long): ScanAfterLimit = {
+    val withNumRecords = {
+      getFilesAndNumRecords(df)
+    }
+
+    var logicalRowsToScan = 0L
+    var physicalRowsToScan = 0L
+    var bytesToScan = 0L
+    var bytesToIgnore = 0L
+    var rowsUnknown = false
+
+    val filesAfterLimit = try {
+      val iter = withNumRecords
+      val filesToScan = ArrayBuffer[AddFile]()
+      val filesToIgnore = ArrayBuffer[AddFile]()
+      while (iter.hasNext && logicalRowsToScan < limit) {
+        val file = iter.next
+        if (file._2.numPhysicalRecords == null || file._2.numLogicalRecords == null) {
+          // this file has no stats, ignore for now
+          bytesToIgnore += file._1.size
+          filesToIgnore += file._1
+        } else {
+          physicalRowsToScan += file._2.numPhysicalRecords.toLong
+          logicalRowsToScan += file._2.numLogicalRecords.toLong
+          bytesToScan += file._1.size
+          filesToScan += file._1
+        }
+      }
+
+      // If the files that have stats do not contain enough rows, fall back to reading all files
+      if (logicalRowsToScan < limit && filesToIgnore.nonEmpty) {
+        filesToScan ++= filesToIgnore
+        bytesToScan += bytesToIgnore
+        rowsUnknown = true
+      }
+      filesToScan.toSeq
+    } finally {
+      withNumRecords.close()
+    }
+
+    if (rowsUnknown) {
+      ScanAfterLimit(filesAfterLimit, Some(bytesToScan), None, None)
+    } else {
+      ScanAfterLimit(filesAfterLimit, Some(bytesToScan),
+        Some(physicalRowsToScan), Some(logicalRowsToScan))
     }
   }
 }

@@ -106,8 +106,10 @@ sealed trait DeltaMergeIntoClause extends Expression with DeltaUnevaluable {
     actions.map(_.asInstanceOf[DeltaMergeAction])
   }
 
-  def clauseType: String =
-    getClass.getSimpleName.stripPrefix("DeltaMergeInto").stripSuffix("Clause")
+  /**
+   * String representation of the clause type: Update, Delete or Insert.
+   */
+  def clauseType: String
 
   override def toString: String = {
     val condStr = condition.map { c => s"condition: $c" }
@@ -173,14 +175,18 @@ object DeltaMergeIntoClause {
 sealed trait DeltaMergeIntoMatchedClause extends DeltaMergeIntoClause
 
 /** Represents the clause WHEN MATCHED THEN UPDATE in MERGE. See [[DeltaMergeInto]]. */
-case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Seq[Expression])
+case class DeltaMergeIntoMatchedUpdateClause(
+    condition: Option[Expression],
+    actions: Seq[Expression])
   extends DeltaMergeIntoMatchedClause {
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
+  override def clauseType: String = "Update"
+
   override protected def withNewChildrenInternal(
-      newChildren: IndexedSeq[Expression]): DeltaMergeIntoUpdateClause = {
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoMatchedUpdateClause = {
     if (condition.isDefined) {
       copy(condition = Some(newChildren.head), actions = newChildren.tail)
     } else {
@@ -190,26 +196,35 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
 }
 
 /** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
-case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
+case class DeltaMergeIntoMatchedDeleteClause(condition: Option[Expression])
     extends DeltaMergeIntoMatchedClause {
   def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
   children
+
+  override def clauseType: String = "Delete"
   override def actions: Seq[Expression] = Seq.empty
 
   override protected def withNewChildrenInternal(
-      newChildren: IndexedSeq[Expression]): DeltaMergeIntoDeleteClause =
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoMatchedDeleteClause =
     copy(condition = if (condition.isDefined) Some(newChildren.head) else None)
 }
 
+/** Trait that represents WHEN NOT MATCHED clause in MERGE. See [[DeltaMergeInto]]. */
+sealed trait DeltaMergeIntoNotMatchedClause extends DeltaMergeIntoClause
+
 /** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
-case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Seq[Expression])
-  extends DeltaMergeIntoClause {
+case class DeltaMergeIntoNotMatchedInsertClause(
+    condition: Option[Expression],
+    actions: Seq[Expression])
+  extends DeltaMergeIntoNotMatchedClause {
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
+  override def clauseType: String = "Insert"
+
   override protected def withNewChildrenInternal(
-      newChildren: IndexedSeq[Expression]): DeltaMergeIntoInsertClause =
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoNotMatchedInsertClause =
     if (condition.isDefined) {
       copy(condition = Some(newChildren.head), actions = newChildren.tail)
     } else {
@@ -259,7 +274,7 @@ case class DeltaMergeInto(
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+    notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     migrateSchema: Boolean,
     finalSchema: Option[StructType])
   extends Command with SupportsSubquery {
@@ -280,9 +295,7 @@ object DeltaMergeInto {
       source: LogicalPlan,
       condition: Expression,
       whenClauses: Seq[DeltaMergeIntoClause]): DeltaMergeInto = {
-    val deleteClauses = whenClauses.collect { case x: DeltaMergeIntoDeleteClause => x }
-    val updateClauses = whenClauses.collect { case x: DeltaMergeIntoUpdateClause => x }
-    val insertClauses = whenClauses.collect { case x: DeltaMergeIntoInsertClause => x }
+    val notMatchedClauses = whenClauses.collect { case x: DeltaMergeIntoNotMatchedClause => x }
     val matchedClauses = whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }
 
     // grammar enforcement goes here.
@@ -301,7 +314,7 @@ object DeltaMergeInto {
     }
 
     // check that only last NOT MATCHED clause omits the condition
-    if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
+    if (notMatchedClauses.length > 1 && !notMatchedClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
         errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
@@ -311,8 +324,8 @@ object DeltaMergeInto {
       target,
       source,
       condition,
-      whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x },
-      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x },
+      matchedClauses,
+      notMatchedClauses,
       migrateSchema = false,
       finalSchema = Some(target.schema))
   }
@@ -340,7 +353,7 @@ object DeltaMergeInto {
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
         val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
-        a.failAnalysis(s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
+        a.failAnalysis(msg = s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
       }
       resolvedExpr
     }
@@ -397,14 +410,14 @@ object DeltaMergeInto {
             }
           case _: UnresolvedStar if canAutoMigrate =>
             clause match {
-              case _: DeltaMergeIntoInsertClause =>
+              case _: DeltaMergeIntoNotMatchedInsertClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
                 // column name. Target columns not present in the source will be filled in
                 // with null later.
                 source.output.map { attr =>
                   DeltaMergeAction(Seq(attr.name), attr, targetColNameResolved = true)
                 }
-              case _: DeltaMergeIntoUpdateClause =>
+              case _: DeltaMergeIntoMatchedUpdateClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
                 // column name. Target columns not present in the source will be filled in with
                 // no-op actions later.
@@ -445,7 +458,7 @@ object DeltaMergeInto {
             Seq(d)
 
           case _ =>
-            action.failAnalysis(s"Unexpected action expression '$action' in clause $clause")
+            action.failAnalysis(msg = s"Unexpected action expression '$action' in clause $clause")
         }
       }
 
@@ -493,7 +506,7 @@ object DeltaMergeInto {
       val input = resolvedMerge.inputSet.mkString(",")
       val msgForMissingAttributes = s"Resolved attribute(s) $missingAttributes missing " +
         s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
-      resolvedMerge.failAnalysis(msgForMissingAttributes)
+      resolvedMerge.failAnalysis(msg = msgForMissingAttributes)
     }
 
     resolvedMerge

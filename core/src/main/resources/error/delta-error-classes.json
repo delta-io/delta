@@ -354,6 +354,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CONVERSION_NO_PARTITION_FOUND" : {
+    "message" : [
+      "Found no partition information in the catalog for table <tableName>. Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING" : {
     "message" : [
       "The configuration '<config>' cannot be set to `<mode>` when using CONVERT TO DELTA."
@@ -946,6 +952,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_MISSING_ICEBERG_CLASS" : {
+    "message" : [
+      "Iceberg class was not found. Please ensure Delta Iceberg support is installed.",
+      "Please refer to <docLink> for more details."
+    ]
+  },
   "DELTA_MISSING_NOT_NULL_COLUMN_VALUE" : {
     "message" : [
       "Column <columnName>, which has a NOT NULL constraint, is missing from the data being written into the table."
@@ -1202,6 +1214,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES" : {
+    "message" : [
+      "Partition schema cannot be specified when converting Iceberg tables. It is automatically inferred."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
       "<path> doesn't exist"
@@ -1275,6 +1293,37 @@
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [
       "Detected schema change:",
+      "old schema: <oldSchema>",
+      "",
+      "new schema: <newSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS" : {
+    "message" : [
+      "Detected schema change in version <version>:",
+      "old schema: <oldSchema>",
+      "",
+      "new schema: <newSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory. If the issue persists after",
+      "changing to a new checkpoint directory, you may need to change the existing",
+      "'startingVersion' or 'startingTimestamp' option to start from a version newer than",
+      "<version> with a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGED_WITH_VERSION" : {
+    "message" : [
+      "Detected schema change in version <version>:",
       "old schema: <oldSchema>",
       "",
       "new schema: <newSchema>",

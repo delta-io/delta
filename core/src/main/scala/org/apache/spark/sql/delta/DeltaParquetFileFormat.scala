@@ -16,20 +16,31 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
 /** A thin wrapper over the Parquet file format to support columns names without restrictions. */
-class DeltaParquetFileFormat(
-    val columnMappingMode: DeltaColumnMappingMode,
-    val referenceSchema: StructType)
-  extends ParquetFileFormat {
+class DeltaParquetFileFormat(metadata: Metadata) extends ParquetFileFormat {
+
+  val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
+  val referenceSchema: StructType = metadata.schema
+
+  if (columnMappingMode == IdMapping) {
+    val requiredReadConf = SQLConf.PARQUET_FIELD_ID_READ_ENABLED
+    require(SparkSession.getActiveSession.exists(_.sessionState.conf.getConf(requiredReadConf)),
+      s"${requiredReadConf.key} must be enabled to support Delta id column mapping mode")
+    val requiredWriteConf = SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED
+    require(SparkSession.getActiveSession.exists(_.sessionState.conf.getConf(requiredWriteConf)),
+      s"${requiredWriteConf.key} must be enabled to support Delta id column mapping mode")
+  }
 
   def prepareSchema(inputSchema: StructType): StructType = {
     DeltaColumnMapping.createPhysicalSchema(inputSchema, referenceSchema, columnMappingMode)

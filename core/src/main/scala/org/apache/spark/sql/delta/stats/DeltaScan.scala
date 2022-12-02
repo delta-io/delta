@@ -16,15 +16,13 @@
 
 package org.apache.spark.sql.delta.stats
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.command.DDLUtils
-import org.apache.spark.sql.execution.datasources.PartitioningUtils
 
 /**
  * DataSize describes following attributes for data that consists of a list of input files
@@ -42,7 +40,7 @@ case class DataSize(
     rows: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     files: Option[Long] = None
-    )
+)
 
 object DataSize {
   def apply(a: ArrayAccumulator): DataSize = {

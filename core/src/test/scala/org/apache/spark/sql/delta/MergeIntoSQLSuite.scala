@@ -241,6 +241,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   test("detect nondeterministic source - flag on") {
     withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
       val e = intercept[UnsupportedOperationException](
@@ -252,12 +254,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   test("detect nondeterministic source - flag off") {
     withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
     ) {
       testNondeterministicOrder
     }
   }
 
+  test("detect nondeterministic source - flag on, materialized") {
+    withSQLConf(
+      // materializing source fixes determinism, so the source is no longer nondeterministic
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
+    ) {
+      testNondeterministicOrder
+    }
+  }
 
   test("merge into a dataset temp views with star") {
     withTempView("v") {
@@ -335,15 +348,47 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       }
     }
   }
+
+  Seq(true, false).foreach { partitioned =>
+    test(s"User defined _change_type column doesn't get dropped - partitioned=$partitioned") {
+      withTable("target") {
+        sql(
+          s"""CREATE TABLE target USING DELTA
+             |${if (partitioned) "PARTITIONED BY (part) " else ""}
+             |TBLPROPERTIES (delta.enableChangeDataFeed = false)
+             |AS SELECT id, int(id / 10) AS part, 'foo' as _change_type
+             |FROM RANGE(1000)
+             |""".stripMargin)
+        executeMerge(
+          target = "target as t",
+          source =
+            """(
+              |  SELECT id * 42 AS id, int(id / 10) AS part, 'bar' as _change_type FROM RANGE(33)
+              |) s""".stripMargin,
+          condition = "t.id = s.id",
+          update = "*",
+          insert = "*")
+
+        sql("SELECT id, _change_type FROM target").collect().foreach { row =>
+          val _change_type = row.getString(1)
+          assert(_change_type === "foo" || _change_type === "bar",
+            s"Invalid _change_type for id=${row.get(0)}")
+        }
+      }
+    }
+  }
 }
 
-
-class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def columnMappingMode: String = NameMapping.name
-
+trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] =
     Seq("schema evolution - new nested column with update non-* and insert * - " +
       "array of struct - longer target")
 }
+
+class MergeIntoSQLIdColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableIdMode
+  with MergeIntoSQLColumnMappingSuiteBase
+
+class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode
+  with MergeIntoSQLColumnMappingSuiteBase

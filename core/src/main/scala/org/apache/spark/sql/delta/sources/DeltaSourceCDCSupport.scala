@@ -299,9 +299,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           if (verifyMetadataAction) {
             checkColumnMappingSchemaChangesDuringStreaming(m, version)
             val cdcSchema = CDCReader.cdcReadSchema(m.schema)
-            if (!SchemaUtils.isReadCompatible(cdcSchema, schema)) {
-              throw DeltaErrors.schemaChangedException(schema, cdcSchema, false)
-            }
+            verifySchemaChange(cdcSchema, version)
           }
           false
         case protocol: Protocol =>

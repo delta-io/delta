@@ -136,14 +136,13 @@ case class DescribeDeltaDetailCommand(
   private def toRows(detail: TableDetail): Seq[Row] = TableDetail.toRow(detail) :: Nil
 
   private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
-    var location = table.storage.locationUri.map(uri => CatalogUtils.URIToString(uri))
     toRows(
       TableDetail(
         table.provider.orNull,
         null,
         table.qualifiedName,
         table.comment.getOrElse(""),
-        location.orNull,
+        table.storage.locationUri.map(new Path(_).toString).orNull,
         new Timestamp(table.createTime),
         null,
         table.partitionColumnNames,

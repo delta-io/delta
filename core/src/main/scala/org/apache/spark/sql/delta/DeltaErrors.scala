@@ -98,7 +98,8 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage"
+    "columnMappingAdviceMessage",
+    "icebergClassMissing"
   )
 }
 
@@ -915,25 +916,36 @@ trait DeltaErrorsBase
       messageParameters = Array(action, version.toString))
   }
 
+
   def schemaChangedException(
       oldSchema: StructType,
       newSchema: StructType,
-      retryable: Boolean): Throwable = {
-    val msg =
-      s"""Detected schema change:
-        |old schema: ${formatSchema(oldSchema)}
-        |
-        |new schema: ${formatSchema(newSchema)}
-        |
-        |Please try restarting the query. If this issue repeats across query restarts without
-        |making progress, you have made an incompatible schema change and need to start your
-        |query from scratch using a new checkpoint directory.
-        |""".stripMargin
-    new DeltaIllegalStateException(
-      errorClass = "DELTA_SCHEMA_CHANGED",
-      messageParameters = Array(
+      retryable: Boolean,
+      version: Option[Long],
+      includeStartingVersionOrTimestampMessage: Boolean): Throwable = {
+    def newException(errorClass: String, messageParameters: Array[String]): Throwable = {
+      new DeltaIllegalStateException(errorClass, messageParameters)
+    }
+
+    if (version.isEmpty) {
+      newException("DELTA_SCHEMA_CHANGED", Array(
         formatSchema(oldSchema),
-        formatSchema(newSchema)))
+        formatSchema(newSchema)
+        ))
+    } else if (!includeStartingVersionOrTimestampMessage) {
+      newException("DELTA_SCHEMA_CHANGED_WITH_VERSION", Array(
+        version.get.toString,
+        formatSchema(oldSchema),
+        formatSchema(newSchema)
+      ))
+    } else {
+      newException("DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS", Array(
+        version.get.toString,
+        formatSchema(oldSchema),
+        formatSchema(newSchema),
+        version.get.toString
+      ))
+    }
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -1886,6 +1898,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
   }
 
+  def convertToDeltaNoPartitionFound(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONVERSION_NO_PARTITION_FOUND",
+      messageParameters = Array(tableName)
+    )
+  }
+
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING",
@@ -2452,6 +2471,19 @@ trait DeltaErrorsBase
         unsupportedOptions.mkString(","))
     )
   }
+
+  def partitionSchemaInIcebergTables: Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
+  }
+
+  def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_ICEBERG_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -2703,7 +2735,7 @@ class DeltaSparkException(
 class DeltaNoSuchTableException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
-  extends NoSuchTableException(
+  extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass

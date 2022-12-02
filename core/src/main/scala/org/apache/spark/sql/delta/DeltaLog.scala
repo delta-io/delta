@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.lang.ref.WeakReference
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
@@ -38,7 +39,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -48,6 +49,7 @@ import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expressi
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -149,13 +151,7 @@ class DeltaLog private(
    * state, but no files will be deleted.
    */
   def minSetTransactionRetentionTimestamp: Option[Long] = {
-    val intervalOpt = DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.fromMetaData(metadata)
-
-    if (intervalOpt.isDefined) {
-      Some(clock.getTimeMillis() - DeltaConfigs.getMilliSeconds(intervalOpt.get))
-    } else {
-      None
-    }
+    DeltaLog.minSetTransactionRetentionInterval(metadata).map { clock.getTimeMillis() - _ }
   }
 
   /**
@@ -203,8 +199,7 @@ class DeltaLog private(
       schema: StructType = Action.logSchema): LogicalRelation = {
     val formatSpecificOptions: Map[String, String] = index.format match {
       case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
-        // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
-        Map("mode" -> FailFastMode.name)
+        DeltaLog.jsonCommitParseOption
       case _ => Map.empty
     }
     // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
@@ -236,8 +231,10 @@ class DeltaLog private(
    * Note that all reads in a transaction must go through the returned transaction object, and not
    * directly to the [[DeltaLog]] otherwise they will not be checked for conflicts.
    */
-  def startTransaction(): OptimisticTransaction = {
-    new OptimisticTransaction(this)
+  def startTransaction(): OptimisticTransaction = startTransaction(None)
+
+  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
+    new OptimisticTransaction(this, snapshotOpt)
   }
 
   /**
@@ -263,15 +260,17 @@ class DeltaLog private(
    * Upgrade the table's protocol version, by default to the maximum recognized reader and writer
    * versions in this DBR release.
    */
-  def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
-    val currentVersion = unsafeVolatileSnapshot.protocol
+  def upgradeProtocol(
+      snapshot: Snapshot,
+      newVersion: Protocol): Unit = {
+    val currentVersion = snapshot.protocol
     if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
         newVersion.minWriterVersion == currentVersion.minWriterVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
 
-    val txn = startTransaction()
+    val txn = startTransaction(Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -280,6 +279,11 @@ class DeltaLog private(
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
+  }
+
+  // Test-only!!
+  private[delta] def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
+    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
   /**
@@ -336,7 +340,7 @@ class DeltaLog private(
   def protocolRead(protocol: Protocol): Unit = {
     val supportedReaderVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
-    if (protocol != null && supportedReaderVersion < protocol.minReaderVersion) {
+    if (supportedReaderVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
@@ -354,7 +358,7 @@ class DeltaLog private(
   def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
     val supportedWriterVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
-    if (protocol != null && supportedWriterVersion < protocol.minWriterVersion) {
+    if (supportedWriterVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
@@ -509,6 +513,38 @@ class DeltaLog private(
       }
     }
   }
+
+  /**
+   * Returns a proper path canonicalization function for the current Delta log.
+   *
+   * If `runsOnExecutors` is true, the returned method will use a broadcast Hadoop Configuration
+   * so that the method is suitable for execution on executors. Otherwise, the returned method
+   * will use a local Hadoop Configuration and the method can only be executed on the driver.
+   */
+  private[delta] def getCanonicalPathFunction(runsOnExecutors: Boolean): String => String = {
+    val hadoopConf = newDeltaHadoopConf()
+    // Wrap `hadoopConf` with a method to delay the evaluation to run on executors.
+    val getHadoopConf = if (runsOnExecutors) {
+      val broadcastHadoopConf =
+        spark.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+      () => broadcastHadoopConf.value.value
+    } else {
+      () => hadoopConf
+    }
+
+    new DeltaLog.CanonicalPathFunction(getHadoopConf)
+  }
+
+  /**
+   * Returns a proper path canonicalization UDF for the current Delta log.
+   *
+   * If `runsOnExecutors` is true, the returned UDF will use a broadcast Hadoop Configuration.
+   * Otherwise, the returned UDF will use a local Hadoop Configuration and the UDF can
+   * only be executed on the driver.
+   */
+  private[delta] def getCanonicalPathUdf(runsOnExecutors: Boolean = true): UserDefinedFunction = {
+    DeltaUDF.stringFromString(getCanonicalPathFunction(runsOnExecutors))
+  }
 }
 
 object DeltaLog extends DeltaLogging {
@@ -519,6 +555,13 @@ object DeltaLog extends DeltaLogging {
    * `DataFrameReader/Writer`
    */
   private type DeltaLogCacheKey = (Path, Map[String, String])
+
+  /** The name of the subdirectory that holds Delta metadata files */
+  private val LOG_DIR_NAME = "_delta_log"
+
+  private[delta] def logPathFor(dataPath: String): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: Path): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
 
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
@@ -542,44 +585,47 @@ object DeltaLog extends DeltaLogging {
   }
 
 
+  // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
+  val jsonCommitParseOption = Map("mode" -> FailFastMode.name)
+
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), Map.empty, new SystemClock)
+    apply(spark, logPathFor(dataPath), Map.empty, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
-    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), new SystemClock)
+    apply(spark, logPathFor(dataPath), new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
+    apply(spark, logPathFor(dataPath), new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), clock)
+    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log for the table. */
@@ -603,22 +649,59 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    val log = apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
-    log
+    apply(spark, logPathFor(new Path(table.location)), clock)
   }
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
+    forTable(spark, deltaTable, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
     if (deltaTable.path.isDefined) {
-      forTable(spark, deltaTable.path.get)
+      forTable(spark, deltaTable.path.get, clock)
     } else {
-      forTable(spark, deltaTable.table.get)
+      forTable(spark, deltaTable.table.get, clock)
     }
   }
 
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, dataPath, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, dataPath, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      tableName: TableIdentifier): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, tableName, _) }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
+    withFreshSnapshot { forTable(spark, tableName, _) }
+
+  /**
+   * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
+   * partially applied DeltaLog.forTable call, which we can then wrap around with a
+   * snapshot update. We use the system clock to avoid back-to-back updates.
+   */
+  private[delta] def withFreshSnapshot(thunk: Clock => DeltaLog): (DeltaLog, Snapshot) = {
+    val clock = new SystemClock
+    val ts = clock.getTimeMillis()
+    val deltaLog = thunk(clock)
+    val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(ts))
+    (deltaLog, snapshot)
+  }
 
   private def apply(
       spark: SparkSession,
@@ -640,9 +723,8 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    var path = rawPath
-    val fs = path.getFileSystem(hadoopConf)
-    path = fs.makeQualified(path)
+    val fs = rawPath.getFileSystem(hadoopConf)
+    val path = fs.makeQualified(rawPath)
     def createDeltaLog(): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
@@ -684,7 +766,7 @@ object DeltaLog extends DeltaLogging {
   /** Invalidate the cached DeltaLog object for the given `dataPath`. */
   def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
     try {
-      val rawPath = new Path(dataPath, "_delta_log")
+      val rawPath = logPathFor(dataPath)
       // scalastyle:off deltahadoopconfiguration
       // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
       // has set the correct file system configurations in the session configs.
@@ -777,5 +859,33 @@ object DeltaLog extends DeltaLogging {
             UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
         }
     })
+  }
+
+  def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
+    DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
+      .fromMetaData(metadata)
+      .map(DeltaConfigs.getMilliSeconds)
+  }
+
+  /** Get a function that canonicalizes a given `path`. */
+  private[delta] class CanonicalPathFunction(getHadoopConf: () => Configuration)
+      extends Function[String, String] with Serializable {
+    // Mark it `@transient lazy val` so that de-serialization happens only once on every executor.
+    @transient
+    private lazy val fs = {
+      // scalastyle:off FileSystemGet
+      FileSystem.get(getHadoopConf())
+      // scalastyle:on FileSystemGet
+    }
+
+    override def apply(path: String): String = {
+      val hadoopPath = new Path(new URI(path))
+      if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
+        fs.makeQualified(hadoopPath).toUri.toString
+      } else {
+        // return untouched if it is a relative path or is already fully qualified
+        hadoopPath.toUri.toString
+      }
+    }
   }
 }

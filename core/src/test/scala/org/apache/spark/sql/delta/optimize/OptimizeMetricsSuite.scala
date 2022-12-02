@@ -230,11 +230,9 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           .getMap(0)
           .asInstanceOf[Map[String, String]]
 
-        // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-        val numRemovedFiles = 37
-        val expMetrics =
+        val expMetricsJson =
           s"""{
-            |  "numRemovedFiles" : "$numRemovedFiles",
+            |  "numRemovedFiles" : "37",
             |  "numAddedFiles" : "10",
             |  "numAddedBytes" : "${finalSizes.sum}",
             |  "numRemovedBytes" : "${startSizes.sum}",
@@ -245,7 +243,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
             |  "p75FileSize" : "${finalSizes(3 * finalSizes.length / 4)}"
             |}""".stripMargin.trim
 
-        assert(actualMetrics === JsonUtils.fromJson[Map[String, String]](expMetrics))
+        val expMetrics = JsonUtils.fromJson[Map[String, String]](expMetricsJson)
+        assert(actualMetrics === expMetrics)
       }
     }
   }

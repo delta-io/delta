@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -54,19 +54,19 @@ trait StateCache extends DeltaLogging {
     // single-session scenarios to avoid the overhead of `Dataset` creation which can take 100ms.
     private val cachedDs = cached.synchronized {
       if (isCached) {
-        val rdd = recordFrameProfile("Delta", "CachedDS.toRdd") {
-          ds.queryExecution.toRdd.map(_.copy())
+        val qe = ds.queryExecution
+        val rdd = SQLExecution.withNewExecutionId(qe, Some(s"Cache $name")) {
+          val rdd = recordFrameProfile("Delta", "CachedDS.toRdd") {
+            // toRdd should always trigger execution
+            qe.toRdd.map(_.copy())
+          }
+          rdd.setName(name)
+          rdd.persist(storageLevel)
         }
-        rdd.setName(name)
-        rdd.persist(storageLevel)
         cached += rdd
         val dsCache = new DatasetRefCache(() => {
-          Dataset.ofRows(
-            spark,
-            LogicalRDD(
-              ds.queryExecution.analyzed.output,
-              rdd)(
-              spark))
+          val logicalRdd = LogicalRDD(qe.analyzed.output, rdd)(spark)
+          Dataset.ofRows(spark, logicalRdd)
         })
         Some(dsCache)
       } else {
