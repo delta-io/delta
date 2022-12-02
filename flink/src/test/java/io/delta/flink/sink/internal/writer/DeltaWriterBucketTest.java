@@ -194,19 +194,6 @@ public class DeltaWriterBucketTest {
     }
 
     @Test
-    public void testSerde() throws IOException {
-        DeltaWriterBucketState bucketState =
-            new DeltaWriterBucketState(
-                "bucketId",
-                new Path("file:///tmp/bucketId"),
-                "appId",
-                1
-            );
-        DeltaWriterBucketState deserialized = serializeAndDeserialize(bucketState);
-        assertBucketStateEquals(bucketState, deserialized);
-    }
-
-    @Test
     public void testMetrics() throws Exception {
         // GIVEN
         File outDir = TEMP_FOLDER.newFolder();
@@ -272,7 +259,7 @@ public class DeltaWriterBucketTest {
                         false, // flush
                         APP_ID,
                         1);
-        DeltaWriterBucketState bucketState = bucket.snapshotState(APP_ID, 1);
+        DeltaWriterBucketState bucketState = bucket.snapshotState(APP_ID);
 
         assertEquals(BUCKET_ID, bucketState.getBucketId());
         assertEquals(bucketPath, bucketState.getBucketPath());
@@ -327,25 +314,5 @@ public class DeltaWriterBucketTest {
                                                   long currentTime) {
             return false;
         }
-    }
-
-    ///////////////////////////////////////////////////
-    // serde test utils
-    ///////////////////////////////////////////////////
-
-    private void assertBucketStateEquals(
-        DeltaWriterBucketState bucketState, DeltaWriterBucketState deserialized) {
-        assertEquals(bucketState.getBucketId(), deserialized.getBucketId());
-        assertEquals(bucketState.getBucketPath(), deserialized.getBucketPath());
-        assertEquals(bucketState.getAppId(), deserialized.getAppId());
-        assertEquals(bucketState.getCheckpointId(), deserialized.getCheckpointId());
-    }
-
-    private DeltaWriterBucketState serializeAndDeserialize(DeltaWriterBucketState bucketState)
-        throws IOException {
-        DeltaWriterBucketStateSerializer serializer =
-            new DeltaWriterBucketStateSerializer();
-        byte[] data = serializer.serialize(bucketState);
-        return serializer.deserialize(serializer.getVersion(), data);
     }
 }

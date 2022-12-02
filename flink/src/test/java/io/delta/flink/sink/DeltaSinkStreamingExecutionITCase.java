@@ -73,7 +73,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -142,12 +141,9 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
     @ParameterizedTest(name = "isPartitioned = {0}, triggerFailover = {1}")
     @CsvSource({
         "false, false",
-        "true, false"
-        // TODO Flink_1.15 this should be uncomment when Flink 1.15.3 will be released.
-        //  This comment out variations run test for failover scenarios.
-        //  When Flink 1.15.3 will be released whe should use it in connector's dependencies.
-        // "false, true",
-        // "true, true"
+        "true, false",
+        "false, true",
+        "true, true"
     })
     public void testFileSink(boolean isPartitioned, boolean triggerFailover) throws Exception {
 
@@ -169,10 +165,6 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
      *
      * @param exceptionMode whether to throw an exception before or after Delta log commit.
      */
-    // TODO Flink_1.15 this should be re-enabled when Flink 1.15.3 will be released.
-    //  This test executes failover scenarios.
-    //  When Flink 1.15.3 will be released whe should use it in connector's dependencies.
-    @Disabled
     @ResourceLock("StreamingFailoverDeltaGlobalCommitter")
     @ParameterizedTest(name = "isPartitioned = {0}, exceptionMode = {1}")
     @CsvSource({

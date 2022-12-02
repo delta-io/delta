@@ -101,9 +101,14 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
      * Unique identifier of a checkpoint interval. It's necessary to maintain and increment this
      * value inside writer as this needs to be passed as a part of committables' information during
      * {@link DeltaWriter#prepareCommit} method. Its value is always incremented by one after
-     * generating set of committables for given checkpoint interval. It's also snapshotted as a part
-     * of the writer's state in order to support failure recovery and provide exactly-once delivery
-     * guarantee. For a fresh start of an application it always starts with the value of "1".
+     * generating set of committables for given checkpoint interval. For a fresh start of an
+     * application it always starts with the value of "1".
+     *
+     * @implNote The checkpointId we forward from the writer might not be fully accurate. It is
+     * possible that {@link DeltaWriter#prepareCommit} is called without a following checkpoint i.e.
+     * if the pipeline finishes or for batch executions. For this reason this value might not
+     * reflect exact current checkpointID for the Job, and it is advised to use it as a general
+     * monitoring tool, for example logs.
      */
     private long nextCheckpointId;
 
@@ -177,8 +182,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
      *                              needs to be constant across all app's restarts to guarantee
      *                              idempotent writes/commits to the DeltaLake's table.
      * @param nextCheckpointId      Identifier of the next checkpoint interval to be committed.
-     *                              During DeltaLog's commit phase it will be used as transaction's
-     *                              version.
+     *                              During DeltaLog's commit phase it will be used to group
+     *                              committable objects.
      */
     public DeltaWriter(
         final Path basePath,
@@ -238,14 +243,14 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
 
         List<DeltaWriterBucketState> states = new ArrayList<>();
         for (DeltaWriterBucket<IN> bucket : activeBuckets.values()) {
-            states.add(bucket.snapshotState(appId, nextCheckpointId));
+            states.add(bucket.snapshotState(appId));
         }
 
         if (states.isEmpty()) {
-            // we still need to snapshot transactional ids (appId and checkpointId) even though
+            // we still need to snapshot transactional ids (appId) even though
             // there are no active buckets in the writer.
             states.add(
-                new DeltaWriterBucketState(NOOP_WRITER_STATE, basePath, appId, nextCheckpointId)
+                new DeltaWriterBucketState(NOOP_WRITER_STATE, basePath, appId)
             );
         }
         return states;

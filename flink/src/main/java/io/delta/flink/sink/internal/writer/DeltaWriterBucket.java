@@ -232,16 +232,10 @@ public class DeltaWriterBucket<IN> {
      *
      * @param appId        unique identifier of the Flink app that needs to be retained within all
      *                     app restarts
-     * @param checkpointId identifier of current in-progress checkpoint interval
      * @return snapshot of the current bucket writer's state
      */
-    DeltaWriterBucketState snapshotState(String appId, long checkpointId) {
-        return new DeltaWriterBucketState(
-            bucketId,
-            bucketPath,
-            appId,
-            checkpointId
-        );
+    DeltaWriterBucketState snapshotState(String appId) {
+        return new DeltaWriterBucketState(bucketId, bucketPath, appId);
     }
 
     /**

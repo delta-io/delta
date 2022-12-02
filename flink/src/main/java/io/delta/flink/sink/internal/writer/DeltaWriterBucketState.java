@@ -56,17 +56,14 @@ public class DeltaWriterBucketState {
     private final Path bucketPath;
 
     private final String appId;
-    private final long checkpointId;
 
     public DeltaWriterBucketState(
         String bucketId,
         Path bucketPath,
-        String appId,
-        long checkpointId) {
+        String appId) {
         this.bucketId = bucketId;
         this.bucketPath = bucketPath;
         this.appId = appId;
-        this.checkpointId = checkpointId;
     }
 
     public String getBucketId() {
@@ -84,16 +81,10 @@ public class DeltaWriterBucketState {
             " and bucketPath=" +
             bucketPath +
             " and appId=" +
-            appId +
-            " and checkpointId=" +
-            checkpointId;
+            appId;
     }
 
     public String getAppId() {
         return appId;
-    }
-
-    public long getCheckpointId() {
-        return checkpointId;
     }
 }

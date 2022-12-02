@@ -111,13 +111,12 @@ public class DeltaSinkInternal<IN>
         List<DeltaWriterBucketState> states
     ) throws IOException {
         String appId = restoreOrCreateAppId(states);
-        long nextCheckpointId =
-            restoreOrGetNextCheckpointId(states);
-        DeltaWriter<IN> writer = sinkBuilder.createWriter(context, appId, nextCheckpointId);
+        long checkpointId = context.getRestoredCheckpointId().orElse(1);
+        DeltaWriter<IN> writer = sinkBuilder.createWriter(context, appId, checkpointId);
         writer.initializeState(states);
         LOG.info("Created new writer for: " +
                     "appId=" + appId +
-                    " nextCheckpointId=" + nextCheckpointId
+                    " checkpointId=" + checkpointId
         );
         return writer;
     }
@@ -142,39 +141,6 @@ public class DeltaSinkInternal<IN>
             return sinkBuilder.getAppId();
         }
         return states.get(0).getAppId();
-    }
-
-    /**
-     * Restores the last checkpoint id snapshotted in one of the most recent {@link DeltaWriter}s'
-     * states or sets it to "1" in case there is no previous states.
-     * <p>
-     * In order to gurantee the idempotency of the GlobalCommitter we need to version consecutive
-     * commits with consecutive identifiers. For this purpose we are using checkpointId that is
-     * being "manually" managed in writer's internal logic, added to the committables information
-     * and incremented on every precommit action (after generating the committables).
-     * <p>
-     * To restore the last recent checkpoint id we need to get max value of this param within all
-     * the given states. We are interested in max because at this stage if we are given states with
-     * checkpoint ids lower than the max then it means that committables for those checkpoint
-     * intervals have been already generated and checkpointed in the job's state so when creating
-     * new writers we should pass them the most recent value of resolved checkpoint id (the writers
-     * will use this value for generating new set of committables for next incoming checkpoint
-     * interval).
-     *
-     * @param states restored list of writer's buckets states that include previously generated
-     *               appId
-     * @return value of the nextCheckpointId to be passed to the new writer's instance
-     */
-    private long restoreOrGetNextCheckpointId(List<DeltaWriterBucketState> states) {
-        if (states.isEmpty()) {
-            return 1;
-        }
-        return states
-            .stream()
-            .map(DeltaWriterBucketState::getCheckpointId)
-            .mapToLong(v -> v)
-            .max()
-            .getAsLong();
     }
 
     @Override
