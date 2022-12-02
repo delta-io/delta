@@ -410,7 +410,7 @@ The following is an example of `cdc` action.
 
 #### Writer Requirements for AddCDCFile
 
-As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files).
+As of [Writer Versions 4 up to 6](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files).
 
 As of Writer Version 7, all writers must first ensure the feature `changeDataFeed` exists in the table `protocol`'s `writerFeatures`, then respect all requirements for Writer Version 4.
 
@@ -811,6 +811,10 @@ Writers should reject any transaction that contains data where the expression `x
 
 ## CHECK Constraints
 
+Enablement:
+- If the table is on a Writer Version up to 6, CHECK Constraints is enabled when the table's metadata contains required keys.
+- If the table is on Writer Version 7, a feature name `checkConstraints` must exist in the table `protocol`'s `writerFeatures`.
+
 CHECK constraints are stored in the map of the `configuration` field in [Metadata](#change-metadata). Each CHECK constraint has a name and is stored as a key value pair. The key format is `delta.constraints.{name}`, and the value is a SQL expression string whose return type must be `Boolean`. Columns referred by the SQL expression must exist in the table schema.
 
 Rows in a table must satisfy CHECK constraints. In other words, evaluating the SQL expressions of CHECK constraints must return `true` for each row in a table.
@@ -818,6 +822,7 @@ Rows in a table must satisfy CHECK constraints. In other words, evaluating the S
 For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
 
 Hence, a writer must follow the rules below:
+- Upon the first time a writer add CHECK Constraints to a table and if the table is on Writer Version 7, the writer must write a `protocol` action to add a feature name `checkConstraints` to `writerFeatures`.
 - When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
 - When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
 
