@@ -926,7 +926,7 @@ Field Name | Description
 name| Name of this (possibly nested) column
 type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
 nullable| Boolean denoting whether this field can be null
-metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that clients must handle when writing to a table.
+metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [Column Metadata](#column-metadata) for more information on column level metadata that clients must handle when writing to a table.
 
 ### Array Type
 
@@ -947,6 +947,17 @@ Field Name | Description
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+
+### Column Metadata
+A column metadata stores various information about the column.
+For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
+Field Name | Description
+-|-
+delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
+delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
+delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
+delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
+
 
 ### Example
 
