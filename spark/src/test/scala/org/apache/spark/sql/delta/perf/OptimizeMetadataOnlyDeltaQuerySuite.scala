@@ -39,9 +39,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   val testTablePath = Utils.createTempDir().getAbsolutePath
   val noStatsTableName = " table_nostats"
   val mixedStatsTableName = " table_mixstats"
-  val totalRows = 9L
-  val totalNonNullData = 8L
-  val totalDistinctData = 5L
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -84,56 +81,51 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   test("Select Count: basic") {
     checkResultsAndOptimizedPlan(
       s"SELECT COUNT(*) FROM $testTableName",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
   test("Select Count: column alias") {
     checkResultsAndOptimizedPlan(
       s"SELECT COUNT(*) as MyColumn FROM $testTableName",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
   test("Select Count: table alias") {
     checkResultsAndOptimizedPlan(
       s"SELECT COUNT(*) FROM $testTableName MyTable",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
   test("Select Count: time travel") {
     checkResultsAndOptimizedPlan(s"SELECT COUNT(*) FROM $testTableName VERSION AS OF 0",
-      Seq(Row(3L)),
       "LocalRelation [none#0L]")
 
     checkResultsAndOptimizedPlan(s"SELECT COUNT(*) FROM $testTableName VERSION AS OF 1",
-      Seq(Row(2L)),
       "LocalRelation [none#0L]")
 
     checkResultsAndOptimizedPlan(s"SELECT COUNT(*) FROM $testTableName VERSION AS OF 2",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
   test("Select Count: external") {
     checkResultsAndOptimizedPlan(
       s"SELECT COUNT(*) FROM delta.`$testTablePath`",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
   test("Select Count: sub-query") {
     checkResultsAndOptimizedPlan(
       s"SELECT (SELECT COUNT(*) FROM $testTableName)",
-      Seq(Row(totalRows)),
       "Project [scalar-subquery#0 [] AS #0L]\n:  +- LocalRelation [none#0L]\n+- OneRowRelation")
   }
 
   test("Select Count: as sub-query filter") {
+    val result = spark.sql(s"SELECT COUNT(*) FROM $testTableName").head
+    val totalRows = result.getLong(0)
+
     checkResultsAndOptimizedPlan(
-      s"SELECT 'ABC' WHERE (SELECT COUNT(*) FROM $testTableName) = $totalRows",
-      Seq(Row("ABC")),
+      s"SELECT 'ABC' WHERE" +
+        s" (SELECT COUNT(*) FROM $testTableName) = $totalRows",
       "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
         totalRows + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation")
   }
@@ -142,7 +134,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     // Limit doesn't affect COUNT results
     checkResultsAndOptimizedPlan(
       s"SELECT COUNT(*) FROM $testTableName LIMIT 3",
-      Seq(Row(totalRows)),
       "LocalRelation [none#0L]")
   }
 
@@ -151,7 +142,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
     val query = "SELECT COUNT(*) FROM TestEmpty"
 
-    checkResultsAndOptimizedPlan(query, Seq(Row(0)), "LocalRelation [none#0L]")
+    checkResultsAndOptimizedPlan(query, "LocalRelation [none#0L]")
   }
 
   test("Select Count: snapshot isolation") {
@@ -164,7 +155,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
     checkResultsAndOptimizedPlan(
       query,
-      Seq(Row(1, 1)),
       "Project [scalar-subquery#0 [] AS #0L, scalar-subquery#0 [] AS #1L]\n" +
         ":  :- LocalRelation [none#0L]\n" +
         ":  +- LocalRelation [none#0L]\n" +
@@ -190,97 +180,91 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
   // Tests to validate the optimizer won't use missing or partial stats
   test("Select Count: missing stats") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) FROM $mixedStatsTableName",
-      Seq(Row(totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) FROM $mixedStatsTableName")
 
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) FROM $noStatsTableName",
-      Seq(Row(totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) FROM $noStatsTableName")
   }
 
   // Tests to validate the optimizer won't incorrectly change queries it can't correctly handle
   test("Select Count: multiple aggregations") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) AS MyCount, MAX(id) FROM $testTableName",
-      Seq(Row(totalRows, 10L)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) AS MyCount, MAX(id) FROM $testTableName")
   }
 
   test("Select Count: group by") {
-    checkSameQueryPlanAndResults(
-      s"SELECT group, COUNT(*) FROM $testTableName GROUP BY group",
-      Seq(Row(1L, totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT group, COUNT(*) FROM $testTableName GROUP BY group")
   }
 
   test("Select Count: count twice") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*), COUNT(*) FROM $testTableName",
-      Seq(Row(totalRows, totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*), COUNT(*) FROM $testTableName")
   }
 
   test("Select Count: plus literal") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) + 1 FROM $testTableName",
-      Seq(Row(totalRows + 1)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) + 1 FROM $testTableName")
   }
 
   test("Select Count: distinct") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(DISTINCT data) FROM $testTableName",
-      Seq(Row(totalDistinctData)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(DISTINCT data) FROM $testTableName")
   }
 
   test("Select Count: filter") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) FROM $testTableName WHERE id > 0",
-      Seq(Row(totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) FROM $testTableName WHERE id > 0")
   }
 
   test("Select Count: sub-query with filter") {
-    checkSameQueryPlanAndResults(
-      s"SELECT (SELECT COUNT(*) FROM $testTableName WHERE id > 0)",
-      Seq(Row(totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT (SELECT COUNT(*) FROM $testTableName WHERE id > 0)")
   }
 
   test("Select Count: non-null") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(ALL data) FROM $testTableName",
-      Seq(Row(totalNonNullData)))
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(data) FROM $testTableName",
-      Seq(Row(totalNonNullData)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(ALL data) FROM $testTableName")
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(data) FROM $testTableName")
   }
 
   test("Select Count: join") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) FROM $testTableName A, $testTableName B",
-      Seq(Row(totalRows * totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) FROM $testTableName A, $testTableName B")
   }
 
   test("Select Count: over") {
-    checkSameQueryPlanAndResults(
-      s"SELECT COUNT(*) OVER() FROM $testTableName LIMIT 1",
-      Seq(Row(totalRows)))
+    checkOptimizationIsNotTriggered(
+      s"SELECT COUNT(*) OVER() FROM $testTableName LIMIT 1")
   }
 
+  /** Validate the results of the query is the same with the flag
+   * DELTA_OPTIMIZE_METADATA_QUERY_ENABLED enabled and disabled.
+   * And the expected Optimized Query Plan with the flag enabled */
   private def checkResultsAndOptimizedPlan(
     query: String,
-    expectedAnswer: scala.Seq[Row],
     expectedOptimizedPlan: String): Unit = {
-    checkResultsAndOptimizedPlan(() => spark.sql(query), expectedAnswer, expectedOptimizedPlan)
+    checkResultsAndOptimizedPlan(() => spark.sql(query), expectedOptimizedPlan)
   }
 
+  /** Validate the results of the query is the same with the flag
+   * DELTA_OPTIMIZE_METADATA_QUERY_ENABLED enabled and disabled.
+   * And the expected Optimized Query Plan with the flag enabled. */
   private def checkResultsAndOptimizedPlan(
     generateQueryDf: () => DataFrame,
-    expectedAnswer: scala.Seq[Row],
     expectedOptimizedPlan: String): Unit = {
+    var expectedAnswer: scala.Seq[org.apache.spark.sql.Row] = null
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false") {
+      expectedAnswer = generateQueryDf().collect()
+    }
+
     withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
       val queryDf = generateQueryDf()
       val optimizedPlan = queryDf.queryExecution.optimizedPlan.canonicalized.toString()
 
-      assertResult(expectedAnswer(0)(0)) {
-        queryDf.collect()(0)(0)
-      }
+      assert(queryDf.collect().sameElements(expectedAnswer))
 
       assertResult(expectedOptimizedPlan.trim) {
         optimizedPlan.trim
@@ -293,32 +277,30 @@ class OptimizeMetadataOnlyDeltaQuerySuite
    * This method can be used to verify cases that we shouldn't trigger optimization
    * or cases that we can potentially improve.
    * @param query
-   * @param expectedAnswer
    */
-  private def checkSameQueryPlanAndResults(
-    query: String,
-    expectedAnswer: scala.Seq[Row]) {
-    var optimizationEnabledQueryPlan: String = null
-    var optimizationDisabledQueryPlan: String = null
-
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
-
-      val queryDf = spark.sql(query)
-      optimizationEnabledQueryPlan = queryDf.queryExecution.optimizedPlan
-        .canonicalized.toString()
-      checkAnswer(queryDf, expectedAnswer)
-    }
+  private def checkOptimizationIsNotTriggered(query: String) {
+    var expectedOptimizedPlan: String = null
+    var expectedAnswer: scala.Seq[org.apache.spark.sql.Row] = null
 
     withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false") {
 
-      val countQuery = spark.sql(query)
-      optimizationDisabledQueryPlan = countQuery.queryExecution.optimizedPlan
+      val generateQueryDf = spark.sql(query)
+      expectedOptimizedPlan = generateQueryDf.queryExecution.optimizedPlan
         .canonicalized.toString()
-      checkAnswer(countQuery, expectedAnswer)
+      expectedAnswer = generateQueryDf.collect()
     }
 
-    assertResult(optimizationEnabledQueryPlan) {
-      optimizationDisabledQueryPlan
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
+
+      val generateQueryDf = spark.sql(query)
+      val optimizationEnabledQueryPlan = generateQueryDf.queryExecution.optimizedPlan
+        .canonicalized.toString()
+
+      assert(generateQueryDf.collect().sameElements(expectedAnswer))
+
+      assertResult(expectedOptimizedPlan) {
+        optimizationEnabledQueryPlan
+      }
     }
   }
 
