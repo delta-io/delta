@@ -40,7 +40,8 @@ abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
     with BeforeAndAfterEach    with SQLTestUtils
-    with DeltaTestUtilsForTempViews {
+    with DeltaTestUtilsForTempViews
+    with MergeHelpers {
 
   import testImplicits._
 
@@ -932,7 +933,8 @@ abstract class MergeIntoSuiteBase
 
       append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
       // cache is in effect, as the above change is not reflected
-      checkAnswer(spark.table(s"delta.`$tempPath`"), Row(2, 2) :: Row(1, 4) :: Nil)
+      checkAnswer(spark.table(s"delta.`$tempPath`"),
+        Row(2, 2) :: Row(1, 4) :: Row(100, 100) :: Row(3, 5) :: Nil)
 
       executeMerge(
         target = s"delta.`$tempPath` as trgNew",
@@ -1541,28 +1543,6 @@ abstract class MergeIntoSuiteBase
     insert = "(key, value) VALUES (s.key, s.value)",
     result = """{ "key": "A", "value": { "a": { "x": 20, "y": 10 }, "b": 2 } }""",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
-
-  /** A simple representative of a any WHEN clause in a MERGE statement */
-  protected case class MergeClause(isMatched: Boolean, condition: String, action: String = null) {
-    def sql: String = {
-      assert(action != null, "action not specified yet")
-      val matched = if (isMatched) "MATCHED" else "NOT MATCHED"
-      val cond = if (condition != null) s"AND $condition" else ""
-      s"WHEN $matched $cond THEN $action"
-    }
-  }
-
-  protected def update(set: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"UPDATE SET $set")
-  }
-
-  protected def delete(condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"DELETE")
-  }
-
-  protected def insert(values: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = false, condition, s"INSERT $values")
-  }
 
   protected def testAnalysisErrorsInExtendedMerge(
       name: String,
@@ -5016,4 +4996,38 @@ class ComplexTestUDT extends UserDefinedType[ComplexTest] {
   }
 
   override def userClass: Class[ComplexTest] = classOf[ComplexTest]
+}
+
+trait MergeHelpers {
+  /** A simple representative of a any WHEN clause in a MERGE statement */
+  protected sealed trait MergeClause {
+    def condition: String
+    def action: String
+    def clause: String
+    def sql: String = {
+      assert(action != null, "action not specified yet")
+      val cond = if (condition != null) s"AND $condition" else ""
+      s"WHEN $clause $cond THEN $action"
+    }
+  }
+
+  protected case class MatchedClause(condition: String, action: String) extends MergeClause {
+    override def clause: String = "MATCHED"
+  }
+
+  protected case class NotMatchedClause(condition: String, action: String) extends MergeClause {
+    override def clause: String = "NOT MATCHED"
+  }
+
+  protected def update(set: String = null, condition: String = null): MergeClause = {
+    MatchedClause(condition, s"UPDATE SET $set")
+  }
+
+  protected def delete(condition: String = null): MergeClause = {
+    MatchedClause(condition, s"DELETE")
+  }
+
+  protected def insert(values: String = null, condition: String = null): MergeClause = {
+    NotMatchedClause(condition, s"INSERT $values")
+  }
 }

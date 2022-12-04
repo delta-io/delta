@@ -1026,6 +1026,9 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
 
 }
 
+class DeltaCDCStreamIdColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode {
+}
 
 class DeltaCDCStreamNameColumnMappingSuite extends DeltaCDCStreamColumnMappingSuiteBase
   with DeltaColumnMappingEnableNameMode {

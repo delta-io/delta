@@ -108,15 +108,6 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   /**
-   * Pin down the snapshot during initialization of DeltaSource so we could consistently use this
-   * same snapshot across the lifespan of this Delta Source.
-   *
-   * Visible for testing.
-   */
-  // TODO: Should this be pinned to the latest snapshot via deltaLog.update()?
-  protected[delta] val snapshotAtSourceInit: Snapshot = deltaLog.unsafeVolatileSnapshot
-
-  /**
    * Flag that allows user to force enable unsafe streaming read on Delta table with
    * column mapping enabled AND drop/rename actions.
    */
@@ -474,6 +465,7 @@ case class DeltaSource(
     spark: SparkSession,
     deltaLog: DeltaLog,
     options: DeltaOptions,
+    snapshotAtSourceInit: Snapshot,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport {

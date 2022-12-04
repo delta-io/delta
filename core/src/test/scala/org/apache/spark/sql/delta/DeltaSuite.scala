@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.struct
+import org.apache.spark.sql.functions.{expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -568,6 +568,34 @@ class DeltaSuite extends QueryTest
           .save(dir.toString)
 
         checkAnswer(data, Seq(2, 4, 6).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+      }
+    }
+  }
+
+  Seq(true, false).foreach { p =>
+    test(s"replaceWhere user defined _change_type column doesn't get dropped - partitioned=$p") {
+      withTable("tab") {
+        sql(
+          s"""CREATE TABLE tab USING DELTA
+             |${if (p) "PARTITIONED BY (part) " else ""}
+             |TBLPROPERTIES (delta.enableChangeDataFeed = false)
+             |AS SELECT id, floor(id / 10) AS part, 'foo' as _change_type
+             |FROM RANGE(1000)
+             |""".stripMargin)
+        Seq(33L).map(id => id * 42).toDF("id")
+          .withColumn("part", expr("floor(id / 10)"))
+          .withColumn("_change_type", lit("bar"))
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "id % 7 = 0")
+          .saveAsTable("tab")
+
+        sql("SELECT id, _change_type FROM tab").collect().foreach { row =>
+          val _change_type = row.getString(1)
+          assert(_change_type === "foo" || _change_type === "bar",
+            s"Invalid _change_type for id=${row.get(0)}")
+        }
       }
     }
   }

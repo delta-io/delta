@@ -75,6 +75,27 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+  Seq(true, false).foreach { partitioned =>
+    test(s"User defined _change_type column doesn't get dropped - partitioned=$partitioned") {
+      withTable("tab") {
+        sql(
+          s"""CREATE TABLE tab USING DELTA
+             |${if (partitioned) "PARTITIONED BY (part) " else ""}
+             |TBLPROPERTIES (delta.enableChangeDataFeed = false)
+             |AS SELECT id, int(id / 10) AS part, 'foo' as _change_type
+             |FROM RANGE(1000)
+             |""".stripMargin)
+        val rowsToUpdate = (1 to 1000 by 42).mkString("(", ", ", ")")
+        executeUpdate("tab", "_change_type = 'bar'", s"id in $rowsToUpdate")
+        sql("SELECT id, _change_type FROM tab").collect().foreach { row =>
+          val _change_type = row.getString(1)
+          assert(_change_type === "foo" || _change_type === "bar",
+            s"Invalid _change_type for id=${row.get(0)}")
+        }
+      }
+    }
+  }
+
   override protected def executeUpdate(
       target: String,
       set: String,

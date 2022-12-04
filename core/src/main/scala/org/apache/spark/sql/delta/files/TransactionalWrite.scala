@@ -410,6 +410,15 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val resultFiles = committer.addedStatuses.map { a =>
       a.copy(stats = optionalStatsTracker.map(
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
+    }.filter {
+      // In some cases, we can write out an empty `inputData`. Some examples of this (though, they
+      // may be fixed in the future) are the MERGE command when you delete with empty source, or
+      // empty target, or on disjoint tables. This is hard to catch before the write without
+      // collecting the DF ahead of time. Instead, we can return only the AddFiles that
+      // a) actually add rows, or
+      // b) don't have any stats so we don't know the number of rows at all
+      case a: AddFile => a.numLogicalRecords.forall(_ > 0)
+      case _ => true
     }
 
     resultFiles.toSeq ++ committer.changeFiles

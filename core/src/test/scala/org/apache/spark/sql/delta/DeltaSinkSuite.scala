@@ -22,7 +22,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -557,8 +557,16 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
 
 }
 
-abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite {
+abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite
+  with DeltaColumnMappingSelectedTestMixin {
   import testImplicits._
+
+  override protected def runOnlyTests = Seq(
+    "append mode",
+    "complete mode",
+    "partitioned writing and batch reading",
+    "work with aggregation + watermark"
+  )
 
 
   test("allow schema evolution after renaming column") {
@@ -741,16 +749,9 @@ abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite {
 
 }
 
+class DeltaSinkIdColumnMappingSuite extends DeltaSinkColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode
+  with DeltaColumnMappingTestUtils
 
 class DeltaSinkNameColumnMappingSuite extends DeltaSinkColumnMappingSuiteBase
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def runOnlyTests = Seq(
-    "append mode",
-    "complete mode",
-    "partitioned writing and batch reading",
-    "work with aggregation + watermark"
-  )
-
-}
-
+  with DeltaColumnMappingEnableNameMode

@@ -46,6 +46,10 @@ case class DeltaTableIdentifier(
     DeltaLog.forTable(spark, getPath(spark))
   }
 
+  def getDeltaLogWithSnapshot(spark: SparkSession): (DeltaLog, Snapshot) = {
+    DeltaLog.forTableWithSnapshot(spark, getPath(spark))
+  }
+
   /**
    * Escapes back-ticks within the identifier name with double-back-ticks.
    */

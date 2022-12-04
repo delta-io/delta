@@ -179,6 +179,23 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             raise
 
 
+def run_s3_log_store_util_integration_tests():
+    print("\n\n##### Running S3LogStoreUtil tests #####")
+
+    env = { "S3_LOG_STORE_UTIL_TEST_ENABLED": "true" }
+    assert os.environ.get("S3_LOG_STORE_UTIL_TEST_BUCKET") is not None, "S3_LOG_STORE_UTIL_TEST_BUCKET must be set"
+    assert os.environ.get("S3_LOG_STORE_UTIL_TEST_RUN_UID") is not None, "S3_LOG_STORE_UTIL_TEST_RUN_UID must be set"
+
+    try:
+        cmd = ["build/sbt", "project storage", "testOnly -- -n IntegrationTest"]
+        print("\nRunning IntegrationTests of storage\n=====================")
+        print("Command: %s" % " ".join(cmd))
+        run_cmd(cmd, stream_output=True, env=env)
+    except:
+        print("Failed IntegrationTests")
+        raise
+
+
 def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
     clear_artifact_cache()
@@ -293,6 +310,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only Scala tests")
     parser.add_argument(
+        "--s3-log-store-util-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only S3LogStoreUtil tests")
+    parser.add_argument(
         "--scala-version",
         required=False,
         default="2.12",
@@ -368,6 +391,10 @@ if __name__ == "__main__":
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                                 args.dbb_packages, args.dbb_conf, args.use_local)
+        quit()
+
+    if args.s3_log_store_util_only:
+        run_s3_log_store_util_integration_tests()
         quit()
 
     if run_scala:

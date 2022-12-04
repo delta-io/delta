@@ -130,7 +130,7 @@ object MergeStats {
       metrics: Map[String, SQLMetric],
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       isPartitioned: Boolean): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
@@ -218,7 +218,7 @@ case class MergeIntoCommand(
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+    notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
@@ -445,7 +445,7 @@ case class MergeIntoCommand(
       // Multiple matches are not ambiguous when there is only one unconditional delete as
       // all the matched row pairs in the 2nd join in `writeAllChanges` will get deleted.
       val isUnconditionalDelete = matchedClauses.headOption match {
-        case Some(DeltaMergeIntoDeleteClause(None)) => true
+        case Some(DeltaMergeIntoMatchedDeleteClause(None)) => true
         case _ => false
       }
       matchedClauses.size == 1 && isUnconditionalDelete
@@ -706,7 +706,7 @@ case class MergeIntoCommand(
 
     def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
       val exprs = clause match {
-        case u: DeltaMergeIntoUpdateClause =>
+        case u: DeltaMergeIntoMatchedUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false and
           // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
           val mainDataOutput = u.resolvedActions.map(_.expr) :+ FalseLiteral :+
@@ -726,7 +726,7 @@ case class MergeIntoCommand(
           } else {
             Seq(mainDataOutput)
           }
-        case _: DeltaMergeIntoDeleteClause =>
+        case _: DeltaMergeIntoMatchedDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true and CDC_TYPE_COLUMN_NAME =
           // CDC_TYPE_NOT_CDC
           val mainDataOutput = targetOutputCols :+ TrueLiteral :+ incrDeletedCountExpr :+
@@ -744,7 +744,7 @@ case class MergeIntoCommand(
       exprs.map(resolveOnJoinedPlan)
     }
 
-    def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Seq[Expression]] = {
+    def notMatchedClauseOutput(clause: DeltaMergeIntoNotMatchedClause): Seq[Seq[Expression]] = {
       // Generate insert expressions and set ROW_DELETED_COL = false and
       // CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC
       val insertExprs = clause.resolvedActions.map(_.expr)
@@ -827,14 +827,6 @@ case class MergeIntoCommand(
     // Write to Delta
     val newFiles = deltaTxn
       .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
-      .filter {
-        // In some cases (e.g. delete with empty source, or empty target, or on disjoint tables)
-        // we can write out an empty outputDF. This is hard to catch before the write without
-        // collecting the DF ahead of time. Instead, we can just accept only the AddFiles that
-        // actually add rows or when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
-        case _ => true
-      }
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)

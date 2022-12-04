@@ -58,6 +58,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DML_METRICS_FROM_METADATA =
+    buildConf("dmlMetricsFromMetadata.enabled")
+      .internal()
+      .doc(
+        """ When enabled, metadata only Delete, ReplaceWhere and Truncate operations will report row
+        | level operation metrics by reading the file statistics for number of rows.
+        | """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
     buildConf("stats.collect.using.tableSchema")
       .internal()
@@ -730,6 +740,19 @@ trait DeltaSQLConfBase {
         "to write data without providing values for a nullable column via DataFrame.write")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_ENABLED =
+    buildConf("convert.iceberg.enabled")
+      .internal()
+      .doc("If enabled, Iceberg tables can be converted into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED =
+    buildConf("convert.iceberg.partitionEvolution.enabled")
+      .doc("If enabled, support conversion of iceberg tables experienced partition evolution.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
