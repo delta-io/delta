@@ -333,7 +333,10 @@ object DeltaFileOperations extends DeltaLogging {
    * because the file didn't exist, then we still return `true`. Retries on S3 rate limits up to 3
    * times.
    */
-  def tryDeleteNonRecursive(fs: FileSystem, path: Path, tries: Int = 3,
+  def tryDeleteNonRecursive(
+      fs: FileSystem,
+      path: Path,
+      tries: Int = 3,
       firstCall: Boolean = true): Boolean = {
     try fs.delete(path, false) catch {
       case _: FileNotFoundException => true
