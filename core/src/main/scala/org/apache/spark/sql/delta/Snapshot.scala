@@ -412,7 +412,8 @@ object Snapshot extends DeltaLogging {
     setTransactions: Seq[SetTransaction],
     metadata: Metadata,
     protocol: Protocol,
-    fileSizeHistogram: Option[FileSizeHistogram] = None)
+    fileSizeHistogram: Option[FileSizeHistogram] = None
+  )
 }
 
 /**
