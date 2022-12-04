@@ -130,9 +130,6 @@ trait DeltaSourceBase extends Source
     }
   }
 
-  private val enableAvailableNowOffsetInitializationFix =
-    spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX)
-
   /**
    * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
    * will process up. We may run multiple micro batches, but the query will stop itself when it
@@ -145,13 +142,8 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
+    logInfo("The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
-    if (!enableAvailableNowOffsetInitializationFix) {
-      val offset = latestOffsetInternal(ReadLimit.allAvailable())
-      if (offset != null) {
-        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
-      }
-    }
   }
 
   /**
@@ -159,13 +151,18 @@ trait DeltaSourceBase extends Source
    * `prepareForTriggerAvailableNow`.
    */
   protected def initForTriggerAvailableNowIfNeeded(): Unit = {
-    if (enableAvailableNowOffsetInitializationFix && isTriggerAvailableNow &&
-        !isLastOffsetForTriggerAvailableNowInitialized) {
+    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
       isLastOffsetForTriggerAvailableNowInitialized = true
-      val offset = latestOffsetInternal(ReadLimit.allAvailable())
-      if (offset != null) {
-        lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
-      }
+      initLastOffsetForTriggerAvailableNow()
+    }
+  }
+
+  private def initLastOffsetForTriggerAvailableNow(): Unit = {
+    val offset = latestOffsetInternal(ReadLimit.allAvailable())
+    if (offset != null) {
+      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+      logInfo("lastOffset for Trigger.AvailableNow has set to " +
+        s"${lastOffsetForTriggerAvailableNow.json}")
     }
   }
 
@@ -501,6 +498,8 @@ case class DeltaSource(
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
 
+  logInfo(s"Filters being pushed down: $filters")
+
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
    * included in the result.
@@ -672,6 +671,25 @@ case class DeltaSource(
   }
 
   /**
+   * Verify whether the schema change in `version` is safe to continue. If not, throw an exception
+   * to fail the query.
+   */
+  protected def verifySchemaChange(newSchema: StructType, version: Long): Unit = {
+    // There is a schema change. All of files after this commit will use `newSchema`. Hence, we
+    // check whether we can use `schema` (the fixed source schema we use in the same run of the
+    // query) to read these new files safely.
+    if (!SchemaUtils.isReadCompatible(newSchema, schema)) {
+      val retryable = SchemaUtils.isReadCompatible(schema, newSchema)
+      throw DeltaErrors.schemaChangedException(
+        schema,
+        newSchema,
+        retryable = retryable,
+        Some(version),
+        includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
+    }
+  }
+
+  /**
    * Check stream for violating any constraints.
    *
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
@@ -693,9 +711,7 @@ case class DeltaSource(
       case m: Metadata =>
         if (verifyMetadataAction) {
           checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
-            throw DeltaErrors.schemaChangedException(schema, m.schema, false)
-          }
+          verifySchemaChange(m.schema, version)
         }
       case protocol: Protocol =>
         deltaLog.protocolRead(protocol)
@@ -749,9 +765,7 @@ case class DeltaSource(
       case m: Metadata =>
         if (verifyMetadataAction) {
           checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
-            throw DeltaErrors.schemaChangedException(schema, m.schema, false)
-          }
+          verifySchemaChange(m.schema, version)
         }
         false
       case protocol: Protocol =>

@@ -201,7 +201,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
-  /** Stores the updated metadata (if any) that will result from this txn. */
+  /**
+   * Stores the updated metadata (if any) that will result from this txn.
+   *
+   * This is just one way to change metadata.
+   * New metadata can also be added during commit from actions.
+   * But metadata should *not* be updated via both paths.
+   */
   protected var newMetadata: Option[Metadata] = None
 
   /** Stores the updated protocol (if any) that will result from this txn. */
@@ -491,18 +497,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * given log
    */
   def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
-    if (index.deltaLog.isSameLogAs(deltaLog)) {
-      this
-    } else {
-      if (spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)) {
-        readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
-          // Will be called only when the log is accessed the first time
-          index.getSnapshot
-        })
-      } else {
-        index.getSnapshot
-      }
-    }
+    if (index.deltaLog.isSameLogAs(deltaLog)) return this
+
+    // Will be called only when the log is accessed the first time
+    readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */
@@ -514,6 +512,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan
+  }
+
+  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
+  override def filesForScan(limit: Long): DeltaScan = {
+    val scan = snapshot.filesForScan(limit)
+    readFiles ++= scan.files
+    scan
+  }
+
+  /** Returns a[[DeltaScan]] based on the given partition filters, projections and limits. */
+  override def filesForScan(
+      limit: Long,
+      partitionFilters: Seq[Expression]): DeltaScan = {
+    partitionFilters.foreach { f =>
+      assert(
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark),
+        s"Only filters on partition columns [${metadata.partitionColumns.mkString(", ")}]" +
+          s" expected, found $f")
+    }
+    val scan = snapshot.filesForScan(limit, partitionFilters)
     readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
     readFiles ++= scan.files
     scan
@@ -935,6 +956,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(!committed, "Transaction already committed.")
 
     // If the metadata has changed, add that to the set of actions
+    // New metadata can come either from `newMetadata` or from the `actions` there.
     var finalActions = newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
     if (metadataChanges.length > 1) {
@@ -944,7 +966,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       assert(
         metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
     }
-    metadataChanges.foreach(m => verifyNewMetadata(m))
+    // There be at most one metadata entry at this point.
+    metadataChanges.foreach { m =>
+      verifyNewMetadata(m)
+      // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
+      // metadata was set via `updateMetadata` or `actions`.
+      newMetadata = Some(m)
+    }
     finalActions = newProtocol.toSeq ++ finalActions
 
 

@@ -24,16 +24,21 @@ import scala.util.Random
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.{FileAlreadyExistsException, FileStatus, FileSystem, FSDataInputStream, Path}
+import org.apache.hadoop.io.IOUtils.copyBytes
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop.{Footer, ParquetFileReader}
 
-import org.apache.spark.{SparkEnv, TaskContext}
+import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.execution.streaming.CheckpointFileManager
+import org.apache.spark.sql.execution.streaming.CheckpointFileManager.CancellableFSDataOutputStream
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**
@@ -427,4 +432,25 @@ object DeltaFileOperations extends DeltaLogging {
       isDaemon: Boolean = true)(body: => T): T = {
     ThreadUtils.runInNewThread(threadName, isDaemon)(body)
   }
+
+  /**
+   * Returns a `Dataset[AddFile]`, where all the `AddFile` actions have absolute paths. The files
+   * may have already had absolute paths, in which case they are left unchanged. Else, they are
+   * prepended with the `qualifiedSourcePath`.
+   *
+   * @param qualifiedTablePath Fully qualified path of Delta table root
+   * @param files List of `AddFile` instances
+   */
+  def makePathsAbsolute(
+      qualifiedTablePath: String,
+      files: Dataset[AddFile]): Dataset[AddFile] = {
+    import org.apache.spark.sql.delta.implicits._
+    files.mapPartitions { fileList =>
+      fileList.map { addFile =>
+        val fileSource = DeltaFileOperations.absolutePath(qualifiedTablePath, addFile.path)
+          addFile.copy(path = fileSource.toUri.toString)
+      }
+    }
+  }
+
 }

@@ -142,10 +142,10 @@ class DeltaAnalysis(session: SparkSession)
           RestoreTableCommand(traveledTable, tblIdent)
 
         case u: UnresolvedRelation =>
-          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+          u.failAnalysis(msg = s"Table not found: ${u.multipartIdentifier.quoted}")
 
         case TimeTravel(u: UnresolvedRelation, _, _, _) =>
-          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+          u.failAnalysis(msg = s"Table not found: ${u.multipartIdentifier.quoted}")
 
         case _ =>
           throw DeltaErrors.notADeltaTableException("RESTORE")

@@ -26,9 +26,10 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
-import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -38,7 +39,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand.computeStats
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -76,6 +76,8 @@ abstract class ConvertToDeltaCommandBase(
     partitionSchema: Option[StructType],
     collectStats: Boolean = true,
     deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
+
+  protected lazy val statsEnabled: Boolean = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
 
   protected lazy val icebergEnabled: Boolean =
     conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
@@ -286,20 +288,25 @@ abstract class ConvertToDeltaCommandBase(
       txn: OptimisticTransaction,
       fs: FileSystem): Iterator[AddFile] = {
     val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
-    val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
     val shouldCollectStats = collectStats && statsEnabled
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
+    var numFiles = 0L
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
         ConvertToDeltaCommand.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
-        computeStats(txn.deltaLog, initialSnapshot, adds)
+        logInfo(s"Collecting stats for a batch of ${batch.size} files; " +
+          s"finished $numFiles so far")
+        numFiles += statsBatchSize
+          ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, adds)
       } else if (collectStats) {
         logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
           s" is false. Skip statistics collection")
         adds.toIterator
-      } else adds.toIterator
+      } else {
+        adds.toIterator
+      }
     }
   }
 
@@ -398,7 +405,6 @@ abstract class ConvertToDeltaCommandBase(
       numFilesConverted: Long,
       convertProperties: ConvertTarget,
       sourceFormat: String): DeltaOperations.Operation = {
-    val statsEnabled = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
     DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
@@ -706,19 +712,21 @@ class CatalogFileManifest(
   serializableConf: SerializableConfiguration)
   extends ConvertTargetFileManifest {
 
+  // List of partition directories and corresponding partition values.
   private lazy val partitionList = {
     if (catalogTable.partitionSchema.isEmpty) {
       // Not a partitioned table.
-      Seq(basePath)
+      Seq(basePath -> Map.empty[String, String])
     } else {
       val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
       partitions.map { partition =>
-        partition.storage.locationUri.map(_.toString())
+        val partitionDir = partition.storage.locationUri.map(_.toString())
           .getOrElse {
             val partitionDir =
               PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
             basePath.stripSuffix("/") + "/" + partitionDir
           }
+        partitionDir -> partition.spec
       }
     }
   }
@@ -734,11 +742,13 @@ class CatalogFileManifest(
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
     val rdd = spark.sparkContext.parallelize(partitionList)
       .repartition(math.min(parallelism, partitionList.length))
-      .mapPartitions { dirs =>
-        DeltaFileOperations
-          .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
-          .map(ConvertTargetFile(_))
-      }
+      .mapPartitions { partitions =>
+        partitions.flatMap ( partition =>
+          DeltaFileOperations
+            .localListDirs(conf.value.value, Seq(partition._1), recursive = false).filter(!_.isDir)
+            .map(ConvertTargetFile(_, Some(partition._2)))
+        )
+    }
     spark.createDataset(rdd).cache()
   }
 
@@ -885,10 +895,10 @@ trait ConvertToDeltaCommandUtils extends DeltaLogging {
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
     import org.apache.spark.sql.functions._
     val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
-      .groupBy(input_file_name).agg(to_json(snapshot.statsCollector))
+      .groupBy(input_file_name()).agg(to_json(snapshot.statsCollector))
+
     val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
-    filesWithStats
-      .collect().iterator.map{ row =>
+    filesWithStats.collect().iterator.map { row =>
       val addFile = getTouchedFile(deltaLog.dataPath, row.getString(0), pathToAddFileMap)
       addFile.copy(stats = row.getString(1))
     }

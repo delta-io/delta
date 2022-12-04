@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -349,6 +349,28 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             "appendOnly should require the higher protocol")
         }
       }
+    }
+  }
+
+  test("create a table with no protocol") {
+    withTempDir { path =>
+      val log = DeltaLog.forTable(spark, path)
+      log.ensureLogDirectoryExist()
+      log.store.write(
+        deltaFile(log.logPath, 0),
+        Iterator(Metadata().json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+
+      assert(intercept[DeltaIllegalStateException] {
+        log.update()
+      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
+      assert(intercept[DeltaIllegalStateException] {
+        spark.read.format("delta").load(path.getCanonicalPath)
+      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
+      assert(intercept[DeltaIllegalStateException] {
+        spark.range(1).write.format("delta").mode(SaveMode.Overwrite).save(path.getCanonicalPath)
+      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
     }
   }
 

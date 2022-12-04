@@ -75,7 +75,6 @@ abstract class HiveConvertToDeltaSuiteBase
   }
 
   test("convert without statistics") {
-
     val tbl = "hive_parquet"
     withTable(tbl) {
       sql(
@@ -99,7 +98,6 @@ abstract class HiveConvertToDeltaSuiteBase
 
     }
   }
-
 
   test("convert a Hive based parquet table") {
     val tbl = "hive_parquet"

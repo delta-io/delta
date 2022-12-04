@@ -36,6 +36,19 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 /**
+ * A description of a Delta [[Snapshot]], including basic information such its [[DeltaLog]]
+ * metadata, protocol, and version.
+ */
+trait SnapshotDescriptor {
+  def deltaLog: DeltaLog
+  def version: Long
+  def metadata: Metadata
+  def protocol: Protocol
+
+  def schema: StructType = metadata.schema
+}
+
+/**
  * An immutable snapshot of the state of the log at some delta version. Internally
  * this class manages the replay of actions stored in checkpoint or delta files.
  *
@@ -52,15 +65,16 @@ import org.apache.spark.util.Utils
  */
 class Snapshot(
     val path: Path,
-    val version: Long,
+    override val version: Long,
     val logSegment: LogSegment,
     val minFileRetentionTimestamp: Long,
-    val deltaLog: DeltaLog,
+    override val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
     val minSetTransactionRetentionTimestamp: Option[Long] = None,
     checkpointMetadataOpt: Option[CheckpointMetaData] = None)
-  extends StateCache
+  extends SnapshotDescriptor
+  with StateCache
   with StatisticsCollection
   with DataSkippingReader
   with DeltaLogging {
@@ -165,16 +179,16 @@ class Snapshot(
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
     Map(
-      "protocol" -> last(col("protocol"), ignoreNulls = true),
-      "metadata" -> last(col("metaData"), ignoreNulls = true),
-      "setTransactions" -> collect_set(col("txn")),
       // sum may return null for empty data set.
       "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
+      "numOfSetTransactions" -> count(col("txn")),
       "numOfFiles" -> count(col("add")),
+      "numOfRemoves" -> count(col("remove")),
       "numOfMetadata" -> count(col("metaData")),
       "numOfProtocol" -> count(col("protocol")),
-      "numOfRemoves" -> count(col("remove")),
-      "numOfSetTransactions" -> count(col("txn")),
+      "setTransactions" -> collect_set(col("txn")),
+      "metadata" -> last(col("metaData"), ignoreNulls = true),
+      "protocol" -> last(col("protocol"), ignoreNulls = true),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
     )
   }
@@ -214,16 +228,19 @@ class Snapshot(
     }
   }
 
-  def protocol: Protocol = computedState.protocol
-  def metadata: Metadata = computedState.metadata
-  def setTransactions: Seq[SetTransaction] = computedState.setTransactions
   def sizeInBytes: Long = computedState.sizeInBytes
+  def numOfSetTransactions: Long = computedState.numOfSetTransactions
   def numOfFiles: Long = computedState.numOfFiles
-  def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
+  def numOfRemoves: Long = computedState.numOfRemoves
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
-  def numOfRemoves: Long = computedState.numOfRemoves
-  def numOfSetTransactions: Long = computedState.numOfSetTransactions
+  def setTransactions: Seq[SetTransaction] = computedState.setTransactions
+  override def metadata: Metadata = computedState.metadata
+  override def protocol: Protocol = computedState.protocol
+  def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
+  private[delta] def sizeInBytesOpt: Option[Long] = Some(sizeInBytes)
+  private[delta] def setTransactionsOpt: Option[Seq[SetTransaction]] = Some(setTransactions)
+  private[delta] def numOfFilesOpt: Option[Long] = Some(numOfFiles)
 
   /**
    * Computes all the information that is needed by the checksum for the current snapshot.
@@ -232,14 +249,15 @@ class Snapshot(
    * attached. E.g. if a snapshot is created by reading a checkpoint, then no txnId is present.
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
+    txnId = None,
     tableSizeBytes = sizeInBytes,
     numFiles = numOfFiles,
     numMetadata = numOfMetadata,
     numProtocol = numOfProtocol,
-    protocol = protocol,
+    setTransactions = checksumOpt.flatMap(_.setTransactions),
     metadata = metadata,
+    protocol = protocol,
     histogramOpt = fileSizeHistogram,
-    txnId = None,
     allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** A map to look up transaction version by appId. */
@@ -257,9 +275,6 @@ class Snapshot(
   def tombstones: Dataset[RemoveFile] = {
     stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
   }
-
-  /** Returns the schema of the table. */
-  def schema: StructType = metadata.schema
 
   /** Returns the data schema of the table, used for reading stats */
   def tableDataSchema: StructType = metadata.dataSchema
@@ -374,28 +389,30 @@ object Snapshot extends DeltaLogging {
   }
 
   /**
-   * Metrics and metadata computed around the Delta table
-   * @param protocol The protocol version of the Delta table
-   * @param metadata The metadata of the table
-   * @param setTransactions The streaming queries writing to this table
-   * @param sizeInBytes The total size of the table (of active files, not including tombstones)
-   * @param numOfFiles The number of files in this table
-   * @param numOfMetadata The number of metadata actions in the state. Should be 1
-   * @param numOfProtocol The number of protocol actions in the state. Should be 1
-   * @param numOfRemoves The number of tombstones in the state
-   * @param numOfSetTransactions Number of streams writing to this table
+   * Metrics and metadata computed around the Delta table.
+   * @param sizeInBytes The total size of the table (of active files, not including tombstones).
+   * @param numOfSetTransactions Number of streams writing to this table.
+   * @param numOfFiles The number of files in this table.
+   * @param numOfRemoves The number of tombstones in the state.
+   * @param numOfMetadata The number of metadata actions in the state. Should be 1.
+   * @param numOfProtocol The number of protocol actions in the state. Should be 1.
+   * @param setTransactions The streaming queries writing to this table.
+   * @param metadata The metadata of the table.
+   * @param protocol The protocol version of the Delta table.
+   * @param fileSizeHistogram A Histogram class tracking the file counts and total bytes
+   *                          in different size ranges.
    */
   case class State(
-    protocol: Protocol,
-    metadata: Metadata,
-    setTransactions: Seq[SetTransaction],
     sizeInBytes: Long,
+    numOfSetTransactions: Long,
     numOfFiles: Long,
+    numOfRemoves: Long,
     numOfMetadata: Long,
     numOfProtocol: Long,
-    numOfRemoves: Long,
-    numOfSetTransactions: Long,
-    fileSizeHistogram: Option[FileSizeHistogram])
+    setTransactions: Seq[SetTransaction],
+    metadata: Metadata,
+    protocol: Protocol,
+    fileSizeHistogram: Option[FileSizeHistogram] = None)
 }
 
 /**
@@ -434,6 +451,16 @@ class InitialSnapshot(
   override protected lazy val computedState: Snapshot.State = initialState
   private def initialState: Snapshot.State = {
     val protocol = Protocol.forNewTable(spark, metadata)
-    Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L, None)
+    Snapshot.State(
+      sizeInBytes = 0L,
+      numOfSetTransactions = 0L,
+      numOfFiles = 0L,
+      numOfRemoves = 0L,
+      numOfMetadata = 1L,
+      numOfProtocol = 1L,
+      setTransactions = Nil,
+      metadata = metadata,
+      protocol = protocol
+    )
   }
 }

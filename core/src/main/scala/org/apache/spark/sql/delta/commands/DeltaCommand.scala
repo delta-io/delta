@@ -91,7 +91,7 @@ trait DeltaCommand extends DeltaLogging {
    * rewrite files such as delete, merge, update. We expect file names to be unique, because
    * each file contains a UUID.
    */
-   def generateCandidateFileMap(
+  def generateCandidateFileMap(
       basePath: Path,
       candidateFiles: Seq[AddFile]): Map[String, AddFile] = {
     val nameToAddFileMap = candidateFiles.map(add =>
@@ -154,7 +154,7 @@ trait DeltaCommand extends DeltaLogging {
    * @param filePath The path to a file. Can be either absolute or relative
    * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
    */
-   def getTouchedFile(
+  def getTouchedFile(
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {

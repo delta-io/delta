@@ -241,6 +241,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   test("detect nondeterministic source - flag on") {
     withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
       val e = intercept[UnsupportedOperationException](
@@ -252,12 +254,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   test("detect nondeterministic source - flag off") {
     withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
     ) {
       testNondeterministicOrder
     }
   }
 
+  test("detect nondeterministic source - flag on, materialized") {
+    withSQLConf(
+      // materializing source fixes determinism, so the source is no longer nondeterministic
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
+    ) {
+      testNondeterministicOrder
+    }
+  }
 
   test("merge into a dataset temp views with star") {
     withTempView("v") {

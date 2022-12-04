@@ -21,9 +21,10 @@ import java.util.Objects
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshot, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.perf.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -49,9 +50,8 @@ import org.apache.spark.sql.types.StructType
  */
 trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
-  with DeltaLogging { self: PrepareDeltaScan =>
-
-  private val snapshotIsolationEnabled = spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)
+  with DeltaLogging
+  with OptimizeMetadataOnlyDeltaQuery { self: PrepareDeltaScan =>
 
   /**
    * Tracks the first-access snapshots of other logs planned by this rule. The snapshots are
@@ -73,17 +73,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     // The first case means that we've fixed the table snapshot for time travel
     if (index.isTimeTravelQuery) return index.getSnapshot
-    val scanGenerator = OptimisticTransaction.getActive().map(_.getDeltaScanGenerator(index))
+    val scanGenerator = OptimisticTransaction.getActive()
+      .map(_.getDeltaScanGenerator(index))
       .getOrElse {
-        val snapshot = if (snapshotIsolationEnabled) {
-          scannedSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
-            // Will be called only when the log is accessed the first time
-            index.getSnapshot
-          })
-        } else {
-          index.getSnapshot
-        }
-        snapshot
+        // Will be called only when the log is accessed the first time
+        scannedSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
       }
     import PrepareDeltaScanBase._
     if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)
@@ -103,12 +97,14 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       fileIndex.deltaLog,
       fileIndex.path,
       preparedScan,
-      fileIndex.partitionSchema,
       fileIndex.versionToUse)
   }
 
   /**
    * Scan files using the given `filters` and return `DeltaScan`.
+   *
+   * Note: when `limitOpt` is non empty, `filters` must contain only partition filters. Otherwise,
+   * it can contain arbitrary filters. See `DeltaTableScan` for more details.
    */
   protected def filesForScan(
       scanGenerator: DeltaScanGenerator,
@@ -116,6 +112,12 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       filters: Seq[Expression],
       delta: LogicalRelation): DeltaScan = {
     withStatusCode("DELTA", "Filtering files for query") {
+      if (limitOpt.nonEmpty) {
+        // If we trigger limit push down, the filters must be partition filters. Since
+        // there are no data filters, we don't need to apply Generated Columns
+        // optimization. See `DeltaTableScan` for more details.
+        return scanGenerator.filesForScan(limitOpt.get, filters)
+      }
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
           filters
@@ -160,25 +162,29 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
           val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
               filesForScan(scanGenerator, limit, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
-          optimizeGeneratedColumns(
-            preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
+          optimizeGeneratedColumns(scan, preparedIndex, filters, limit, delta)
       }
 
     transform(plan)
   }
 
   protected def optimizeGeneratedColumns(
-      scannedSnapshot: Snapshot,
       scan: LogicalPlan,
       preparedIndex: PreparedDeltaFileIndex,
       filters: Seq[Expression],
       limit: Option[Int],
       delta: LogicalRelation): LogicalPlan = {
+    if (limit.nonEmpty) {
+      // If we trigger limit push down, the filters must be partition filters. Since
+      // there are no data filters, we don't need to apply Generated Columns
+      // optimization. See `DeltaTableScan` for more details.
+      return DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
+    }
     if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
       DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
     } else {
       val generatedPartitionFilters =
-        GeneratedColumn.generatePartitionFilters(spark, scannedSnapshot, filters, delta)
+        GeneratedColumn.generatePartitionFilters(spark, preparedIndex, filters, delta)
       val scanWithFilters =
         if (generatedPartitionFilters.nonEmpty) {
           scan transformUp {
@@ -199,7 +205,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
     )
     if (shouldPrepareDeltaScan) {
-
       // Should not be applied to subqueries to avoid duplicate delta jobs.
       val isSubquery = plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]
       // Should not be applied to DataSourceV2 write plans, because they'll be planned later
@@ -207,6 +212,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
       if (isSubquery || isDataSourceV2) {
         return plan
+      }
+
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)) {
+        plan = optimizeQueryWithMetadata(plan)
       }
 
       prepareDeltaScan(plan)
@@ -248,6 +257,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
      * object `plan` and tries to give back the arguments as a [[DeltaTableScanType]].
      */
     def unapply(plan: LogicalPlan): Option[DeltaTableScanType] = {
+      val limitPushdownEnabled = spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)
 
       // Remove projections as a plan differentiator because it does not affect file listing
       // results. Plans with the same filters but different projections therefore will not have
@@ -260,6 +270,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       }
 
       plan match {
+        case LocalLimit(IntegerLiteral(limit),
+          PhysicalOperation(_, filters, delta @ DeltaTable(fileIndex: TahoeLogFileIndex)))
+            if limitPushdownEnabled && containsPartitionFiltersOnly(filters, fileIndex) =>
+          Some((canonicalizePlanForDeltaFileListing(plan), filters, fileIndex, Some(limit), delta))
         case PhysicalOperation(
             _,
             filters,
@@ -322,13 +336,9 @@ case class PreparedDeltaFileIndex(
     override val deltaLog: DeltaLog,
     override val path: Path,
     preparedScan: DeltaScan,
-    override val partitionSchema: StructType,
     versionScanned: Option[Long])
-  extends TahoeFileIndex(spark, deltaLog, path) with DeltaLogging {
-
-  override def tableVersion: Long = preparedScan.version
-  override def metadata: Metadata = preparedScan.scannedSnapshot.metadata
-  override def getSnapshot: Snapshot = preparedScan.scannedSnapshot
+  extends TahoeFileIndexWithSnapshot(spark, deltaLog, path, preparedScan.scannedSnapshot)
+  with DeltaLogging {
 
   /**
    * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`

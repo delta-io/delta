@@ -130,7 +130,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
-
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
       val validFiles = snapshot.stateDS
         .mapPartitions { actions =>

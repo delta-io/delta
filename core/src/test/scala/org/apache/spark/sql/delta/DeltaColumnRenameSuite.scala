@@ -408,7 +408,8 @@ class DeltaColumnRenameSuite extends QueryTest
         assertException("A generated column cannot use a non-existent column") {
           spark.sql("alter table t1 rename column arr to arr1")
         }
-        assertException("No such struct field d in c1, d1") {
+        assertExceptionOneOf(Seq("No such struct field d in c1, d1",
+          "No such struct field `d` in `c1`, `d1`")) {
           spark.sql("alter table t1 rename column b.d to d1")
         }
       }

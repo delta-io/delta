@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.test
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, NoMapping}
+import org.apache.spark.sql.delta.{DeltaColumnMappingTestUtils, DeltaConfigs, NoMapping}
 import org.scalactic.source.Position
 import org.scalatest.Tag
 import org.scalatest.exceptions.TestFailedException
@@ -29,11 +29,10 @@ import org.apache.spark.sql.test.SQLTestUtils
 /**
  * A trait for selective enabling certain tests to run for column mapping modes
  */
-trait DeltaColumnMappingSelectedTestMixin extends SparkFunSuite with SQLTestUtils {
+trait DeltaColumnMappingSelectedTestMixin extends SparkFunSuite
+  with SQLTestUtils with DeltaColumnMappingTestUtils {
 
   protected def runOnlyTests: Seq[String] = Seq()
-
-  protected def columnMappingMode: String = NoMapping.name
 
   /**
    * If true, will run all tests.

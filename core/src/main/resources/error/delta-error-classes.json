@@ -1304,6 +1304,37 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS" : {
+    "message" : [
+      "Detected schema change in version <version>:",
+      "old schema: <oldSchema>",
+      "",
+      "new schema: <newSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory. If the issue persists after",
+      "changing to a new checkpoint directory, you may need to change the existing",
+      "'startingVersion' or 'startingTimestamp' option to start from a version newer than",
+      "<version> with a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGED_WITH_VERSION" : {
+    "message" : [
+      "Detected schema change in version <version>:",
+      "old schema: <oldSchema>",
+      "",
+      "new schema: <newSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" : {
     "message" : [
       "The schema of your Delta table has changed in an incompatible way since your DataFrame",

@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
-import org.apache.spark.sql.delta.PreprocessTableRestore
+import org.apache.spark.sql.delta.PreprocessTimeTravel
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -79,7 +79,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTableRestore(session)
+      new PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support

@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
+import org.apache.spark.sql.functions.{col, from_json}
 
 trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
   with DeltaSQLCommandTest {
@@ -31,6 +34,30 @@ trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
         s" partitioned by ($stringSchema)")
     }
   }
+
+  // TODO: Move to ConvertToDeltaSuiteBaseCommons when DeltaTable API contains collectStats option
+  test("convert with collectStats set to false") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF)
+        convertToDelta(s"parquet.`$tempDir`", collectStats = false)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val history = io.delta.tables.DeltaTable.forPath(tempDir).history()
+        checkAnswer(
+          spark.read.format("delta").load(tempDir),
+          simpleDF
+        )
+        assert(history.count == 1)
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema)
+            .as("stats")).select("stats.*")
+        assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
+      }
+    }
+  }
+
 }
 
 class ConvertToDeltaSQLSuite extends ConvertToDeltaSQLSuiteBase

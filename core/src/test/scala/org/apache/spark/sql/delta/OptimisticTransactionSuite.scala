@@ -431,4 +431,31 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
     }
   }
+
+  test("can set partition columns in first commit") {
+    withTempDir { tableDir =>
+      val partitionColumns = Array("part")
+      val exampleAddFile = AddFile(
+        path = "test-path",
+        partitionValues = Map("part" -> "one"),
+        size = 1234,
+        modificationTime = 5678,
+        dataChange = true,
+        stats = """{"numRecords": 1}""",
+        tags = Map.empty)
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType()
+        .add("id", "long")
+        .add("part", "string")
+      deltaLog.withNewTransaction { txn =>
+        val protocol = Protocol()
+        val metadata = Metadata(
+          schemaString = schema.json,
+          partitionColumns = partitionColumns)
+        txn.commit(Seq(protocol, metadata, exampleAddFile), DeltaOperations.ManualUpdate)
+      }
+      val snapshot = deltaLog.update()
+      assert(snapshot.metadata.partitionColumns.sameElements(partitionColumns))
+    }
+  }
 }

@@ -650,7 +650,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key2, value) VALUES (3, 4)")
       }.getMessage
 
-      errorContains(e, "Reference 'value' is ambiguous, could be: ")
+      Seq("value", "is ambiguous", "could be").foreach(x => errorContains(e, x))
 
       // non-deterministic search condition
       e = intercept[AnalysisException] {
@@ -1570,7 +1570,7 @@ abstract class MergeIntoSuiteBase
   testAnalysisErrorsInExtendedMerge("update condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
     update(condition = "key > 1", set = "tgtValue = srcValue"))(
-    errorStrs = "reference 'key' is ambiguous" :: Nil)
+    errorStrs = "reference" :: "key" :: "is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - unknown reference")(
     mergeOn = "s.key = t.key",
@@ -1591,7 +1591,7 @@ abstract class MergeIntoSuiteBase
   testAnalysisErrorsInExtendedMerge("delete condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
     delete(condition = "key > 1"))(
-    errorStrs = "reference 'key' is ambiguous" :: Nil)
+    errorStrs = "reference" :: "key" :: "is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - unknown reference")(
     mergeOn = "s.key = t.key",

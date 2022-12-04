@@ -176,6 +176,11 @@ trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteUtils {
 
     assert(e.getMessage.contains(message))
   }
+
+  protected def assertExceptionOneOf(messages: Seq[String])(block: => Unit): Unit = {
+    val e = intercept[Exception](block)
+    assert(messages.exists(x => e.getMessage.contains(x)))
+  }
 }
 
 class DeltaArbitraryColumnNameSuite extends QueryTest

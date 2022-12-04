@@ -1650,6 +1650,7 @@ class DeltaAlterTableByNameSuite
         Map("delta.randomPrefixLength" -> "5", "key" -> "value"))
     }
   }
+
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest

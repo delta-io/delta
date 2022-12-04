@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.SparkSession
@@ -27,10 +28,10 @@ import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
 /** A thin wrapper over the Parquet file format to support columns names without restrictions. */
-class DeltaParquetFileFormat(
-    val columnMappingMode: DeltaColumnMappingMode,
-    val referenceSchema: StructType)
-  extends ParquetFileFormat {
+class DeltaParquetFileFormat(metadata: Metadata) extends ParquetFileFormat {
+
+  val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
+  val referenceSchema: StructType = metadata.schema
 
   if (columnMappingMode == IdMapping) {
     val requiredReadConf = SQLConf.PARQUET_FIELD_ID_READ_ENABLED

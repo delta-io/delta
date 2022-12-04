@@ -151,13 +151,7 @@ class DeltaLog private(
    * state, but no files will be deleted.
    */
   def minSetTransactionRetentionTimestamp: Option[Long] = {
-    val intervalOpt = DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.fromMetaData(metadata)
-
-    if (intervalOpt.isDefined) {
-      Some(clock.getTimeMillis() - DeltaConfigs.getMilliSeconds(intervalOpt.get))
-    } else {
-      None
-    }
+    DeltaLog.minSetTransactionRetentionInterval(metadata).map { clock.getTimeMillis() - _ }
   }
 
   /**
@@ -205,8 +199,7 @@ class DeltaLog private(
       schema: StructType = Action.logSchema): LogicalRelation = {
     val formatSpecificOptions: Map[String, String] = index.format match {
       case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
-        // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
-        Map("mode" -> FailFastMode.name)
+        DeltaLog.jsonCommitParseOption
       case _ => Map.empty
     }
     // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
@@ -347,7 +340,7 @@ class DeltaLog private(
   def protocolRead(protocol: Protocol): Unit = {
     val supportedReaderVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
-    if (protocol != null && supportedReaderVersion < protocol.minReaderVersion) {
+    if (supportedReaderVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
@@ -365,7 +358,7 @@ class DeltaLog private(
   def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
     val supportedWriterVersion =
       Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
-    if (protocol != null && supportedWriterVersion < protocol.minWriterVersion) {
+    if (supportedWriterVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
@@ -592,6 +585,9 @@ object DeltaLog extends DeltaLogging {
   }
 
 
+  // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
+  val jsonCommitParseOption = Map("mode" -> FailFastMode.name)
+
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
     apply(spark, logPathFor(dataPath), Map.empty, new SystemClock)
@@ -727,9 +723,8 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    var path = rawPath
-    val fs = path.getFileSystem(hadoopConf)
-    path = fs.makeQualified(path)
+    val fs = rawPath.getFileSystem(hadoopConf)
+    val path = fs.makeQualified(rawPath)
     def createDeltaLog(): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
@@ -864,6 +859,12 @@ object DeltaLog extends DeltaLogging {
             UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
         }
     })
+  }
+
+  def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
+    DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
+      .fromMetaData(metadata)
+      .map(DeltaConfigs.getMilliSeconds)
   }
 
   /** Get a function that canonicalizes a given `path`. */
