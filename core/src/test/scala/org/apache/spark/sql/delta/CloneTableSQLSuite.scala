@@ -38,47 +38,13 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       isCreate: Boolean = true,
       isReplace: Boolean = false,
       tableProperties: Map[String, String] = Map.empty): Unit = {
-    val header = if (isCreate && isReplace) {
-      "CREATE OR REPLACE"
-    } else if (isReplace) {
-      "REPLACE"
-    } else {
-      "CREATE"
-    }
-    // e.g. CREATE TABLE targetTable
-    val createTbl =
-      if (targetIsTable) s"$header TABLE $target" else s"$header TABLE delta.`$target`"
-    // e.g. CREATE TABLE targetTable SHALLOW CLONE
-    val withMethod =
-        createTbl + " SHALLOW CLONE "
-    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table`
-    val withSource = if (sourceIsTable) {
-      withMethod + s"$source "
-    } else {
-      withMethod + s"$sourceFormat.`$source` "
-    }
-    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table` VERSION AS OF 0
-    val withVersion = if (versionAsOf.isDefined) {
-      withSource + s"VERSION AS OF ${versionAsOf.get}"
-    } else if (timestampAsOf.isDefined) {
-      withSource + s"TIMESTAMP AS OF '${timestampAsOf.get}'"
-    } else {
-      withSource
-    }
-    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table` VERSION AS OF 0
-    //      LOCATION '/desired/target/location'
-    val withLocation = if (targetLocation.isDefined) {
-      s" $withVersion LOCATION '${targetLocation.get}'"
-    } else {
-      withVersion
-    }
-    val withProperties = if (tableProperties.nonEmpty) {
-      val props = tableProperties.map(p => s"'${p._1}' = '${p._2}'").mkString(",")
-      s" $withLocation TBLPROPERTIES ($props)"
-    } else {
-      withLocation
-    }
-    sql(withProperties)
+    val commandSql = CloneTableSQLTestUtils.buildCloneSqlString(
+      source, target,
+      sourceIsTable, targetIsTable,
+      sourceFormat, targetLocation,
+      versionAsOf, timestampAsOf,
+      isCreate, isReplace, tableProperties)
+    sql(commandSql)
   }
   // scalastyle:on argcount
 
@@ -238,4 +204,65 @@ class CloneTableSQLNameColumnMappingSuite
   extends CloneTableSQLSuite
     with CloneTableColumnMappingNameSuiteBase
     with DeltaColumnMappingEnableNameMode {
+}
+
+object CloneTableSQLTestUtils {
+
+  // scalastyle:off argcount
+  def buildCloneSqlString(
+      source: String,
+      target: String,
+      sourceIsTable: Boolean = false,
+      targetIsTable: Boolean = false,
+      sourceFormat: String = "delta",
+      targetLocation: Option[String] = None,
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None,
+      isCreate: Boolean = true,
+      isReplace: Boolean = false,
+      tableProperties: Map[String, String] = Map.empty): String = {
+    val header = if (isCreate && isReplace) {
+      "CREATE OR REPLACE"
+    } else if (isReplace) {
+      "REPLACE"
+    } else {
+      "CREATE"
+    }
+    // e.g. CREATE TABLE targetTable
+    val createTbl =
+      if (targetIsTable) s"$header TABLE $target" else s"$header TABLE delta.`$target`"
+    // e.g. CREATE TABLE targetTable SHALLOW CLONE
+    val withMethod =
+      createTbl + " SHALLOW CLONE "
+    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table`
+    val withSource = if (sourceIsTable) {
+      withMethod + s"$source "
+    } else {
+      withMethod + s"$sourceFormat.`$source` "
+    }
+    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table` VERSION AS OF 0
+    val withVersion = if (versionAsOf.isDefined) {
+      withSource + s"VERSION AS OF ${versionAsOf.get}"
+    } else if (timestampAsOf.isDefined) {
+      withSource + s"TIMESTAMP AS OF '${timestampAsOf.get}'"
+    } else {
+      withSource
+    }
+    // e.g. CREATE TABLE targetTable SHALLOW CLONE delta.`/source/table` VERSION AS OF 0
+    //      LOCATION '/desired/target/location'
+    val withLocation = if (targetLocation.isDefined) {
+      s" $withVersion LOCATION '${targetLocation.get}'"
+    } else {
+      withVersion
+    }
+    val withProperties = if (tableProperties.nonEmpty) {
+      val props = tableProperties.map(p => s"'${p._1}' = '${p._2}'").mkString(",")
+      s" $withLocation TBLPROPERTIES ($props)"
+    } else {
+      withLocation
+    }
+
+    withProperties
+  }
+  // scalastyle:on argcount
 }

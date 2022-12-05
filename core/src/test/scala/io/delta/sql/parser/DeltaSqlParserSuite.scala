@@ -18,12 +18,14 @@ package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
 
+import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
+import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -114,6 +116,146 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  test("CLONE command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+
+    // Standard shallow clone
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("t1")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = false,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = None
+      )
+    }
+
+    // Path based source table
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "/path/to/t1",
+        "t1",
+        targetIsTable = true
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("/path/to/t1", "delta")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = false,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = None
+      )
+    }
+
+    // REPLACE
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true,
+        isCreate = false,
+        isReplace = true
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("t1")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = true,
+        isCreateCommand = false,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = None
+      )
+    }
+
+    // CREATE OR REPLACE
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true,
+        isCreate = true,
+        isReplace = true
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("t1")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = true,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = None
+      )
+    }
+
+    // clone with table properties
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true,
+        tableProperties = Map("a" -> "a")
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("t1")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = false,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map("a" -> "a"),
+        targetLocation = None
+      )
+    }
+
+    // clone with external location
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true,
+        targetLocation = Some("/new/path")
+      )) == CloneTableStatement(
+        UnresolvedRelation(tblId("t1")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = false,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = Some("/new/path")
+      )
+    }
+
+    // clone with time travel
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        "t1",
+        "t1",
+        sourceIsTable = true,
+        targetIsTable = true,
+        versionAsOf = Some(1L)
+      )) == CloneTableStatement(
+        TimeTravel(
+          UnresolvedRelation(tblId("t1")),
+          None,
+          Some(1L),
+          Some("sql")),
+        UnresolvedRelation(tblId("t1")),
+        ifNotExists = false,
+        isReplaceCommand = false,
+        isCreateCommand = true,
+        tablePropertyOverrides = Map.empty,
+        targetLocation = None
+      )
+    }
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
