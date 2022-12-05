@@ -114,9 +114,10 @@ trait CloneTableSuiteBase extends QueryTest
       sourceVersion: Option[Long] = None,
       sourceTimestamp: Option[String] = None,
       isCreate: Boolean = true,
-      isReplaceOperation: Boolean = false, // If we are doing a replace on an existing table
-      isReplaceDelta: Boolean = true, // If we are doing a replace, whether it is on a Delta table
-      expectNoCopy: Boolean = false, // If we are expecting no file copy due to deduplication
+      // If we are doing a replace on an existing table
+      isReplaceOperation: Boolean = false,
+      // If we are doing a replace, whether it is on a Delta table
+      isReplaceDelta: Boolean = true,
       commitLargeMetricsMap: Map[String, String] = Map.empty,
       expectedDataframe: DataFrame = spark.emptyDataFrame)
       (f: () => Unit =
@@ -235,11 +236,6 @@ trait CloneTableSuiteBase extends QueryTest
     assert(blob("sourceTableSize") === cloneSource.sizeInBytes)
     assert(blob("sourceNumOfFiles") === cloneSource.numOfFiles)
 
-    verifyNumberFilesClonedAndRemoved(
-      blob,
-      cloneSource,
-      targetLog.unsafeVolatileSnapshot,
-      expectNoCopy)
 
     // Check whether resulting metadata of target and source at version is the same
     compareMetadata(
@@ -269,22 +265,6 @@ trait CloneTableSuiteBase extends QueryTest
       sourceDf)
   }
 
-  private def verifyNumberFilesClonedAndRemoved(
-      blob: Map[String, Any],
-      cloneSource: CloneSource,
-      targetSnapshot: Snapshot,
-      expectNoCopy: Boolean): Unit = {
-
-    if (targetSnapshot.deltaLog.dataPath == cloneSource.dataPath ||
-        cloneSource.numOfFiles === 0 ||
-        expectNoCopy) {
-      assert(blob("numCopiedFiles") === 0)
-      assert(blob("copiedFilesSize") === 0)
-    } else {
-      assert(blob("numCopiedFiles").toString.toInt > 0)
-      assert(blob("copiedFilesSize").toString.toInt > 0)
-    }
-  }
 
   protected def verifyAllCloneOperationsEmitted(
       allLogs: Seq[UsageRecord],

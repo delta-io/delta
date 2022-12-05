@@ -2472,14 +2472,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def shallowCloneFileNotFoundHint(path: String): String = {
-    "A file referenced in the transaction log cannot be found. This can occur when data has been " +
-      "manually deleted from the file system rather than using the table `DELETE` statement. " +
-      "This table appears to be a shallow clone, if that is the case, this error can occur when " +
-      "the original table from which this table was cloned has deleted a file that the clone is " +
-      "still using. "
-  }
-
   def cloneOnRelativePath(path: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_CLONE_PATH",

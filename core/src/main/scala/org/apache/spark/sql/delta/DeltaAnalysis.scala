@@ -294,11 +294,12 @@ class DeltaAnalysis(session: SparkSession)
    * @param targetPath Target path containing the target path to clone to
    * @param byPath Whether the target is a path based table
    * @param tableIdent Table Identifier for the target table
+   * @param targetLocation User specified target location for the new table
    * @param existingTable Existing table definition if we're going to be replacing the table
    * @param srcTable The source table to clone
    * @return catalog to CreateDeltaTableCommand with
    */
-  private def createCatalogForCommandForClone(
+  private def createCatalogTableForCloneCommand(
       targetPath: Path,
       byPath: Boolean,
       tableIdent: TableIdentifier,
@@ -382,7 +383,7 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
         }
         // We're creating a table by path and there won't be a place to store catalog stats
-        val catalog = createCatalogForCommandForClone(
+        val catalog = createCatalogTableForCloneCommand(
           path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
         CreateDeltaTableCommand(
           catalog,
@@ -405,7 +406,7 @@ class DeltaAnalysis(session: SparkSession)
           .asTableIdentifier
         val finalTarget = new Path(statement.targetLocation.getOrElse(
           session.sessionState.catalog.defaultTablePath(tblIdent).toString))
-        val catalogTable = createCatalogForCommandForClone(
+        val catalogTable = createCatalogTableForCloneCommand(
           finalTarget, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
         val catalogTableWithPath = if (targetLocation.isEmpty) {
           catalogTable.copy(
@@ -433,9 +434,7 @@ class DeltaAnalysis(session: SparkSession)
           case None => TableIdentifier(path.toString, Some("delta"))
         }
         val cloneSourceTable = sourceTbl
-
-
-        val catalog = createCatalogForCommandForClone(
+        val catalogTable = createCatalogTableForCloneCommand(
           path,
           byPath = existingTable.isEmpty,
           tblIdent,
@@ -444,7 +443,7 @@ class DeltaAnalysis(session: SparkSession)
           cloneSourceTable)
 
         CreateDeltaTableCommand(
-          catalog,
+          catalogTable,
           existingTable,
           saveMode,
           Some(CloneTableCommand(
@@ -457,14 +456,14 @@ class DeltaAnalysis(session: SparkSession)
           output = CloneTableCommand.output)
 
       // Non-delta metastore table already exists at target
-      case LogicalRelation(_, _, existingCatalog @ Some(catalog), _) =>
-        val tblIdent = catalog.identifier
-        val path = new Path(catalog.location)
-        val newCatalog = createCatalogForCommandForClone(
+      case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
+        val tblIdent = catalogTable.identifier
+        val path = new Path(catalogTable.location)
+        val newCatalogTable = createCatalogTableForCloneCommand(
           path, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
         CreateDeltaTableCommand(
-          newCatalog,
-          existingCatalog,
+          newCatalogTable,
+          existingCatalogTable,
           saveMode,
           Some(CloneTableCommand(
             sourceTbl,

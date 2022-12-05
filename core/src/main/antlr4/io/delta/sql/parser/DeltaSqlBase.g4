@@ -60,11 +60,6 @@ grammar DeltaSqlBase;
       return true;
     }
   }
-
-  /**
-   * When true, double quoted literals are identifiers rather than STRINGs.
-   */
-  public boolean double_quoted_identifiers = false;
 }
 
 tokens {
@@ -152,7 +147,7 @@ propertyValue
 
 stringLit
     : STRING
-    | {!double_quoted_identifiers}? DOUBLEQUOTED_STRING
+    | DOUBLEQUOTED_STRING
     ;
 
 booleanValue

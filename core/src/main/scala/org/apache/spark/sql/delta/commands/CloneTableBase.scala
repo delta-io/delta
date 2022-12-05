@@ -103,11 +103,8 @@ trait CloneTableBaseUtils extends DeltaLogging
       opMetrics: SnapshotOverwriteOperationMetrics): Map[String, Long] = {
     Map(
       SOURCE_TABLE_SIZE -> opMetrics.sourceSnapshotSizeInBytes,
-      SOURCE_NUM_OF_FILES -> opMetrics.sourceSnapshotFileCount,
-      NUM_REMOVED_FILES -> opMetrics.destSnapshotRemovedFileCount,
-      NUM_COPIED_FILES -> 0L,
-      REMOVED_FILES_SIZE -> opMetrics.destSnapshotRemovedFilesSizeInBytes,
-      COPIED_FILES_SIZE -> 0L)
+      SOURCE_NUM_OF_FILES -> opMetrics.sourceSnapshotFileCount
+    )
   }
 
   /**
@@ -120,11 +117,6 @@ trait CloneTableBaseUtils extends DeltaLogging
 
   /** Make a output Seq[Row] of metrics for the executed command */
   protected def getOutputSeq(operationMetrics: Map[String, Long]): Seq[Row]
-
-
-  protected val fnfExceptionMessage: String = "Tried to clone a version of the table where " +
-    "files have been deleted manually or by VACUUM. To continue with the operation " +
-    "by skipping the missing files set `spark.sql.files.ignoreMissingFiles` to true."
 
   protected def checkColumnMappingMode(beforeMetadata: Metadata, afterMetadata: Metadata): Unit = {
     val beforeColumnMappingMode = beforeMetadata.columnMappingMode
@@ -152,9 +144,6 @@ trait CloneTableBaseUtils extends DeltaLogging
   }
 }
 
-/**
- * Base Trait for Clone and Restore Commands
- */
 abstract class CloneTableBase(
     sourceTable: CloneSource,
     tablePropertyOverrides: Map[String, String],
@@ -194,7 +183,10 @@ abstract class CloneTableBase(
       destinationTable.createLogDirectory()
     }
 
-    val (datasetOfNewFilesToAdd, newMetadata, datasetOfExistingFileToRemoveOpt) = {
+    val (
+      datasetOfNewFilesToAdd,
+      newMetadata
+      ) = {
       // Make sure target table is empty before running clone
       if (txn.snapshot.allFiles.count() > 0) {
         throw DeltaErrors.cloneReplaceNonEmptyTable
@@ -204,7 +196,7 @@ abstract class CloneTableBase(
         id = UUID.randomUUID().toString,
         name = null, // remove the name of the table during cloning
         description = null) // remove description of table during cloning
-      (sourceTable.allFiles, clonedMetadata, Option.empty[Dataset[AddFile]])
+      (sourceTable.allFiles, clonedMetadata)
     }
 
     // TODO: we have not decided on how to implement switching column mapping modes
@@ -224,31 +216,19 @@ abstract class CloneTableBase(
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
 
-    val datasetOfCopiedFileList = handleNewDataFiles(
+    val datasetOfAddedFileList = handleNewDataFiles(
       opName,
       datasetOfNewFilesToAdd,
       qualifiedSource,
       destinationTable)
 
-    val copiedFileList = datasetOfCopiedFileList.collectAsList()
+    val addedFileList = datasetOfAddedFileList.collectAsList()
 
-    val (copiedFileCount, copiedFilesSize) =
-      (copiedFileList.size.toLong, totalDataSize(copiedFileList.iterator))
+    val (addedFileCount, addedFilesSize) =
+      (addedFileList.size.toLong, totalDataSize(addedFileList.iterator))
 
     val operationTimestamp = sourceTable.clock.getTimeMillis()
 
-    val existingFilesToRemoveOpt =
-      datasetOfExistingFileToRemoveOpt.map(_.collectAsList())
-
-    val existingFileList = existingFilesToRemoveOpt.map {
-      _.iterator.asScala.map { file =>
-        file.removeWithTimestamp(operationTimestamp)
-      }
-    }.getOrElse(Iterator.empty)
-
-    val (removedFileCount, removedFilesSize) = existingFilesToRemoveOpt
-      .map(fileList => (fileList.size.toLong, totalDataSize(fileList.iterator)))
-      .getOrElse(0L, 0L)
 
     val sourceProtocol = sourceTable.protocol
     // Pre-transaction version of the target table.
@@ -271,23 +251,17 @@ abstract class CloneTableBase(
 
     try {
       var actions = Iterator.single(newProtocol) ++
-        existingFileList.map(a => a.copy(dataChange = true)) ++
-        copiedFileList.iterator.asScala.map(a => a.copy(dataChange = true))
-
-
+        addedFileList.iterator.asScala.map(a => a.copy(dataChange = true))
       val sourceName = sourceTable.name
-
       // Override source table metadata with user-defined table properties
-      var context = Map[String, String]()
+      val context = Map[String, String]()
       val isReplaceDelta = txn.readVersion >= 0
 
       val opMetrics = SnapshotOverwriteOperationMetrics(
         sourceTable.sizeInBytes,
         sourceTable.numOfFiles,
-        removedFileCount,
-        copiedFileCount,
-        removedFilesSize,
-        copiedFilesSize)
+        addedFileCount,
+        addedFilesSize)
       val commitOpMetrics = getOperationMetricsForDeltaLog(opMetrics)
 
         recordDeltaOperation(destinationTable, s"delta.${opName.toLowerCase()}.commit") {
@@ -338,19 +312,13 @@ object CloneTableBase extends Logging {
  * Metrics of snapshot overwrite operation.
  * @param sourceSnapshotSizeInBytes Total size of the data in the source snapshot.
  * @param sourceSnapshotFileCount Number of data files in the source snapshot.
- * @param destSnapshotRemovedFileCount Number of existing files in destination snapshot
- *                                     removed as part of the execution.
  * @param destSnapshotAddedFileCount Number of new data files added to the destination
  *                                   snapshot as part of the execution.
- * @param destSnapshotRemovedFilesSizeInBytes Total size (in bytes) of the data files removed
- *                                            from destination snapshot.
  * @param destSnapshotAddedFilesSizeInBytes Total size (in bytes) of the data files that were
  *                                          added to the destination snapshot.
  */
 case class SnapshotOverwriteOperationMetrics(
     sourceSnapshotSizeInBytes: Long,
     sourceSnapshotFileCount: Long,
-    destSnapshotRemovedFileCount: Long,
     destSnapshotAddedFileCount: Long,
-    destSnapshotRemovedFilesSizeInBytes: Long,
     destSnapshotAddedFilesSizeInBytes: Long)

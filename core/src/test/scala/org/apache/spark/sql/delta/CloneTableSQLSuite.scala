@@ -199,11 +199,7 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       // schema check
       val expectedColumns = Seq(
         "source_table_size",
-        "source_num_of_files",
-        "num_removed_files",
-        "num_copied_files",
-        "removed_files_size",
-        "copied_files_size"
+        "source_num_of_files"
       )
       assert(expectedColumns == res.columns.toSeq)
 
@@ -212,8 +208,22 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       val returnedMetrics = res.first()
       assert(returnedMetrics.getAs[Long]("source_table_size") != 0L)
       assert(returnedMetrics.getAs[Long]("source_num_of_files") != 0L)
-      assert(returnedMetrics.getAs[Long]("num_copied_files") == 0L)
-      assert(returnedMetrics.getAs[Long]("copied_files_size") == 0L)
+    }
+  }
+
+  cloneTest("Negative test: Clone to target path and also have external location") { (deep, ext) =>
+    val sourceTable = "source"
+    withTable(sourceTable) {
+      spark.range(5).write.format("delta").saveAsTable(sourceTable)
+      val ex = intercept[IllegalArgumentException] {
+        runAndValidateClone(
+          sourceTable,
+          deep,
+          sourceIsTable = true,
+          targetLocation = Some(ext))()
+      }
+
+      assert(ex.getMessage.contains("Two paths were provided as the CLONE target"))
     }
   }
 }
