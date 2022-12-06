@@ -39,7 +39,7 @@ Depending on the version of the connector you can use it with following Apache F
 |:-------------------:|:---------------------:|
 |  0.4.x (Sink Only)  | 1.12.0 <= X <= 1.14.5 |
 |        0.5.0        | 1.13.0 <= X <= 1.13.6 |
-|   0.5.1-SNAPSHOT    |      X >= 1.15.0      |
+|        0.6.0        |      X >= 1.15.3      |
 
 ### APIs
 
@@ -330,7 +330,8 @@ Scala 2.12:
 <project>
     <properties>
         <scala.main.version>2.12</scala.main.version>
-        <flink-version>1.12.0</flink-version>
+        <delta-connectors-version>0.6.0</delta-connectors-version>
+        <flink-version>1.15.3</flink-version>
         <hadoop-version>3.1.0</hadoop-version>
     </properties>
 
@@ -338,12 +339,12 @@ Scala 2.12:
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-flink</artifactId>
-            <version>0.5.0</version>
+            <version>${delta-connectors-version}</version>
         </dependency>
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-standalone_${scala.main.version}</artifactId>
-            <version>0.5.0</version>
+            <version>${delta-connectors-version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
