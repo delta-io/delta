@@ -88,9 +88,10 @@ case class MergeStats(
     insertExprs: Seq[String],
     deleteConditionExpr: String,
 
-    // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
+    // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED/NOT MATCHED BY SOURCE
     matchedStats: Seq[MergeClauseStats],
     notMatchedStats: Seq[MergeClauseStats],
+    notMatchedBySourceStats: Seq[MergeClauseStats],
 
     // Timings
     executionTimeMs: Long,
@@ -137,6 +138,7 @@ object MergeStats {
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
+      notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
       isPartitioned: Boolean): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
@@ -147,9 +149,11 @@ object MergeStats {
       // Merge condition expression
       conditionExpr = condition.sql,
 
-      // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
+      // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED/
+      // NOT MATCHED BY SOURCE
       matchedStats = matchedClauses.map(MergeClauseStats(_)),
       notMatchedStats = notMatchedClauses.map(MergeClauseStats(_)),
+      notMatchedBySourceStats = notMatchedBySourceClauses.map(MergeClauseStats(_)),
 
       // Timings
       executionTimeMs = metrics("executionTimeMs").value,
@@ -210,13 +214,15 @@ object MergeStats {
  *
  * Phase 3: Use the Delta protocol to atomically remove the touched files and add the new files.
  *
- * @param source            Source data to merge from
- * @param target            Target table to merge into
- * @param targetFileIndex   TahoeFileIndex of the target table
- * @param condition         Condition for a source row to match with a target row
- * @param matchedClauses    All info related to matched clauses.
- * @param notMatchedClauses  All info related to not matched clause.
- * @param migratedSchema    The final schema of the target - may be changed by schema evolution.
+ * @param source                     Source data to merge from
+ * @param target                     Target table to merge into
+ * @param targetFileIndex            TahoeFileIndex of the target table
+ * @param condition                  Condition for a source row to match with a target row
+ * @param matchedClauses             All info related to matched clauses.
+ * @param notMatchedClauses          All info related to not matched clauses.
+ * @param notMatchedBySourceClauses  All info related to not matched by source clauses.
+ * @param migratedSchema             The final schema of the target - may be changed by schema
+ *                                   evolution.
  */
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
@@ -225,6 +231,7 @@ case class MergeIntoCommand(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
+    notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand
   with PredicateHelper
@@ -264,9 +271,10 @@ case class MergeIntoCommand(
   }
 
   /** Whether this merge statement has only a single insert (NOT MATCHED) clause. */
-  private def isSingleInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.length == 1
-  /** Whether this merge statement has only MATCHED clauses. */
-  private def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty
+  private def isSingleInsertOnly: Boolean =
+    matchedClauses.isEmpty && notMatchedBySourceClauses.isEmpty && notMatchedClauses.length == 1
+  /** Whether this merge statement has no insert (NOT MATCHED) clause. */
+  private def hasNoInserts: Boolean = notMatchedClauses.isEmpty
 
   // We over-count numTargetRowsDeleted when there are multiple matches;
   // this is the amount of the overcount, so we can subtract it to get a correct final metric.
@@ -391,11 +399,16 @@ case class MergeIntoCommand(
           DeltaOperations.Merge(
             Option(condition.sql),
             matchedClauses.map(DeltaOperations.MergePredicate(_)),
-            notMatchedClauses.map(DeltaOperations.MergePredicate(_))))
+            notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
+            notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
 
         // Record metrics
         var stats = MergeStats.fromMergeSQLMetrics(
-          metrics, condition, matchedClauses, notMatchedClauses,
+          metrics,
+          condition,
+          matchedClauses,
+          notMatchedClauses,
+          notMatchedBySourceClauses,
           deltaTxn.metadata.partitionColumns.nonEmpty)
         stats = stats.copy(
           materializeSourceReason = Some(materializeSourceReason.toString),
@@ -445,15 +458,18 @@ case class MergeIntoCommand(
     val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
 
-    // Apply inner join to between source and target using the merge condition to find matches
+    // Join the source and target table using the merge condition to find touched files. An inner
+    // join collects all candidate files for MATCHED clauses, a right outer join also includes
+    // candidates for NOT MATCHED BY SOURCE clauses.
     // In addition, we attach two columns
     // - a monotonically increasing row id for target rows to later identify whether the same
     //     target row is modified by multiple user or not
     // - the target file name the row is from to later identify the files touched by matched rows
+    val joinType = if (notMatchedBySourceClauses.isEmpty) "inner" else "right_outer"
     val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
       .withColumn(FILE_NAME_COL, input_file_name())
-    val joinToFindTouchedFiles = sourceDF.join(targetDF, new Column(condition), "inner")
+    val joinToFindTouchedFiles = sourceDF.join(targetDF, new Column(condition), joinType)
 
     // Process the matches from the inner join to record touched files and find multiple matches
     val collectTouchedFiles = joinToFindTouchedFiles
@@ -648,7 +664,7 @@ case class MergeIntoCommand(
     // Generate a new logical plan that has same output attributes exprIds as the target plan.
     // This allows us to apply the existing resolved update/insert expressions.
     val newTarget = buildTargetPlanWithFiles(deltaTxn, filesToRewrite)
-    val joinType = if (isMatchedOnly &&
+    val joinType = if (hasNoInserts &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED)) {
       "rightOuter"
     } else {
@@ -815,6 +831,8 @@ case class MergeIntoCommand(
       case u: DeltaMergeIntoMatchedUpdateClause => updateOutput(u.resolvedActions)
       case _: DeltaMergeIntoMatchedDeleteClause => deleteOutput()
       case i: DeltaMergeIntoNotMatchedInsertClause => insertOutput(i.resolvedActions)
+      case u: DeltaMergeIntoNotMatchedBySourceUpdateClause => updateOutput(u.resolvedActions)
+      case _: DeltaMergeIntoNotMatchedBySourceDeleteClause => deleteOutput()
     }
 
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
@@ -833,6 +851,8 @@ case class MergeIntoCommand(
       matchedOutputs = matchedClauses.map(clauseOutput),
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
       notMatchedOutputs = notMatchedClauses.map(clauseOutput),
+      notMatchedBySourceConditions = notMatchedBySourceClauses.map(clauseCondition),
+      notMatchedBySourceOutputs = notMatchedBySourceClauses.map(clauseOutput),
       noopCopyOutput =
         resolveOnJoinedPlan(targetOutputCols :+ FalseLiteral :+ incrNoopCountExpr :+
           CDC_TYPE_NOT_CDC),
@@ -1043,6 +1063,11 @@ object MergeIntoCommand {
    * @param notMatchedOutputs     corresponding output for each not-matched clause. for each clause,
    *                              we have 1-2 output rows, each of which is a sequence of
    *                              expressions to apply to the joined row
+   * @param notMatchedBySourceConditions  condition for each not-matched-by-source clause
+   * @param notMatchedBySourceOutputs     corresponding output for each not-matched-by-source
+   *                                      clause. for each clause, we have 1-3 output rows, each of
+   *                                      which is a sequence of expressions to apply to the joined
+   *                                      row
    * @param noopCopyOutput        no-op expression to copy a target row to the output
    * @param deleteRowOutput       expression to drop a row from the final output. this is used for
    *                              source rows that don't match any not-matched clauses
@@ -1057,6 +1082,8 @@ object MergeIntoCommand {
       matchedOutputs: Seq[Seq[Seq[Expression]]],
       notMatchedConditions: Seq[Expression],
       notMatchedOutputs: Seq[Seq[Seq[Expression]]],
+      notMatchedBySourceConditions: Seq[Expression],
+      notMatchedBySourceOutputs: Seq[Seq[Seq[Expression]]],
       noopCopyOutput: Seq[Expression],
       deleteRowOutput: Seq[Expression],
       joinedAttributes: Seq[Attribute],
@@ -1079,6 +1106,8 @@ object MergeIntoCommand {
       val matchedProjs = matchedOutputs.map(_.map(generateProjection))
       val notMatchedPreds = notMatchedConditions.map(generatePredicate)
       val notMatchedProjs = notMatchedOutputs.map(_.map(generateProjection))
+      val notMatchedBySourcePreds = notMatchedBySourceConditions.map(generatePredicate)
+      val notMatchedBySourceProjs = notMatchedBySourceOutputs.map(_.map(generateProjection))
       val noopCopyProj = generateProjection(noopCopyOutput)
       val deleteRowProj = generateProjection(deleteRowOutput)
       val outputProj = UnsafeProjection.create(outputRowEncoder.schema)
@@ -1093,29 +1122,27 @@ object MergeIntoCommand {
       }
 
       def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
-        if (targetRowHasNoMatchPred.eval(inputRow)) {
-          // Target row did not match any source row, so just copy it to the output
-          Iterator(noopCopyProj.apply(inputRow))
+        // Identify which set of clauses to execute: matched, not-matched or not-matched-by-source
+        val (predicates, projections, noopAction) = if (targetRowHasNoMatchPred.eval(inputRow)) {
+          // Target row did not match any source row, so update the target row.
+          (notMatchedBySourcePreds, notMatchedBySourceProjs, noopCopyProj)
+        } else if (sourceRowHasNoMatchPred.eval(inputRow)) {
+          // Source row did not match with any target row, so insert the new source row
+          (notMatchedPreds, notMatchedProjs, deleteRowProj)
         } else {
-          // identify which set of clauses to execute: matched or not-matched ones
-          val (predicates, projections, noopAction) = if (sourceRowHasNoMatchPred.eval(inputRow)) {
-            // Source row did not match with any target row, so insert the new source row
-            (notMatchedPreds, notMatchedProjs, deleteRowProj)
-          } else {
-            // Source row matched with target row, so update the target row
-            (matchedPreds, matchedProjs, noopCopyProj)
-          }
+          // Source row matched with target row, so update the target row
+          (matchedPreds, matchedProjs, noopCopyProj)
+        }
 
-          // find (predicate, projection) pair whose predicate satisfies inputRow
-          val pair = (predicates zip projections).find {
-            case (predicate, _) => predicate.eval(inputRow)
-          }
+        // find (predicate, projection) pair whose predicate satisfies inputRow
+        val pair = (predicates zip projections).find {
+          case (predicate, _) => predicate.eval(inputRow)
+        }
 
-          pair match {
-            case Some((_, projections)) =>
-              projections.map(_.apply(inputRow)).iterator
-            case None => Iterator(noopAction.apply(inputRow))
-          }
+        pair match {
+          case Some((_, projections)) =>
+            projections.map(_.apply(inputRow)).iterator
+          case None => Iterator(noopAction.apply(inputRow))
         }
       }
 

@@ -183,15 +183,18 @@ object DeltaOperations {
    * Recorded when a merge operation is committed to the table.
    *
    * `updatePredicate`, `deletePredicate`, and `insertPredicate` are DEPRECATED.
-   * Only use `predicate`, `matchedPredicates`, and `notMatchedPredicates` to record the merge.
+   * Only use `predicate`, `matchedPredicates`, `notMatchedPredicates` and
+   * `notMatchedBySourcePredicates` to record the merge.
    */
+  val OP_MERGE = "MERGE"
   case class Merge(
       predicate: Option[String],
       updatePredicate: Option[String],
       deletePredicate: Option[String],
       insertPredicate: Option[String],
       matchedPredicates: Seq[MergePredicate],
-      notMatchedPredicates: Seq[MergePredicate]) extends Operation("MERGE") {
+      notMatchedPredicates: Seq[MergePredicate],
+      notMatchedBySourcePredicates: Seq[MergePredicate]) extends Operation(OP_MERGE) {
 
     override val parameters: Map[String, Any] = {
       predicate.map("predicate" -> _).toMap ++
@@ -199,7 +202,8 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap +
         ("matchedPredicates" -> JsonUtils.toJson(matchedPredicates)) +
-        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
+        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates)) +
+        ("notMatchedBySourcePredicates" -> JsonUtils.toJson(notMatchedBySourcePredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
 
@@ -228,13 +232,15 @@ object DeltaOperations {
     def apply(
         predicate: Option[String],
         matchedPredicates: Seq[MergePredicate],
-        notMatchedPredicates: Seq[MergePredicate]): Merge = Merge(
+        notMatchedPredicates: Seq[MergePredicate],
+        notMatchedBySourcePredicates: Seq[MergePredicate]): Merge = Merge(
           predicate,
           updatePredicate = None,
           deletePredicate = None,
           insertPredicate = None,
           matchedPredicates,
-          notMatchedPredicates)
+          notMatchedPredicates,
+          notMatchedBySourcePredicates)
   }
 
   /** Recorded when an update operation is committed to the table. */

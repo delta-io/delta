@@ -52,7 +52,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
   def apply(mergeInto: DeltaMergeInto, transformToCommand: Boolean): LogicalPlan = {
     val DeltaMergeInto(
-    target, source, condition, matched, notMatched, migrateSchema, finalSchemaOpt) = mergeInto
+      target,
+      source,
+      condition,
+      matched,
+      notMatched,
+      notMatchedBySource,
+      migrateSchema,
+      finalSchemaOpt) = mergeInto
 
     if (finalSchemaOpt.isEmpty) {
       throw DeltaErrors.targetTableFinalSchemaEmptyException()
@@ -76,7 +83,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
 
     checkCondition(condition, "search")
-    (matched ++ notMatched).filter(_.condition.nonEmpty).foreach { clause =>
+    (matched ++ notMatched ++ notMatchedBySource).filter(_.condition.nonEmpty).foreach { clause =>
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
     }
 
@@ -98,14 +105,26 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         val alignedActions = alignUpdateActions(
           target,
           m.resolvedActions,
-          whenClauses = matched ++ notMatched,
+          whenClauses = matched ++ notMatched ++ notMatchedBySource,
           identityColumns = additionalColumns,
           generatedColumns = generatedColumns,
           allowStructEvolution = migrateSchema,
-          finalSchema = finalSchema
-        )
+          finalSchema = finalSchema)
         m.copy(m.condition, alignedActions)
-      case m: DeltaMergeIntoMatchedDeleteClause => m    // Delete does not need reordering
+      case m: DeltaMergeIntoMatchedDeleteClause => m // Delete does not need reordering
+    }
+    val processedNotMatchedBySource = notMatchedBySource.map {
+      case m: DeltaMergeIntoNotMatchedBySourceUpdateClause =>
+        val alignedActions = alignUpdateActions(
+          target,
+          m.resolvedActions,
+          whenClauses = matched ++ notMatched ++ notMatchedBySource,
+          identityColumns = additionalColumns,
+          generatedColumns,
+          migrateSchema,
+          finalSchema)
+        m.copy(m.condition, alignedActions)
+      case m: DeltaMergeIntoNotMatchedBySourceDeleteClause => m // Delete does not need reordering
     }
 
     val processedNotMatched = notMatched.map { case m: DeltaMergeIntoNotMatchedInsertClause =>
@@ -189,11 +208,19 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           condition,
           processedMatched,
           processedNotMatched,
+          processedNotMatchedBySource,
           finalSchemaOpt),
         now)
     } else {
-      DeltaMergeInto(source, target, condition,
-        processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
+      DeltaMergeInto(
+        source,
+        target,
+        condition,
+        processedMatched,
+        processedNotMatched,
+        processedNotMatchedBySource,
+        migrateSchema,
+        finalSchemaOpt)
     }
   }
 
