@@ -427,6 +427,19 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
+  /** Recorded when cloning a Delta table into a new location. */
+  case class Clone(
+      source: String,
+      sourceVersion: Long
+  ) extends Operation("CLONE") {
+    override val parameters: Map[String, Any] = Map(
+      "source" -> source,
+      "sourceVersion" -> sourceVersion
+    )
+    override def changesData: Boolean = true
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.CLONE
+  }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
@@ -623,6 +636,15 @@ private[delta] object DeltaOperationMetrics {
     "numRestoredFiles", // number of files that were added as a result of the restore
     "removedFilesSize", // size in bytes of files removed by the restore
     "restoredFilesSize" // size in bytes of files added by the restore
+  )
+
+  val CLONE = Set(
+    "sourceTableSize", // size in bytes of source table at version
+    "sourceNumOfFiles", // number of files in source table at version
+    "numRemovedFiles", // number of files removed from target table if delta table was replaced
+    "numCopiedFiles", // number of files that were cloned - 0 for shallow tables
+    "removedFilesSize", // size in bytes of files removed from an existing Delta table if one exists
+    "copiedFilesSize" // size of files copied - 0 for shallow tables
   )
 
 }

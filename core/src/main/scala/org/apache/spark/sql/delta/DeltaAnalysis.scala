@@ -22,8 +22,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.RestoreTableCommand
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -40,11 +39,16 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, HiveTableRelation}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -104,6 +108,59 @@ class DeltaAnalysis(session: SparkSession)
         index.partitionFilters.reduce(And),
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
 
+
+    // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
+    // to perform CLONE. We do this by passing the CloneTableCommand as the query in
+    // CreateDeltaTableCommand and let Create handle the creation + checks of creating a table in
+    // the metastore instead of duplicating that effort in CloneTableCommand.
+    case cloneStatement: CloneTableStatement =>
+      // Get the info necessary to CreateDeltaTableCommand
+      EliminateSubqueryAliases(cloneStatement.source) match {
+        case DataSourceV2Relation(table: DeltaTableV2, _, _, _, _) =>
+          resolveCloneCommand(cloneStatement.target, new CloneDeltaSource(table), cloneStatement)
+
+        // Pass the traveled table if a previous version is to be cloned
+        case tt @ TimeTravel(DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _), _, _, _)
+            if tt.expressions.forall(_.resolved) =>
+          val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
+          val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
+          resolveCloneCommand(
+            cloneStatement.target, new CloneDeltaSource(traveledTable), cloneStatement)
+
+
+        case u: UnresolvedRelation =>
+          u.failAnalysis(msg = s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case TimeTravel(u: UnresolvedRelation, _, _, _) =>
+          u.failAnalysis(msg = s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case LogicalRelation(
+            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
+          val tableIdent = catalogTable.map(_.identifier)
+            .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
+          resolveCloneCommand(
+            cloneStatement.target,
+            new CloneParquetSource(tableIdent, catalogTable, session), cloneStatement)
+
+        case HiveTableRelation(catalogTable, _, _, _, _) =>
+          if (!ConvertToDeltaCommand.isHiveStyleParquetTable(catalogTable)) {
+            throw DeltaErrors.cloneFromUnsupportedSource(
+              catalogTable.identifier.unquotedString,
+              catalogTable.storage.serde.getOrElse("Unknown"))
+          }
+          resolveCloneCommand(
+            cloneStatement.target,
+            new CloneParquetSource(catalogTable.identifier, Some(catalogTable), session),
+            cloneStatement)
+
+        case v: View =>
+            throw DeltaErrors.cloneFromUnsupportedSource(
+              v.desc.identifier.unquotedString, "View")
+
+        case l: LogicalPlan =>
+          throw DeltaErrors.cloneFromUnsupportedSource(
+            l.toString, "Unknown")
+      }
 
     case restoreStatement @ RestoreTableStatement(target) =>
       EliminateSubqueryAliases(target) match {
@@ -231,6 +288,194 @@ class DeltaAnalysis(session: SparkSession)
 
   }
 
+  /**
+   * Creates a catalog table for CreateDeltaTableCommand.
+   *
+   * @param targetPath Target path containing the target path to clone to
+   * @param byPath Whether the target is a path based table
+   * @param tableIdent Table Identifier for the target table
+   * @param targetLocation User specified target location for the new table
+   * @param existingTable Existing table definition if we're going to be replacing the table
+   * @param srcTable The source table to clone
+   * @return catalog to CreateDeltaTableCommand with
+   */
+  private def createCatalogTableForCloneCommand(
+      targetPath: Path,
+      byPath: Boolean,
+      tableIdent: TableIdentifier,
+      targetLocation: Option[String],
+      existingTable: Option[CatalogTable],
+      srcTable: CloneSource): CatalogTable = {
+    // If external location is defined then then table is an external table
+    // If the table is a path-based table, we also say that the table is external even if no
+    // metastore table will be created. This is done because we are still explicitly providing a
+    // locationUri which is behavior expected only of external tables
+    // In the case of ifNotExists being true and a table existing at the target destination, create
+    // a managed table so we don't have to pass a fake path
+    val (tableType, storage) = if (targetLocation.isDefined || byPath) {
+      (CatalogTableType.EXTERNAL,
+        CatalogStorageFormat.empty.copy(locationUri = Some(targetPath.toUri)))
+    } else {
+      (CatalogTableType.MANAGED, CatalogStorageFormat.empty)
+    }
+    val properties = srcTable.metadata.configuration
+
+    new CatalogTable(
+      identifier = tableIdent,
+      tableType = tableType,
+      storage = storage,
+      schema = srcTable.schema,
+      properties = properties,
+      provider = Some("delta"),
+      stats = existingTable.flatMap(_.stats)
+    )
+  }
+
+  /**
+   * Instantiates a CreateDeltaTableCommand with CloneTableCommand as the child query.
+   *
+   * @param targetPlan the target of Clone as passed in a LogicalPlan
+   * @param sourceTbl the DeltaTableV2 that was resolved as the source of the clone command
+   * @return Resolve the clone command as the query in a CreateDeltaTableCommand.
+   */
+  private def resolveCloneCommand(
+      targetPlan: LogicalPlan,
+      sourceTbl: CloneSource,
+      statement: CloneTableStatement): LogicalPlan = {
+    val isReplace = statement.isReplaceCommand
+    val isCreate = statement.isCreateCommand
+
+    import session.sessionState.analyzer.SessionCatalogAndIdentifier
+    val targetLocation = statement.targetLocation
+    val saveMode = if (isReplace) {
+      SaveMode.Overwrite
+    } else if (statement.ifNotExists) {
+      SaveMode.Ignore
+    } else {
+      SaveMode.ErrorIfExists
+    }
+
+    val tableCreationMode = if (isCreate && isReplace) {
+      TableCreationModes.CreateOrReplace
+    } else if (isCreate) {
+      TableCreationModes.Create
+    } else {
+      TableCreationModes.Replace
+    }
+    // We don't use information in the catalog if the table is time travelled
+    val sourceCatalogTable = if (sourceTbl.timeTravelOpt.isDefined) None else sourceTbl.catalogTable
+
+    EliminateSubqueryAliases(targetPlan) match {
+      // Target is a path based table
+      case DataSourceV2Relation(targetTbl @ DeltaTableV2(_, path, _, _, _, _, _), _, _, _, _)
+          if !targetTbl.deltaLog.tableExists =>
+        val tblIdent = TableIdentifier(path.toString, Some("delta"))
+        if (!isCreate) {
+          throw DeltaErrors.cannotReplaceMissingTableException(
+            Identifier.of(Array("delta"), path.toString))
+        }
+        // Trying to clone something on itself should be a no-op
+        if (sourceTbl == new CloneDeltaSource(targetTbl)) {
+          return LocalRelation()
+        }
+        // If this is a path based table and an external location is also defined throw an error
+        if (statement.targetLocation.exists(loc => new Path(loc).toString != path.toString)) {
+          throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
+        }
+        // We're creating a table by path and there won't be a place to store catalog stats
+        val catalog = createCatalogTableForCloneCommand(
+          path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        CreateDeltaTableCommand(
+          catalog,
+          None,
+          saveMode,
+          Some(CloneTableCommand(
+            sourceTbl,
+            tblIdent,
+            statement.tablePropertyOverrides,
+            path)),
+          tableByPath = true,
+          output = CloneTableCommand.output)
+
+      // Target is a metastore table
+      case UnresolvedRelation(SessionCatalogAndIdentifier(catalog, ident), _, _) =>
+        if (!isCreate) {
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
+        val tblIdent = ident
+          .asTableIdentifier
+        val finalTarget = new Path(statement.targetLocation.getOrElse(
+          session.sessionState.catalog.defaultTablePath(tblIdent).toString))
+        val catalogTable = createCatalogTableForCloneCommand(
+          finalTarget, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalogTableWithPath = if (targetLocation.isEmpty) {
+          catalogTable.copy(
+            storage = CatalogStorageFormat.empty.copy(locationUri = Some(finalTarget.toUri)))
+        } else {
+          catalogTable
+        }
+        CreateDeltaTableCommand(
+          catalogTableWithPath,
+          None,
+          saveMode,
+          Some(CloneTableCommand(
+            sourceTbl,
+            tblIdent,
+            statement.tablePropertyOverrides,
+            finalTarget)),
+          operation = tableCreationMode,
+          output = CloneTableCommand.output)
+
+      // Delta metastore table already exists at target
+      case DataSourceV2Relation(
+          deltaTableV2 @ DeltaTableV2(_, path, existingTable, _, _, _, _), _, _, _, _) =>
+        val tblIdent = existingTable match {
+          case Some(existingCatalog) => existingCatalog.identifier
+          case None => TableIdentifier(path.toString, Some("delta"))
+        }
+        val cloneSourceTable = sourceTbl
+        val catalogTable = createCatalogTableForCloneCommand(
+          path,
+          byPath = existingTable.isEmpty,
+          tblIdent,
+          targetLocation,
+          sourceCatalogTable,
+          cloneSourceTable)
+
+        CreateDeltaTableCommand(
+          catalogTable,
+          existingTable,
+          saveMode,
+          Some(CloneTableCommand(
+            cloneSourceTable,
+            tblIdent,
+            statement.tablePropertyOverrides,
+            path)),
+          tableByPath = existingTable.isEmpty,
+          operation = tableCreationMode,
+          output = CloneTableCommand.output)
+
+      // Non-delta metastore table already exists at target
+      case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
+        val tblIdent = catalogTable.identifier
+        val path = new Path(catalogTable.location)
+        val newCatalogTable = createCatalogTableForCloneCommand(
+          path, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        CreateDeltaTableCommand(
+          newCatalogTable,
+          existingCatalogTable,
+          saveMode,
+          Some(CloneTableCommand(
+            sourceTbl,
+            tblIdent,
+            statement.tablePropertyOverrides,
+            path)),
+          operation = tableCreationMode,
+          output = CloneTableCommand.output)
+
+      case _ => throw DeltaErrors.notADeltaTableException("CLONE")
+    }
+  }
 
   /**
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we

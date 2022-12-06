@@ -1864,7 +1864,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_SCHEMA_NOT_PROVIDED")
       assert(e.getMessage ==
         "Table schema is not provided. Please provide the schema (column definition) " +
-        "of the table when using REPLACE table and an AS SELECT query is not provided.")
+          "of the table when using REPLACE table and an AS SELECT query is not provided.")
       assert(e.getSqlState == "22000")
     }
     {
@@ -2449,8 +2449,9 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNEXPECTED_CHANGE_FILES_FOUND")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage == """Change files found in a dataChange = false transaction. Files:
-                               |a.parquet""".stripMargin)
+      assert(e.getMessage ==
+        """Change files found in a dataChange = false transaction. Files:
+          |a.parquet""".stripMargin)
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2458,7 +2459,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
       assert(e.getSqlState == "22000")
-      assert(e.getMessage ==  "The transaction log has failed integrity checks. Failed " +
+      assert(e.getMessage == "The transaction log has failed integrity checks. Failed " +
         "verification at version 2 of:\noption1")
     }
     {
@@ -2478,7 +2479,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage ==  "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
+      assert(e.getMessage == "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2737,6 +2738,48 @@ trait DeltaErrorsSuiteBase
       val prefixStr = DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]")
       assert(e.getMessage == "Currently DeltaTable.forPath only supports hadoop configuration " +
         s"keys starting with $prefixStr but got ${options.mkString(",")}")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneOnRelativePath("path")
+      }
+      assert(e.getMessage ==
+        """The target location for CLONE needs to be an absolute path or table name. Use an
+          |absolute path instead of path.""".stripMargin)
+    }
+    {
+      val e = intercept[AnalysisException] {
+        throw DeltaErrors.cloneFromUnsupportedSource( "table-0", "CSV")
+      }
+      assert(e.getErrorClass == "DELTA_CLONE_UNSUPPORTED_SOURCE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Unsupported clone source 'table-0', whose format is CSV.\n" +
+        "The supported formats are 'delta' and 'parquet'.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneReplaceUnsupported(TableIdentifier("customer"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        s"""
+           |You tried to REPLACE an existing table (`customer`) with CLONE. This operation is
+           |unsupported. Try a different target for CLONE or delete the table at the current target.
+           |""".stripMargin)
+
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneAmbiguousTarget("external-location", TableIdentifier("table1"))
+      }
+      assert(e.getErrorClass == "DELTA_CLONE_AMBIGUOUS_TARGET")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""
+           |Two paths were provided as the CLONE target so it is ambiguous which to use. An external
+           |location for CLONE was provided at external-location at the same time as the path
+           |`table1`.""".stripMargin)
     }
   }
 }

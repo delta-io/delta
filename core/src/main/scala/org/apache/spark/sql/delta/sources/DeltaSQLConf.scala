@@ -946,7 +946,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  // TODO(SC-109291): Force wipe history, too.
   val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
     buildConf("restore.protocolDowngradeAllowed")
       .doc("Whether a table may be restored to a lower protocol version than the current." +
@@ -957,6 +956,13 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CLONE_REPLACE_ENABLED =
+    buildConf("clone.replaceEnabled")
+      .internal()
+      .doc("If enabled, the table will be replaced when cloning over an existing Delta table.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
     buildConf("optimizeMetadataQuery.enabled")
