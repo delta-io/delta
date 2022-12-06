@@ -103,7 +103,11 @@ trait CloneTableBaseUtils extends DeltaLogging
       opMetrics: SnapshotOverwriteOperationMetrics): Map[String, Long] = {
     Map(
       SOURCE_TABLE_SIZE -> opMetrics.sourceSnapshotSizeInBytes,
-      SOURCE_NUM_OF_FILES -> opMetrics.sourceSnapshotFileCount
+      SOURCE_NUM_OF_FILES -> opMetrics.sourceSnapshotFileCount,
+      NUM_REMOVED_FILES -> 0L,
+      NUM_COPIED_FILES -> 0L,
+      REMOVED_FILES_SIZE -> 0L,
+      COPIED_FILES_SIZE -> 0L
     )
   }
 

@@ -62,7 +62,11 @@ case class CloneTableCommand(
   override protected def getOutputSeq(operationMetrics: Map[String, Long]): Seq[Row] = {
     Seq(Row(
       operationMetrics.get(SOURCE_TABLE_SIZE),
-      operationMetrics.get(SOURCE_NUM_OF_FILES)
+      operationMetrics.get(SOURCE_NUM_OF_FILES),
+      operationMetrics.get(NUM_REMOVED_FILES),
+      operationMetrics.get(NUM_COPIED_FILES),
+      operationMetrics.get(REMOVED_FILES_SIZE),
+      operationMetrics.get(COPIED_FILES_SIZE)
     ))
   }
 
@@ -105,14 +109,26 @@ object CloneTableCommand {
   // Names of the metrics - added to the Delta commit log as part of Clone transaction
   val SOURCE_TABLE_SIZE = "sourceTableSize"
   val SOURCE_NUM_OF_FILES = "sourceNumOfFiles"
+  val NUM_REMOVED_FILES = "numRemovedFiles"
+  val NUM_COPIED_FILES = "numCopiedFiles"
+  val REMOVED_FILES_SIZE = "removedFilesSize"
+  val COPIED_FILES_SIZE = "copiedFilesSize"
 
   // SQL way column names for metrics in command execution output
   private val COLUMN_SOURCE_TABLE_SIZE = "source_table_size"
   private val COLUMN_SOURCE_NUM_OF_FILES = "source_num_of_files"
+  private val COLUMN_NUM_REMOVED_FILES = "num_removed_files"
+  private val COLUMN_NUM_COPIED_FILES = "num_copied_files"
+  private val COLUMN_REMOVED_FILES_SIZE = "removed_files_size"
+  private val COLUMN_COPIED_FILES_SIZE = "copied_files_size"
 
   val output: Seq[Attribute] = Seq(
     AttributeReference(COLUMN_SOURCE_TABLE_SIZE, LongType)(),
-    AttributeReference(COLUMN_SOURCE_NUM_OF_FILES, LongType)()
+    AttributeReference(COLUMN_SOURCE_NUM_OF_FILES, LongType)(),
+    AttributeReference(COLUMN_NUM_REMOVED_FILES, LongType)(),
+    AttributeReference(COLUMN_NUM_COPIED_FILES, LongType)(),
+    AttributeReference(COLUMN_REMOVED_FILES_SIZE, LongType)(),
+    AttributeReference(COLUMN_COPIED_FILES_SIZE, LongType)()
   )
 }
 

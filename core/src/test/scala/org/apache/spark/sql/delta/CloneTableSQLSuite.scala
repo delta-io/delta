@@ -165,7 +165,11 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       // schema check
       val expectedColumns = Seq(
         "source_table_size",
-        "source_num_of_files"
+        "source_num_of_files",
+        "num_removed_files",
+        "num_copied_files",
+        "removed_files_size",
+        "copied_files_size"
       )
       assert(expectedColumns == res.columns.toSeq)
 
@@ -174,6 +178,9 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       val returnedMetrics = res.first()
       assert(returnedMetrics.getAs[Long]("source_table_size") != 0L)
       assert(returnedMetrics.getAs[Long]("source_num_of_files") != 0L)
+      // Delta-OSS doesn't support copied file metrics
+      assert(returnedMetrics.getAs[Long]("num_copied_files") == 0L)
+      assert(returnedMetrics.getAs[Long]("copied_files_size") == 0L)
     }
   }
 
