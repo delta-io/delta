@@ -220,6 +220,12 @@ trait CDCReaderImpl extends DeltaLogging {
 
   /**
    * Get a Relation that represents change data between two snapshots of the table.
+   *
+   * @param spark Spark session
+   * @param snapshotToUse Snapshot to use to provide read schema and version
+   * @param isTimeTravelQuery Whether this CDC scan is used in conjunction with time-travel args
+   * @param conf SQL conf
+   * @param options CDC specific options
    */
   def getCDCRelation(
       spark: SparkSession,

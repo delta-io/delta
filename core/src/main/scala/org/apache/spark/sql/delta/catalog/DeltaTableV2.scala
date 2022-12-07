@@ -104,7 +104,7 @@ case class DeltaTableV2(
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(cdcOptions) &&
-          !spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ENABLE_TIME_TRAVEL)) {
+          !spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL)) {
         throw DeltaErrors.timeTravelNotSupportedException
       }
 
