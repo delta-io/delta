@@ -583,7 +583,7 @@ trait DeltaCDCColumnMappingScalaSuiteBase extends DeltaCDCColumnMappingSuiteBase
 
   // NOTE: we do not support time travel option with SQL API, so we will just test Scala API suite
   test("cannot specify both time travel options and schema mode") {
-    withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL.key -> "true") {
+    withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS.key -> "true") {
       withTempDir { dir =>
         Seq(1).toDF("id").write.format("delta").save(dir.getCanonicalPath)
         val e = intercept[DeltaIllegalArgumentException] {
@@ -601,7 +601,7 @@ trait DeltaCDCColumnMappingScalaSuiteBase extends DeltaCDCColumnMappingSuiteBase
   }
 
   test("time travel option is respected") {
-    withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL.key -> "true") {
+    withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS.key -> "true") {
       withTempDir { dir =>
         // Set up an initial table with 10 records in schema <id string, value string>
         setupInitialDeltaTable(dir)

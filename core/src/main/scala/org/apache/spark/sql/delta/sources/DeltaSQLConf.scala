@@ -913,7 +913,7 @@ trait DeltaSQLConfBase {
       .stringConf
       .createWithDefault("endVersion")
 
-  val DELTA_CDF_ALLOW_TIME_TRAVEL =
+  val DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS =
     buildConf("changeDataFeed.allowTimeTravelOptionsForSchema")
       .doc(
         s"""If allowed, user can specify time-travel reader options such as
