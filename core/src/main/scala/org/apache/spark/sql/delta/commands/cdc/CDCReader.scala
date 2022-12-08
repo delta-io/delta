@@ -112,8 +112,8 @@ object CDCReader extends CDCReaderImpl
      * may break.
      */
     private lazy val endingVersionForBatchSchema: Long = endingVersion.map { v =>
-      // As defined in docs, if ending version is greater than the latest version, we will just use
-      // the latest version to find the schema.
+      // As defined in the method doc, if ending version is greater than the latest version, we will
+      // just use the latest version to find the schema.
       latestVersionOfTableDuringAnalysis min v
     }.getOrElse {
       // Or if endingVersion is not specified, we just use the latest schema.

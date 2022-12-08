@@ -50,10 +50,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       implicit val deltaLog: DeltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
 
       // add column should not be blocked
-      sql(
-        s"""
-           |ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (name string)
-           |""".stripMargin)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (name string)")
 
       // write more data
       writeDeltaData((10 until 15))
@@ -193,10 +190,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       val v1 = deltaLog.update().version
 
       // drop column would cause CDC read to be blocked
-      sql(
-        s"""
-           |ALTER TABLE delta.`${dir.getCanonicalPath}` DROP COLUMN value
-           |""".stripMargin)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` DROP COLUMN value")
       val v2 = deltaLog.update().version
 
       // write more data
@@ -279,10 +273,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       )
 
       // let's add the column back...
-      sql(
-        s"""
-           |ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (value string)
-           |""".stripMargin)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (value string)")
       val v4 = deltaLog.update().version
 
       // write more data
@@ -320,10 +311,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       val v1 = deltaLog.update().version
 
       // Rename column
-      sql(
-        s"""
-           |ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id TO id2
-           |""".stripMargin)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id TO id2")
       val v2 = deltaLog.update().version
 
       // write more data
@@ -393,10 +381,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       )
 
       // Let's rename the column back
-      sql(
-        s"""
-          |ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id2 TO id
-          |""".stripMargin)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id2 TO id")
       val v4 = deltaLog.update().version
 
       // write more data
@@ -609,10 +594,7 @@ trait DeltaCDCColumnMappingScalaSuiteBase extends DeltaCDCColumnMappingSuiteBase
         val v1 = deltaLog.update().version
 
         // Add a column
-        sql(
-          s"""
-             |ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (prop string)
-             |""".stripMargin)
+        sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` ADD COLUMN (prop string)")
         val v2 = deltaLog.update().version
 
         // write more data
@@ -620,10 +602,7 @@ trait DeltaCDCColumnMappingScalaSuiteBase extends DeltaCDCColumnMappingSuiteBase
         val v3 = deltaLog.update().version
 
         // Rename a column
-        sql(
-          s"""
-             |ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id TO id2
-             |""".stripMargin)
+        sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` RENAME COLUMN id TO id2")
         val v4 = deltaLog.update().version
 
         // write more data
