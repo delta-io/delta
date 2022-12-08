@@ -170,6 +170,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
+    "message" : [
+      "A uri (<uri>) which cannot be turned into a relative path was found in the transaction log."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_RENAME_PATH" : {
     "message" : [
       "Cannot rename <currentPath> to <newPath>"
