@@ -23,7 +23,6 @@ class DeltaAnalysisException(
   extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters),
     errorClass = Some(errorClass),
-    messageParameters = messageParameters,
     cause = cause)
   with DeltaThrowable
 

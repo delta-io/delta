@@ -134,8 +134,7 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
         sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE tmp")
       }
       assert(ex.errorClass === Some("DELTA_CLONE_UNSUPPORTED_SOURCE"))
-      assert(ex.messageParameters.map(_.toString).exists(_.contains("tmp")))
-      assert(ex.messageParameters.map(_.toString).exists(_.contains("View")))
+      assert(ex.getMessage.contains("clone source 'tmp', whose format is View."))
     }
   }
 
@@ -148,8 +147,9 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
           sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE tmp")
         }
         assert(ex.errorClass === Some("DELTA_CLONE_UNSUPPORTED_SOURCE"))
-        assert(ex.messageParameters.map(_.toString).exists(_.contains("tmp")))
-        assert(ex.messageParameters.map(_.toString).exists(_.contains("View")))
+        assert(
+          ex.getMessage.contains("clone source 'default.tmp', whose format is View.")
+        )
       }
     }
   }
