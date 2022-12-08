@@ -61,7 +61,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class DeltaAnalysis(session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
 
-  type CastFunction = (Expression, DataType) => Expression
+  type CastFunction = (Expression, DataType, String) => Expression
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // INSERT INTO by ordinal
@@ -558,7 +558,7 @@ class DeltaAnalysis(session: SparkSession)
       case (s: StructType, t: StructType) if s != t =>
         addCastsToStructs(tblName, attr, s, t)
       case _ =>
-        getCastFunction(attr, targetAttr.dataType)
+        getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
     Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
   }
@@ -588,12 +588,15 @@ class DeltaAnalysis(session: SparkSession)
     val timeZone = conf.sessionLocalTimeZone
     conf.storeAssignmentPolicy match {
       case SQLConf.StoreAssignmentPolicy.LEGACY =>
-        Cast(_, _, Option(timeZone), ansiEnabled = false)
+        (input: Expression, dt: DataType, _) =>
+          Cast(input, dt, Option(timeZone), ansiEnabled = false)
       case SQLConf.StoreAssignmentPolicy.ANSI =>
-        (input: Expression, dt: DataType) => {
+        (input: Expression, dt: DataType, name: String) => {
           AnsiCast(input, dt, Option(timeZone))
         }
-      case SQLConf.StoreAssignmentPolicy.STRICT => UpCast(_, _)
+      case SQLConf.StoreAssignmentPolicy.STRICT =>
+        (input: Expression, dt: DataType, _) =>
+          UpCast(input, dt)
     }
   }
 
@@ -626,7 +629,8 @@ class DeltaAnalysis(session: SparkSession)
       case (other, i) if i < target.length =>
         val targetAttr = target(i)
         Alias(
-          getCastFunction(GetStructField(parent, i, Option(other.name)), targetAttr.dataType),
+          getCastFunction(GetStructField(parent, i, Option(other.name)),
+            targetAttr.dataType, targetAttr.name),
           targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
 
       case (other, i) =>
