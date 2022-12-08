@@ -37,7 +37,7 @@ def getStandaloneVersion(): String = {
     println("Using Delta version " + version)
     version
   } else {
-    "0.5.0"
+    "0.6.0"
   }
 }
 
@@ -59,7 +59,7 @@ lazy val helloWorld = (project in file("hello-world")) settings (
   extraMavenRepo
 )
 
-val flinkVersion = "1.15.2"
+val flinkVersion = "1.15.3"
 val flinkHadoopVersion = "3.1.0"
 lazy val flinkExample = (project in file("flink-example")) settings (
   name := "flink",
@@ -70,8 +70,9 @@ lazy val flinkExample = (project in file("flink-example")) settings (
   libraryDependencies ++= Seq(
     "io.delta" % "delta-flink" % getStandaloneVersion(),
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
-    "org.apache.flink" %% "flink-parquet" % flinkVersion,
+    "org.apache.flink" % "flink-parquet" % flinkVersion,
     "org.apache.flink" % "flink-table-common" % flinkVersion,
+    "org.apache.flink" % "flink-connector-files" % flinkVersion,
     "org.apache.hadoop" % "hadoop-client" % flinkHadoopVersion,
 
     // Log4j runtime dependencies
@@ -80,7 +81,7 @@ lazy val flinkExample = (project in file("flink-example")) settings (
     "org.apache.logging.log4j" % "log4j-core" % "2.12.1" % "runtime",
 
     // Below dependencies are needed only to run the example project in memory
-    "org.apache.flink" %% "flink-clients" % flinkVersion,
-    "org.apache.flink" %% "flink-table-runtime" % flinkVersion
+    "org.apache.flink" % "flink-clients" % flinkVersion % "test",
+    "org.apache.flink" % "flink-table-runtime" % flinkVersion
   )
 )

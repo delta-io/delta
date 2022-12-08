@@ -34,7 +34,7 @@ public final class Utils {
             // Maven commands are run from the examples/flink-example/ directory
             rootPath + "/src/main/resources/" + resourcesTableDir :
             // while SBT commands are run from the examples/ directory
-            rootPath + "/examples/flink-example/src/main/resources/" + resourcesTableDir;
+            rootPath + "/flink-example/src/main/resources/" + resourcesTableDir;
     }
 
     public static void prepareDirs(String tablePath) throws IOException {
