@@ -360,6 +360,9 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
+                case TruncTimestamp(
+                  StringLiteral(format), ExtractBaseColumn(name, TimestampType), _) =>
+                    createExpr(name)(DateTruncPartitionExpr(format, partColName))
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None

@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.perf
 
+import org.apache.spark.sql.catalyst.expressions.TruncTimestamp
+
 import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.{CountDownLatch, TimeUnit}
-
 import scala.util.matching.Regex
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -747,6 +748,48 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       "outer.inner.nested.value >= 'foo'" ->
         Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
       "outer.inner.nested.value is null" -> Seq("(substr IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventTime TIMESTAMP",
+    "eventTimeTrunc TIMESTAMP",
+    Map("eventTimeTrunc" -> "date_trunc('YEAR', eventTime)"),
+    expectedPartitionExpr = DateTruncPartitionExpr("YEAR", "eventTimeTrunc"),
+    auxiliaryTestName = Option(" from date_trunc(timestamp)"),
+    filterTestCases = Seq(
+      "eventTime < '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime <= '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime = '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime > '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime >= '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime is null" -> Seq("(eventTimeTrunc IS NULL)"),
+      // Verify we can reverse the order
+      "'2021-01-01 18:00:00' > eventTime" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' >= eventTime" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' = eventTime" ->
+        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' < eventTime" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' <= eventTime" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))")
     )
   )
 
