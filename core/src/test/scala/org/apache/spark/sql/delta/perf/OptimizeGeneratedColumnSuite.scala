@@ -1035,6 +1035,84 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     )
   )
 
+  testOptimizablePartitionExpression(
+    "eventTime TIMESTAMP",
+    "date DATE",
+    Map("date" -> "(trunc(eventTime, 'year'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "YEAR"),
+    filterTestCases = Seq(
+      "eventTime < '2021-01-01 18:00:00'" ->
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+      "eventTime <= '2021-01-01 18:00:00'" ->
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+      "eventTime = '2021-01-01 18:00:00'" ->
+        Seq("((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
+          "OR ((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+      "eventTime > '2021-01-01 18:00:00'" ->
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+      "eventTime >= '2021-01-01 18:00:00'" ->
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+      "eventTime is null" ->
+        Seq("(date IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventDate DATE",
+    "date DATE",
+    Map("date" -> "(trunc(eventDate, 'month'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "MONTH"),
+    filterTestCases = Seq(
+      "eventDate < '2021-12-01'" ->
+        Seq("((date <= trunc(DATE '2021-12-01', 'MONTH')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+      "eventDate <= '2021-12-01'" ->
+        Seq("((date <= trunc(DATE '2021-12-01', 'MONTH')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+      "eventDate = '2021-12-01'" ->
+        Seq("((date = trunc(DATE '2021-12-01', 'MONTH')) " +
+          "OR ((date = trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+      "eventDate > '2021-12-01'" ->
+        Seq("((date >= trunc(DATE '2021-12-01', 'MONTH')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+      "eventDate >= '2021-12-01'" ->
+        Seq("((date >= trunc(DATE '2021-12-01', 'MONTH')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+      "eventDate is null" ->
+        Seq("(date IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventDateStr STRING",
+    "date DATE",
+    Map("date" -> "(trunc(eventDateStr, 'quarter'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "QUARTER"),
+    filterTestCases = Seq(
+      "eventDateStr < '2022-04-01'" ->
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+      "eventDateStr <= '2022-04-01'" ->
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+      "eventDateStr = '2022-04-01'" ->
+        Seq("((date = trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
+          "OR ((date = trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+      "eventDateStr > '2022-04-01'" ->
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+      "eventDateStr >= '2022-04-01'" ->
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+      "eventDateStr is null" ->
+        Seq("(date IS NULL)")
+    )
+  )
+
   test("five digits year in a year month day partition column") {
     withTempDir { tempDir =>
       withTableName("optimizable_partition_expression") { table =>

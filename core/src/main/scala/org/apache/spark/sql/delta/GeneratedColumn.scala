@@ -362,7 +362,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
-                case TruncDate(ExtractBaseColumn(name, _), StringLiteral(format)) =>
+                case TruncDate(ExtractBaseColumn(name, DateType), StringLiteral(format)) =>
                   format toUpperCase Locale.ROOT match {
                     case DATE_FORMAT_WEEK =>
                       createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_WEEK))
@@ -375,7 +375,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                     case _ => None
                   }
                 case TruncDate(Cast(
-                ExtractBaseColumn(name, TimestampType), DateType, _, _), StringLiteral(format)) =>
+                ExtractBaseColumn(name, _), DateType, _, _), StringLiteral(format)) =>
                   format toUpperCase Locale.ROOT match {
                     case DATE_FORMAT_WEEK =>
                       createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_WEEK))
