@@ -1091,6 +1091,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" : {
+    "message" : [
+      "When there are more than one NOT MATCHED BY SOURCE clauses in a MERGE statement, only the last NOT MATCHED BY SOURCE clause can omit the condition."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one NOT MATCHED clauses in a MERGE statement, only the last NOT MATCHED clause can omit the condition"
