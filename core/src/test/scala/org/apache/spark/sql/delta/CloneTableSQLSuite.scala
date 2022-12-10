@@ -148,7 +148,8 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
         }
         assert(ex.errorClass === Some("DELTA_CLONE_UNSUPPORTED_SOURCE"))
         assert(
-          ex.getMessage.contains("clone source 'default.tmp', whose format is View.")
+          ex.getMessage.contains("clone source") &&
+            ex.getMessage.contains("default.tmp', whose format is View.")
         )
       }
     }
