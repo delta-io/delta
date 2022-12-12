@@ -30,7 +30,6 @@
   - [Upgrade table protocol to support Table Features](#upgrade-table-protocol-to-support-table-features)
   - [Enabled features](#enabled-features)
   - [Disabled features](#disabled-features)
-  - [Allowed features](#allowed-features)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -589,9 +588,6 @@ A feature being `enabled` does not imply it's active, for example, a table may h
 
 ## Disabled features
 A feature is `disabled` if it’s in neither `readerFeatures` nor `writerFeatures`. Writers are allowed to `enable` this feature for the table, by adding its name to the `protocol` action.
-
-## Allowed features
-User can specify an allowlist for features that are allowed to be `enabled`. The existence of such an allowlist is governed by a table property `delta.enableFeatureAllowlist` which value can be `true` or `false`. When enabled, the table must have another table property `delta.allowedFeatures` with value a comma-separated list of feature names, such as `appendOnly,columnMapping`. An empty value ` ` means no feature can be `enabled`.
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`. Up to Reader Version 2 and Writer Version 6, the column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`. From Reader Version 3 and Writer Version 7, Column Mapping's on/off status is governed by the existence of a feature name `columnMapping` in both `readerFeatures` and `writerFeatures`, plus the table property `delta.columnMapping.mode` being one of `none`, `id` and `name`.
