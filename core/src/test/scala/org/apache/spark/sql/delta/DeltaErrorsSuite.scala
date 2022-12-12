@@ -145,7 +145,7 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-  test("test DeltaErrors methods") {
+  test("test DeltaErrors methods part 1") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
@@ -159,6 +159,7 @@ trait DeltaErrorsSuiteBase
            |Change Data Feed on the table rename/drop these columns.
            |""".stripMargin)
     }
+  test("test DeltaErrors methods part 1") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.cdcColumnsInData(Seq("col1", "col2"))

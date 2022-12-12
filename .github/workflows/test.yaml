@@ -6,15 +6,16 @@ jobs:
     strategy:
       matrix:
         scala: [2.12.15, 2.13.5]
+        java: [ '8', '11' ]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
       - uses: actions/checkout@v3
-      - name: install java
+      - name: install java - - ${{matrix.java}}
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "8"
+          java-version: ${{matrix.java}}
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
