@@ -99,7 +99,10 @@ trait DocsPath {
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
     "columnMappingAdviceMessage",
-    "icebergClassMissing"
+    "icebergClassMissing",
+    "tableFeatureReadRequiresWriteException",
+    "tableFeatureRequiresHigherReaderProtocolVersion",
+    "tableFeatureRequiresHigherWriterProtocolVersion"
   )
 }
 
@@ -2078,6 +2081,70 @@ trait DeltaErrorsBase
     new io.delta.exceptions.ProtocolChangedException(message)
   }
 
+  def unsupportedReaderTableFeaturesInTableException(
+    unsupported: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
+      messageParameters = Array(unsupported.mkString(", ")))
+  }
+
+  def unsupportedWriterTableFeaturesInTableException(
+    unsupported: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
+      messageParameters = Array(unsupported.mkString(", ")))
+  }
+
+  def unsupportedTableFeatureConfigsException(
+      configs: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG",
+      messageParameters = Array(configs.mkString(", ")))
+  }
+
+  def unsupportedTableFeatureStatusException(
+      feature: String,
+      status: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURE_STATUS",
+      messageParameters = Array(feature, status))
+  }
+
+  def tableFeatureReadRequiresWriteException(
+      requiredWriterVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE",
+      messageParameters = Array(
+        requiredWriterVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureRequiresHigherReaderProtocolVersion(
+      feature: String,
+      currentVersion: Int,
+      requiredVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION",
+      messageParameters = Array(
+        feature,
+        currentVersion.toString,
+        requiredVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureRequiresHigherWriterProtocolVersion(
+      feature: String,
+      currentVersion: Int,
+      requiredVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION",
+      messageParameters = Array(
+        feature,
+        currentVersion.toString,
+        requiredVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,
@@ -2712,6 +2779,28 @@ class DeltaIndexOutOfBoundsException(
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 }
+
+/** Thrown when the protocol version of a table is greater than supported by this client. */
+class InvalidProtocolVersionException(requiredVersion: Int, supportedVersion: Int)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
+    messageParameters = Array(requiredVersion.toString, supportedVersion.toString)))
+  with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
+}
+
+class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+    messageParameters = Array(s"(${oldProtocol.simpleString})", s"(${newProtocol.simpleString})")
+  )) with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+}
+
+class DeltaTableFeatureException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends DeltaRuntimeException(errorClass, messageParameters)
 
 class DeltaRuntimeException(
     errorClass: String,

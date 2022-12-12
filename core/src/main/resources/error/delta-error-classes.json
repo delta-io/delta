@@ -574,6 +574,18 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
+    "message" : [
+      "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
+    "message" : [
+      "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [
       "Existing file path <path>"
@@ -826,6 +838,12 @@
   "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
     "message" : [
       "Protocol version cannot be downgraded from <oldProtocol> to <newProtocol>"
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_PROTOCOL_VERSION" : {
+    "message" : [
+      "Delta protocol version is too new for this version of Delta Lake: table requires <required>, client supports up to <supported>. Please upgrade to a newer release."
     ],
     "sqlState" : "42000"
   },
@@ -1243,6 +1261,12 @@
       "Protocol property <key> needs to be an integer. Found <value>"
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE" : {
+    "message" : [
+      "Unable to upgrade only the reader protocol version to use table features. Writer protocol version must be at least <writerVersion> to proceed. Refer to <docLink> for more information on table protocol versions."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
@@ -1747,6 +1771,30 @@
       "<expression> cannot be used in a generated column"
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
+    "message" : [
+      "Unable to read this table because it requires reader table features that are unsupported by this version of Delta Lake: <unsupported>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
+    "message" : [
+      "Unable to write this table because it requires writer table features that are unsupported by this version of Delta Lake: <unsupported>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG" : {
+    "message" : [
+      "Table features configured in the following Spark configs or Delta table properties are not recognized by this version of Delta Lake: <configs>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURE_STATUS" : {
+    "message" : [
+      "Expecting the status for table feature <feature> to be \"enabled\", but got \"<status>\"."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT" : {
     "message" : [
