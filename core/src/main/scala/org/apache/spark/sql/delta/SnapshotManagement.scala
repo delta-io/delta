@@ -273,7 +273,6 @@ trait SnapshotManagement { self: DeltaLog =>
     val snapshot = initSegment.map { segment =>
       val snapshot = createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = lastCheckpointOpt,
         checksumOpt = None)
       snapshot
@@ -308,7 +307,6 @@ trait SnapshotManagement { self: DeltaLog =>
 
   protected def createSnapshot(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long,
       checkpointMetadataOptHint: Option[CheckpointMetaData],
       checksumOpt: Option[VersionChecksum]): Snapshot = {
     val startingFrom = initSegment.checkpointVersionOpt
@@ -319,11 +317,9 @@ trait SnapshotManagement { self: DeltaLog =>
         path = logPath,
         version = segment.version,
         logSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt.orElse(readChecksum(segment.version)),
-        minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
         checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
   }
@@ -607,7 +603,6 @@ trait SnapshotManagement { self: DeltaLog =>
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp,
           checkpointMetadataOptHint = previousSnapshot.getCheckpointMetadataOpt,
           checksumOpt = None)
         logMetadataTableIdChange(previousSnapshot, newSnapshot)
@@ -651,14 +646,12 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def createSnapshotAfterCommit(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long,
       newChecksumOpt: Option[VersionChecksum],
       committedVersion: Long,
       checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
     logInfo(s"Creating a new snapshot v${initSegment.version} for commit version $committedVersion")
     createSnapshot(
       initSegment,
-      minFileRetentionTimestamp,
       checkpointMetadataOptHint,
       checksumOpt = newChecksumOpt
     )
@@ -695,7 +688,6 @@ trait SnapshotManagement { self: DeltaLog =>
 
       val newSnapshot = createSnapshotAfterCommit(
         segment,
-        minFileRetentionTimestamp,
         newChecksumOpt,
         committedVersion,
         previousSnapshot.getCheckpointMetadataOpt)
@@ -722,7 +714,6 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = None,
         checksumOpt = None)
     }.getOrElse {
