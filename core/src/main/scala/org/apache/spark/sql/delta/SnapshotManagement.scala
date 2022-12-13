@@ -265,7 +265,6 @@ trait SnapshotManagement { self: DeltaLog =>
         logInfo(s"Loading version ${segment.version}$startCheckpoint")
         val snapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp,
           checkpointMetadataOptHint = lastCheckpointOpt)
 
         logInfo(s"Returning initial snapshot $snapshot")
@@ -282,7 +281,6 @@ trait SnapshotManagement { self: DeltaLog =>
 
   protected def createSnapshot(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long,
       checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
     val checksumOpt = readChecksum(initSegment.version)
     createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
@@ -290,11 +288,9 @@ trait SnapshotManagement { self: DeltaLog =>
         path = logPath,
         version = segment.version,
         logSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt,
-        minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
         checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
   }
@@ -566,7 +562,6 @@ trait SnapshotManagement { self: DeltaLog =>
 
         val newSnapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp,
           checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt)
 
         if (previousSnapshot.version > -1 &&
@@ -616,7 +611,6 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = None)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.

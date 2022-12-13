@@ -117,12 +117,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       require(snapshot.version >= 0, "No state defined for this table. Is this really " +
         "a Delta table? Refusing to garbage collect.")
 
+      val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
-      checkRetentionPeriodSafety(spark, retentionMillis, deltaLog.tombstoneRetentionMillis)
+      checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
 
       val deleteBeforeTimestamp = retentionMillis.map { millis =>
         clock.getTimeMillis() - millis
-      }.getOrElse(deltaLog.minFileRetentionTimestamp)
+      }.getOrElse(snapshot.minFileRetentionTimestamp)
       logInfo(s"Starting garbage collection (dryRun = $dryRun) of untracked files older than " +
         s"${new Date(deleteBeforeTimestamp).toGMTString} in $path")
       val hadoopConf = spark.sparkContext.broadcast(
@@ -247,7 +248,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           val stats = DeltaVacuumStats(
             isDryRun = true,
             specifiedRetentionMillis = retentionMillis,
-            defaultRetentionMillis = deltaLog.tombstoneRetentionMillis,
+            defaultRetentionMillis = snapshotTombstoneRetentionMillis,
             minRetainedTimestamp = deleteBeforeTimestamp,
             dirsPresentBeforeDelete = dirCounts,
             objectsDeleted = numFiles,
@@ -266,7 +267,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           diffFiles,
           sizeOfDataToDelete,
           retentionMillis,
-          deltaLog.tombstoneRetentionMillis)
+          snapshotTombstoneRetentionMillis)
 
         val filesDeleted = try {
           delete(diffFiles, spark, basePath, hadoopConf, parallelDeleteEnabled,
@@ -278,7 +279,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         val stats = DeltaVacuumStats(
           isDryRun = false,
           specifiedRetentionMillis = retentionMillis,
-          defaultRetentionMillis = deltaLog.tombstoneRetentionMillis,
+          defaultRetentionMillis = snapshotTombstoneRetentionMillis,
           minRetainedTimestamp = deleteBeforeTimestamp,
           dirsPresentBeforeDelete = dirCounts,
           objectsDeleted = filesDeleted,
