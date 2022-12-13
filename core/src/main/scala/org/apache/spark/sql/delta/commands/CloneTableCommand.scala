@@ -30,6 +30,7 @@ import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
+import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -244,4 +245,22 @@ class CloneParquetSource(
   def description: String = s"${format} table ${name}"
 
   override def close(): Unit = convertTargetTable.fileManifest.close()
+}
+
+/**
+ * A iceberg table source to be cloned from
+ */
+case class CloneIcebergSource(
+  tableIdentifier: TableIdentifier,
+  sparkTable: Option[Table],
+  tableSchema: Option[StructType],
+  spark: SparkSession) extends CloneParquetSource(tableIdentifier, None, spark) {
+
+  override lazy val convertTargetTable: ConvertTargetTable =
+    ConvertToDeltaCommand.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
+
+  override def format: String = CloneSourceFormat.ICEBERG
+
+  override def name: String =
+    sparkTable.map(_.name()).getOrElse(s"iceberg.`${tableIdentifier.table}`")
 }

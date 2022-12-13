@@ -89,6 +89,7 @@ trait CloneSource extends Closeable {
 // Clone source table formats
 object CloneSourceFormat {
   val DELTA = "Delta"
+  val ICEBERG = "Iceberg"
   val PARQUET = "Parquet"
   val UNKNOWN = "Unknown"
 }

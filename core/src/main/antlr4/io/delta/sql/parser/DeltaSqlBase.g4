@@ -121,7 +121,7 @@ temporalClause
     ;
 
 qualifiedName
-    : identifier ('.' identifier)*
+    : identifier ('.' identifier)* ('.' identifier)*
     ;
 
 propertyList

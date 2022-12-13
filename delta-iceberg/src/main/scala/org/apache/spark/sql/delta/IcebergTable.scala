@@ -256,7 +256,7 @@ class IcebergFileManifest(
           }
       }
       spark.createDataset(rdd)
-    }.reduce(_.union(_))
+    }.reduceOption(_.union(_)).getOrElse(spark.emptyDataset[ConvertTargetFile])
 
     fileSparkResults = Some(res.cache())
     _numFiles = Some(numFiles)
