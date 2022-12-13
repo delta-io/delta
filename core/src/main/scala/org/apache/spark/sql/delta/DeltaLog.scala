@@ -127,32 +127,9 @@ class DeltaLog private(
   def maxSnapshotLineageLength: Int =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
 
-  /** How long to keep around logically deleted files before physically deleting them. */
-  private[delta] def tombstoneRetentionMillis: Long =
-    DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
-
   // TODO: There is a race here where files could get dropped when increasing the
   // retention interval...
   protected def metadata = Option(unsafeVolatileSnapshot).map(_.metadata).getOrElse(Metadata())
-
-  /**
-   * Tombstones before this timestamp will be dropped from the state and the files can be
-   * garbage collected.
-   */
-  def minFileRetentionTimestamp: Long = {
-    // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
-    recordFrameProfile("Delta", "DeltaLog.minFileRetentionTimestamp") {
-      clock.getTimeMillis() - tombstoneRetentionMillis
-    }
-  }
-
-  /**
-   * [[SetTransaction]]s before this timestamp will be considered expired and dropped from the
-   * state, but no files will be deleted.
-   */
-  def minSetTransactionRetentionTimestamp: Option[Long] = {
-    DeltaLog.minSetTransactionRetentionInterval(metadata).map { clock.getTimeMillis() - _ }
-  }
 
   /**
    * Checks whether this table only accepts appends. If so it will throw an error in operations that
@@ -217,6 +194,16 @@ class DeltaLog private(
     val fsRelation = HadoopFsRelation(
       index, index.partitionSchema, schema, None, index.format, allOptions)(spark)
     LogicalRelation(fsRelation)
+  }
+
+  /**
+   * Load the data using the FileIndex. This allows us to skip many checks that add overhead, e.g.
+   * file existence checks, partitioning schema inference.
+   */
+  def loadIndex(
+      index: DeltaLogFileIndex,
+      schema: StructType = Action.logSchema): DataFrame = {
+    Dataset.ofRows(spark, indexToRelation(index, schema))
   }
 
   /* ------------------ *
@@ -861,10 +848,15 @@ object DeltaLog extends DeltaLogging {
     })
   }
 
+  /** How long to keep around SetTransaction actions before physically deleting them. */
   def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
     DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
       .fromMetaData(metadata)
       .map(DeltaConfigs.getMilliSeconds)
+  }
+  /** How long to keep around logically deleted files before physically deleting them. */
+  def tombstoneRetentionMillis(metadata: Metadata): Long = {
+    DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
   }
 
   /** Get a function that canonicalizes a given `path`. */
