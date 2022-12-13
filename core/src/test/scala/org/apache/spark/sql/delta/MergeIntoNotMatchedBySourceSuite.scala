@@ -1,4 +1,3 @@
-@@ -1,411 +0,0 @@
 /*
  * Copyright (2021) The Delta Lake Project Authors.
  *
