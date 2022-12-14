@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.perf
 
-import org.apache.spark.sql.catalyst.expressions.TruncTimestamp
-
 import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.{CountDownLatch, TimeUnit}
