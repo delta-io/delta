@@ -371,8 +371,8 @@ class Snapshot(
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
   /** Return the set of properties of the table. */
-  def getProperties: mutable.HashMap[String, String] = {
-    val base = new mutable.HashMap[String, String]()
+  def getProperties: mutable.Map[String, String] = {
+    val base = new mutable.LinkedHashMap[String, String]()
     metadata.configuration.foreach { case (k, v) =>
       if (k != "path") {
         base.put(k, v)
@@ -380,7 +380,13 @@ class Snapshot(
     }
     base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
     base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
-    base
+    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val descriptors = protocol.writerFeatureDescriptors.map(desc =>
+        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}${desc.name}" -> desc.status.toString)
+      base ++ descriptors.toSeq.sorted
+    } else {
+      base
+    }
   }
 
   // Given the list of files from `LogSegment`, create respective file indices to help create

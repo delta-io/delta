@@ -372,23 +372,33 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
       newProtocol = Some(Protocol.forNewTable(spark, latestMetadata))
+    } else if (latestMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
+      latestMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
+      // If the request contains protocol bump for an existing table, we must apply this change to
+      // the `newProtocol` variable so that it can be committed by the transaction.
+
+      // Collect new reader and writer versions from table properties, or maintain the existing
+      // version.
+      val newReaderVersion = latestMetadata.configuration
+        .get(Protocol.MIN_READER_VERSION_PROP)
+        .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
+        .getOrElse(protocolBeforeUpdate.minReaderVersion)
+      val newWriterVersion = latestMetadata.configuration
+        .get(Protocol.MIN_WRITER_VERSION_PROP)
+        .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
+        .getOrElse(protocolBeforeUpdate.minWriterVersion)
+      val newProtocolFromMetadata = Protocol(newReaderVersion, newWriterVersion)
+
+      // Check protocol downgrade before protocol merge to throw the appropriate error message.
+      if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
+        newWriterVersion < protocolBeforeUpdate.minWriterVersion) {
+        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolFromMetadata)
+      }
+      // Use the merge logic (when newReaderVersion and newWriterVersion support table features)
+      // to explicitly enable implicitly-enabled features of the old protocol.
+      newProtocol = Some(protocolBeforeUpdate.merge(newProtocolFromMetadata))
     }
-    // Remove the protocol version properties
-    val configs = latestMetadata.configuration.filter {
-      case (Protocol.MIN_READER_VERSION_PROP, value) =>
-        if (!isCreatingNewTable) {
-          newProtocol = Some(protocol.copy(
-            minReaderVersion = Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, value)))
-        }
-        false
-      case (Protocol.MIN_WRITER_VERSION_PROP, value) =>
-        if (!isCreatingNewTable) {
-          newProtocol = Some(protocol.copy(
-            minWriterVersion = Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, value)))
-        }
-        false
-      case _ => true
-    }
+
     latestMetadata = if (isCreatingNewTable) {
       // Creating a new table will drop all existing data, so we don't need to fix the old
       // metadata.
@@ -418,9 +428,45 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         }
       }
     }
-    latestMetadata = latestMetadata.copy(configuration = configs)
+
+    // This transaction's new metadata might contain some automatically-enabled features, or
+    // have table feature-related table properties (props start with [[FEATURE_PROP_PREFIX]]).
+    // We silently add them to the `protocol` action.
+    val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
+    if (newProtocolBeforeAddingFeatures.supportsReaderFeatures ||
+      newProtocolBeforeAddingFeatures.supportsWriterFeatures) {
+      val minProtocolFromActiveFeatures =
+        Protocol.minProtocolFromActiveFeatures(spark, latestMetadata)
+
+      val newFeaturesFromTableConf =
+        TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
+          latestMetadata.configuration,
+          TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+      val descriptorsFromTableConf = newFeaturesFromTableConf.map(_.toDescriptor)
+
+      val existingDescriptors =
+        newProtocolBeforeAddingFeatures.readerAndWriterFeatureDescriptors
+
+      if (!descriptorsFromTableConf.subsetOf(existingDescriptors)) {
+        newProtocol = Some(
+          newProtocolBeforeAddingFeatures
+            .withReaderFeatureDescriptors(minProtocolFromActiveFeatures.readerFeatureDescriptors)
+            .withWriterFeatureDescriptors(minProtocolFromActiveFeatures.writerFeatureDescriptors)
+            .withFeatures(newFeaturesFromTableConf))
+      }
+    }
+
+    // We are done with protocol versions and features, time to remove related table properties.
+    val configsWithoutProtocolProps = latestMetadata.configuration.filter {
+      case (Protocol.MIN_READER_VERSION_PROP, _) => false
+      case (Protocol.MIN_WRITER_VERSION_PROP, _) => false
+      case (k, _) if k.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) => false
+      case _ => true
+    }
+    latestMetadata = latestMetadata.copy(configuration = configsWithoutProtocolProps)
     verifyNewMetadata(latestMetadata)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
+
 
     newMetadata = Some(latestMetadata)
   }
@@ -1058,9 +1104,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    deltaLog.protocolWrite(
-      snapshot.protocol,
-      logUpgradeMessage = !actions.headOption.exists(_.isInstanceOf[Protocol]))
+    deltaLog.protocolWrite(snapshot.protocol)
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.

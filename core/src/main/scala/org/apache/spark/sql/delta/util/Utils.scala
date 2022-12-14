@@ -47,4 +47,11 @@ object Utils {
   def getRandomPrefix(numChars: Int): String = {
     Random.alphanumeric.take(numChars).mkString
   }
+
+  /**
+   * Indicates whether Delta is currently running unit tests.
+   */
+  def isTesting: Boolean = {
+    System.getenv("DELTA_TESTING") != null
+  }
 }

@@ -368,7 +368,7 @@ trait DescribeDeltaHistorySuiteBase
         overwrite = false,
         log.newDeltaHadoopConf())
       log.update()
-      log.upgradeProtocol()
+      log.upgradeProtocol(Action.supportedProtocolVersion())
       checkLastOperation(
         path.toString,
         Seq("UPGRADE PROTOCOL",

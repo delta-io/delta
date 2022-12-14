@@ -26,7 +26,7 @@ import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -84,7 +84,19 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
     "columnMappingAdviceMessage" ->
       DeltaErrors.columnRenameNotSupported,
-    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable())
+    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable()),
+    "tableFeatureReadRequiresWriteException" ->
+      DeltaErrors.tableFeatureReadRequiresWriteException(requiredWriterVersion = 7),
+    "tableFeatureRequiresHigherReaderProtocolVersion" ->
+      DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
+        feature = "feature",
+        currentVersion = 1,
+        requiredVersion = 7),
+    "tableFeatureRequiresHigherWriterProtocolVersion" ->
+      DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
+        feature = "feature",
+        currentVersion = 1,
+        requiredVersion = 7)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -1325,8 +1337,8 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[ProtocolDowngradeException] {
-        val p1 = new Protocol(1, 1)
-        val p2 = new Protocol(2, 2)
+        val p1 = Protocol(1, 1)
+        val p2 = Protocol(2, 2)
         throw new ProtocolDowngradeException(p1, p2)
       }
       assert(e.getErrorClass == "DELTA_INVALID_PROTOCOL_DOWNGRADE")

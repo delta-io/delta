@@ -184,7 +184,7 @@ class CloneParquetSource(
 
   def format: String = CloneSourceFormat.PARQUET
 
-  def protocol: Protocol = new Protocol()
+  def protocol: Protocol = Protocol()
 
   override val clock: Clock = new SystemClock()
 

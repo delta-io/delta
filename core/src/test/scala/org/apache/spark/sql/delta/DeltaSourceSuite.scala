@@ -24,7 +24,7 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

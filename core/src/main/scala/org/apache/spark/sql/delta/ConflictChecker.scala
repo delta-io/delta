@@ -161,10 +161,8 @@ private[delta] class ConflictChecker(
         deltaLog.protocolRead(p)
         deltaLog.protocolWrite(p)
       }
-      currentTransactionInfo.actions.foreach {
-        case Protocol(_, _) =>
-          throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
-        case _ =>
+      if (currentTransactionInfo.actions.exists(_.isInstanceOf[Protocol])) {
+        throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
       }
     }
   }

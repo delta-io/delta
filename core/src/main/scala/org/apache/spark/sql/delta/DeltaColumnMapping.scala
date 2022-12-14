@@ -121,7 +121,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       } else {
         // legal mode change, now check if protocol is upgraded before or part of this txn
         val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
-        val newProtocol = new Protocol(
+        val newProtocol = Protocol(
           minReaderVersion = caseInsensitiveMap
             .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
             .getOrElse(oldProtocol.minReaderVersion),

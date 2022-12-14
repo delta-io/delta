@@ -46,7 +46,7 @@ def run_sbt_tests(root_dir, coverage, scala_version=None):
         cmd += ["++ %s test" % scala_version]
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
-    run_cmd(cmd, stream_output=True)
+    run_cmd(cmd, env={"DELTA_TESTING": "1"}, stream_output=True)
 
 
 def run_python_tests(root_dir):

@@ -136,6 +136,7 @@ class DeltaLog private(
    * can remove data such as DELETE/UPDATE/MERGE.
    */
   def assertRemovable(): Unit = {
+    val metadata = unsafeVolatileSnapshot.metadata
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
       throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
     }
@@ -269,7 +270,7 @@ class DeltaLog private(
   }
 
   // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
+  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
     upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
@@ -321,39 +322,82 @@ class DeltaLog private(
    * --------------------- */
 
   /**
-   * Asserts that the client is up to date with the protocol and
-   * allowed to read the table that is using the given `protocol`.
+   * Asserts the highest protocol supported by this client is not less than what required by the
+   * table for performing read or write operations. This ensures the client to support a
+   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
+   *
+   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
+   * `read` and `write`.
    */
-  def protocolRead(protocol: Protocol): Unit = {
-    val supportedReaderVersion =
-      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
-    if (supportedReaderVersion < protocol.minReaderVersion) {
-      recordDeltaEvent(
-        this,
-        "delta.protocol.failure.read",
-        data = Map(
-          "clientVersion" -> supportedReaderVersion,
-          "minReaderVersion" -> protocol.minReaderVersion))
-      throw new InvalidProtocolVersionException
+  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
+    val clientSupportedProtocol = Action.supportedProtocolVersion(Some(spark.sessionState.conf))
+    // Depending on the operation, pull related protocol versions out of Protocol objects.
+    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
+    val (clientSupportedVersion, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
+      case "read" => (
+          clientSupportedProtocol.minReaderVersion,
+          tableProtocol.minReaderVersion,
+          (f: Protocol) => f.readerFeatureDescriptors)
+      case "write" => (
+          clientSupportedProtocol.minWriterVersion,
+          tableProtocol.minWriterVersion,
+          (f: Protocol) => f.writerFeatureDescriptors)
+      case _ =>
+        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
+    }
+
+    // Check is complete when both the protocol version and all referenced features are supported.
+    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol).map(_.name)
+    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol).map(_.name)
+    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
+      clientSupportedVersion >= tableRequiredVersion) {
+      return
+    }
+
+    // Otherwise, either the protocol version, or few features referenced by the table, is
+    // unsupported.
+    val clientUnsupportedFeatureNames =
+      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
+    // Prepare event log constants and the appropriate error message handler.
+    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
+      case "read" => (
+          "delta.protocol.failure.read",
+          "minReaderVersion",
+          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
+      case "write" => (
+          "delta.protocol.failure.write",
+          "minWriterVersion",
+          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
+    }
+    recordDeltaEvent(
+      this,
+      opType,
+      data = Map(
+        "clientVersion" -> clientSupportedVersion,
+        versionKey -> tableRequiredVersion,
+        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
+        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
+    if (clientSupportedVersion < tableRequiredVersion) {
+      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersion)
+    } else {
+      throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }
   }
 
   /**
-   * Asserts that the client is up to date with the protocol and
-   * allowed to write to the table that is using the given `protocol`.
+   * Asserts that the client is up to date with the protocol and allowed to read the table that is
+   * using the given `protocol`.
    */
-  def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
-    val supportedWriterVersion =
-      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
-    if (supportedWriterVersion < protocol.minWriterVersion) {
-      recordDeltaEvent(
-        this,
-        "delta.protocol.failure.write",
-        data = Map(
-          "clientVersion" -> supportedWriterVersion,
-          "minWriterVersion" -> protocol.minWriterVersion))
-      throw new InvalidProtocolVersionException
-    }
+  def protocolRead(protocol: Protocol): Unit = {
+    protocolCheck(protocol, "read")
+  }
+
+  /**
+   * Asserts that the client is up to date with the protocol and allowed to write to the table
+   * that is using the given `protocol`.
+   */
+  def protocolWrite(protocol: Protocol): Unit = {
+    protocolCheck(protocol, "write")
   }
 
   /* ---------------------------------------- *

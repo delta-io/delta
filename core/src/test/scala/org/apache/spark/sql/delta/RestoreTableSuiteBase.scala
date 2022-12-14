@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -201,7 +202,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       val deltaLog = DeltaLog.forTable(spark, path)
       val oldProtocolVersion = deltaLog.snapshot.protocol
       // Update table to latest version.
-      deltaLog.upgradeProtocol()
+      deltaLog.upgradeProtocol(Protocol())
       val newProtocolVersion = deltaLog.snapshot.protocol
       assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
         newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
