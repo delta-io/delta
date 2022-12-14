@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.OptimizablePartitionExpression._
+
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncTimestamp, UnixTimestamp, Year}
@@ -547,7 +548,7 @@ case class DateFormatPartitionExpr(
 }
 
 /** The rules for the generation expression `date_trunc(field, col)`. */
-case class DateTruncPartitionExpr(format: String, partitionColumn: String)
+case class TimestampTruncPartitionExpr(format: String, partitionColumn: String)
   extends OptimizablePartitionExpression {
   override def lessThan(lit: Literal): Option[Expression] = {
     // As the partition column has truncated information, we need to turn "<" to "<=".
@@ -557,6 +558,8 @@ case class DateTruncPartitionExpr(format: String, partitionColumn: String)
   override def lessThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
       case TimestampType => Some(partitionColumn.toPartCol <= TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol <= TruncTimestamp(format, Cast(lit, TimestampType)))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -566,6 +569,8 @@ case class DateTruncPartitionExpr(format: String, partitionColumn: String)
   override def equalTo(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
       case TimestampType => Some(partitionColumn.toPartCol === TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol === TruncTimestamp(format, Cast(lit, TimestampType)))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -580,6 +585,8 @@ case class DateTruncPartitionExpr(format: String, partitionColumn: String)
   override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
       case TimestampType => Some(partitionColumn.toPartCol >= TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol >= TruncTimestamp(format, Cast(lit, TimestampType)))
       case _ => None
     }
     // to avoid any expression which yields null

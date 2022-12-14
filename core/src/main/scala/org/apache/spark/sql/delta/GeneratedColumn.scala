@@ -362,7 +362,19 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
                 case TruncTimestamp(
                   StringLiteral(format), ExtractBaseColumn(name, TimestampType), _) =>
-                    createExpr(name)(DateTruncPartitionExpr(format, partColName))
+                    createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
+                case TruncTimestamp(
+                  StringLiteral(format),
+                  Cast(ExtractBaseColumn(name, DateType), TimestampType, _, _), _) =>
+                  format match {
+                    case "YEAR" | "YYYY" | "YY"
+                         | "QUARTER"
+                         | "MONTH" | "MM" | "MON"
+                         | "WEEK"
+                         | "DAY" | "DD" =>
+                      createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
+                    case _ => None
+                  }
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
