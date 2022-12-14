@@ -25,6 +25,7 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 
@@ -126,6 +127,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       target: String,
       sourceFormat: String = "delta",
       sourceIsTable: Boolean = true,
+      sourceIs3LTable: Boolean = false,
       targetIsTable: Boolean = true,
       targetLocation: Option[String] = None,
       versionAsOf: Option[Long] = None,
@@ -146,23 +148,30 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         isCreate = isCreate,
         isReplace = isReplace,
         tableProperties = tableProperties
-      )) == CloneTableStatement(
-        if (versionAsOf.isEmpty && timestampAsOf.isEmpty) {
-          UnresolvedRelation(tblId(source, if (sourceIsTable) null else sourceFormat))
+      )) == {
+        val sourceRelation = if (sourceIs3LTable) {
+          new UnresolvedRelation(source.split('.'))
         } else {
-          TimeTravel(
-            UnresolvedRelation(tblId(source, if (sourceIsTable) null else sourceFormat)),
-            timestampAsOf.map(Literal(_)),
-            versionAsOf,
-            Some("sql"))
-        },
-        UnresolvedRelation(tblId(target)),
-        ifNotExists = false,
-        isReplaceCommand = isReplace,
-        isCreateCommand = isCreate,
-        tablePropertyOverrides = tableProperties,
-        targetLocation = targetLocation
-      )
+          UnresolvedRelation(tblId(source, if (sourceIsTable) null else sourceFormat))
+        }
+        CloneTableStatement(
+          if (versionAsOf.isEmpty && timestampAsOf.isEmpty) {
+            sourceRelation
+          } else {
+            TimeTravel(
+              sourceRelation,
+              timestampAsOf.map(Literal(_)),
+              versionAsOf,
+              Some("sql"))
+          },
+          UnresolvedRelation(tblId(target)),
+          ifNotExists = false,
+          isReplaceCommand = isReplace,
+          isCreateCommand = isCreate,
+          tablePropertyOverrides = tableProperties,
+          targetLocation = targetLocation
+        )
+      }
     }
   }
   // scalastyle:on argcount
@@ -183,6 +192,16 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     checkCloneStmt(parser, source = "t1", target = "t1", targetLocation = Some("/new/path"))
     // Clone with time travel
     checkCloneStmt(parser, source = "t1", target = "t1", versionAsOf = Some(1L))
+    // Clone with 3L table (only useful for Iceberg table now)
+    checkCloneStmt(parser, source = "local.iceberg.table", target = "t1", sourceIs3LTable = true)
+    // Yet target cannot be a 3L table yet
+    intercept[ParseException] {
+      checkCloneStmt(parser, source = "local.iceberg.table", target = "catalog.delta.table",
+        sourceIs3LTable = true)
+    }
+    // Custom source format with path
+    checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
+      sourceIsTable = false)
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {

@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
+import scala.util.{Failure, Success, Try}
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -38,6 +40,8 @@ import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, HiveTableRelation}
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
@@ -127,6 +131,29 @@ class DeltaAnalysis(session: SparkSession)
           resolveCloneCommand(
             cloneStatement.target, new CloneDeltaSource(traveledTable), cloneStatement)
 
+        case DataSourceV2Relation(table: IcebergTablePlaceHolder, _, _, _, _) =>
+          resolveCloneCommand(
+            cloneStatement.target,
+            CloneIcebergSource(
+              table.tableIdentifier, sparkTable = None, tableSchema = None, session),
+            cloneStatement)
+
+        case DataSourceV2Relation(table, _, _, _, _)
+            if table.getClass.getName.endsWith("org.apache.iceberg.spark.source.SparkTable") =>
+          val tableIdent = Try {
+            CatalystSqlParser.parseTableIdentifier(table.name())
+          } match {
+            case Success(ident) => ident
+            case Failure(_: ParseException) =>
+              // Fallback to 2-level identifier to make compatible with older Apache spark,
+              // this ident will NOT be used to look up the Iceberg tables later.
+              CatalystSqlParser.parseMultipartIdentifier(table.name()).tail.asTableIdentifier
+            case Failure(e) => throw e
+          }
+          resolveCloneCommand(
+            cloneStatement.target,
+            CloneIcebergSource(tableIdent, Some(table), tableSchema = None, session),
+            cloneStatement)
 
         case u: UnresolvedRelation =>
           u.failAnalysis(msg = s"Table not found: ${u.multipartIdentifier.quoted}")
@@ -436,7 +463,13 @@ class DeltaAnalysis(session: SparkSession)
           case Some(existingCatalog) => existingCatalog.identifier
           case None => TableIdentifier(path.toString, Some("delta"))
         }
-        val cloneSourceTable = sourceTbl
+        // Reuse the existing schema so that the physical name of columns are consistent
+        val cloneSourceTable = sourceTbl match {
+          case source: CloneIcebergSource =>
+            // Reuse the existing schema so that the physical name of columns are consistent
+            source.copy(tableSchema = Some(deltaTableV2.snapshot.metadata.schema))
+          case other => other
+        }
         val catalogTable = createCatalogTableForCloneCommand(
           path,
           byPath = existingTable.isEmpty,

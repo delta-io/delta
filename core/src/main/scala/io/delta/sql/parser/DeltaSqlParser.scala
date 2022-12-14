@@ -278,7 +278,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     }
 
     // Get source for clone (and time travel source if necessary)
-    val sourceRelation = UnresolvedRelation(visitTableIdentifier(ctx.source))
+    // The source relation can be an Iceberg table in form of `catalog.db.table` so we visit
+    // a multipart identifier instead of TableIdentifier (which does not support 3L namespace)
+    // in Spark 3.3. In Spark 3.4 we should have TableIdentifier supporting 3L namespace so we
+    // could revert back to that.
+    val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
     val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
     val targetRelation = UnresolvedRelation(target)
 
@@ -404,6 +408,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
+  }
+
+  protected def visitMultipartIdentifier(ctx: QualifiedNameContext): Seq[String] = withOrigin(ctx) {
+    ctx.identifier.asScala.map(_.getText).toSeq
   }
 
   override def visitPassThrough(ctx: PassThroughContext): LogicalPlan = null
