@@ -1443,15 +1443,6 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.invalidMergeClauseWhenNotMatched("MAGIC")
-      }
-      assert(e.getErrorClass == "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE")
-      assert(e.getSqlState == "42000")
-      assert(e.getMessage == "MAGIC clauses cannot be part of the WHEN NOT MATCHED clause" +
-        " in MERGE INTO.")
-    }
-    {
-      val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.createManagedTableWithoutSchemaException("table-1", spark)
       }
       assert(e.getErrorClass == "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA")

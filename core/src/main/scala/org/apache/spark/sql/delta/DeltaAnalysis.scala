@@ -253,7 +253,7 @@ class DeltaAnalysis(session: SparkSession)
         case delete: DeleteAction =>
           DeltaMergeIntoMatchedDeleteClause(delete.condition)
         case other =>
-          throw new AnalysisException(
+          throw new IllegalArgumentException(
             s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
       val notMatchedActions = merge.notMatchedActions.map {
@@ -265,7 +265,9 @@ class DeltaAnalysis(session: SparkSession)
           DeltaMergeIntoNotMatchedInsertClause(
             insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
-          throw DeltaErrors.invalidMergeClauseWhenNotMatched(s"${other.prettyName}")
+          throw new IllegalArgumentException(
+            s"${other.prettyName} clauses cannot be part of the WHEN NOT MATCHED clause in MERGE " +
+             "INTO.")
       }
       // rewrites Delta from V2 to V1
       val newTarget =
@@ -276,7 +278,8 @@ class DeltaAnalysis(session: SparkSession)
         newTarget,
         merge.sourceTable,
         merge.mergeCondition,
-        matchedActions ++ notMatchedActions)
+        matchedActions ++ notMatchedActions
+      )
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 

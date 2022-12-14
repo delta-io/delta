@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -23,7 +24,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.Row
 
 trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
-
   import testImplicits._
 
   // All CDC suites run using MergeIntoSQLSuite only. The SQL API for NOT MATCHED BY SOURCE will
@@ -347,6 +347,43 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (10, 11, "update_postimage"),
       (11, 11, "delete")))
 
+  testExtendedMergeWithCDC("not matched by source update + conditional insert")(
+    source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value % 2 = 0", values = "*"),
+    updateNotMatched(set = "t.value = t.value + 1"))(
+    result = Seq(
+      (0, 2), // Not matched (by target), inserted
+      (2, 3),  // Not matched by source, updated
+      (1, 4), // Matched, no change
+      // (5, 5) // Not matched (by target), not inserted
+      (7, 4)  // Not matched by source, updated
+    ),
+    cdc = Seq(
+      (0, 2, "insert"),
+      (2, 2, "update_preimage"),
+      (2, 3, "update_postimage"),
+      (7, 3, "update_preimage"),
+      (7, 4, "update_postimage")))
+
+  testExtendedMergeWithCDC("not matched by source delete + conditional insert")(
+    source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value % 2 = 0", values = "*"),
+    deleteNotMatched(condition = "t.value > 2"))(
+    result = Seq(
+      (0, 2), // Not matched (by target), inserted
+      (2, 2), // Not matched by source, no change
+      (1, 4) // Matched, no change
+      // (5, 5) // Not matched (by target), not inserted
+      // (7, 3) Not matched by source, no deleted
+    ),
+    cdc = Seq(
+      (0, 2, "insert"),
+      (7, 3, "delete")))
+
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and delete not matched by source")(
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
@@ -359,7 +396,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (2, 2, "extra2") // Not matched by target, inserted
       // (3, 30) Not matched by source, deleted
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((1, 10), (2, 2)).toDF("key", "value"))
+    expectedWithoutEvolution = Seq((1, 10), (2, 2)).toDF("key", "value")
+  )
 
   testEvolution("new column with insert * and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -372,7 +410,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (2, 2, "extra2"), // Not matched by target, inserted
       (3, 31, null) // Not matched by source, updated
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 10), (2, 2), (3, 31)).toDF("key", "value"))
+    expectedWithoutEvolution = Seq((0, 0), (1, 10), (2, 2), (3, 31)).toDF("key", "value")
+  )
 
   testEvolution("new column not inserted and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -383,7 +422,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (1, 10), // Matched, no change
       (3, 31) // Not matched by source, updated
     ).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 31)).toDF("key", "value"))
+    expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 31)).toDF("key", "value")
+  )
 
   testEvolution("new column referenced in matched condition but not inserted")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -395,7 +435,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       // (1, 10), Matched, deleted
       (3, 31) // Not matched by source, updated
     ).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (3, 31)).toDF("key", "value"))
+    expectedWithoutEvolution = Seq((0, 0), (3, 31)).toDF("key", "value")
+  )
 
   testEvolution("matched update * and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -407,5 +448,6 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (1, 1, "extra1"), // Matched, updated
       (3, 31, null) // Not matched by source, updated
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 31)).toDF("key", "value"))
+    expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 31)).toDF("key", "value")
+  )
 }

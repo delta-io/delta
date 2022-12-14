@@ -931,12 +931,6 @@
     ],
     "sqlState" : "22005"
   },
-  "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE" : {
-    "message" : [
-      "<clause> clauses cannot be part of the WHEN NOT MATCHED clause in MERGE INTO."
-    ],
-    "sqlState" : "42000"
-  },
   "DELTA_MERGE_MISSING_WHEN" : {
     "message" : [
       "There must be at least one WHEN clause in a MERGE statement."

@@ -1402,13 +1402,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def invalidMergeClauseWhenNotMatched(clause: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE",
-      messageParameters = Array(clause)
-    )
-  }
-
   def unexpectedPartialScan(path: Path): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNEXPECTED_PARTIAL_SCAN",
