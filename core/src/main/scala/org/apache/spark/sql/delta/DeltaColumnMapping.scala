@@ -358,7 +358,11 @@ trait DeltaColumnMappingBase extends DeltaLogging {
               SchemaUtils.findNestedFieldIgnoreCase(
                 oldMetadata.schema, fullName, includeCollections = true)
             if (existingField.isEmpty) {
-              throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
+              if (oldMetadata.schema.isEmpty) {
+                // We should relax the check for tables that have both an empty schema
+                // and no data. Assumption: no schema => no data
+                generatePhysicalName
+              } else throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
                 oldMetadata.schema, newMetadata.schema)
             } else {
               // When changing from NoMapping to NameMapping mode, we directly use old display names

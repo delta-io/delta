@@ -278,6 +278,22 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_CLONE_AMBIGUOUS_TARGET" : {
+    "message" : [
+      "",
+      "Two paths were provided as the CLONE target so it is ambiguous which to use. An external",
+      "location for CLONE was provided at <externalLocation> at the same time as the path",
+      "<targetIdentifier>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
+    "message" : [
+      "Unsupported clone source '<name>', whose format is <format>.",
+      "The supported formats are 'delta' and 'parquet'."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
       "Unable to find the column `<columnName>` given [<columnList>]"
@@ -743,6 +759,13 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_INVALID_CLONE_PATH" : {
+    "message" : [
+      "The target location for CLONE needs to be an absolute path or table name. Use an",
+      "absolute path instead of <path>."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."
@@ -1083,6 +1106,12 @@
   "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one MATCHED clauses in a MERGE statement, only the last MATCHED clause can omit the condition."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" : {
+    "message" : [
+      "When there are more than one NOT MATCHED BY SOURCE clauses in a MERGE statement, only the last NOT MATCHED BY SOURCE clause can omit the condition."
     ],
     "sqlState" : "42000"
   },
@@ -1688,6 +1717,15 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
+    "message" : [
+      "",
+      "You tried to REPLACE an existing table (<tableName>) with CLONE. This operation is",
+      "unsupported. Try a different target for CLONE or delete the table at the current target.",
+      ""
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE" : {
     "message" : [
       "Changing column mapping mode from '<oldMode>' to '<newMode>' is not supported."
@@ -1835,6 +1873,12 @@
   "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
     "message" : [
       "Nested field is not supported in the <operation> (field = <fieldName>)."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_NON_EMPTY_CLONE" : {
+    "message" : [
+      "The clone destination table is non-empty. Please TRUNCATE or DELETE FROM the table before running CLONE."
     ],
     "sqlState" : "0A000"
   },

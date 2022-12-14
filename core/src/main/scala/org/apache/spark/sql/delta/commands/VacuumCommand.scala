@@ -241,8 +241,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             timeTakenForDelete = 0L)
 
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-          logConsole(s"Found $numFiles files and directories in a total of " +
-            s"$dirCounts directories that are safe to delete.$stats")
+          logConsole(s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
+            s"a total of $dirCounts directories that are safe to delete.")
 
           return diffFiles.map(f => stringToPath(f).toString).toDF("path")
         }

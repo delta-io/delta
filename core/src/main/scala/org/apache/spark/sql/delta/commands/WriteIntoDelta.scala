@@ -35,6 +35,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
 
 /**
@@ -198,10 +199,17 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    // Delta does not support char padding and we should only have varchar type. This does not
-    // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
-    val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
-      replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    // TODO: use `SQLConf.READ_SIDE_CHAR_PADDING` after Spark 3.4 is released.
+    val charPadding = sparkSession.conf.get("spark.sql.readSideCharPadding", "false") == "true"
+    val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
+    val dataSchema = if (!charAsVarchar && charPadding) {
+      data.schema
+    } else {
+      // If READ_SIDE_CHAR_PADDING is not enabled, CHAR type is the same as VARCHAR. The change
+      // below makes DESC TABLE to show VARCHAR instead of CHAR.
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(
+        replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    }
     var finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)

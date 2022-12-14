@@ -244,7 +244,7 @@ trait CDCReaderImpl extends DeltaLogging {
    * shouldn't be produced.
    */
   def shouldSkipFileActionsInCommit(commitInfo: CommitInfo): Boolean = {
-    val isMerge = commitInfo.operation == DeltaOperations.Merge(None, Nil, Nil).name
+    val isMerge = commitInfo.operation == DeltaOperations.OP_MERGE
     val knownToHaveNoChangedRows = {
       val metrics = commitInfo.operationMetrics.getOrElse(Map.empty)
       // Note that if any metrics are missing, this condition will be false and we won't skip.

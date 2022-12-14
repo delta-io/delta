@@ -18,12 +18,15 @@ package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
 
+import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.SQLHelper
+import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -114,6 +117,72 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  // scalastyle:off argcount
+  private def checkCloneStmt(
+      parser: DeltaSqlParser,
+      source: String,
+      target: String,
+      sourceFormat: String = "delta",
+      sourceIsTable: Boolean = true,
+      targetIsTable: Boolean = true,
+      targetLocation: Option[String] = None,
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None,
+      isCreate: Boolean = true,
+      isReplace: Boolean = false,
+      tableProperties: Map[String, String] = Map.empty): Unit = {
+    assert {
+      parser.parsePlan(CloneTableSQLTestUtils.buildCloneSqlString(
+        source,
+        target,
+        sourceIsTable,
+        targetIsTable,
+        sourceFormat,
+        targetLocation = targetLocation,
+        versionAsOf = versionAsOf,
+        timestampAsOf = timestampAsOf,
+        isCreate = isCreate,
+        isReplace = isReplace,
+        tableProperties = tableProperties
+      )) == CloneTableStatement(
+        if (versionAsOf.isEmpty && timestampAsOf.isEmpty) {
+          UnresolvedRelation(tblId(source, if (sourceIsTable) null else sourceFormat))
+        } else {
+          TimeTravel(
+            UnresolvedRelation(tblId(source, if (sourceIsTable) null else sourceFormat)),
+            timestampAsOf.map(Literal(_)),
+            versionAsOf,
+            Some("sql"))
+        },
+        UnresolvedRelation(tblId(target)),
+        ifNotExists = false,
+        isReplaceCommand = isReplace,
+        isCreateCommand = isCreate,
+        tablePropertyOverrides = tableProperties,
+        targetLocation = targetLocation
+      )
+    }
+  }
+  // scalastyle:on argcount
+
+  test("CLONE command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    // Standard shallow clone
+    checkCloneStmt(parser, source = "t1", target = "t1")
+    // Path based source table
+    checkCloneStmt(parser, source = "/path/to/t1", target = "t1", sourceIsTable = false)
+    // REPLACE
+    checkCloneStmt(parser, source = "t1", target = "t1", isCreate = false, isReplace = true)
+    // CREATE OR REPLACE
+    checkCloneStmt(parser, source = "t1", target = "t1", isCreate = true, isReplace = true)
+    // Clone with table properties
+    checkCloneStmt(parser, source = "t1", target = "t1", tableProperties = Map("a" -> "a"))
+    // Clone with external location
+    checkCloneStmt(parser, source = "t1", target = "t1", targetLocation = Some("/new/path"))
+    // Clone with time travel
+    checkCloneStmt(parser, source = "t1", target = "t1", versionAsOf = Some(1L))
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
