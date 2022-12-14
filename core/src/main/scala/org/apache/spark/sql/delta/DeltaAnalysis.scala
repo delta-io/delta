@@ -751,6 +751,7 @@ case class DeltaDynamicPartitionOverwriteCommand(
     copy(table = newTable)
   }
 
+
   override protected def withNewChildInternal(
       newChild: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = copy(query = newChild)
 
