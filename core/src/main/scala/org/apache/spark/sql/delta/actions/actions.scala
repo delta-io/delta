@@ -71,7 +71,7 @@ object Action {
       conf: Option[SQLConf] = None,
       withAllFeatures: Boolean = true): Protocol = {
       if (withAllFeatures) {
-        protocolVersion.withFeatures(TableFeatureStore.allSupportedFeaturesMap.values)
+        protocolVersion.withFeatures(TableFeature.allSupportedFeaturesMap.values)
       } else {
         protocolVersion
       }
@@ -275,7 +275,7 @@ object Protocol {
   def minProtocolFromActiveFeatures(spark: SparkSession, metadata: Metadata): Protocol = {
     var minimumRequired = Protocol(0, 0)
 
-    TableFeatureStore.allSupportedFeaturesMap.values.foreach {
+    TableFeature.allSupportedFeaturesMap.values.foreach {
       case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
         if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
           // bump the protocol version to which the feature requires

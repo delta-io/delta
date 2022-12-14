@@ -65,7 +65,7 @@ class DeltaTableFeatureSuite
     }
     collect(ru.typeOf[TableFeature].typeSymbol)
 
-    val registeredFeatures = TableFeatureStore.allSupportedFeaturesMap.values
+    val registeredFeatures = TableFeature.allSupportedFeaturesMap.values
       .map(_.getClass.getSimpleName.stripSuffix("$")) // remove '$' from object names
       .toSet
     val notRegisteredFeatures = subClassNames.diff(registeredFeatures)

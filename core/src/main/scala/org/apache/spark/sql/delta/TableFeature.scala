@@ -23,59 +23,6 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.SparkSession
 
-object TableFeatureStore {
-
-  /**
-   * All table features recognized by this client. Update this set when you added a new Table
-   * Feature.
-   */
-  val allSupportedFeaturesMap: Map[String, TableFeature] = {
-    var features = Set[TableFeature](AppendOnlyTableFeature)
-    if (DeltaUtils.isTesting) {
-      features ++= Set(
-        TestLegacyWriterFeature,
-        TestWriterFeature,
-        TestLegacyReaderWriterFeature,
-        TestReaderWriterFeature)
-    }
-    val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
-    require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
-    featureMap
-  }
-}
-
-/* ---------------------------------------- *
- |  All table features known to the client  |
- * ---------------------------------------- */
-
-object AppendOnlyTableFeature
-  extends LegacyWriterFeature(name = "appendOnly", minWriterVersion = 2)
-  with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata,
-      spark: SparkSession): Boolean = {
-    DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
-  }
-}
-
-/**
- * Features below are for testing only, and are being registered to the system only in the testing
- * environment. See [[TableFeatureStore.allSupportedFeaturesMap]] for the registration.
- */
-
-object TestLegacyWriterFeature
-  extends LegacyWriterFeature(name = "testLegacyWriter", minWriterVersion = 5)
-
-object TestWriterFeature extends WriterFeature(name = "testWriter")
-
-object TestLegacyReaderWriterFeature
-  extends LegacyReaderWriterFeature(
-    name = "testLegacyReaderWriter",
-    minReaderVersion = 2,
-    minWriterVersion = 6)
-
-object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
-
 /* --------------------------------------- *
  |  Table features base class definitions  |
  * --------------------------------------- */
@@ -235,3 +182,56 @@ sealed abstract class LegacyReaderWriterFeature(
     minWriterVersion: Int)
   extends LegacyWriterFeature(name, minWriterVersion)
   with ReaderWriterFeatureType
+
+object TableFeature {
+
+  /**
+   * All table features recognized by this client. Update this set when you added a new Table
+   * Feature.
+   */
+  val allSupportedFeaturesMap: Map[String, TableFeature] = {
+    var features = Set[TableFeature](AppendOnlyTableFeature)
+    if (DeltaUtils.isTesting) {
+      features ++= Set(
+        TestLegacyWriterFeature,
+        TestWriterFeature,
+        TestLegacyReaderWriterFeature,
+        TestReaderWriterFeature)
+    }
+    val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
+    require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
+    featureMap
+  }
+}
+
+/* ---------------------------------------- *
+ |  All table features known to the client  |
+ * ---------------------------------------- */
+
+object AppendOnlyTableFeature
+  extends LegacyWriterFeature(name = "appendOnly", minWriterVersion = 2)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
+  }
+}
+
+/**
+ * Features below are for testing only, and are being registered to the system only in the testing
+ * environment. See [[TableFeature.allSupportedFeaturesMap]] for the registration.
+ */
+
+object TestLegacyWriterFeature
+  extends LegacyWriterFeature(name = "testLegacyWriter", minWriterVersion = 5)
+
+object TestWriterFeature extends WriterFeature(name = "testWriter")
+
+object TestLegacyReaderWriterFeature
+  extends LegacyReaderWriterFeature(
+    name = "testLegacyReaderWriter",
+    minReaderVersion = 2,
+    minWriterVersion = 6)
+
+object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")

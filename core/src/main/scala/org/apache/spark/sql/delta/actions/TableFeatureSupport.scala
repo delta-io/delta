@@ -207,7 +207,7 @@ trait TableFeatureSupport { this: Protocol =>
       // this protocol uses both reader and writer features, no feature can be implicitly enabled
       Set()
     } else {
-      TableFeatureStore.allSupportedFeaturesMap.values
+      TableFeature.allSupportedFeaturesMap.values
         .filter(_.isLegacyFeature)
         .filterNot(supportsReaderFeatures || this.minReaderVersion < _.minReaderVersion)
         .filterNot(supportsWriterFeatures || this.minWriterVersion < _.minWriterVersion)
@@ -285,7 +285,7 @@ case class TableFeatureDescriptor(
 
   /** Get the actual [[TableFeature]] object represented by this descriptor. */
   def toFeature: Option[TableFeature] =
-    TableFeatureStore.allSupportedFeaturesMap.get(name.toLowerCase(Locale.ROOT))
+    TableFeature.allSupportedFeaturesMap.get(name.toLowerCase(Locale.ROOT))
 }
 
 object TableFeatureStatus extends Enumeration {
@@ -346,7 +346,7 @@ object TableFeatureProtocolUtils {
       if (status != TableFeatureStatus.ENABLED.toString) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(name, status)
       }
-      val featureOpt = TableFeatureStore.allSupportedFeaturesMap.get(name)
+      val featureOpt = TableFeature.allSupportedFeaturesMap.get(name)
       if (!featureOpt.isDefined) {
         unsupportedFeatureConfigs += key
       }

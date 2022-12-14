@@ -1002,8 +1002,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     for (row <- rows) {
       val name = row.getAs[String]("key").substring(FEATURE_PROP_PREFIX.length)
       val status = row.getAs[String]("value")
-      assert(
-        TableFeatureStore.allSupportedFeaturesMap.contains(name.toLowerCase(Locale.ROOT)))
+      assert(TableFeature.allSupportedFeaturesMap.contains(name.toLowerCase(Locale.ROOT)))
       assert(status == "enabled")
     }
   }

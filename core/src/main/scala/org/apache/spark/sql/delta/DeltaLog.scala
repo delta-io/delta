@@ -339,6 +339,7 @@ class DeltaLog private(
    */
   private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
     val clientSupportedProtocol = Action.supportedProtocolVersion(Some(spark.sessionState.conf))
+    // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersion, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
       case "read" => (
@@ -353,16 +354,19 @@ class DeltaLog private(
         throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
     }
 
+    // Check is complete when both the protocol version and all referenced features are supported.
     val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol).map(_.name)
     val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol).map(_.name)
     if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
       clientSupportedVersion >= tableRequiredVersion) {
-      return // protocol validation complete
+      return
     }
 
+    // Otherwise, either the protocol version, or few features referenced by the table, is
+    // unsupported.
     val clientUnsupportedFeatureNames =
       tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
-    // `unsupportedFeaturesException` is a pointer to the appropriate error message.
+    // Prepare event log constants and the appropriate error message handler.
     val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
       case "read" => (
           "delta.protocol.failure.read",
