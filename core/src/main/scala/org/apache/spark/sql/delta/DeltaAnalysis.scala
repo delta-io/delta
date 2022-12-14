@@ -460,12 +460,10 @@ class DeltaAnalysis(session: SparkSession)
           case Some(existingCatalog) => existingCatalog.identifier
           case None => TableIdentifier(path.toString, Some("delta"))
         }
-        // Reuse the existing schema so that the physical name of columns are consistent between
-        // the existing files and the newly added files.
+        // Reuse the existing schema so that the physical name of columns are consistent
         val cloneSourceTable = sourceTbl match {
           case source: CloneIcebergSource =>
-            // Reuse the existing schema so that the physical name of columns are consistent between
-            // the existing files and the newly added files.
+            // Reuse the existing schema so that the physical name of columns are consistent
             source.copy(tableSchema = Some(deltaTableV2.snapshot.metadata.schema))
           case other => other
         }
