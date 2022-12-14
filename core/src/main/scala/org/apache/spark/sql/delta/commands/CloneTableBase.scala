@@ -248,9 +248,9 @@ abstract class CloneTableBase(
       // It's not a real downgrade if the table doesn't exist before the CLONE.
       txn.snapshot.version == -1
     val newProtocol = if (protocolDowngradeAllowed) {
-      sourceProtocol.max(minRequiredProtocol)
+      sourceProtocol.merge(minRequiredProtocol)
     } else {
-      targetProtocol.max(sourceProtocol).max(minRequiredProtocol)
+      targetProtocol.merge(sourceProtocol, minRequiredProtocol)
     }
 
     try {
