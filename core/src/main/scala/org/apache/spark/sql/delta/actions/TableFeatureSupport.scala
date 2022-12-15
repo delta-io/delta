@@ -109,15 +109,13 @@ trait TableFeatureSupport { this: Protocol =>
    * `addToWriterFeatures` is set to `true`, the descriptor will be added to the protocol's
    * `writerFeatures` field.
    *
-   * The method does not require the feature to be recognized by the client.
+   * The method does not require the feature to be recognized by the client, therefore will not
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
   private[actions] def withFeatureDescriptor(
       desc: TableFeatureDescriptor,
       addToReaderFeatures: Boolean,
       addToWriterFeatures: Boolean): Protocol = {
-    // When the feature has been enabled by this protocol, no work is needed.
-    if (getFeatureDescriptor(desc.name).isDefined) return this
-
     if (addToReaderFeatures && !supportsReaderFeatures) {
       throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
         desc.name,

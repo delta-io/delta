@@ -161,4 +161,15 @@ class DeltaTableFeatureSuite
         tfProtocol2.withFeatures(
           Set(AppendOnlyTableFeature, TestLegacyWriterFeature, TestLegacyReaderWriterFeature)))
   }
+
+  test("add reader and writer feature descriptors") {
+    var p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+    val desc = AppendOnlyTableFeature.toDescriptor
+    p = p.withReaderFeatureDescriptors(Seq(desc))
+    assert(p.readerFeatures === Some(Set(desc)))
+    assert(p.writerFeatures === Some(Set.empty))
+    p = p.withWriterFeatureDescriptors(Seq(desc))
+    assert(p.readerFeatures === Some(Set(desc)))
+    assert(p.writerFeatures === Some(Set(desc)))
+  }
 }
