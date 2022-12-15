@@ -2485,14 +2485,37 @@ trait DeltaErrorsBase
     // scalastyle:on line.size.limit
   }
 
-  def blockBatchCdfReadOnColumnMappingEnabledTable(
+  /**
+   * If `isSchemaChange` is false, this means the `incompatVersion` actually refers to a data schema
+   * instead of a schema change. This happens when we could not find any read-incompatible schema
+   * changes within the querying range, but the read schema is still NOT compatible with the data
+   * files being queried, which could happen if user falls back to `legacy` mode and read past data
+   * using some diverged latest schema or time-travelled schema. In this uncommon case, we should
+   * tell the user to try setting it back to endVersion, OR ask us to give them the flag to force
+   * unblock.
+   */
+  def blockBatchCdfReadWithIncompatibleSchemaChange(
+      start: Long,
+      end: Long,
       readSchema: StructType,
-      incompatibleSchema: StructType): Throwable = {
-    new DeltaColumnMappingUnsupportedSchemaIncompatibleException(
-      "Change Data Feed (CDF) read",
-      readSchema,
-      incompatibleSchema,
-      DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key
+      readVersion: Long,
+      incompatVersion: Long,
+      isSchemaChange: Boolean = true): Throwable = {
+    new DeltaUnsupportedOperationException(
+      if (isSchemaChange) {
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE"
+      } else {
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA"
+      },
+      messageParameters = Array(
+        start.toString, end.toString,
+        readSchema.json, readVersion.toString, incompatVersion.toString) ++ {
+          if (isSchemaChange) {
+            Array(start.toString, incompatVersion.toString, incompatVersion.toString, end.toString)
+          } else {
+            Array(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key)
+          }
+        }
     )
   }
 
@@ -2878,5 +2901,10 @@ class DeltaColumnMappingUnsupportedSchemaIncompatibleException(
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
     errorClass = "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION",
-    messageParameters = Array(opName, readSchema.json, incompatibleSchema.json, escapeConfigName)
+    messageParameters = Array(
+      opName,
+      readSchema.json,
+      incompatibleSchema.json,
+      opName,
+      escapeConfigName)
   )

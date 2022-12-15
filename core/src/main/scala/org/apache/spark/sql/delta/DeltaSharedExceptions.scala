@@ -24,7 +24,9 @@ class DeltaAnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters),
     errorClass = Some(errorClass),
     cause = cause)
-  with DeltaThrowable
+  with DeltaThrowable {
+  def getMessageParametersArray: Array[String] = messageParameters
+}
 
 class DeltaIllegalArgumentException(
     errorClass: String,
@@ -34,6 +36,7 @@ class DeltaIllegalArgumentException(
       DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
     override def getErrorClass: String = errorClass
+  def getMessageParametersArray: Array[String] = messageParameters
 }
 
 class DeltaUnsupportedOperationException(
@@ -43,4 +46,5 @@ class DeltaUnsupportedOperationException(
       DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
     override def getErrorClass: String = errorClass
+    def getMessageParametersArray: Array[String] = messageParameters
 }

@@ -477,8 +477,8 @@ class DeltaLog private(
     // data.
     if (!cdcOptions.isEmpty) {
       recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
-      return CDCReader.getCDCRelation(spark,
-        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+      return CDCReader.getCDCRelation(
+        spark, snapshotToUse, isTimeTravelQuery, spark.sessionState.conf, cdcOptions)
     }
 
     val fileIndex = TahoeLogFileIndex(
