@@ -195,7 +195,7 @@ case class WriteIntoDelta(
       } else if (mode == SaveMode.Ignore) {
         return Nil
       } else if (mode == SaveMode.Overwrite) {
-        deltaLog.assertRemovable()
+        DeltaLog.assertRemovable(txn.snapshot)
       }
     }
     val rearrangeOnly = options.rearrangeOnly

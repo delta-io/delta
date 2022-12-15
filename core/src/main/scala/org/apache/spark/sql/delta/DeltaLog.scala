@@ -127,23 +127,8 @@ class DeltaLog private(
   def maxSnapshotLineageLength: Int =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
 
-  // TODO: There is a race here where files could get dropped when increasing the
-  // retention interval...
-  protected def metadata = Option(unsafeVolatileSnapshot).map(_.metadata).getOrElse(Metadata())
-
-  /**
-   * Checks whether this table only accepts appends. If so it will throw an error in operations that
-   * can remove data such as DELETE/UPDATE/MERGE.
-   */
-  def assertRemovable(): Unit = {
-    val metadata = unsafeVolatileSnapshot.metadata
-    if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
-      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
-    }
-  }
-
   /** The unique identifier for this table. */
-  def tableId: String = metadata.id
+  def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
 
   /**
    * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
@@ -721,6 +706,13 @@ object DeltaLog extends DeltaLogging {
       tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
     withFreshSnapshot { forTable(spark, tableName, _) }
 
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      dataPath: Path,
+      options: Map[String, String]): (DeltaLog, Snapshot) =
+    withFreshSnapshot { apply(spark, logPathFor(dataPath), options, _) }
+
   /**
    * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
    * partially applied DeltaLog.forTable call, which we can then wrap around with a
@@ -890,6 +882,18 @@ object DeltaLog extends DeltaLogging {
             UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
         }
     })
+  }
+
+
+  /**
+   * Checks whether this table only accepts appends. If so it will throw an error in operations that
+   * can remove data such as DELETE/UPDATE/MERGE.
+   */
+  def assertRemovable(snapshot: Snapshot): Unit = {
+    val metadata = snapshot.metadata
+    if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
+      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
+    }
   }
 
   /** How long to keep around SetTransaction actions before physically deleting them. */

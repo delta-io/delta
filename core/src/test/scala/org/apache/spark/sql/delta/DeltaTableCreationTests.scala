@@ -950,8 +950,8 @@ trait DeltaTableCreationTests
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -971,8 +971,8 @@ trait DeltaTableCreationTests
       val snapshot = deltaLog.update()
       assertEqual(snapshot.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "delta.checkpointInterval" -> "20"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -1008,8 +1008,8 @@ trait DeltaTableCreationTests
           "delta.logRetentionDuration" -> "2 weeks",
           "delta.checkpointInterval" -> "20",
           "key" -> "value"))
-        assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-        assert(deltaLog.checkpointInterval == 20)
+        assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+        assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
       }
     }
   }
@@ -1336,8 +1336,8 @@ trait DeltaTableCreationTests
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -1359,8 +1359,8 @@ trait DeltaTableCreationTests
       val snapshot = deltaLog.update()
       assertEqual(snapshot.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "delta.checkpointInterval" -> "20"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 

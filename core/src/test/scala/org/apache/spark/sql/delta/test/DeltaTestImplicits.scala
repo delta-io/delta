@@ -72,5 +72,17 @@ object DeltaTestImplicits {
     def checkpoint(): Unit = {
       deltaLog.checkpoint(snapshot)
     }
+
+    def checkpointInterval(): Int = {
+      deltaLog.checkpointInterval(snapshot.metadata)
+    }
+
+    def deltaRetentionMillis(): Long = {
+      deltaLog.deltaRetentionMillis(snapshot.metadata)
+    }
+
+    def enableExpiredLogCleanup(): Boolean = {
+      deltaLog.enableExpiredLogCleanup(snapshot.metadata)
+    }
   }
 }

@@ -1109,7 +1109,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.
     val removes = actions.collect { case r: RemoveFile => r }
-    if (removes.exists(_.dataChange)) deltaLog.assertRemovable()
+    if (removes.exists(_.dataChange)) DeltaLog.assertRemovable(snapshot)
 
     finalActions
   }
@@ -1185,7 +1185,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Returns true if we should checkpoint the version that has just been committed.
    */
   protected def shouldCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = {
-    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+    def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   private[delta] def isCommitLockEnabled: Boolean = {

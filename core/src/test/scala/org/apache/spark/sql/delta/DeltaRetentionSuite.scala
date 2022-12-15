@@ -88,7 +88,7 @@ class DeltaRetentionSuite extends QueryTest
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
-      val iterationCount = (log.checkpointInterval * 2) + 1
+      val iterationCount = (log.checkpointInterval() * 2) + 1
 
       (1 to iterationCount).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
@@ -110,9 +110,9 @@ class DeltaRetentionSuite extends QueryTest
       }
 
       // delete some files in the middle
-      val middleStartIndex = log.checkpointInterval / 2
+      val middleStartIndex = log.checkpointInterval() / 2
       getDeltaFiles(logPath).sortBy(_.getName).slice(
-        middleStartIndex, middleStartIndex + log.checkpointInterval).foreach(_.delete())
+        middleStartIndex, middleStartIndex + log.checkpointInterval()).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs(log.snapshot)

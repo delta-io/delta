@@ -297,13 +297,13 @@ trait Checkpoints extends DeltaLogging {
   def logPath: Path
   def dataPath: Path
   protected def store: LogStore
-  protected def metadata: Metadata
 
   /** Used to clean up stale log files. */
   protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
-  def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
+  def checkpointInterval(metadata: Metadata): Int =
+    DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)

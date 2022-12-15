@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -212,7 +213,9 @@ trait SnapshotManagement { self: DeltaLog =>
       if (deltaVersions.nonEmpty) {
         if (deltaVersions.head != newCheckpointVersion + 1) {
           throw DeltaErrors.logFileNotFoundException(
-            deltaFile(logPath, newCheckpointVersion + 1), deltaVersions.last, metadata)
+            deltaFile(logPath, newCheckpointVersion + 1),
+            deltaVersions.last,
+            unsafeVolatileMetadata) // metadata is best-effort only
         }
         verifyDeltaVersions(spark, deltaVersions, Some(newCheckpointVersion + 1), versionToLoad)
       }
@@ -304,6 +307,14 @@ trait SnapshotManagement { self: DeltaLog =>
   @deprecated("This method is deprecated and will be removed in future versions. " +
     "Use unsafeVolatileSnapshot instead", "12.0")
   def snapshot: Snapshot = unsafeVolatileSnapshot
+
+  /**
+   * Unsafe due to thread races that can change it at any time without notice, even between two
+   * calls in the same method. Like [[unsafeVolatileSnapshot]] it depends on, this method should be
+   * used only with extreme care in production code (or by unit tests where no races are possible).
+   */
+  private[delta] def unsafeVolatileMetadata =
+    Option(unsafeVolatileSnapshot).map(_.metadata).getOrElse(Metadata())
 
   protected def createSnapshot(
       initSegment: LogSegment,
