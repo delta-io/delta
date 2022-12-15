@@ -921,8 +921,8 @@ trait DeltaErrorsBase
 
 
   def schemaChangedException(
-      oldSchema: StructType,
-      newSchema: StructType,
+      readSchema: StructType,
+      dataSchema: StructType,
       retryable: Boolean,
       version: Option[Long],
       includeStartingVersionOrTimestampMessage: Boolean): Throwable = {
@@ -932,20 +932,20 @@ trait DeltaErrorsBase
 
     if (version.isEmpty) {
       newException("DELTA_SCHEMA_CHANGED", Array(
-        formatSchema(oldSchema),
-        formatSchema(newSchema)
+        formatSchema(readSchema),
+        formatSchema(dataSchema)
         ))
     } else if (!includeStartingVersionOrTimestampMessage) {
       newException("DELTA_SCHEMA_CHANGED_WITH_VERSION", Array(
         version.get.toString,
-        formatSchema(oldSchema),
-        formatSchema(newSchema)
+        formatSchema(readSchema),
+        formatSchema(dataSchema)
       ))
     } else {
       newException("DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS", Array(
         version.get.toString,
-        formatSchema(oldSchema),
-        formatSchema(newSchema),
+        formatSchema(readSchema),
+        formatSchema(dataSchema),
         version.get.toString
       ))
     }
@@ -2505,7 +2505,7 @@ trait DeltaErrorsBase
       if (isCdfRead) "Streaming read of Change Data Feed (CDF)" else "Streaming read",
       readSchema,
       incompatibleSchema,
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key,
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString
       ))
@@ -2514,7 +2514,8 @@ trait DeltaErrorsBase
   def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
-      Array(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key),
+      Array(DeltaSQLConf
+        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key),
       Some(cause))
   }
 

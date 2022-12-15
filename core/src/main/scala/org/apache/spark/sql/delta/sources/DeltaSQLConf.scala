@@ -881,8 +881,8 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
-  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
-    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
         "Streaming read on Delta table with column mapping schema operations " +
           "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
@@ -891,6 +891,29 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChangesDuringStreamStart.enabled")
+      .doc(
+        """A legacy config to disable schema read-compatibility check on the start version schema
+          |when starting a streaming query. The config is added to allow legacy problematic queries
+          |disabling the check to keep running if users accept the potential risks of incompatible
+          |schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
+    buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
+      .doc(
+        """A legacy config to disable unsafe nullability check. The config is added to allow legacy
+          |problematic queries disabling the check to keep running if users accept the potential
+          |risks of incompatible schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")

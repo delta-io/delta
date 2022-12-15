@@ -1340,9 +1340,9 @@
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [
       "Detected schema change:",
-      "old schema: <oldSchema>",
+      "streaming source schema: <readSchema>",
       "",
-      "new schema: <newSchema>",
+      "data file schema: <dataSchema>",
       "",
       "Please try restarting the query. If this issue repeats across query restarts without",
       "making progress, you have made an incompatible schema change and need to start your",
@@ -1354,9 +1354,9 @@
   "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS" : {
     "message" : [
       "Detected schema change in version <version>:",
-      "old schema: <oldSchema>",
+      "streaming source schema: <readSchema>",
       "",
-      "new schema: <newSchema>",
+      "data file schema: <dataSchema>",
       "",
       "Please try restarting the query. If this issue repeats across query restarts without",
       "making progress, you have made an incompatible schema change and need to start your",
@@ -1371,9 +1371,9 @@
   "DELTA_SCHEMA_CHANGED_WITH_VERSION" : {
     "message" : [
       "Detected schema change in version <version>:",
-      "old schema: <oldSchema>",
+      "streaming source schema: <readSchema>",
       "",
-      "new schema: <newSchema>",
+      "data file schema: <dataSchema>",
       "",
       "Please try restarting the query. If this issue repeats across query restarts without",
       "making progress, you have made an incompatible schema change and need to start your",

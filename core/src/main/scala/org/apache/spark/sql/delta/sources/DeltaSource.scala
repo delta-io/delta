@@ -21,8 +21,8 @@ import java.io.FileNotFoundException
 import java.sql.Timestamp
 
 import scala.collection.mutable
+import scala.util.{Success, Try}
 import scala.util.control.NonFatal
-
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta._
@@ -111,14 +111,31 @@ trait DeltaSourceBase extends Source
    * Flag that allows user to force enable unsafe streaming read on Delta table with
    * column mapping enabled AND drop/rename actions.
    */
-  protected lazy val forceEnableStreamingRead: Boolean = spark.sessionState.conf
-    .getConf(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES)
+  protected lazy val forceEnableStreamingReadOnColumnMappingSchemaChanges: Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES)
+
+  /**
+   * Flag that allows user to disable the read-compatibility check during stream start which
+   * protects against an corner case in which verifyStreamHygiene could not detect.
+   * This is a bug fix but yet a potential behavior change, so we add a flag to fallback.
+   */
+  protected lazy val forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT)
+
+  /**
+   * Flag that allow user to fallback to the legacy behavior in which user can allow nullable=false
+   * schema to read nullable=true data, which is incorrect but a behavior change regardless.
+   */
+  protected lazy val forceEnableUnsafeReadOnNullabilityChange =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
 
   /**
    * A global flag to mark whether we have done a per-stream start check for column mapping
    * schema changes (rename / drop).
    */
-  protected var hasCheckedColumnMappingChangesOnStreamStart: Boolean = false
+  protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
     val schemaWithoutCDC =
@@ -274,7 +291,7 @@ trait DeltaSourceBase extends Source
     } else {
       // Block latestOffset() from generating an invalid offset by proactively verifying
       // incompatible schema changes under column mapping. See more details in the method doc.
-      checkColumnMappingSchemaChangesOnStreamStartOnce(fromVersion)
+      checkReadIncompatibleSchemaChangeOnStreamStartOnce(fromVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, fromVersion, isStartingVersion)
     }
   }
@@ -297,7 +314,7 @@ trait DeltaSourceBase extends Source
     } else {
       // Similarly, block latestOffset() from generating an invalid offset by proactively verifying
       // incompatible schema changes under column mapping. See more details in the method doc.
-      checkColumnMappingSchemaChangesOnStreamStartOnce(previousOffset.reservoirVersion)
+      checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, previousOffset.reservoirVersion,
         previousOffset.isStartingVersion)
     }
@@ -354,7 +371,7 @@ trait DeltaSourceBase extends Source
   }
 
   /**
-   * Check column mapping changes during stream (re)start so we could fail fast.
+   * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
    * This only needs to be called ONCE in the life cycle of a stream, either at the very first
    * latestOffset, or the very first getBatch to make sure we have detected an incompatible
@@ -364,18 +381,19 @@ trait DeltaSourceBase extends Source
    * 1. User starts a new stream @ startingVersion 1
    * 2. latestOffset is called before getBatch() because there was no previous commits so
    * getBatch won't be called as a recovery mechanism.
-   * Suppose there's a single rename/drop column change S during computing next offset, S
+   * Suppose there's a single rename/drop/nullability change S during computing next offset, S
    * would look exactly the same as the latest schema so verifyStreamHygiene would not work.
    * 3. latestOffset would return this new offset cross the schema boundary.
    *
-   * TODO: unblock this after we roll out the proper semantics.
+   * TODO: unblock the column mapping side after we roll out the proper semantics.
    */
-  protected def checkColumnMappingSchemaChangesOnStreamStartOnce(startVersion: Long): Unit = {
-    if (hasCheckedColumnMappingChangesOnStreamStart) {
+  protected def checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion: Long): Unit = {
+    if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) {
       return
     }
+    // Column-mapping related schema changes, all of them should not be retryable
     if (snapshotAtSourceInit.metadata.columnMappingMode != NoMapping &&
-        !forceEnableStreamingRead) {
+        !forceEnableStreamingReadOnColumnMappingSchemaChanges) {
 
       val snapshotAtStartVersionToScan = try {
         getSnapshotFromDeltaLog(startVersion)
@@ -397,8 +415,18 @@ trait DeltaSourceBase extends Source
         )
       }
     }
+
+    if (!forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+      // Other read-incompatible schema changes, some of them can be retryable
+      Try(getSnapshotFromDeltaLog(startVersion)) match {
+        case Success(startSnapshot) =>
+          verifySchemaChange(startSnapshot.schema, startSnapshot.version)
+        case _ =>
+        // Don't regress and fail if we could not calculate such snapshot.
+      }
+    }
     // Mark as checked
-    hasCheckedColumnMappingChangesOnStreamStart = true
+    hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true
   }
 
   /**
@@ -422,7 +450,8 @@ trait DeltaSourceBase extends Source
 
     val metadataAtSourceInit = snapshotAtSourceInit.metadata
 
-    if (metadataAtSourceInit.columnMappingMode != NoMapping && !forceEnableStreamingRead) {
+    if (metadataAtSourceInit.columnMappingMode != NoMapping &&
+      !forceEnableStreamingReadOnColumnMappingSchemaChanges) {
       if (curVersion < snapshotAtSourceInit.version) {
         // Stream version is newer, ensure there's no column mapping schema changes
         // from cur -> stream.
@@ -674,15 +703,30 @@ case class DeltaSource(
    * Verify whether the schema change in `version` is safe to continue. If not, throw an exception
    * to fail the query.
    */
-  protected def verifySchemaChange(newSchema: StructType, version: Long): Unit = {
-    // There is a schema change. All of files after this commit will use `newSchema`. Hence, we
+  protected def verifySchemaChange(schemaChange: StructType, version: Long): Unit = {
+    // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
     // check whether we can use `schema` (the fixed source schema we use in the same run of the
     // query) to read these new files safely.
-    if (!SchemaUtils.isReadCompatible(newSchema, schema)) {
-      val retryable = SchemaUtils.isReadCompatible(schema, newSchema)
+    val backfilling = version < snapshotAtSourceInit.version
+    // We forbid the case when the the schemaChange is nullable while the read schema is NOT
+    // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
+    // because we don't ever want to read back any nulls when the read schema is non-nullable.
+    val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
+    if (!SchemaUtils.isReadCompatible(
+        schemaChange, schema, forbidTightenNullability = shouldForbidTightenNullability)) {
+      // Only schema change later than the current read snapshot/schema can be retried, in other
+      // words, backfills could never be retryable, because we have no way to refresh
+      // the latest schema to "catch up" when the schema change happens before than current read
+      // schema version.
+      // If not backfilling, we do another check to determine retryability, in which we assume that
+      // we will be reading using this later `schemaChange` back on the current outdated `schema`,
+      // and if it works (including that `schemaChange` should not tighten the nullability
+      // constraint from `schema`), it is a retryable exception.
+      val retryable = !backfilling && SchemaUtils.isReadCompatible(
+        schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
       throw DeltaErrors.schemaChangedException(
         schema,
-        newSchema,
+        schemaChange,
         retryable = retryable,
         Some(version),
         includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
@@ -843,7 +887,7 @@ case class DeltaSource(
     // Check for column mapping + streaming incompatible schema changes
     // Note for initial snapshot, the startVersion should be the same as the latestOffset's version
     // and therefore this check won't have any effect.
-    checkColumnMappingSchemaChangesOnStreamStartOnce(startVersion)
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion)
 
     val createdDf = createDataFrameBetweenOffsets(startVersion, startIndex, isStartingVersion,
       startSourceVersion, startOffsetOption, endOffset)

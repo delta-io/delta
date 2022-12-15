@@ -363,8 +363,8 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    */
   protected def withStreamingReadOnColumnMappingTableEnabled(f: => Unit): Unit = {
     if (columnMappingEnabled) {
-      withSQLConf(
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "true") {
+      withSQLConf(DeltaSQLConf
+        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key -> "true") {
         f
       }
     } else {

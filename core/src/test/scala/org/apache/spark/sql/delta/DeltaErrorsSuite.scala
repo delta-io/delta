@@ -626,9 +626,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         var msg =
           s"""Detected schema change:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -646,9 +646,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
           s"""Detected schema change in version 10:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -666,9 +666,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
           s"""Detected schema change in version 10:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -2681,7 +2681,7 @@ trait DeltaErrorsSuiteBase
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
       assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key)
       assert(e.additionalProperties("detectedDuringStreaming").toBoolean)
     }
     {
@@ -2699,7 +2699,7 @@ trait DeltaErrorsSuiteBase
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
       assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key)
       assert(!e.additionalProperties("detectedDuringStreaming").toBoolean)
     }
     {
