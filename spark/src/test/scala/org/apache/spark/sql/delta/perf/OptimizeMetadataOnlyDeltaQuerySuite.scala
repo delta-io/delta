@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.perf
 
+import io.delta.tables.DeltaTable
+import org.apache.spark.sql.Dataset
+
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -25,10 +28,9 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.BeforeAndAfterAll
 
-import org.apache.spark.sql.{DataFrame, QueryTest, Row, SaveMode}
+import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
 
 class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
@@ -36,45 +38,47 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     with BeforeAndAfterAll
     with DeltaSQLCommandTest {
   val testTableName = "table_basic"
-  val testTablePath = Utils.createTempDir().getAbsolutePath
   val noStatsTableName = " table_nostats"
   val mixedStatsTableName = " table_mixstats"
 
+  var dfPart1: DataFrame = null
+  var dfPart2: DataFrame = null
+
   override def beforeAll(): Unit = {
     super.beforeAll()
-    val df = spark.createDataFrame(Seq((1L, "a", 1L), (2L, "b", 1L), (3L, "c", 1L)))
-      .toDF("id", "data", "group")
-    val df2 = spark.createDataFrame(Seq(
-      (4L, "d", 1L),
-      (5L, "e", 1L),
-      (6L, "f", 1L),
-      (7L, null, 1L),
-      (8L, "b", 1L),
-      (9L, "b", 1L),
-      (10L, "b", 1L))).toDF("id", "data", "group")
+
+    dfPart1 = generateRowsDataFrame(spark.range(1L, 6L))
+    dfPart2 = generateRowsDataFrame(spark.range(6L, 11L))
 
     withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-      df.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(noStatsTableName)
-      df.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(mixedStatsTableName)
+      dfPart1.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(noStatsTableName)
+      dfPart1.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(mixedStatsTableName)
 
       spark.sql(s"DELETE FROM $noStatsTableName WHERE id = 1")
       spark.sql(s"DELETE FROM $mixedStatsTableName WHERE id = 1")
 
-      df2.write.format("delta").mode("append").saveAsTable(noStatsTableName)
+      dfPart2.write.format("delta").mode("append").saveAsTable(noStatsTableName)
     }
 
     withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
-      import io.delta.tables._
-
-      df.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(testTableName)
-      df.write.format("delta").mode(SaveMode.Overwrite).save(testTablePath)
+      dfPart1.write.format("delta").mode(SaveMode.Overwrite).saveAsTable(testTableName)
 
       spark.sql(s"DELETE FROM $testTableName WHERE id = 1")
-      DeltaTable.forPath(spark, testTablePath).delete("id = 1")
 
-      df2.write.format("delta").mode(SaveMode.Append).saveAsTable(testTableName)
-      df2.write.format("delta").mode(SaveMode.Append).save(testTablePath)
-      df2.write.format("delta").mode(SaveMode.Append).saveAsTable(mixedStatsTableName)
+      dfPart2.write.format("delta").mode(SaveMode.Append).saveAsTable(testTableName)
+      dfPart2.write.format("delta").mode(SaveMode.Append).saveAsTable(mixedStatsTableName)
+
+      // Run updates to generate more Delta Log and trigger a checkpoint
+      // and make sure stats works after checkpoints
+      for (a <- 1 to 10) {
+        spark.sql(s"UPDATE $testTableName SET data='$a' WHERE id = 7")
+      }
+      spark.sql(s"UPDATE $testTableName SET data=NULL WHERE id = 7")
+
+      // Creates an empty (numRecords == 0) AddFile record
+      generateRowsDataFrame(spark.range(11L, 12L))
+        .write.format("delta").mode("append").saveAsTable(testTableName)
+      spark.sql(s"DELETE FROM $testTableName WHERE id = 11")
     }
   }
 
@@ -108,9 +112,16 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   }
 
   test("Select Count: external") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*) FROM delta.`$testTablePath`",
-      "LocalRelation [none#0L]")
+    withTempDir { dir =>
+      val testTablePath = dir.getAbsolutePath
+      dfPart1.write.format("delta").mode("overwrite").save(testTablePath)
+      DeltaTable.forPath(spark, testTablePath).delete("id = 1")
+      dfPart2.write.format("delta").mode(SaveMode.Append).save(testTablePath)
+
+      checkResultsAndOptimizedPlan(
+        s"SELECT COUNT(*) FROM delta.`$testTablePath`",
+        "LocalRelation [none#0L]")
+    }
   }
 
   test("Select Count: sub-query") {
@@ -238,6 +249,22 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   test("Select Count: over") {
     checkOptimizationIsNotTriggered(
       s"SELECT COUNT(*) OVER() FROM $testTableName LIMIT 1")
+  }
+
+  private def generateRowsDataFrame(source: Dataset[java.lang.Long]): DataFrame = {
+    import testImplicits._
+    import org.apache.spark.sql.functions._
+
+    source.select('id,
+      'id.cast("tinyint") as 'TinyIntColumn,
+      'id.cast("smallint") as 'SmallIntColumn,
+      'id.cast("int") as 'IntColumn,
+      'id.cast("bigint") as 'BigIntColumn,
+      ('id / 3.3).cast("float") as 'FloatColumn,
+      ('id / 3.3).cast("double") as 'DoubleColumn,
+      date_add(lit("2022-08-31").cast("date"), col("id").cast("int")) as 'DateColumn,
+      ('id % 2).cast("integer") as 'group,
+      'id.cast("string") as 'data)
   }
 
   /** Validate the results of the query is the same with the flag
