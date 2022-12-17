@@ -22,7 +22,7 @@ import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.types.{DateType, DoubleType, IntegerType, StringType, TimestampType}
+import org.apache.spark.sql.types.{DateType, DoubleType, IntegerType, StringType, TimestampType, LongType, DecimalType}
 
 /**
  * Defines rules to convert a data filter to a partition filter for a special generation expression
@@ -188,7 +188,8 @@ case class CeilPartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def lessThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case DoubleType | IntegerType => Some(partitionColumn.toPartCol <= Ceil(lit))
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol <= Ceil(lit))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -197,7 +198,8 @@ case class CeilPartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def equalTo(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case DoubleType | IntegerType => Some(partitionColumn.toPartCol.expr === Ceil(lit))
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol.expr === Ceil(lit))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -211,7 +213,8 @@ case class CeilPartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case DoubleType | IntegerType => Some(partitionColumn.toPartCol >= Ceil(lit))
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol >= Ceil(lit))
       case _ => None
     }
     // to avoid any expression which yields null
