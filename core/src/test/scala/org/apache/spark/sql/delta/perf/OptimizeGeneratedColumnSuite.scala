@@ -720,7 +720,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     filterTestCases = Seq(
       "value < 2.12" -> Seq("((part1 <= CEIL(2BD)) OR ((part1 <= CEIL(2BD)) IS NULL))"),
       "value <= 2.12" -> Seq("((part1 <= CEIL(2BD)) OR ((part1 <= CEIL(2BD)) IS NULL))"),
-//      "value = 2.12" -> Seq("((part1 = CEIL(2BD)) OR ((part1 = CEIL(2BD)) IS NULL))"),
+      "value = CAST(2.12 AS DECIMAL(10, 0))" ->
+        Seq("((part1 = CEIL(2BD)) OR ((part1 = CEIL(2BD)) IS NULL))"),
       "value >= 2.12" -> Seq("((part1 >= CEIL(2BD)) OR ((part1 >= CEIL(2BD)) IS NULL))"),
       "value > 2.12" -> Seq("((part1 >= CEIL(2BD)) OR ((part1 >= CEIL(2BD)) IS NULL))"),
       "value is null" -> Seq("(part1 IS NULL)")
