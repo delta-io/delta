@@ -256,7 +256,14 @@ abstract class CloneTableBase(
 
     try {
       var actions = Iterator.single(newProtocol) ++
-        addedFileList.iterator.asScala.map(a => a.copy(dataChange = true))
+        addedFileList.iterator.asScala.map { fileToCopy =>
+          val copiedFile = fileToCopy.copy(dataChange = true)
+          opName match {
+            case CloneTableCommand.OP_NAME =>
+              copiedFile
+            case RestoreTableCommand.OP_NAME => copiedFile
+          }
+        }
       val sourceName = sourceTable.name
       // Override source table metadata with user-defined table properties
       val context = Map[String, String]()
