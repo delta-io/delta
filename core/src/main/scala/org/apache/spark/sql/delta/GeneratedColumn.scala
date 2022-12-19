@@ -177,11 +177,11 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     // errors:
     // - Refer to a non existent column in a generation expression.
     // - Refer to a generated column in another one.
-    val df = Dataset.ofRows(spark, new LocalRelation(StructType(normalColumns).toAttributes))
+    val relation = new LocalRelation(StructType(normalColumns).toAttributes)
     val selectExprs = generatedColumns.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
-          val expr = parseGenerationExpression(df.sparkSession, exprString)
+          val expr = parseGenerationExpression(spark, exprString)
           new Column(expr).alias(f.name)
         case None =>
           // Should not happen
@@ -189,7 +189,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
     val dfWithExprs = try {
-      df.select(selectExprs: _*)
+      val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
+      Dataset.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
