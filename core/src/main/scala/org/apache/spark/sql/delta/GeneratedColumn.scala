@@ -375,7 +375,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                     case _ => None
                   }
                 case TruncDate(Cast(
-                ExtractBaseColumn(name, _), DateType, _, _), StringLiteral(format)) =>
+                ExtractBaseColumn(name, TimestampType | StringType), DateType, _, _),
+                StringLiteral(format)) =>
                   format toUpperCase Locale.ROOT match {
                     case DATE_FORMAT_WEEK =>
                       createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_WEEK))
