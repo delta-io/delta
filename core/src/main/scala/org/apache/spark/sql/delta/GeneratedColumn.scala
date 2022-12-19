@@ -363,31 +363,13 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case TruncDate(ExtractBaseColumn(name, DateType), StringLiteral(format)) =>
-                  format toUpperCase Locale.ROOT match {
-                    case DATE_FORMAT_WEEK =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_WEEK))
-                    case DATE_FORMAT_QUARTER =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_QUARTER))
-                    case DATE_FORMAT_YEAR | DATE_FORMAT_YEAR_2 | DATE_FORMAT_YEAR_3 =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_YEAR))
-                    case DATE_FORMAT_MONTH | DATE_FORMAT_MONTH_2 | DATE_FORMAT_MONTH_3 =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_MONTH))
-                    case _ => None
-                  }
+                  createExpr(name)(TruncDatePartitionExpr(partColName,
+                    format))
                 case TruncDate(Cast(
                 ExtractBaseColumn(name, TimestampType | StringType), DateType, _, _),
                 StringLiteral(format)) =>
-                  format toUpperCase Locale.ROOT match {
-                    case DATE_FORMAT_WEEK =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_WEEK))
-                    case DATE_FORMAT_QUARTER =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_QUARTER))
-                    case DATE_FORMAT_YEAR | DATE_FORMAT_YEAR_2 | DATE_FORMAT_YEAR_3 =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_YEAR))
-                    case DATE_FORMAT_MONTH | DATE_FORMAT_MONTH_2 | DATE_FORMAT_MONTH_3 =>
-                      createExpr(name)(TruncDatePartitionExpr(partColName, DATE_FORMAT_MONTH))
-                    case _ => None
-                  }
+                  createExpr(name)(TruncDatePartitionExpr(partColName,
+                    format))
                 case _ => None
               }
             case other =>
@@ -553,14 +535,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"
   private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
-  private val DATE_FORMAT_WEEK = "WEEK"
-  private val DATE_FORMAT_QUARTER = "QUARTER"
-  private val DATE_FORMAT_YEAR = "YEAR"
-  private val DATE_FORMAT_YEAR_2 = "YY"
-  private val DATE_FORMAT_YEAR_3 = "YYYY"
-  private val DATE_FORMAT_MONTH = "MONTH"
-  private val DATE_FORMAT_MONTH_2 = "MM"
-  private val DATE_FORMAT_MONTH_3 = "MON"
 }
 
 /**

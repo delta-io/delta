@@ -1039,23 +1039,23 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     "eventTime TIMESTAMP",
     "date DATE",
     Map("date" -> "(trunc(eventTime, 'year'))"),
-    expectedPartitionExpr = TruncDatePartitionExpr("date", "YEAR"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "year"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
-        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
-        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
       "eventTime <= '2021-01-01 18:00:00'" ->
-        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
-        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
       "eventTime = '2021-01-01 18:00:00'" ->
-        Seq("((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
-          "OR ((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+        Seq("((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
       "eventTime > '2021-01-01 18:00:00'" ->
-        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
-          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
       "eventTime >= '2021-01-01 18:00:00'" ->
-        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) " +
-          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'YEAR')) IS NULL))"),
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
       "eventTime is null" ->
         Seq("(date IS NULL)")
     )
@@ -1065,23 +1065,23 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     "eventDate DATE",
     "date DATE",
     Map("date" -> "(trunc(eventDate, 'month'))"),
-    expectedPartitionExpr = TruncDatePartitionExpr("date", "MONTH"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "month"),
     filterTestCases = Seq(
       "eventDate < '2021-12-01'" ->
-        Seq("((date <= trunc(DATE '2021-12-01', 'MONTH')) " +
-          "OR ((date <= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
       "eventDate <= '2021-12-01'" ->
-        Seq("((date <= trunc(DATE '2021-12-01', 'MONTH')) " +
-          "OR ((date <= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
       "eventDate = '2021-12-01'" ->
-        Seq("((date = trunc(DATE '2021-12-01', 'MONTH')) " +
-          "OR ((date = trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+        Seq("((date = trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date = trunc(DATE '2021-12-01', 'month')) IS NULL))"),
       "eventDate > '2021-12-01'" ->
-        Seq("((date >= trunc(DATE '2021-12-01', 'MONTH')) " +
-          "OR ((date >= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
       "eventDate >= '2021-12-01'" ->
-        Seq("((date >= trunc(DATE '2021-12-01', 'MONTH')) " +
-          "OR ((date >= trunc(DATE '2021-12-01', 'MONTH')) IS NULL))"),
+        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
       "eventDate is null" ->
         Seq("(date IS NULL)")
     )
@@ -1091,23 +1091,23 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     "eventDateStr STRING",
     "date DATE",
     Map("date" -> "(trunc(eventDateStr, 'quarter'))"),
-    expectedPartitionExpr = TruncDatePartitionExpr("date", "QUARTER"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "quarter"),
     filterTestCases = Seq(
       "eventDateStr < '2022-04-01'" ->
-        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
-          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
       "eventDateStr <= '2022-04-01'" ->
-        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
-          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
       "eventDateStr = '2022-04-01'" ->
-        Seq("((date = trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
-          "OR ((date = trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+        Seq("((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
       "eventDateStr > '2022-04-01'" ->
-        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
-          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
       "eventDateStr >= '2022-04-01'" ->
-        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) " +
-          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'QUARTER')) IS NULL))"),
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
       "eventDateStr is null" ->
         Seq("(date IS NULL)")
     )
