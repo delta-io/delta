@@ -279,6 +279,7 @@ trait CloneTableSuiteBase extends QueryTest
 
       assert(cloneLogs.count(_.opType.get.typeName.equals("delta.clone.makeAbsolute")) == 1)
 
+
     val commitStatsUsageRecords = allLogs.filter(
       _.tags.get("opType") === Some("delta.commit.stats"))
     assert(commitStatsUsageRecords.length === 1)
