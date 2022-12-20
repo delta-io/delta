@@ -47,7 +47,8 @@ case class TableDetail(
     sizeInBytes: java.lang.Long,
     properties: Map[String, String],
     minReaderVersion: java.lang.Integer,
-    minWriterVersion: java.lang.Integer)
+    minWriterVersion: java.lang.Integer
+    )
 
 object TableDetail {
   val schema = ScalaReflection.schemaFor[TableDetail].dataType.asInstanceOf[StructType]
@@ -195,6 +196,7 @@ case class DescribeDeltaDetailCommand(
         snapshot.sizeInBytes,
         snapshot.metadata.configuration,
         snapshot.protocol.minReaderVersion,
-        snapshot.protocol.minWriterVersion))
+        snapshot.protocol.minWriterVersion
+      ))
   }
 }
