@@ -824,6 +824,32 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("batch write: append, dynamic partition overwrite string and integer partition column") {
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq((5, "x"), (7, "y")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 2, 3, 5, 7)
+      }
+    }
+  }
+
   test("batch write: append, dynamic partition overwrite overwrites nothing") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
@@ -1061,6 +1087,32 @@ class DeltaSuite extends QueryTest
           .format("delta")
           .mode("overwrite")
           .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+      }
+    }
+  }
+
+  test("batch write: append, dynamic partition with 'partitionValues' column") {
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("partitionValues", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("partitionValues")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("partitionValues", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("partitionValues")
+          .mode("overwrite")
           .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
           .save(tempDir.getCanonicalPath)
         checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
@@ -2336,6 +2388,8 @@ class DeltaSuite extends QueryTest
 class DeltaNameColumnMappingSuite extends DeltaSuite
   with DeltaColumnMappingEnableNameMode {
 
+  import testImplicits._
+
   override protected def runOnlyTests = Seq(
     "handle partition filters and data filters",
     "query with predicates should skip partitions",
@@ -2345,4 +2399,59 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
     "isBlindAppend with save and saveAsTable"
   )
 
+
+  test(
+    "dynamic partition overwrite with conflicting logical vs. physical named partition columns") {
+    // It isn't sufficient to just test with column mapping enabled because the physical names are
+    // generated automatically and thus are unique w.r.t. the logical names.
+    // Instead we need to have: ColA.logicalName = ColB.physicalName,
+    // which means we need to start with columnMappingMode=None, and then upgrade to
+    // columnMappingMode=name and rename our columns
+
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true",
+      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey-> NoMapping.name) {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(("a", "x", 1), ("b", "y", 2), ("c", "x", 3)).toDF("part1", "part2", "value")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` SET TBLPROPERTIES (
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5',
+             |  'delta.columnMapping.mode' = 'name'
+             |)
+             |""".stripMargin)
+
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN part1 TO temp
+             |""".stripMargin)
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN part2 TO part1
+             |""".stripMargin)
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN temp TO part2
+             |""".stripMargin)
+
+        Seq(("a", "x", 4), ("d", "x", 5)).toDF("part2", "part1", "value")
+          .write
+          .format("delta")
+          .partitionBy("part2", "part1")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("part2", "part1", "value").as[(String, String, Int)],
+          ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
+      }
+    }
+  }
 }

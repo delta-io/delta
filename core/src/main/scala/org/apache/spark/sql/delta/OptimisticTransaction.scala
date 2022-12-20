@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -86,6 +87,31 @@ case class CommitStats(
   removeFilesHistogram: Option[FileSizeHistogram] = None,
   txnId: Option[String] = None
 )
+
+/**
+ * Represents a partition read predicate on a Delta table.
+ *
+ * Partition predicates can either reference the table's logical partition columns, or the
+ * physical [[AddFile]]'s schema. When a predicate refers to the logical partition columns it needs
+ * to be rewritten to be over the [[AddFile]]'s schema before filtering files. This is indicated
+ * with shouldRewriteFilter=true.
+ *
+ * Currently the only path for a predicate with shouldRewriteFilter=false is through DPO
+ * (dynamic partition overwrite) since we filter directly on [[AddFile.partitionValues]].
+ *
+ * For example, consider a table with the schema below and partition column "a"
+ * |-- a: integer {physicalName = "XX"}
+ * |-- b: integer {physicalName = "YY"}
+ *
+ * An example of a predicate that needs to be written is: (a = 0)
+ * Before filtering the [[AddFile]]s, this predicate needs to be rewritten to:
+ * (partitionValues.XX = 0)
+ *
+ * An example of a predicate that does not need to be rewritten is:
+ * (partitionValues = Map(XX -> 0))
+ */
+private[delta] case class DeltaTablePartitionReadPredicate(
+  predicate: Expression, shouldRewriteFilter: Boolean = true)
 
 /**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
@@ -190,7 +216,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the data that could have been seen by recording the partition
    * predicates by which files have been queried by this transaction.
    */
-  protected val readPredicates = new ArrayBuffer[Expression]
+  protected val readPredicates = new ArrayBuffer[DeltaTablePartitionReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
@@ -558,7 +584,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
     readFiles ++= scan.files
     scan
   }
@@ -581,14 +608,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           s" expected, found $f")
     }
     val scan = snapshot.filesForScan(limit, partitionFilters)
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
     readFiles ++= scan.files
     scan
   }
 
   override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
     val metadata = snapshot.filesWithStatsForScan(partitionFilters)
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
     withFilesRead(filterFiles(partitionFilters))
     metadata
   }
@@ -602,26 +631,36 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral))
     readFiles ++= scan.files
     scan.files
   }
 
-  /** Returns files within the given partitions. */
+  /**
+   * Returns files within the given partitions.
+   *
+   * `partitions` is a set of the `partitionValues` stored in [[AddFile]]s. This means they refer to
+   * the physical column names, and values are stored as strings.
+   * */
   def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
-    import org.apache.spark.sql.functions.{array, col}
-    val partitionValues = partitions.map { partition =>
-      metadata.physicalPartitionColumns.map(partition).toArray
-    }
-    val predicate = array(metadata.partitionColumns.map(col): _*)
-      .isInCollection(partitionValues)
-      .expr
-    filterFiles(Seq(predicate))
+    import org.apache.spark.sql.functions.col
+    val df = snapshot.allFiles.toDF()
+    val isFileInTouchedPartitions =
+      DeltaUDF.booleanFromMap(partitions.contains)(col("partitionValues"))
+    val filteredFiles = df
+      .filter(isFileInTouchedPartitions)
+      .withColumn("stats", DataSkippingReader.nullStringLiteral)
+      .as[AddFile]
+      .collect()
+    readPredicates += DeltaTablePartitionReadPredicate(isFileInTouchedPartitions.expr,
+      shouldRewriteFilter = false)
+    filteredFiles
   }
 
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
-    readPredicates += Literal.TrueLiteral
+    readPredicates += DeltaTablePartitionReadPredicate(Literal.TrueLiteral)
     readTheWholeTable = true
   }
 

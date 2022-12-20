@@ -833,17 +833,25 @@ object DeltaLog extends DeltaLogging {
    *              information
    * @param partitionFilters Filters on the partition columns
    * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
+   *                                      [[AddFile]] schema
    */
   def filterFileList(
       partitionSchema: StructType,
       files: DataFrame,
       partitionFilters: Seq[Expression],
-      partitionColumnPrefixes: Seq[String] = Nil): DataFrame = {
-    val rewrittenFilters = rewritePartitionFilters(
-      partitionSchema,
-      files.sparkSession.sessionState.conf.resolver,
-      partitionFilters,
-      partitionColumnPrefixes)
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true): DataFrame = {
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
     val columnFilter = new Column(expr)
     files.filter(columnFilter)
