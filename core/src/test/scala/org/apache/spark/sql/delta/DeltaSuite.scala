@@ -2261,45 +2261,122 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("idempotent Dataframe writes") {
-    withTempDir{ dir =>
+  def idempotentWrite(
+      mode: String,
+      appId: String,
+      seq: DataFrame,
+      path: String,
+      name: String,
+      version: Long,
+      expectedCount: Long,
+      commitVersion: Int,
+      isSaveAsTable: Boolean = true): Unit = {
+    val df = seq.write.format("delta")
+      .option(DeltaOptions.TXN_VERSION, version)
+      .option(DeltaOptions.TXN_APP_ID, appId)
+      .mode(mode)
+    if (isSaveAsTable) {
+      df.option("path", path).saveAsTable(name)
+    } else {
+      df.save(path)
+    }
+    val i = spark.read.format("delta").load(path).count()
+    assert(i == expectedCount)
+    val snapshot = DeltaLog.forTable(spark, path).update()
+    assert(snapshot.version == (commitVersion - 1))
+  }
+
+  Seq((true, true), (true, false), (false, true), (false, false))
+    .foreach {case (isSaveAsTable, isLegacy) =>
+      val op = if (isSaveAsTable) "saveAsTable" else "save"
+      val version = if (isLegacy) "legacy" else "non-legacy"
       val appId1 = "myAppId1"
       val appId2 = "myAppId2"
-      def runQuery(appId: String, seq: Seq[Int], version: Long, expectedCount: Long): Unit = {
-        seq.toDF().write.format("delta")
-          .option(DeltaOptions.TXN_VERSION, version)
-          .option(DeltaOptions.TXN_APP_ID, appId)
-          .mode("append")
-          .save(dir.getCanonicalPath)
-        val i = spark.read.format("delta").load(dir.getCanonicalPath).count()
-        assert(i == expectedCount)
+      val confs = if (isLegacy) Seq(SQLConf.USE_V1_SOURCE_LIST.key -> "tahoe,delta") else Seq.empty
+
+      if (!(isSaveAsTable && isLegacy)) {
+        test(s"Idempotent $version Dataframe $op: append") {
+          withSQLConf(confs: _*) {
+            withTempDir { dir =>
+              val path = dir.getCanonicalPath
+              val name = "append_table_t1"
+              val mode = "append"
+              sql("DROP TABLE IF EXISTS append_table_t1")
+              val df = Seq((1, 2, 3), (4, 5, 6), (7, 8, 9)).toDF("a", "b", "c")
+              // The first 2 runs must succeed increasing the expected count.
+              idempotentWrite(mode, appId1, df, path, name, 1, 3, 1, isSaveAsTable)
+              idempotentWrite(mode, appId1, df, path, name, 2, 6, 2, isSaveAsTable)
+
+              // Even if the version is not consecutive, higher versions should commit successfully.
+              idempotentWrite(mode, appId1, df, path, name, 5, 9, 3, isSaveAsTable)
+
+              // This run should be ignored because it uses an older version.
+              idempotentWrite(mode, appId1, df, path, name, 5, 9, 3, isSaveAsTable)
+
+              // Use a different app ID, but same version. This should succeed.
+              idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
+              idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
+
+              // Verify that specifying only one of the options -- either appId or version -- fails.
+              val e1 = intercept[Exception] {
+                val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
+                if (isSaveAsTable) {
+                  stage.option("path", path).saveAsTable(name)
+                } else {
+                  stage.save(path)
+                }
+              }
+              assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+              val e2 = intercept[Exception] {
+                val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
+                if (isSaveAsTable) {
+                  stage.option("path", path).saveAsTable(name)
+                } else {
+                  stage.save(path)
+                }
+              }
+              assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            }
+          }
+        }
       }
-      var s = Seq(1, 2, 3)
-      // The first 2 runs must succeed increasing the expected count.
-      runQuery(appId1, s, 1, 3)
-      runQuery(appId1, s, 2, 6)
 
-      // Even if the version is not consecutive, higher versions should commit successfully.
-      runQuery(appId1, s, 5, 9)
+      test(s"Idempotent $version Dataframe $op: overwrite") {
+        withSQLConf(confs: _*) {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            val name = "overwrite_table_t1"
+            val mode = "overwrite"
+            sql("DROP TABLE IF EXISTS overwrite_table_t1")
+            val df = Seq((1, 2, 3), (4, 5, 6), (7, 8, 9)).toDF("a", "b", "c")
+            // The first 2 runs must succeed increasing the expected count.
+            idempotentWrite(mode, appId1, df, path, name, 1, 3, 1, isSaveAsTable)
+            idempotentWrite(mode, appId1, df, path, name, 2, 3, 2, isSaveAsTable)
 
-      // This run should be ignored because it uses an older version.
-      runQuery(appId1, s, 5, 9)
+            // Even if the version is not consecutive, higher versions should commit successfully.
+            idempotentWrite(mode, appId1, df, path, name, 5, 3, 3, isSaveAsTable)
 
-      // Use a different app ID, but same version. This should succeed.
-      runQuery(appId2, s, 5, 12)
+            // This run should be ignored because it uses an older version.
+            idempotentWrite(mode, appId1, df, path, name, 5, 3, 3, isSaveAsTable)
 
-      // Verify that specifying only one of the options -- either appId or version -- fails.
-      val e1 = intercept[Exception] {
-        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_APP_ID, 1)
-          .mode("append").save(dir.getCanonicalPath)
+            // Use a different app ID, but same version. This should succeed.
+            idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
+            idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
+
+            // Verify that specifying only one of the options -- either appId or version -- fails.
+            val e1 = intercept[Exception] {
+              val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
+              if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
+            }
+            assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            val e2 = intercept[Exception] {
+              val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
+              if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
+            }
+            assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+          }
+        }
       }
-      assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-      val e2 = intercept[Exception] {
-        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_VERSION, 1)
-          .mode("append").save(dir.getCanonicalPath)
-      }
-      assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-    }
   }
 
   test("idempotent writes in streaming foreachBatch") {
