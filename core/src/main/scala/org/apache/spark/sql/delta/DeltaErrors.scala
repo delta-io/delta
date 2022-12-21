@@ -2601,6 +2601,11 @@ trait DeltaErrorsBase
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
   }
+
+  def cannotReconstructPathFromURI(uri: String): Throwable =
+    new DeltaRuntimeException(
+      errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
+      messageParameters = Array(uri))
 }
 
 object DeltaErrors extends DeltaErrorsBase
