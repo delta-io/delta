@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -222,6 +223,41 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       }
     }
   }
+
+  for (downgradeAllowed <- DeltaTestUtils.BOOLEAN_DOMAIN)
+    test(
+      s"restore downgrade protocol with table features (allowed=$downgradeAllowed)") {
+      withTempDir { tempDir =>
+        val path = tempDir.getAbsolutePath
+        spark.range(5).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val oldProtocolVersion = deltaLog.snapshot.protocol
+        // Update table to latest version.
+        deltaLog.upgradeProtocol(
+          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+            .withFeatures(Seq(TestLegacyReaderWriterFeature)))
+        val newProtocolVersion = deltaLog.snapshot.protocol
+        assert(
+          newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
+            newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
+          s"newProtocolVersion=$newProtocolVersion is not strictly greater than" +
+            s" oldProtocolVersion=$oldProtocolVersion")
+
+        withSQLConf(
+          DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key ->
+            downgradeAllowed.toString) {
+          // Restore to before the upgrade.
+          restoreTableToVersion(path, version = 0, isMetastoreTable = false)
+        }
+        val restoredProtocolVersion = deltaLog.snapshot.protocol
+        if (downgradeAllowed) {
+          assert(restoredProtocolVersion === oldProtocolVersion)
+        } else {
+          assert(restoredProtocolVersion ===
+            newProtocolVersion.withFeatures(oldProtocolVersion.implicitlyEnabledFeatures))
+        }
+      }
+    }
 
   test("restore operation metrics in Delta table history") {
     withSQLConf(

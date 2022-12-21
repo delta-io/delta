@@ -353,7 +353,9 @@ object DeltaOperations {
   case class UpgradeProtocol(newProtocol: Protocol) extends Operation("UPGRADE PROTOCOL") {
     override val parameters: Map[String, Any] = Map("newProtocol" -> JsonUtils.toJson(Map(
       "minReaderVersion" -> newProtocol.minReaderVersion,
-      "minWriterVersion" -> newProtocol.minWriterVersion
+      "minWriterVersion" -> newProtocol.minWriterVersion,
+      "readerFeatures" -> newProtocol.readerFeatures,
+      "writerFeatures" -> newProtocol.writerFeatures
     )))
   }
 

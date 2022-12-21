@@ -368,13 +368,19 @@ trait DescribeDeltaHistorySuiteBase
         overwrite = false,
         log.newDeltaHadoopConf())
       log.update()
-      log.upgradeProtocol(Action.supportedProtocolVersion())
+      log.upgradeProtocol(
+        Action.supportedProtocolVersion(withAllFeatures = false)
+          .withFeature(TestLegacyReaderWriterFeature))
+      // scalastyle:off line.size.limit
       checkLastOperation(
         path.toString,
         Seq("UPGRADE PROTOCOL",
           s"""{"minReaderVersion":$readerVersion,""" +
-            s""""minWriterVersion":$writerVersion}"""),
+            s""""minWriterVersion":$writerVersion,""" +
+            s""""readerFeatures":[{"name":"${TestLegacyReaderWriterFeature.name}","status":"enabled"}],""" +
+            s""""writerFeatures":[{"name":"${TestLegacyReaderWriterFeature.name}","status":"enabled"}]}"""),
         Seq($"operation", $"operationParameters.newProtocol"))
+      // scalastyle:on line.size.limit
     }
   }
 
