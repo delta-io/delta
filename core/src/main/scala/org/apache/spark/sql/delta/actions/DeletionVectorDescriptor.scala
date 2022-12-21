@@ -134,9 +134,15 @@ case class DeletionVectorDescriptor(
   /**
    * Produce a copy of this DV, with `pathOrInlineDv` replaced by a relative path based on `id`
    * and `randomPrefix`.
+   *
+   * If the DV already has a relative path or is inline, then this is just a normal copy.
    */
   def copyWithNewRelativePath(id: UUID, randomPrefix: String): DeletionVectorDescriptor = {
-    this.copy(storageType = UUID_DV_MARKER, pathOrInlineDv = encodeUUID(id, randomPrefix))
+    storageType match {
+      case PATH_DV_MARKER =>
+        this.copy(storageType = UUID_DV_MARKER, pathOrInlineDv = encodeUUID(id, randomPrefix))
+      case UUID_DV_MARKER | INLINE_DV_MARKER => this.copy()
+    }
   }
 
   @JsonIgnore
@@ -222,8 +228,7 @@ object DeletionVectorDescriptor {
    * Optionally, prepend a `prefix` to the name.
    */
   def assembleDeletionVectorPath(targetParentPath: Path, id: UUID, prefix: String = ""): Path = {
-    val core = DELETION_VECTOR_FILE_NAME_CORE
-    val fileName = s"${core}_${id}.bin"
+    val fileName = s"${DELETION_VECTOR_FILE_NAME_CORE}_${id}.bin"
     if (prefix.nonEmpty) {
       new Path(new Path(targetParentPath, prefix), fileName)
     } else {

@@ -52,16 +52,11 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
     // There is no on-disk file name for an inline DV
     intercept[IllegalArgumentException] { dv.absolutePath(testTablePath) }
 
-    // Copy as on-disk DV with absolute path - expect the returned DV is same as
-    // input, since this is inline so paths are irrelevant.
+    // Copy as on-disk DV with absolute path and relative path -
+    // expect the returned DV is same as input, since this is inline
+    // so paths are irrelevant.
     assert(dv.copyWithAbsolutePath(testTablePath) === dv)
-
-    // Copy DV as a relative path DV
-    val uuid = UUID.randomUUID()
-    val dvCopyWithRelativePath = dv.copyWithNewRelativePath(uuid, "prefix")
-    assert(dvCopyWithRelativePath.isRelative)
-    assert(dvCopyWithRelativePath.isOnDisk)
-    assert(dvCopyWithRelativePath.pathOrInlineDv === encodeUUID(uuid, "prefix"))
+    assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") === dv)
   }
 
   for (offset <- Seq(None, Some(25))) {
@@ -131,12 +126,9 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       assert(
         dvCopyWithAbsPath.pathOrInlineDv === s"$testTablePath/prefix/deletion_vector_$uuid.bin")
 
-      // Copy DV as a relative path DV
-      val uuid2 = UUID.randomUUID()
-      val dvCopyWithRelativePath = dv.copyWithNewRelativePath(uuid2, "prefix2")
-      assert(dvCopyWithRelativePath.isRelative)
-      assert(dvCopyWithRelativePath.isOnDisk)
-      assert(dvCopyWithRelativePath.pathOrInlineDv === encodeUUID(uuid2, "prefix2"))
+      // Copy DV as a relative path DV - expect to return the same DV as the current
+      // DV already contains relative path.
+      assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") == dv)
     }
   }
 
