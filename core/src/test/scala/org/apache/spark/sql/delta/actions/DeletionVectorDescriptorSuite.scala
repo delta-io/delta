@@ -128,7 +128,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
 
       // Copy DV as a relative path DV - expect to return the same DV as the current
       // DV already contains relative path.
-      assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") == dv)
+      assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") === dv)
     }
   }
 
