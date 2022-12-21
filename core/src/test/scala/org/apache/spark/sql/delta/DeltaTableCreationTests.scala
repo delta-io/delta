@@ -25,7 +25,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -1704,6 +1704,7 @@ class DeltaTableCreationSuite
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
   }
 

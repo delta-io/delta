@@ -219,7 +219,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       if (downgradeAllowed) {
         assert(restoredProtocolVersion === oldProtocolVersion)
       } else {
-        assert(restoredProtocolVersion === newProtocolVersion)
+        assert(restoredProtocolVersion === newProtocolVersion.merge(oldProtocolVersion))
       }
     }
   }

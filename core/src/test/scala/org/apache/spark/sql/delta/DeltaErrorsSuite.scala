@@ -27,6 +27,7 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -503,7 +504,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
-        throw DeltaErrors.changeColumnMappingModeOnOldProtocol(Protocol())
+        throw DeltaErrors.changeColumnMappingModeOnOldProtocol(Protocol(2, 6))
       }
       assert(e.getMessage ==
         s"""

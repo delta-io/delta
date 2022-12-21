@@ -314,8 +314,7 @@ object TableFeatureProtocolUtils {
    * features into its `readerFeatures` field.
    */
   def supportsReaderFeatures(readerVersion: Int): Boolean = {
-    // TODO: To be modified to ">=". Now limited to `==` to not break tests of legacy features.
-    readerVersion == TABLE_FEATURES_MIN_READER_VERSION
+    readerVersion >= TABLE_FEATURES_MIN_READER_VERSION
   }
 
   /**
@@ -323,8 +322,7 @@ object TableFeatureProtocolUtils {
    * features into its `writerFeatures` field.
    */
   def supportsWriterFeatures(writerVersion: Int): Boolean = {
-    // TODO: To be modified to ">=". Now limited to `==` to not break tests of legacy features.
-    writerVersion == TABLE_FEATURES_MIN_WRITER_VERSION
+    writerVersion >= TABLE_FEATURES_MIN_WRITER_VERSION
   }
 
   /**
@@ -354,5 +352,15 @@ object TableFeatureProtocolUtils {
       throw DeltaErrors.unsupportedTableFeatureConfigsException(unsupportedFeatureConfigs)
     }
     collectedFeatures.toSet
+  }
+
+  /**
+   * Checks if the the given table property key is a Table Protocol property, i.e.,
+   * `delta.minReaderVersion`, `delta.minWriterVersion`, or anything starts with `delta.feature.`
+   */
+  def isTableProtocolProperty(key: String): Boolean = {
+    key == Protocol.MIN_READER_VERSION_PROP ||
+    key == Protocol.MIN_WRITER_VERSION_PROP ||
+    key.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
   }
 }

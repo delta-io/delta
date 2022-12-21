@@ -70,11 +70,12 @@ object Action {
   private[delta] def supportedProtocolVersion(
       conf: Option[SQLConf] = None,
       withAllFeatures: Boolean = true): Protocol = {
-      if (withAllFeatures) {
-        protocolVersion.withFeatures(TableFeature.allSupportedFeaturesMap.values)
-      } else {
-        protocolVersion
-      }
+    val features = if (withAllFeatures) {
+      TableFeature.allSupportedFeaturesMap.values
+    } else {
+      Set.empty
+    }
+      protocolVersion.withFeatures(features)
   }
 
   def fromJson(json: String): Action = {
@@ -167,12 +168,10 @@ object Protocol {
   /**
    * Construct a [[Protocol]] case class of the given reader and writer versions. This method will
    * initialize table features fields when reader and writer versions are capable.
-   *
-   * Until table features is released, this method will return the highest protocol version that
-   * does not support table features. This is to prevent users from accidentally creating tables
-   * using unreleased table features.
    */
-  def apply(minReaderVersion: Int = 2, minWriterVersion: Int = 6): Protocol = {
+  def apply(
+      minReaderVersion: Int = Action.readerVersion,
+      minWriterVersion: Int = Action.writerVersion): Protocol = {
     new Protocol(
       minReaderVersion = minReaderVersion,
       minWriterVersion = minWriterVersion,
