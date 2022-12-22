@@ -31,10 +31,6 @@ import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
-  val MIN_WRITER_VERSION = 5
-  val MIN_READER_VERSION = 2
-  val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
-
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
@@ -65,16 +61,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
     .contains(field.name.toLowerCase(Locale.ROOT))
 
-  def requiresNewProtocol(metadata: Metadata): Boolean =
-    metadata.columnMappingMode match {
-      case IdMapping => true
-      case NameMapping => true
-      case NoMapping => false
-    }
-
-  def satisfyColumnMappingProtocol(protocol: Protocol): Boolean =
-    protocol.minWriterVersion >= MIN_WRITER_VERSION &&
-      protocol.minReaderVersion >= MIN_READER_VERSION
+  def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureEnabled(ColumnMappingTableFeature)
 
   /**
    * The only allowed mode change is from NoMapping to NameMapping. Other changes
@@ -121,15 +109,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       } else {
         // legal mode change, now check if protocol is upgraded before or part of this txn
         val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
-        val newProtocol = Protocol(
+        var newProtocol = Protocol(
           minReaderVersion = caseInsensitiveMap
             .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
             .getOrElse(oldProtocol.minReaderVersion),
           minWriterVersion = caseInsensitiveMap
             .get(Protocol.MIN_WRITER_VERSION_PROP).map(_.toInt)
             .getOrElse(oldProtocol.minWriterVersion))
+        if (newProtocol.supportsReaderFeatures && newProtocol.supportsWriterFeatures) {
+          newProtocol = newProtocol.withFeature(ColumnMappingTableFeature)
+        }
 
-        if (!satisfyColumnMappingProtocol(newProtocol)) {
+        if (!satisfiesColumnMappingProtocol(newProtocol)) {
           throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
         }
       }

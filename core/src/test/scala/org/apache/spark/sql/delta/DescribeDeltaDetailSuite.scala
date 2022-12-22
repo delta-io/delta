@@ -250,7 +250,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         Seq(
           TABLE_FEATURES_MIN_READER_VERSION,
           TABLE_FEATURES_MIN_WRITER_VERSION,
-          Array(AppendOnlyTableFeature.name)),
+          Array(AppendOnlyTableFeature.name, InvariantsTableFeature.name)),
         Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
     }
   }

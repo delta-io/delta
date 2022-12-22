@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -2065,7 +2065,7 @@ class DeltaSuite extends QueryTest
 
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(Protocol(), newMetadata) ++ files.map(_.remove)
+    val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,

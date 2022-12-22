@@ -237,8 +237,7 @@ class DeltaLog private(
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
-    if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
-        newVersion.minWriterVersion == currentVersion.minWriterVersion) {
+    if (newVersion == currentVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
@@ -366,6 +365,30 @@ class DeltaLog private(
       throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersion)
     } else {
       throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
+    }
+  }
+
+  /**
+   * Asserts that the table's protocol enabled all <b>legacy</b> features that are active in the
+   * metadata.
+   *
+   * A mismatch shouldn't happen when the table has gone through a proper write process because we
+   * require all active features during writes. However, other clients may void this guarantee.
+   */
+  def assertLegacyTableFeaturesMatch(targetProtocol: Protocol, targetMetadata: Metadata): Unit = {
+    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+
+    val protocolEnabledLegacyFeatures =
+      targetProtocol.writerFeatureDescriptors.flatMap(_.toFeature).filter(_.isLegacyFeature)
+    val activeFeatures: Set[TableFeature] =
+      TableFeature.allSupportedFeaturesMap.values.collect {
+        case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
+            if f.isLegacyFeature && f.metadataRequiresFeatureToBeEnabled(targetMetadata, spark) =>
+          f
+      }.toSet
+    val activeButNotEnabled = activeFeatures.diff(protocolEnabledLegacyFeatures)
+    if (activeButNotEnabled.nonEmpty) {
+      throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
     }
   }
 

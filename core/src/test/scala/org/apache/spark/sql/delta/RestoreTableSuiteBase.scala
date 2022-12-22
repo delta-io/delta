@@ -203,7 +203,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       val deltaLog = DeltaLog.forTable(spark, path)
       val oldProtocolVersion = deltaLog.snapshot.protocol
       // Update table to latest version.
-      deltaLog.upgradeProtocol(Protocol())
+      deltaLog.upgradeProtocol(oldProtocolVersion.merge(Protocol()))
       val newProtocolVersion = deltaLog.snapshot.protocol
       assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
         newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
@@ -235,7 +235,8 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         // Update table to latest version.
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeatures(Seq(TestLegacyReaderWriterFeature)))
+            .withFeatures(Seq(TestLegacyReaderWriterFeature))
+            .withFeatures(oldProtocolVersion.implicitlyEnabledFeatures))
         val newProtocolVersion = deltaLog.snapshot.protocol
         assert(
           newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
@@ -254,7 +255,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
           assert(restoredProtocolVersion === oldProtocolVersion)
         } else {
           assert(restoredProtocolVersion ===
-            newProtocolVersion.withFeatures(oldProtocolVersion.implicitlyEnabledFeatures))
+            newProtocolVersion.merge(oldProtocolVersion))
         }
       }
     }

@@ -105,11 +105,22 @@ class DeltaTableFeatureSuite
     assert(
       Protocol(2, 6).implicitlyEnabledFeatures === Set(
         AppendOnlyTableFeature,
+        ColumnMappingTableFeature,
+        InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        ChangeDataFeedTableFeature,
+        GeneratedColumnsTableFeature,
+        IdentityColumnsTableFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature))
     assert(
       Protocol(2, 5).implicitlyEnabledFeatures === Set(
         AppendOnlyTableFeature,
+        ColumnMappingTableFeature,
+        InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        ChangeDataFeedTableFeature,
+        GeneratedColumnsTableFeature,
         TestLegacyWriterFeature))
     assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlyEnabledFeatures === Set())
     assert(
@@ -155,11 +166,64 @@ class DeltaTableFeatureSuite
 
     assert(
       tfProtocol1.merge(Protocol(1, 2)) ===
-        tfProtocol1.withFeature(AppendOnlyTableFeature))
+        tfProtocol1.withFeatures(Seq(AppendOnlyTableFeature, InvariantsTableFeature)))
     assert(
       tfProtocol2.merge(Protocol(2, 6)) ===
-        tfProtocol2.withFeatures(
-          Set(AppendOnlyTableFeature, TestLegacyWriterFeature, TestLegacyReaderWriterFeature)))
+        tfProtocol2.withFeatures(Set(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ColumnMappingTableFeature,
+          ChangeDataFeedTableFeature,
+          CheckConstraintsTableFeature,
+          GeneratedColumnsTableFeature,
+          IdentityColumnsTableFeature,
+          TestLegacyWriterFeature,
+          TestLegacyReaderWriterFeature)))
+  }
+
+  test("protocol upgrade compatibility") {
+    assert(Protocol(1, 1).canUpgradeTo(Protocol(1, 1)))
+    assert(Protocol(1, 1).canUpgradeTo(Protocol(2, 1)))
+    assert(!Protocol(1, 2).canUpgradeTo(Protocol(1, 1)))
+    assert(!Protocol(2, 2).canUpgradeTo(Protocol(2, 1)))
+    assert(
+      Protocol(1, 1).canUpgradeTo(
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)))
+    assert(
+      !Protocol(2, 3).canUpgradeTo(
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)))
+    assert(
+      !Protocol(2, 6).canUpgradeTo(
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeatures(
+            Seq(
+              // With one feature not referenced, `canUpgradeTo` must be `false`.
+              // AppendOnlyTableFeature,
+              InvariantsTableFeature,
+              CheckConstraintsTableFeature,
+              ChangeDataFeedTableFeature,
+              GeneratedColumnsTableFeature,
+              ColumnMappingTableFeature,
+              IdentityColumnsTableFeature,
+              TestLegacyWriterFeature,
+              TestLegacyReaderWriterFeature))))
+    assert(
+      Protocol(2, 6).canUpgradeTo(
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeatures(Seq(
+            AppendOnlyTableFeature,
+            InvariantsTableFeature,
+            CheckConstraintsTableFeature,
+            ChangeDataFeedTableFeature,
+            GeneratedColumnsTableFeature,
+            ColumnMappingTableFeature,
+            IdentityColumnsTableFeature,
+            TestLegacyWriterFeature,
+            TestLegacyReaderWriterFeature))))
+    // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
+    assert(
+      !Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .canUpgradeTo(Protocol(1, 1)))
   }
 
   test("add reader and writer feature descriptors") {

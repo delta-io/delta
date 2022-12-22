@@ -364,7 +364,9 @@ trait DescribeDeltaHistorySuiteBase
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
-        Iterator(Metadata(schemaString = spark.range(1).schema.json).json, Protocol(1, 1).json),
+        Iterator(
+          Metadata(schemaString = spark.range(1).schema.asNullable.json).json,
+          Protocol(1, 1).json),
         overwrite = false,
         log.newDeltaHadoopConf())
       log.update()

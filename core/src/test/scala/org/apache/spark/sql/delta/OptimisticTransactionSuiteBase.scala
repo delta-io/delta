@@ -54,7 +54,7 @@ trait OptimisticTransactionSuiteBase
   protected def check(
       name: String,
       conflicts: Boolean,
-      setup: Seq[Action] = Seq(Metadata(), Protocol()),
+      setup: Seq[Action] = Seq(Metadata(), Action.supportedProtocolVersion()),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],

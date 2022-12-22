@@ -305,7 +305,8 @@ case class WriteIntoDelta(
         // the CDF protocol requires either (i) all CDF data are generated explicitly as AddCDCFile,
         // or (ii) all CDF data can be deduced from [[AddFile]] and [[RemoveFile]].
         val dataToWrite =
-          if (containsDataFilters && CDCReader.isCDCEnabledOnTable(txn.metadata) &&
+          if (containsDataFilters &&
+              CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
               sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED) &&
               cdcExistsInRemoveOp) {
             var dataWithDefaultExprs = data

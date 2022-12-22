@@ -215,9 +215,9 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Protocol()),
+      Action.supportedProtocolVersion()),
     actions = Seq(
-      Protocol()))
+      Action.supportedProtocolVersion()))
 
   check(
     "taint whole table",
@@ -538,7 +538,7 @@ class OptimisticTransactionSuite
         .add("id", "long")
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
-        val protocol = Protocol()
+        val protocol = Action.supportedProtocolVersion()
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)

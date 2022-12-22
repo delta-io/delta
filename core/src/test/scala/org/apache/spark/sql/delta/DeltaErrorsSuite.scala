@@ -503,27 +503,41 @@ trait DeltaErrorsSuiteBase
         "when using CONVERT TO DELTA.")
     }
     {
-      val e = intercept[DeltaColumnMappingUnsupportedException] {
-        throw DeltaErrors.changeColumnMappingModeOnOldProtocol(Protocol(2, 6))
+      val oldAndNew = Seq(
+        (Protocol(2, 4), ColumnMappingTableFeature.minProtocolVersion),
+        (
+          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+            .withFeature(ColumnMappingTableFeature)))
+      for ((oldProtocol, newProtocol) <- oldAndNew) {
+        val e = intercept[DeltaColumnMappingUnsupportedException] {
+          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
+        }
+        // scalastyle:off line.size.limit
+        assert(e.getMessage ==
+          s"""
+             |Your current table protocol version does not support changing column mapping modes
+             |using delta.columnMapping.mode.
+             |
+             |Required Delta protocol version for column mapping:
+             |${newProtocol.toString}
+             |Your table's current Delta protocol version:
+             |${oldProtocol.toString}
+             |
+             |Please enable Column Mapping on your Delta table with mapping mode 'name'.
+             |You can use one of the following commands.
+             |
+             |If your table is already on the required protocol version:
+             |ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+             |
+             |If your table is not on the required protocol version and requires a protocol upgrade:
+             |ALTER TABLE <table_name> SET TBLPROPERTIES (
+             |   'delta.columnMapping.mode' = 'name',
+             |   'delta.minReaderVersion' = '${newProtocol.minReaderVersion}',
+             |   'delta.minWriterVersion' = '${newProtocol.minWriterVersion}')
+             |""".stripMargin)
+          // scalastyle:off line.size.limit
       }
-      assert(e.getMessage ==
-        s"""
-           |Your current table protocol version does not support changing column mapping modes
-           |using delta.columnMapping.mode.
-           |
-           |Required Delta protocol version for column mapping:
-           |Protocol(2,5)
-           |Your table's current Delta protocol version:
-           |Protocol(2,6)
-           |
-           |Please upgrade your Delta table to reader version 2 and writer version 5
-           |and change the column mapping mode to 'name' mapping. You can use the following command:
-           |
-           |ALTER TABLE <table_name> SET TBLPROPERTIES (
-           |   'delta.columnMapping.mode' = 'name',
-           |   'delta.minReaderVersion' = '2',
-           |   'delta.minWriterVersion' = '5')
-           |""".stripMargin)
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {

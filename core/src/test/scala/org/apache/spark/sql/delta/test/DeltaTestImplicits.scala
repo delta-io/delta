@@ -43,8 +43,11 @@ object DeltaTestImplicits {
         } else {
           // if we don't have an implicit protocol action, make sure the first commit
           // contains one explicitly
-          val protocolOpt =
-            if (!actions.exists(_.isInstanceOf[Protocol])) Some(Protocol()) else None
+          val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) {
+            Some(Action.supportedProtocolVersion())
+          } else {
+            None
+          }
           txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
         }
       } else {
