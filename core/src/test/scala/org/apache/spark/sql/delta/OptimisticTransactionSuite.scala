@@ -215,9 +215,9 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Protocol()),
+      Action.supportedProtocolVersion()),
     actions = Seq(
-      Protocol()))
+      Action.supportedProtocolVersion()))
 
   check(
     "taint whole table",
