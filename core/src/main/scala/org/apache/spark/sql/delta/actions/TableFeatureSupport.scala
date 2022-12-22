@@ -302,12 +302,11 @@ object TableFeatureProtocolUtils {
   /** Prop prefix in Spark sessions configs. */
   val DEFAULT_FEATURE_PROP_PREFIX = "spark.databricks.delta.properties.defaults.feature."
 
-  // TODO: Switch to (3, 7) once the implementation is done
   /** Min reader version that supports reader features. */
-  val TABLE_FEATURES_MIN_READER_VERSION = Int.MaxValue / 2
+  val TABLE_FEATURES_MIN_READER_VERSION = 3
 
   /** Min reader version that supports writer features. */
-  val TABLE_FEATURES_MIN_WRITER_VERSION = Int.MaxValue / 2
+  val TABLE_FEATURES_MIN_WRITER_VERSION = 7
 
   /**
    * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
