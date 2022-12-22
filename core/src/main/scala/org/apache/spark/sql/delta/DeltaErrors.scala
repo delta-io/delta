@@ -30,13 +30,13 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{ChecksumException, Path}
 import org.json4s.JValue
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -2606,6 +2606,21 @@ trait DeltaErrorsBase
     new DeltaRuntimeException(
       errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
       messageParameters = Array(uri))
+
+
+  def deletionVectorSizeMismatch(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_SIZE_MISMATCH",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
+  def deletionVectorChecksumMismatch(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -2890,6 +2905,16 @@ class ColumnMappingUnsupportedException(msg: String)
   extends UnsupportedOperationException(msg)
 case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
   extends AnalysisException(msg)
+
+class DeltaChecksumException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty,
+    pos: Long)
+  extends ChecksumException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters), pos)
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
 
 /**
  * Errors thrown when an operation is not supported with column mapping schema changes
