@@ -229,7 +229,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+            .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(
@@ -257,7 +258,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+            .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(

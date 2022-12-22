@@ -433,20 +433,21 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // This is not a new table. The new schema may be merged from the existing schema. We
       // decide whether we should keep the Generated or IDENTITY columns by checking whether the
       // protocol satisfies the requirements.
-      val (keepGeneratedColumns, keepIdentityColumns) =
-        ColumnWithDefaultExprUtils.satisfyProtocol(protocolBeforeUpdate)
-      if (keepIdentityColumns) {
-        // If a protocol satisfies IDENTITY column requirement, it must also satisfies Generated
-        // column requirement because IDENTITY columns are introduced after Generated columns. In
-        // this case we do nothing here.
-        assert(keepGeneratedColumns)
+      val keepGeneratedColumns =
+        GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)
+      val keepIdentityColumns =
+        ColumnWithDefaultExprUtils.satisfiesIdentityColumnProtocol(protocolBeforeUpdate)
+      if (keepGeneratedColumns && keepIdentityColumns) {
+        // If a protocol satisfies both requirements, we do nothing here.
         latestMetadata
       } else {
         // As the protocol doesn't match, this table is created by an old version that doesn't
         // support generated columns or identity columns. We should remove the generation
         // expressions to fix the schema to avoid bumping the writer version incorrectly.
-        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(latestMetadata
-          .schema, keepGeneratedColumns)
+        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(
+          latestMetadata.schema,
+          keepGeneratedColumns = keepGeneratedColumns,
+          keepIdentityColumns = keepIdentityColumns)
         if (newSchema ne latestMetadata.schema) {
           latestMetadata.copy(schemaString = newSchema.json)
         } else {
@@ -705,12 +706,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def performCdcMetadataCheck(): Unit = {
     if (newMetadata.nonEmpty) {
-      if (CDCReader.isCDCEnabledOnTable(newMetadata.get)) {
+      if (CDCReader.isCDCEnabledOnTable(newMetadata.get, spark)) {
         val schema = newMetadata.get.schema.fieldNames
         val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
           .intersect(schema)
         if (reservedColumnsUsed.length > 0) {
-          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata)) {
+          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata, spark)) {
             // cdc was not enabled previously but reserved columns are present in the new schema.
             throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
           } else {
@@ -760,7 +761,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val _newMetadata = newMetadata.get
       val _currentMetadata = snapshot.metadata
 
-      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata)
+      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata, spark)
 
       val columnMappingEnabled = _newMetadata.columnMappingMode != NoMapping
 
@@ -1116,8 +1117,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
         if (!isCreatingNewTable) {
           val currentVersion = snapshot.protocol
-          if (newVersion.minReaderVersion < currentVersion.minReaderVersion ||
-              newVersion.minWriterVersion < currentVersion.minWriterVersion) {
+          if (!currentVersion.canUpgradeTo(newVersion)) {
             throw new ProtocolDowngradeException(currentVersion, newVersion)
           }
         }

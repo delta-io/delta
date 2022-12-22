@@ -382,7 +382,7 @@ trait CDCReaderImpl extends DeltaLogging {
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!isCDCEnabledOnTable(startVersionSnapshot.metadata) && !ignoreAddCDCFileActions) {
+    if (!ignoreAddCDCFileActions && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -435,7 +435,7 @@ trait CDCReaderImpl extends DeltaLogging {
         // that it's enabled for the starting version, so checking this for each version
         // incrementally is sufficient to ensure that it's enabled for the entire range.)
         val cdcDisabled = actions.exists {
-          case m: Metadata => !isCDCEnabledOnTable(m)
+          case m: Metadata => !isCDCEnabledOnTable(m, spark)
           case _ => false
         }
 
@@ -681,8 +681,8 @@ trait CDCReaderImpl extends DeltaLogging {
   /**
    * Determine if the metadata provided has cdc enabled or not.
    */
-  def isCDCEnabledOnTable(metadata: Metadata): Boolean = {
-    DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
+  def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
+    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
   }
 
   /**

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.SparkSession
@@ -190,7 +191,14 @@ object TableFeature {
    * Feature.
    */
   val allSupportedFeaturesMap: Map[String, TableFeature] = {
-    var features = Set[TableFeature](AppendOnlyTableFeature)
+    var features = Set[TableFeature](
+      AppendOnlyTableFeature,
+      ChangeDataFeedTableFeature,
+      CheckConstraintsTableFeature,
+      IdentityColumnsTableFeature,
+      GeneratedColumnsTableFeature,
+      InvariantsTableFeature,
+      ColumnMappingTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -215,6 +223,72 @@ object AppendOnlyTableFeature
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
+  }
+}
+
+object InvariantsTableFeature
+  extends LegacyWriterFeature(name = "invariants", minWriterVersion = 2)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    Invariants.getFromSchema(metadata.schema, spark).nonEmpty
+  }
+}
+
+object CheckConstraintsTableFeature
+  extends LegacyWriterFeature(name = "checkConstraints", minWriterVersion = 3)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    Constraints.getCheckConstraints(metadata, spark).nonEmpty
+  }
+}
+
+object ChangeDataFeedTableFeature
+  extends LegacyWriterFeature(name = "changeDataFeed", minWriterVersion = 4)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
+  }
+}
+
+object GeneratedColumnsTableFeature
+  extends LegacyWriterFeature(name = "generatedColumns", minWriterVersion = 4)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    GeneratedColumn.hasGeneratedColumns(metadata.schema)
+  }
+}
+
+object ColumnMappingTableFeature
+  extends LegacyReaderWriterFeature(
+    name = "columnMapping",
+    minReaderVersion = 2,
+    minWriterVersion = 5)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.columnMappingMode match {
+      case NoMapping => false
+      case _ => true
+    }
+  }
+}
+
+object IdentityColumnsTableFeature
+  extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
   }
 }
 

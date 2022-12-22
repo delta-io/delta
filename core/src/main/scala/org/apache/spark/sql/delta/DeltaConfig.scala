@@ -204,11 +204,14 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Normalize the specified property keys if the key is for a Delta config.
    */
   def normalizeConfigKeys(propKeys: Seq[String]): Seq[String] = {
-    propKeys.map {
-      case key if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
-          .map(_.key).getOrElse(key)
-      case key => key
+    propKeys.map { key =>
+      key.toLowerCase(Locale.ROOT) match {
+        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+          lKey
+        case lKey if lKey.startsWith("delta.") =>
+          Option(entries.get(lKey.stripPrefix("delta."))).map(_.key).getOrElse(key)
+        case _ => key
+      }
     }
   }
 
@@ -216,11 +219,14 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Normalize the specified property key if the key is for a Delta config.
    */
   def normalizeConfigKey(propKey: Option[String]): Option[String] = {
-    propKey.map {
-      case key if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
-          .map(_.key).getOrElse(key)
-      case key => key
+    propKey.map { key =>
+      key.toLowerCase(Locale.ROOT) match {
+        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+          lKey
+        case lKey if lKey.startsWith("delta.") =>
+          Option(entries.get(lKey.stripPrefix("delta."))).map(_.key).getOrElse(key)
+        case _ => key
+      }
     }
   }
 
@@ -382,12 +388,12 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
    */
   val IS_APPEND_ONLY = buildConfig[Boolean](
-    "appendOnly",
-    "false",
-    _.toBoolean,
-    _ => true,
-    "needs to be a boolean.",
-    Some(Protocol(0, 2)))
+    key = "appendOnly",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.",
+    minimumProtocolVersion = Some(AppendOnlyTableFeature.minProtocolVersion))
 
 
   /**
@@ -466,7 +472,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean.",
     alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY),
-    minimumProtocolVersion = Some(Protocol(0, minWriterVersion = 4)))
+    minimumProtocolVersion = Some(ChangeDataFeedTableFeature.minProtocolVersion))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",
@@ -474,7 +480,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     DeltaColumnMappingMode(_),
     _ => true,
     "",
-    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
+    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion))
 
   /**
    * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
@@ -486,7 +492,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toLong,
     _ => true,
     "",
-    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION),
+    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion),
     userConfigurable = false)
 
 

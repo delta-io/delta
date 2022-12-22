@@ -182,8 +182,9 @@ trait TableFeatureSupport { this: Protocol =>
    * `writerFeatures` field. Returns an empty set when this protocol supports none of reader and
    * writer features.
    */
-  def readerAndWriterFeatureDescriptors: Set[TableFeatureDescriptor] =
-    this.readerFeatures.getOrElse(Set()) ++ this.writerFeatures.getOrElse(Set())
+  @JsonIgnore
+  lazy val readerAndWriterFeatureDescriptors: Set[TableFeatureDescriptor] =
+    readerFeatureDescriptors ++ writerFeatureDescriptors
 
   /**
    * Get the [[TableFeatureDescriptor]] if a feature with name `featureName` is explicitly
@@ -260,6 +261,18 @@ trait TableFeatureSupport { this: Protocol =>
     } else {
       mergedProtocol
     }
+  }
+
+  /**
+   * Check if a `feature` is enabled in this protocol. This means either (a) the protocol does not
+   * support table features and implicitly supports the feature, or (b) the protocol supports
+   * table features and references the feature.
+   */
+  def isFeatureEnabled(feature: TableFeature): Boolean = {
+    // legacy feature + legacy protocol
+    (feature.isLegacyFeature && this.implicitlyEnabledFeatures.contains(feature)) ||
+    // new protocol
+    getFeatureDescriptor(feature.name).isDefined
   }
 }
 

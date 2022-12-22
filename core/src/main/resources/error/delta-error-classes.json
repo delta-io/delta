@@ -614,6 +614,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
+    "message" : [
+      "Unable to operate on this table because the following table features are enabled in metadata but not listed in protocol: <features>."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."

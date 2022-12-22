@@ -22,10 +22,11 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
@@ -272,47 +273,23 @@ object Protocol {
    * [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
    */
   def minProtocolFromActiveFeatures(spark: SparkSession, metadata: Metadata): Protocol = {
-    var minimumRequired = Protocol(0, 0)
-
-    TableFeature.allSupportedFeaturesMap.values.foreach {
-      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
-        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-          // bump the protocol version to which the feature requires
-          minimumRequired = minimumRequired.merge(feature.minProtocolVersion)
-          // and if `minimumRequired` supports table features, require the feature explicitly
-          if (minimumRequired.supportsReaderFeatures || minimumRequired.supportsWriterFeatures) {
-            minimumRequired = minimumRequired.withFeature(feature)
+    var minimumRequired = {
+      var (readerVersion, writerVersion) = (0, 0)
+      val enabledFeatures = mutable.Set[TableFeature]()
+      TableFeature.allSupportedFeaturesMap.values.foreach {
+        case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
+          if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
+            readerVersion = math.max(readerVersion, feature.minReaderVersion)
+            writerVersion = math.max(writerVersion, feature.minWriterVersion)
+            enabledFeatures += feature
           }
-        }
-      case _ => () // Do nothing. We only care about features that can be activated in metadata.
+        case _ => () // Do nothing. We only care about features that can be activated in metadata.
+      }
+      Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
     }
 
-    // Check for invariants in the schema
-    if (Invariants.getFromSchema(metadata.schema, spark).nonEmpty) {
-      minimumRequired = Protocol(0, minWriterVersion = 2)
-    }
-
-    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
-      minimumRequired = Protocol(0, minWriterVersion = 3)
-    }
-
-    if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
-      minimumRequired = Protocol(0, minWriterVersion = GeneratedColumn.MIN_WRITER_VERSION)
-    }
-
-    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
-      minimumRequired = Protocol(0, minWriterVersion = 4)
-    }
-
-    if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
-      minimumRequired = Protocol(
-        minReaderVersion = 0,
-        minWriterVersion = ColumnWithDefaultExprUtils.IDENTITY_MIN_WRITER_VERSION)
+    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
       throw DeltaErrors.identityColumnNotSupported()
-    }
-
-    if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
-      minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
 

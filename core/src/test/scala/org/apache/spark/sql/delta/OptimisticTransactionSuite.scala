@@ -538,7 +538,7 @@ class OptimisticTransactionSuite
         .add("id", "long")
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
-        val protocol = Protocol()
+        val protocol = Action.supportedProtocolVersion()
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)

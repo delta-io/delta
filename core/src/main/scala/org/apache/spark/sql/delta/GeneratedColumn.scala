@@ -70,11 +70,8 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
  */
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
-  val MIN_WRITER_VERSION = 4
-
-  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean = {
-    protocol.minWriterVersion >= MIN_WRITER_VERSION
-  }
+  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureEnabled(GeneratedColumnsTableFeature)
 
   /**
    * Whether the field contains the generation expression. Note: this doesn't mean the column is a
@@ -94,10 +91,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   /**
    * Whether any generation expressions exist in the schema. Note: this doesn't mean the table
-   * contains generated columns. A table has generated columns only if its
-   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
-   * schema contain generation expressions. Use `enforcesGeneratedColumns` to check generated
-   * column tables instead.
+   * contains generated columns. A table has generated columns only if its protocol satisfies
+   * Generated Column (listed in Table Features or supported implicitly) and some of columns in
+   * the table schema contain generation expressions. Use `enforcesGeneratedColumns` to check
+   * generated column tables instead.
    */
   def hasGeneratedColumns(schema: StructType): Boolean = {
     schema.exists(isGeneratedColumn)
@@ -118,8 +115,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   /**
    * Whether the table has generated columns. A table has generated columns only if its
-   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
-   * schema contain generation expressions.
+   * protocol satisfies Generated Column (listed in Table Features or supported implicitly) and
+   * some of columns in the table schema contain generation expressions.
    *
    * As Spark will propagate column metadata storing the generation expression through
    * the entire plan, old versions that don't support generated columns may create tables whose

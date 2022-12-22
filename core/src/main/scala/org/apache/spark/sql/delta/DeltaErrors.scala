@@ -21,7 +21,7 @@ import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
@@ -1910,34 +1910,50 @@ trait DeltaErrorsBase
   }
 
   def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+    val requiredProtocol = {
+      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
+        Protocol(
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(ColumnMappingTableFeature)
+      } else {
+        ColumnMappingTableFeature.minProtocolVersion
+      }
+    }
+
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
       messageParameters = Array(
         s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
+        s"$requiredProtocol",
         s"$oldProtocol",
-        columnMappingAdviceMessage))
+        columnMappingAdviceMessage(requiredProtocol)))
   }
 
-  private def columnMappingAdviceMessage: String = {
+  private def columnMappingAdviceMessage(
+      requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
     s"""
-       |Please upgrade your Delta table to reader version 2 and writer version 5
-       |and change the column mapping mode to 'name' mapping. You can use the following command:
+       |Please enable Column Mapping on your Delta table with mapping mode 'name'.
+       |You can use one of the following commands.
        |
+       |If your table is already on the required protocol version:
+       |ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+       |
+       |If your table is not on the required protocol version and requires a protocol upgrade:
        |ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '2',
-       |   'delta.minWriterVersion' = '5')
+       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
+       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
        |""".stripMargin
   }
 
   def columnRenameNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage
+    val adviceMsg = columnMappingAdviceMessage()
     new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
-    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage else ""
+    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage() else ""
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
@@ -1965,7 +1981,7 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array(columnMappingAdviceMessage),
+      messageParameters = Array(columnMappingAdviceMessage()),
       cause = Some(cause))
 
   def foundViolatingConstraintsForColumnChange(
@@ -2136,6 +2152,12 @@ trait DeltaErrorsBase
         currentVersion.toString,
         requiredVersion.toString,
         generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureMismatchException(features: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH",
+      messageParameters = Array(features.mkString(", ")))
   }
 
   def concurrentAppendException(
