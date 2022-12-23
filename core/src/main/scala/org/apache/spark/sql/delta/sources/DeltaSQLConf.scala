@@ -258,8 +258,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      // TODO: Int.MaxValue / 2 is the temporary version for table features. To be changed to 7.
-      .checkValues(Set(1, 2, 3, 4, 5, 6, Int.MaxValue / 2))
+      .checkValues(Set(1, 2, 3, 4, 5, 6, 7))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -267,8 +266,7 @@ trait DeltaSQLConfBase {
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      // TODO: Int.MaxValue / 2 is the temporary version for table features. To be changed to 3.
-      .checkValues(Set(1, 2, Int.MaxValue / 2))
+      .checkValues(Set(1, 2, 3))
       .createWithDefault(1)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
