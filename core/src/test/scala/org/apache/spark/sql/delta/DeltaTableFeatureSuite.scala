@@ -236,4 +236,9 @@ class DeltaTableFeatureSuite
     assert(p.readerFeatures === Some(Set(desc)))
     assert(p.writerFeatures === Some(Set(desc)))
   }
+
+  test("native automatically-enabled feature can't be implicitly enabled") {
+    val p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+    assert(p.implicitlyEnabledFeatures.isEmpty)
+  }
 }

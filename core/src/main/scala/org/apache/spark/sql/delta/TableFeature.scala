@@ -204,7 +204,8 @@ object TableFeature {
         TestLegacyWriterFeature,
         TestWriterFeature,
         TestLegacyReaderWriterFeature,
-        TestReaderWriterFeature)
+        TestReaderWriterFeature,
+        TestReaderWriterMetadataFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -309,3 +310,14 @@ object TestLegacyReaderWriterFeature
     minWriterVersion = 6)
 
 object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
+
+object TestReaderWriterMetadataFeature
+  extends ReaderWriterFeature(name = "testReaderWriterMetadata")
+  with FeatureAutomaticallyEnabledByMetadata {
+  val TABLE_PROP_KEY = "_123testReaderWriterMetadata321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+}

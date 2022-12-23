@@ -456,31 +456,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
-    // This transaction's new metadata might contain some automatically-enabled features, or
-    // have table feature-related table properties (props start with [[FEATURE_PROP_PREFIX]]).
-    // We silently add them to the `protocol` action.
+    // This transaction's new metadata might contain some table properties to enable some
+    // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
+    // action.
+    // Unlike auto-enabled features, the following logic will not auto upgrade protocol version
+    // silently to which the feature requests. In other words, here we will explicitly list the
+    // table features that are required to be added, and assume it's supported by the protocol.
+    // When this turns out to be not true, the `withFeatures` method will fail and ask users to
+    // upgrade their table.
+    //
+    // Note: automatically-enabled features are left to the `verifyNewMetadata` call.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
-    if (newProtocolBeforeAddingFeatures.supportsReaderFeatures ||
-      newProtocolBeforeAddingFeatures.supportsWriterFeatures) {
-      val minProtocolFromActiveFeatures =
-        Protocol.minProtocolFromActiveFeatures(spark, latestMetadata)
-
-      val newFeaturesFromTableConf =
-        TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
-          latestMetadata.configuration,
-          TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
-      val descriptorsFromTableConf = newFeaturesFromTableConf.map(_.toDescriptor)
-
-      val existingDescriptors =
-        newProtocolBeforeAddingFeatures.readerAndWriterFeatureDescriptors
-
-      if (!descriptorsFromTableConf.subsetOf(existingDescriptors)) {
-        newProtocol = Some(
-          newProtocolBeforeAddingFeatures
-            .withReaderFeatureDescriptors(minProtocolFromActiveFeatures.readerFeatureDescriptors)
-            .withWriterFeatureDescriptors(minProtocolFromActiveFeatures.writerFeatureDescriptors)
-            .withFeatures(newFeaturesFromTableConf))
-      }
+    val newFeaturesFromTableConf =
+      TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
+        latestMetadata.configuration,
+        TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+    val descriptorsFromTableConf = newFeaturesFromTableConf.map(_.toDescriptor)
+    val existingDescriptors =
+      newProtocolBeforeAddingFeatures.readerAndWriterFeatureDescriptors
+    if (!descriptorsFromTableConf.subsetOf(existingDescriptors)) {
+      newProtocol = Some(newProtocolBeforeAddingFeatures.withFeatures(newFeaturesFromTableConf))
     }
 
     // We are done with protocol versions and features, time to remove related table properties.

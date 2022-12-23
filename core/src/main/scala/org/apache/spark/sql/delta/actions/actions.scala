@@ -225,25 +225,26 @@ object Protocol {
       .get(MIN_WRITER_VERSION_PROP)
       .map(getVersion(MIN_WRITER_VERSION_PROP, _))
 
-    // Priority to decide the final protocol version:
-    // 1. protocol version defined in table properties
-    // 2. max of:
-    //    a. protocol version defined in session defaults
-    //    b. min version required by automatically-enabled features
-    //    c. min version required by features configured in table properties and session defaults
-    val finalReaderVersion = readerVersionFromTableConfOpt.getOrElse {
-      val candidates = Seq(
-        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
-        minProtocolFromActiveFeaturesOpt.map(_.minReaderVersion).getOrElse(0),
-        minProtocolFromFeaturesInTablePropAndSession.minReaderVersion)
-      candidates.max
+    // Decide the final protocol version:
+    // 1. Get the version defined as properties: table property takes precedence over
+    //   session defaults
+    // 2. Get the max of these three:
+    //   a. version defined as properties
+    //   b. version required by active features
+    //   c. version required by manually enabled features
+    val finalReaderVersion = {
+      val minReaderVersionFromNumbers = readerVersionFromTableConfOpt.getOrElse(
+        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
+      minReaderVersionFromNumbers // 2a
+        .max(minProtocolFromActiveFeaturesOpt.map(_.minReaderVersion).getOrElse(0)) // 2b
+        .max(minProtocolFromFeaturesInTablePropAndSession.minReaderVersion) // 2c
     }
-    val finalWriterVersion = writerVersionFromTableConfOpt.getOrElse {
-      val candidates = Seq(
-        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION),
-        minProtocolFromActiveFeaturesOpt.map(_.minWriterVersion).getOrElse(0),
-        minProtocolFromFeaturesInTablePropAndSession.minWriterVersion)
-      candidates.max
+    val finalWriterVersion = {
+      val minWriterVersionFromNumbers = writerVersionFromTableConfOpt.getOrElse(
+        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+      minWriterVersionFromNumbers // 2a
+        .max(minProtocolFromActiveFeaturesOpt.map(_.minWriterVersion).getOrElse(0)) // 2b
+        .max(minProtocolFromFeaturesInTablePropAndSession.minWriterVersion) // 2c
     }
     val minActiveFeatures = minProtocolFromActiveFeaturesOpt
       .map(_.readerAndWriterFeatureDescriptors.flatMap(_.toFeature))
