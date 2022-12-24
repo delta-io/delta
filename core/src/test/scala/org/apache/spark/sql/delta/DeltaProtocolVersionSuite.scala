@@ -121,7 +121,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures = None,
           writerFeatures =
-            Some(Set(AppendOnlyTableFeature, InvariantsTableFeature).map(_.toDescriptor))))
+            Some(Set(AppendOnlyTableFeature, InvariantsTableFeature).map(_.name))))
       table.upgradeTableProtocol(
         TABLE_FEATURES_MIN_READER_VERSION,
         TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -131,7 +131,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures = Some(Set()),
           writerFeatures =
-            Some(Set(AppendOnlyTableFeature, InvariantsTableFeature).map(_.toDescriptor))))
+            Some(Set(AppendOnlyTableFeature, InvariantsTableFeature).map(_.name))))
     }
   }
 
@@ -156,7 +156,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             InvariantsTableFeature,
             TestLegacyWriterFeature,
             TestLegacyReaderWriterFeature)
-            .map(_.toDescriptor))))
+            .map(_.name))))
       spark.sql(
         s"ALTER TABLE delta.`${path.getPath}` SET TBLPROPERTIES (" +
           s"  delta.feature.${TestWriterFeature.name}='enabled'" +
@@ -181,7 +181,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               TestLegacyWriterFeature,
               TestLegacyReaderWriterFeature,
               TestWriterFeature)
-              .map(_.toDescriptor))))
+              .map(_.name))))
     }
   }
 
@@ -204,7 +204,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           readerFeatures = None,
           writerFeatures = Some(
             Set(AppendOnlyTableFeature, CheckConstraintsTableFeature, InvariantsTableFeature)
-              .map(_.toDescriptor))))
+              .map(_.name))))
       assertPropertiesAndShowTblProperties(log, tableHasFeatures = true)
       sql(s"ALTER TABLE delta.`${path.getCanonicalPath}` " +
         s"SET TBLPROPERTIES (delta.minReaderVersion=$TABLE_FEATURES_MIN_READER_VERSION)")
@@ -215,7 +215,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           readerFeatures = Some(Set()),
           writerFeatures = Some(
             Set(AppendOnlyTableFeature, CheckConstraintsTableFeature, InvariantsTableFeature)
-              .map(_.toDescriptor))))
+              .map(_.name))))
       assertPropertiesAndShowTblProperties(log, tableHasFeatures = true)
     }
   }
@@ -461,10 +461,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "writer protocol version must support table features because a native feature" +
             "is enabled.")
         assert(
-          deltaLog.snapshot.protocol.readerAndWriterFeatureDescriptors === Set(
+          deltaLog.snapshot.protocol.readerAndWriterFeatureNames === Set(
             AppendOnlyTableFeature,
             TestLegacyReaderWriterFeature,
-            TestWriterFeature).map(_.toDescriptor))
+            TestWriterFeature).map(_.name))
       }
     }
   }
@@ -687,8 +687,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(
         deltaLog.snapshot.protocol.minWriterVersion === TABLE_FEATURES_MIN_WRITER_VERSION)
       assert(
-        deltaLog.snapshot.protocol.readerAndWriterFeatureDescriptors === Set(
-          AppendOnlyTableFeature, TestWriterFeature).map(_.toDescriptor))
+        deltaLog.snapshot.protocol.readerAndWriterFeatureNames === Set(
+          AppendOnlyTableFeature, TestWriterFeature).map(_.name))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -723,8 +723,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         deltaLog.snapshot.protocol.minWriterVersion ===
           TABLE_FEATURES_MIN_WRITER_VERSION)
       assert(
-        deltaLog.snapshot.protocol.readerAndWriterFeatureDescriptors === Set(
-          TestWriterFeature.toDescriptor))
+        deltaLog.snapshot.protocol.readerAndWriterFeatureNames ===
+          Set(TestWriterFeature.name))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -744,8 +744,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(
         deltaLog.snapshot.protocol.minWriterVersion === TABLE_FEATURES_MIN_WRITER_VERSION)
       assert(
-        deltaLog.snapshot.protocol.readerAndWriterFeatureDescriptors === Set(
-          TestLegacyReaderWriterFeature, TestReaderWriterFeature).map(_.toDescriptor))
+        deltaLog.snapshot.protocol.readerAndWriterFeatureNames === Set(
+          TestLegacyReaderWriterFeature, TestReaderWriterFeature).map(_.name))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -766,9 +766,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures =
-            Some(Set(TestLegacyReaderWriterFeature.toDescriptor)),
+            Some(Set(TestLegacyReaderWriterFeature.name)),
           writerFeatures =
-            Some(Set(TestLegacyReaderWriterFeature.toDescriptor))))
+            Some(Set(TestLegacyReaderWriterFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -789,7 +789,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures = None,
           writerFeatures =
-            Some(Set(TestLegacyReaderWriterFeature.toDescriptor))))
+            Some(Set(TestLegacyReaderWriterFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -805,8 +805,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         deltaLog.snapshot.protocol === Protocol(
           minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
-          readerFeatures = Some(Set(TestReaderWriterMetadataFeature.toDescriptor)),
-          writerFeatures = Some(Set(TestReaderWriterMetadataFeature.toDescriptor))))
+          readerFeatures = Some(Set(TestReaderWriterMetadataFeature.name)),
+          writerFeatures = Some(Set(TestReaderWriterMetadataFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -838,8 +838,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         deltaLog.snapshot.protocol === Protocol(
           minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
-          readerFeatures = Some(Set(TestReaderWriterMetadataFeature.toDescriptor)),
-          writerFeatures = Some(Set(TestReaderWriterMetadataFeature.toDescriptor))))
+          readerFeatures = Some(Set(TestReaderWriterMetadataFeature.name)),
+          writerFeatures = Some(Set(TestReaderWriterMetadataFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -858,7 +858,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           minReaderVersion = 1,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures = None,
-          writerFeatures = Some(Set(TestWriterFeature.toDescriptor))))
+          writerFeatures = Some(Set(TestWriterFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -1251,7 +1251,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(!log.snapshot.protocol.readerFeatures.isDefined)
       assert(
         log.snapshot.protocol.writerFeatures === Some(
-          Set(TestLegacyReaderWriterFeature.toDescriptor)))
+          Set(TestLegacyReaderWriterFeature.name)))
     }
   }
 
@@ -1303,8 +1303,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     for (row <- rows) {
       val name = row.getAs[String]("key").substring(FEATURE_PROP_PREFIX.length)
       val status = row.getAs[String]("value")
-      assert(TableFeature.allSupportedFeaturesMap.contains(name.toLowerCase(Locale.ROOT)))
-      assert(status == "enabled")
+      assert(TableFeature.featureNameToFeature(name).isDefined)
+      assert(status == FEATURE_PROP_ENABLED)
     }
   }
 }

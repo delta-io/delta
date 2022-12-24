@@ -32,9 +32,8 @@ import org.apache.spark.sql.SparkSession
  * A base class for all table features.
  *
  * A feature can be <b>explicitly enabled</b> by a table's protocol when the protocol contains a
- * [[TableFeatureDescriptor]] that has the feature's `name` listed. Writers (for writer-only
- * features) or readers and writers (for reader-writer features) must recognize enabled features
- * and must handle them appropriately.
+ * the feature's `name`. Writers (for writer-only features) or readers and writers (for
+ * reader-writer features) must recognize enabled features and must handle them appropriately.
  *
  * A table feature that released before Delta Table Features (reader version 3 and writer version
  * 7) is considered as a <b>legacy feature</b>. Legacy features are <b>implicitly enabled</b> when
@@ -97,10 +96,6 @@ sealed abstract class TableFeature(
    * more information.
    */
   def isLegacyFeature: Boolean = this.isInstanceOf[LegacyFeatureType]
-
-  /** Convert this feature to a [[TableFeatureDescriptor]]. */
-  def toDescriptor: TableFeatureDescriptor =
-    TableFeatureDescriptor(name, TableFeatureStatus.ENABLED)
 }
 
 /** A trait to indicate a feature applies to readers and writers. */
@@ -189,8 +184,11 @@ object TableFeature {
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
+   *
+   * Warning: Do not call `get` on this Map to get a specific feature because keys in this map
+   * are in lower cases. Use [[featureNameToFeature]] instead.
    */
-  val allSupportedFeaturesMap: Map[String, TableFeature] = {
+  private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
     var features = Set[TableFeature](
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
@@ -211,6 +209,10 @@ object TableFeature {
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
   }
+
+  /** Get a [[TableFeature]] object by its name. */
+  def featureNameToFeature(featureName: String): Option[TableFeature] =
+    allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
 }
 
 /* ---------------------------------------- *

@@ -168,7 +168,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       .withFeature(AppendOnlyTableFeature),
     expectedJson = """{"protocol":{"minReaderVersion":1,""" +
       s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
-      """"writerFeatures":[{"name":"appendOnly","status":"enabled"}]}}""")
+      """"writerFeatures":["appendOnly"]}}""")
 
   testActionSerDe(
     "Protocol - json serialization/deserialization with reader and writer features",
@@ -179,8 +179,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     expectedJson =
       s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
         s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
-        """"readerFeatures":[{"name":"testLegacyReaderWriter","status":"enabled"}],""" +
-        """"writerFeatures":[{"name":"testLegacyReaderWriter","status":"enabled"}]}}""")
+        """"readerFeatures":["testLegacyReaderWriter"],""" +
+        """"writerFeatures":["testLegacyReaderWriter"]}}""")
 
   testActionSerDe(
     "Protocol - json serialization/deserialization with empty reader and writer features",

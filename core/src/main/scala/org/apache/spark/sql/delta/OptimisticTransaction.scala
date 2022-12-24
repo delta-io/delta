@@ -471,10 +471,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
         latestMetadata.configuration,
         TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
-    val descriptorsFromTableConf = newFeaturesFromTableConf.map(_.toDescriptor)
-    val existingDescriptors =
-      newProtocolBeforeAddingFeatures.readerAndWriterFeatureDescriptors
-    if (!descriptorsFromTableConf.subsetOf(existingDescriptors)) {
+    val featuresFromTableConf = newFeaturesFromTableConf.map(_.name)
+    val existingFeatures = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
+    if (!featuresFromTableConf.subsetOf(existingFeatures)) {
       newProtocol = Some(newProtocolBeforeAddingFeatures.withFeatures(newFeaturesFromTableConf))
     }
 

@@ -113,9 +113,9 @@ case class Protocol private (
     minReaderVersion: Int,
     minWriterVersion: Int,
     @JsonInclude(Include.NON_ABSENT) // write to JSON only when the field is not `None`
-    readerFeatures: Option[Set[TableFeatureDescriptor]],
+    readerFeatures: Option[Set[String]],
     @JsonInclude(Include.NON_ABSENT)
-    writerFeatures: Option[Set[TableFeatureDescriptor]])
+    writerFeatures: Option[Set[String]])
   extends Action
   with TableFeatureSupport {
   // Correctness check
@@ -148,10 +148,10 @@ case class Protocol private (
       s"$minReaderVersion,$minWriterVersion"
     } else {
       val readerFeaturesStr = readerFeatures
-        .map(_.map(_.simpleString).toSeq.sorted.mkString("{", ",", "}"))
+        .map(_.toSeq.sorted.mkString("[", ",", "]"))
         .getOrElse("None")
       val writerFeaturesStr = writerFeatures
-        .map(_.map(_.simpleString).toSeq.sorted.mkString("{", ",", "}"))
+        .map(_.toSeq.sorted.mkString("[", ",", "]"))
         .getOrElse("None")
       s"$minReaderVersion,$minWriterVersion,$readerFeaturesStr,$writerFeaturesStr"
     }
@@ -247,7 +247,7 @@ object Protocol {
         .max(minProtocolFromFeaturesInTablePropAndSession.minWriterVersion) // 2c
     }
     val minActiveFeatures = minProtocolFromActiveFeaturesOpt
-      .map(_.readerAndWriterFeatureDescriptors.flatMap(_.toFeature))
+      .map(_.readerAndWriterFeatureNames.flatMap(TableFeature.featureNameToFeature))
       .getOrElse(Set())
 
     Protocol(finalReaderVersion, finalWriterVersion)

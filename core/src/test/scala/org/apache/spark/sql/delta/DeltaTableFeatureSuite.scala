@@ -91,14 +91,12 @@ class DeltaTableFeatureSuite
     assert(
       Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(AppendOnlyTableFeature)
-        .readerAndWriterFeatureDescriptors === Set(
-        TableFeatureDescriptor(AppendOnlyTableFeature.name, TableFeatureStatus.ENABLED)))
+        .readerAndWriterFeatureNames === Set(AppendOnlyTableFeature.name))
 
     assert(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterFeature)
-        .readerAndWriterFeatureDescriptors === Set(
-        TableFeatureDescriptor(TestReaderWriterFeature.name, TableFeatureStatus.ENABLED)))
+        .readerAndWriterFeatureNames === Set(TestReaderWriterFeature.name))
   }
 
   test("implicitly-enabled features") {
@@ -155,8 +153,7 @@ class DeltaTableFeatureSuite
       Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature)
     assert(!protocol.readerFeatures.isDefined)
     assert(
-      protocol.writerFeatures.get === Set(
-        TableFeatureDescriptor(TestLegacyReaderWriterFeature.name, TableFeatureStatus.ENABLED)))
+      protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
   }
 
   test("merge protocols") {
@@ -228,13 +225,13 @@ class DeltaTableFeatureSuite
 
   test("add reader and writer feature descriptors") {
     var p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    val desc = AppendOnlyTableFeature.toDescriptor
-    p = p.withReaderFeatureDescriptors(Seq(desc))
-    assert(p.readerFeatures === Some(Set(desc)))
+    val name = AppendOnlyTableFeature.name
+    p = p.withReaderFeatures(Seq(name))
+    assert(p.readerFeatures === Some(Set(name)))
     assert(p.writerFeatures === Some(Set.empty))
-    p = p.withWriterFeatureDescriptors(Seq(desc))
-    assert(p.readerFeatures === Some(Set(desc)))
-    assert(p.writerFeatures === Some(Set(desc)))
+    p = p.withWriterFeatures(Seq(name))
+    assert(p.readerFeatures === Some(Set(name)))
+    assert(p.writerFeatures === Some(Set(name)))
   }
 
   test("native automatically-enabled feature can't be implicitly enabled") {

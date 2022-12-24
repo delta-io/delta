@@ -32,8 +32,8 @@ import org.apache.spark.util.Utils
  *
  * Protocol reader version 3 and writer version 7 start to support reader and writer table
  * features. In such a case, features can be <b>explicitly enabled</b> by a protocol's reader
- * and/or writer features sets by having a [[TableFeatureDescriptor]], in which the feature's name
- * is listed. When read or write a table, clients MUST respect all enabled features.
+ * and/or writer features sets by adding its name. When read or write a table, clients MUST
+ * respect all enabled features.
  *
  * See also the document of [[TableFeature]] for feature-specific terminologies.
  */
@@ -88,8 +88,8 @@ trait TableFeatureSupport { this: Protocol =>
       shouldAddToWriterFeatures = shouldAddWrite
     }
 
-    withFeatureDescriptor(
-      feature.toDescriptor,
+    withFeature(
+      feature.name,
       addToReaderFeatures = shouldAddToReaderFeatures,
       addToWriterFeatures = shouldAddToWriterFeatures)
   }
@@ -112,25 +112,25 @@ trait TableFeatureSupport { this: Protocol =>
    * The method does not require the feature to be recognized by the client, therefore will not
    * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
-  private[actions] def withFeatureDescriptor(
-      desc: TableFeatureDescriptor,
+  private[actions] def withFeature(
+      name: String,
       addToReaderFeatures: Boolean,
       addToWriterFeatures: Boolean): Protocol = {
     if (addToReaderFeatures && !supportsReaderFeatures) {
       throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
-        desc.name,
+        name,
         currentVersion = minReaderVersion,
         requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION)
     }
     if (addToWriterFeatures && !supportsWriterFeatures) {
       throw DeltaErrors.tableFeatureRequiresHigherWriterProtocolVersion(
-        desc.name,
+        name,
         currentVersion = minWriterVersion,
         requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
     }
 
-    val addedReaderFeatureOpt = if (addToReaderFeatures) Some(desc) else None
-    val addedWriterFeatureOpt = if (addToWriterFeatures) Some(desc) else None
+    val addedReaderFeatureOpt = if (addToReaderFeatures) Some(name) else None
+    val addedWriterFeatureOpt = if (addToWriterFeatures) Some(name) else None
 
     copy(
       readerFeatures = this.readerFeatures.map(_ ++ addedReaderFeatureOpt),
@@ -144,10 +144,9 @@ trait TableFeatureSupport { this: Protocol =>
    * The method does not require the features to be recognized by the client, therefore will not
    * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
-  private[delta] def withReaderFeatureDescriptors(
-      descriptors: Iterable[TableFeatureDescriptor]): Protocol = {
-    descriptors.foldLeft(this)(
-      _.withFeatureDescriptor(_, addToReaderFeatures = true, addToWriterFeatures = false))
+  private[delta] def withReaderFeatures(names: Iterable[String]): Protocol = {
+    names.foldLeft(this)(
+      _.withFeature(_, addToReaderFeatures = true, addToWriterFeatures = false))
   }
 
   /**
@@ -157,43 +156,29 @@ trait TableFeatureSupport { this: Protocol =>
    * The method does not require the features to be recognized by the client, therefore will not
    * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
-  private[delta] def withWriterFeatureDescriptors(
-      descriptors: Iterable[TableFeatureDescriptor]): Protocol = {
-    descriptors.foldLeft(this)(
-      _.withFeatureDescriptor(_, addToReaderFeatures = false, addToWriterFeatures = true))
+  private[delta] def withWriterFeatures(names: Iterable[String]): Protocol = {
+    names.foldLeft(this)(
+      _.withFeature(_, addToReaderFeatures = false, addToWriterFeatures = true))
   }
 
   /**
-   * Get all [[TableFeatureDescriptor]] in this protocol's `readerFeatures` field. Returns an
-   * empty set when this protocol does not support reader features.
+   * Get all feature names in this protocol's `readerFeatures` field. Returns an empty set when
+   * this protocol does not support reader features.
    */
-  def readerFeatureDescriptors: Set[TableFeatureDescriptor] =
-    this.readerFeatures.getOrElse(Set())
+  def readerFeatureNames: Set[String] = this.readerFeatures.getOrElse(Set())
 
   /**
-   * Get a set of all [[TableFeatureDescriptor]] in this protocol's `writerFeatures` field.
-   * Returns an empty set when this protocol does not support writer features.
+   * Get a set of all feature names in this protocol's `writerFeatures` field. Returns an empty
+   * set when this protocol does not support writer features.
    */
-  def writerFeatureDescriptors: Set[TableFeatureDescriptor] =
-    this.writerFeatures.getOrElse(Set())
+  def writerFeatureNames: Set[String] = this.writerFeatures.getOrElse(Set())
 
   /**
-   * Get a set of all [[TableFeatureDescriptor]] in this protocol's `readerFeatures` and
-   * `writerFeatures` field. Returns an empty set when this protocol supports none of reader and
-   * writer features.
+   * Get a set of all feature names in this protocol's `readerFeatures` and `writerFeatures`
+   * field. Returns an empty set when this protocol supports none of reader and writer features.
    */
   @JsonIgnore
-  lazy val readerAndWriterFeatureDescriptors: Set[TableFeatureDescriptor] =
-    readerFeatureDescriptors ++ writerFeatureDescriptors
-
-  /**
-   * Get the [[TableFeatureDescriptor]] if a feature with name `featureName` is explicitly
-   * required by this protocol. Returns `None` if it isn't explicitly required.
-   *
-   * The method does not require the feature to be recognized by the client.
-   */
-  def getFeatureDescriptor(featureName: String): Option[TableFeatureDescriptor] =
-    readerAndWriterFeatureDescriptors.find(_.name == featureName)
+  lazy val readerAndWriterFeatureNames: Set[String] = readerFeatureNames ++ writerFeatureNames
 
   /**
    * Get all features that are implicitly enabled by this protocol, for example, `Protocol(1,2)`
@@ -231,13 +216,11 @@ trait TableFeatureSupport { this: Protocol =>
     if (to.minReaderVersion < this.minReaderVersion) return false
     if (to.minWriterVersion < this.minWriterVersion) return false
 
-    val thisDescriptors =
-      this.readerAndWriterFeatureDescriptors ++ this.implicitlyEnabledFeatures.map(_.toDescriptor)
-    val toDescriptors =
-      to.readerAndWriterFeatureDescriptors ++ to.implicitlyEnabledFeatures.map(_.toDescriptor)
-
+    val thisFeatures =
+      this.readerAndWriterFeatureNames ++ this.implicitlyEnabledFeatures.map(_.name)
+    val toFeatures = to.readerAndWriterFeatureNames ++ to.implicitlyEnabledFeatures.map(_.name)
     // all features enabled in `this` are enabled in `to`
-    thisDescriptors.subsetOf(toDescriptors)
+    thisFeatures.subsetOf(toFeatures)
   }
 
   /**
@@ -248,13 +231,13 @@ trait TableFeatureSupport { this: Protocol =>
     val protocols = this +: others
     val mergedReaderVersion = protocols.map(_.minReaderVersion).max
     val mergedWriterVersion = protocols.map(_.minWriterVersion).max
-    val mergedReaderDescriptors = protocols.flatMap(_.readerFeatureDescriptors)
-    val mergedWriterDescriptors = protocols.flatMap(_.writerFeatureDescriptors)
+    val mergedReaderFeatures = protocols.flatMap(_.readerFeatureNames)
+    val mergedWriterFeatures = protocols.flatMap(_.writerFeatureNames)
     val mergedImplicitFeatures = protocols.flatMap(_.implicitlyEnabledFeatures)
 
     val mergedProtocol = Protocol(mergedReaderVersion, mergedWriterVersion)
-      .withReaderFeatureDescriptors(mergedReaderDescriptors)
-      .withWriterFeatureDescriptors(mergedWriterDescriptors)
+      .withReaderFeatures(mergedReaderFeatures)
+      .withWriterFeatures(mergedWriterFeatures)
 
     if (mergedProtocol.supportsReaderFeatures || mergedProtocol.supportsWriterFeatures) {
       mergedProtocol.withFeatures(mergedImplicitFeatures)
@@ -272,40 +255,9 @@ trait TableFeatureSupport { this: Protocol =>
     // legacy feature + legacy protocol
     (feature.isLegacyFeature && this.implicitlyEnabledFeatures.contains(feature)) ||
     // new protocol
-    getFeatureDescriptor(feature.name).isDefined
+    readerAndWriterFeatureNames.contains(feature.name)
   }
 }
-
-/**
- * A representation of a feature with a specific `status`.
- *
- * When reading or writing a table, clients MUST respect all requirements of features that have an
- * `enabled` status.
- *
- * @param name
- *   a feature name as defined by [[TableFeature.name]].
- * @param status
- *   a [[TableFeatureStatus]], currently the only allowed value is `enabled`.
- */
-case class TableFeatureDescriptor(
-    name: String,
-    @JsonScalaEnumeration(classOf[TableFeatureStatusType])
-    status: TableFeatureStatus.TableFeatureStatus) {
-
-  def simpleString: String = name // no `status` because it can only be `enabled`
-
-  /** Get the actual [[TableFeature]] object represented by this descriptor. */
-  def toFeature: Option[TableFeature] =
-    TableFeature.allSupportedFeaturesMap.get(name.toLowerCase(Locale.ROOT))
-}
-
-object TableFeatureStatus extends Enumeration {
-  type TableFeatureStatus = Value
-  val ENABLED = Value("enabled")
-}
-
-// Type definition for Jackson to map strings to enum items
-class TableFeatureStatusType extends TypeReference[TableFeatureStatus.type]
 
 object TableFeatureProtocolUtils {
 
@@ -314,6 +266,9 @@ object TableFeatureProtocolUtils {
 
   /** Prop prefix in Spark sessions configs. */
   val DEFAULT_FEATURE_PROP_PREFIX = "spark.databricks.delta.properties.defaults.feature."
+
+  /** The string constant "enabled" for uses in table properties. */
+  val FEATURE_PROP_ENABLED = "enabled"
 
   /** Min reader version that supports reader features. */
   val TABLE_FEATURES_MIN_READER_VERSION = 3
@@ -351,10 +306,10 @@ object TableFeatureProtocolUtils {
       // Feature status is not lower cased in any case.
       val name = key.stripPrefix(propertyPrefix).toLowerCase(Locale.ROOT)
       val status = value.toLowerCase(Locale.ROOT)
-      if (status != TableFeatureStatus.ENABLED.toString) {
+      if (status != FEATURE_PROP_ENABLED) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(name, status)
       }
-      val featureOpt = TableFeature.allSupportedFeaturesMap.get(name)
+      val featureOpt = TableFeature.featureNameToFeature(name)
       if (!featureOpt.isDefined) {
         unsupportedFeatureConfigs += key
       }

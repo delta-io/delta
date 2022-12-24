@@ -184,7 +184,7 @@ case class DescribeDeltaDetailCommand(
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
-    val featureNames = snapshot.protocol.readerAndWriterFeatureDescriptors.map(_.name).toSeq.sorted
+    val featureNames = snapshot.protocol.readerAndWriterFeatureNames.toSeq.sorted
     toRows(
       TableDetail(
         format = "delta",

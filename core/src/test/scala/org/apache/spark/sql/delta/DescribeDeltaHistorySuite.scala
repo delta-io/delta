@@ -379,8 +379,8 @@ trait DescribeDeltaHistorySuiteBase
         Seq("UPGRADE PROTOCOL",
           s"""{"minReaderVersion":$readerVersion,""" +
             s""""minWriterVersion":$writerVersion,""" +
-            s""""readerFeatures":[{"name":"${TestLegacyReaderWriterFeature.name}","status":"enabled"}],""" +
-            s""""writerFeatures":[{"name":"${TestLegacyReaderWriterFeature.name}","status":"enabled"}]}"""),
+            s""""readerFeatures":["${TestLegacyReaderWriterFeature.name}"],""" +
+            s""""writerFeatures":["${TestLegacyReaderWriterFeature.name}"]}"""),
         Seq($"operation", $"operationParameters.newProtocol"))
       // scalastyle:on line.size.limit
     }

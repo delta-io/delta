@@ -321,18 +321,18 @@ class DeltaLog private(
       case "read" => (
           clientSupportedProtocol.minReaderVersion,
           tableProtocol.minReaderVersion,
-          (f: Protocol) => f.readerFeatureDescriptors)
+          (f: Protocol) => f.readerFeatureNames)
       case "write" => (
           clientSupportedProtocol.minWriterVersion,
           tableProtocol.minWriterVersion,
-          (f: Protocol) => f.writerFeatureDescriptors)
+          (f: Protocol) => f.writerFeatureNames)
       case _ =>
         throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
     }
 
     // Check is complete when both the protocol version and all referenced features are supported.
-    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol).map(_.name)
-    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol).map(_.name)
+    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
+    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
     if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
       clientSupportedVersion >= tableRequiredVersion) {
       return
@@ -378,8 +378,9 @@ class DeltaLog private(
   def assertLegacyTableFeaturesMatch(targetProtocol: Protocol, targetMetadata: Metadata): Unit = {
     if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
 
-    val protocolEnabledLegacyFeatures =
-      targetProtocol.writerFeatureDescriptors.flatMap(_.toFeature).filter(_.isLegacyFeature)
+    val protocolEnabledLegacyFeatures = targetProtocol.writerFeatureNames
+      .flatMap(TableFeature.featureNameToFeature)
+      .filter(_.isLegacyFeature)
     val activeFeatures: Set[TableFeature] =
       TableFeature.allSupportedFeaturesMap.values.collect {
         case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
