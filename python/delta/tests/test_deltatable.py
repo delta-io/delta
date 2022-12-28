@@ -151,6 +151,7 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, "key = k") \
             .whenMatchedUpdate(set={"value": "v + 0"}) \
             .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
@@ -160,6 +161,7 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
@@ -172,8 +174,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate(condition="k = 'a'", set={"value": "v + 0"}) \
             .whenMatchedDelete(condition="k = 'b'") \
             .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Column expressions in all conditions and dicts
         reset_table()
@@ -185,8 +189,12 @@ class DeltaTableTests(DeltaTestCase):
             .whenNotMatchedInsert(
                 condition=expr("k = 'e'"),
                 values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(
+                condition=expr("key = 'c'"),
+                set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition=expr("key = 'd'")) \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Positional arguments
         reset_table()
@@ -194,8 +202,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate("k = 'a'", {"value": "v + 0"}) \
             .whenMatchedDelete("k = 'b'") \
             .whenNotMatchedInsert("k = 'e'", {"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate("key = 'c'", {"value": "value + 0"}) \
+            .whenNotMatchedBySourceDelete("key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # ============== Test updateAll/insertAll ==============
 
@@ -318,6 +328,51 @@ class DeltaTableTests(DeltaTestCase):
             (dt  # type: ignore[call-overload]
                 .merge(source, "key = k")
                 .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
+
+        # ---- bad args in whenNotMatchedBySourceUpdate()
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate({"value": "value"}))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(condition="key = 'a'"))
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1, {"value": "value"}))
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate("key = 'a'", 1))
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={"value": 1}))  # type: ignore[dict-item]
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={1: ""}))  # type: ignore[dict-item]
+
+        with self.assertRaises(TypeError):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set="key = 'a'", condition={"value": 1}))
+
+        # bad args in whenNotMatchedBySourceDelete()
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
 
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
