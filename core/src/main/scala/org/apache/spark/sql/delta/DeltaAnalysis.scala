@@ -181,8 +181,8 @@ class DeltaAnalysis(session: SparkSession)
             cloneStatement)
 
         case v: View =>
-            throw DeltaErrors.cloneFromUnsupportedSource(
-              v.desc.identifier.unquotedString, "View")
+          throw DeltaErrors.cloneFromUnsupportedSource(
+            v.desc.identifier.unquotedString, "View")
 
         case l: LogicalPlan =>
           throw DeltaErrors.cloneFromUnsupportedSource(

@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta.catalog
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.sql.Timestamp
 import java.util
 import java.util.Locale
-
-// scalastyle:off import.ordering.noEmptyLine
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
