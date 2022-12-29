@@ -492,6 +492,18 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH" : {
+    "message" : [
+      "Could not verify deletion vector integrity, CRC checksum verification failed."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered a size mismatch."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to drop column is lower than 0"
