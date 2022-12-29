@@ -605,6 +605,8 @@ private[delta] object DeltaOperationMetrics {
     "numTargetRowsUpdated", // number of rows updated in the target table.
     "numTargetRowsDeleted", // number of rows deleted in the target table.
     "numTargetRowsCopied", // number of target rows copied
+    "numTargetBytesAdded", // number of target bytes added
+    "numTargetBytesRemoved", // number of target bytes removed
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
     "numTargetFilesRemoved", // number of files removed from the sink(target)
