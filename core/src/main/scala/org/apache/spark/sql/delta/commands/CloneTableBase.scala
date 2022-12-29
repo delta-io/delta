@@ -189,19 +189,20 @@ abstract class CloneTableBase(
     }
 
     val (
-      datasetOfNewFilesToAdd,
-      newMetadata
+      datasetOfNewFilesToAdd
       ) = {
       // Make sure target table is empty before running clone
       if (txn.snapshot.allFiles.count() > 0) {
         throw DeltaErrors.cloneReplaceNonEmptyTable
       }
+      sourceTable.allFiles
+    }
 
-      val clonedMetadata = sourceTable.metadata.copy(
+    val newMetadata = {
+      sourceTable.metadata.copy(
         id = UUID.randomUUID().toString,
-        name = null, // remove the name of the table during cloning
-        description = null) // remove description of table during cloning
-      (sourceTable.allFiles, clonedMetadata)
+        name = txn.metadata.name,
+        description = txn.metadata.description)
     }
 
     // TODO: we have not decided on how to implement switching column mapping modes
