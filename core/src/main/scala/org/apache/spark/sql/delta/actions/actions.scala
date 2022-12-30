@@ -50,33 +50,20 @@ object Action {
    *
    * Use [[supportedProtocolVersion()]] instead, except to define new feature-gated versions.
    */
-  private[actions] val readerVersion =
-    TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
-  private[actions] val writerVersion =
-    TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+  private[actions] val readerVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
+  private[actions] val writerVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
   private[actions] val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   /**
-   * The maximum protocol version we are currently allowed to use based on `conf`.
-   *
-   * This is used to feature-gate certain protocol versions using config values.
-   * If no `conf` is given, then this is the same all feature-gated versions being disabled and
-   * we return [[protocolVersion]].
-   *
-   * Feature-gated versions will always be the same or newer than [[protocolVersion]].
-   *
-   * In all places in the code where we are validating which version can be read, or which version
-   * we are currently writing, pass in `conf` so that features are correctly enabled.
+   * The maximum protocol version we are currently allowed to use, with or without all recognized
+   * features.
    */
-  private[delta] def supportedProtocolVersion(
-      conf: Option[SQLConf] = None,
-      withAllFeatures: Boolean = true): Protocol = {
-    val features = if (withAllFeatures) {
-      TableFeature.allSupportedFeaturesMap.values
+  private[delta] def supportedProtocolVersion(withAllFeatures: Boolean = true): Protocol = {
+    if (withAllFeatures) {
+      protocolVersion.withFeatures(TableFeature.allSupportedFeaturesMap.values)
     } else {
-      Set.empty
+      protocolVersion
     }
-      protocolVersion.withFeatures(features)
   }
 
   def fromJson(json: String): Action = {
@@ -292,7 +279,6 @@ object Protocol {
     if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
       throw DeltaErrors.identityColumnNotSupported()
     }
-
 
     minimumRequired
   }

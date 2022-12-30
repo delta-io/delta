@@ -254,8 +254,8 @@ trait TableFeatureSupport { this: Protocol =>
   def isFeatureEnabled(feature: TableFeature): Boolean = {
     // legacy feature + legacy protocol
     (feature.isLegacyFeature && this.implicitlyEnabledFeatures.contains(feature)) ||
-    // new protocol
-    readerAndWriterFeatureNames.contains(feature.name)
+      // new protocol
+      readerAndWriterFeatureNames.contains(feature.name)
   }
 }
 

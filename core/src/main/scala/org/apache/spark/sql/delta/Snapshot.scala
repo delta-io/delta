@@ -95,7 +95,7 @@ class Snapshot(
   /** Performs validations during initialization */
   protected def init(): Unit = {
     deltaLog.protocolRead(protocol)
-    deltaLog.assertLegacyTableFeaturesMatch(protocol, metadata)
+    deltaLog.assertTableFeaturesMatchMetadata(protocol, metadata)
     SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
   }
 

@@ -49,6 +49,13 @@ trait DescribeDeltaHistorySuiteBase
 
   protected val evolvabilityLastOp = Seq("STREAMING UPDATE", null, null)
 
+  protected def deleteMetricsSchema(partitioned: Boolean) =
+    if (partitioned) DeltaOperationMetrics.DELETE_PARTITIONS else DeltaOperationMetrics.DELETE
+
+  protected val updateMetricsSchema = DeltaOperationMetrics.UPDATE
+  protected val mergeMetricsSchema = DeltaOperationMetrics.MERGE
+  protected val replaceWhereMetricsSchema = DeltaOperationMetrics.WRITE_REPLACE_WHERE
+
   protected def testWithFlag(name: String, tags: Tag*)(f: => Unit): Unit = {
     test(name, tags: _*) {
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
@@ -637,7 +644,10 @@ trait DescribeDeltaHistorySuiteBase
         )
         val copiedRows = operationMetrics("numTargetRowsCopied").toInt
         assert(0 <= copiedRows && copiedRows <= 50)
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
+        checkOperationMetrics(
+          expectedMetrics,
+          operationMetrics,
+          mergeMetricsSchema)
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
@@ -761,7 +771,10 @@ trait DescribeDeltaHistorySuiteBase
       "numUpdatedRows" -> "1",
       "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
     )
-    checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+    checkOperationMetrics(
+      expectedMetrics,
+      operationMetrics,
+      updateMetricsSchema)
     val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
     checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
   }
@@ -800,7 +813,10 @@ trait DescribeDeltaHistorySuiteBase
         "numAddedFiles" -> addedFiles.toString,
         "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
       )
-      checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+      checkOperationMetrics(
+        expectedMetrics,
+        operationMetrics,
+        updateMetricsSchema)
     }
   }
 
@@ -847,7 +863,10 @@ trait DescribeDeltaHistorySuiteBase
           "numDeletedRows" -> "1",
           "numCopiedRows" -> "2" // There should be only three rows in total(deleted + copied)
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
+        checkOperationMetrics(
+          expectedMetrics,
+          operationMetrics,
+          deleteMetricsSchema(partitioned = false))
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
@@ -876,7 +895,9 @@ trait DescribeDeltaHistorySuiteBase
         )
         // row level metrics are not collected for deletes with parition columns
         checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+          expectedMetrics,
+          operationMetrics,
+          deleteMetricsSchema(partitioned = true))
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
@@ -905,7 +926,9 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> numFilesBeforeDelete.toString
         )
         checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+          expectedMetrics,
+          operationMetrics,
+          deleteMetricsSchema(partitioned = true))
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
@@ -1054,7 +1077,7 @@ trait DescribeDeltaHistorySuiteBase
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
-          DeltaOperationMetrics.WRITE_REPLACE_WHERE
+          replaceWhereMetricsSchema
         )
       } else {
         checkOperationMetrics(
@@ -1064,7 +1087,7 @@ trait DescribeDeltaHistorySuiteBase
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
-          DeltaOperationMetrics.WRITE_REPLACE_WHERE.filter(!_.contains("Rows"))
+          replaceWhereMetricsSchema.filter(!_.contains("Rows"))
         )
       }
     }
@@ -1116,7 +1139,7 @@ trait DescribeDeltaHistorySuiteBase
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
-          DeltaOperationMetrics.WRITE_REPLACE_WHERE
+          replaceWhereMetricsSchema
         )
       } else {
         checkOperationMetrics(
@@ -1126,7 +1149,7 @@ trait DescribeDeltaHistorySuiteBase
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
-          DeltaOperationMetrics.WRITE_REPLACE_WHERE.filter(!_.contains("Rows"))
+          replaceWhereMetricsSchema.filter(!_.contains("Rows"))
         )
 
       }
@@ -1171,7 +1194,7 @@ trait DescribeDeltaHistorySuiteBase
                   "numDeletedRows" -> "10"
               ),
                 getOperationMetrics(deltaTable.history(1)),
-                DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS
+                replaceWhereMetricsSchema
               )
             } else {
               checkOperationMetrics(
@@ -1181,7 +1204,7 @@ trait DescribeDeltaHistorySuiteBase
                   "numRemovedFiles" -> "1"
                 ),
                 getOperationMetrics(deltaTable.history(1)),
-                DeltaOperationMetrics.WRITE_REPLACE_WHERE_PARTITIONS.filter(!_.contains("Rows"))
+                replaceWhereMetricsSchema.filter(!_.contains("Rows"))
               )
 
             }

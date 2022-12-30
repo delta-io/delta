@@ -21,7 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaUDF}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -93,6 +93,8 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
   def tableDataSchema: StructType
   def dataSchema: StructType
   val numIndexedCols: Int
+
+  protected def protocol: Protocol
 
   private lazy val explodedDataSchemaNames: Seq[String] =
     SchemaMergingUtils.explodeNestedFieldNames(dataSchema)
@@ -187,7 +189,6 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
 
     val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionSchema)
     val nullCountSchemaOpt = getNullCountSchema(statCollectionSchema)
-
 
     val fields =
       Array(NUM_RECORDS -> LongType) ++

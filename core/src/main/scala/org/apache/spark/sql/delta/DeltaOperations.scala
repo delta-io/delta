@@ -628,15 +628,16 @@ private[delta] object DeltaOperationMetrics {
   )
 
   val OPTIMIZE = Set(
-    "numAddedFiles", // number of files added
-    "numRemovedFiles", // number of files removed
-    "numAddedBytes", // number of bytes added by optimize
-    "numRemovedBytes", // number of bytes removed by optimize
+    "numAddedFiles", // number of data files added
+    "numRemovedFiles", // number of data files removed
+    "numAddedBytes", // number of data bytes added by optimize
+    "numRemovedBytes", // number of data bytes removed by optimize
     "minFileSize", // the size of the smallest file
     "p25FileSize", // the size of the 25th percentile file
     "p50FileSize", // the median file size
     "p75FileSize", // the 75th percentile of the file sizes
-    "maxFileSize" // the size of the largest file
+    "maxFileSize", // the size of the largest file
+    "numDeletionVectorsRemoved" // number of deletion vectors removed by optimize
   )
 
   val RESTORE = Set(
