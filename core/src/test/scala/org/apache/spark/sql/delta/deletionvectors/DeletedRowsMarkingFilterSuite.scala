@@ -50,7 +50,8 @@ class DeletedRowsMarkingFilterSuite extends QueryTest with SharedSparkSession {
         val tablePath = stringToPath(tableDir.toString)
         val dv = createDV(isInline, tablePath, 25)
 
-        val rowIndexFilter = DeletedRowsMarkingFilter.createInstance(dv, newHadoopConf, Some(tablePath))
+        val rowIndexFilter =
+          DeletedRowsMarkingFilter.createInstance(dv, newHadoopConf, Some(tablePath))
 
         assert(eval(rowIndexFilter, start = 0, end = 20) === Seq.empty)
         assert(eval(rowIndexFilter, start = 20, end = 35) === Seq(25))
@@ -65,7 +66,8 @@ class DeletedRowsMarkingFilterSuite extends QueryTest with SharedSparkSession {
         val tablePath = stringToPath(tableDir.toString)
         val dv = createDV(isInline, tablePath, 0, 25, 35, 2000, 50000)
 
-        val rowIndexFilter = DeletedRowsMarkingFilter.createInstance(dv, newHadoopConf, Some(tablePath))
+        val rowIndexFilter =
+          DeletedRowsMarkingFilter.createInstance(dv, newHadoopConf, Some(tablePath))
 
         assert(eval(rowIndexFilter, start = 0, end = 20) === Seq(0))
         assert(eval(rowIndexFilter, start = 20, end = 35) === Seq(25))
