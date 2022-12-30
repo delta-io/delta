@@ -166,6 +166,32 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
+        # Multiple not matched by source update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 0)]))
+
+        # Multiple not matched by source delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
+
+        # Redundant not matched by source update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'd'", set={"value": "6"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 6)]))
+
         # ============== Test clause conditions ==============
 
         # String expressions in all conditions and dicts

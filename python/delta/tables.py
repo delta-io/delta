@@ -723,7 +723,7 @@ class DeltaMergeBuilder(object):
 
       - When there are two ``whenMatched`` clauses and there are conditions (or the lack of)
         such that a row matches both clauses, then the first clause/action is executed.
-        In other words, the order of the ``whenMatched`` clauses matter.
+        In other words, the order of the ``whenMatched`` clauses matters.
 
       - If none of the ``whenMatched`` clauses match a source-target row pair that satisfy
         the merge condition, then the target rows will not be updated or deleted.
@@ -757,18 +757,16 @@ class DeltaMergeBuilder(object):
 
     - Constraints in the ``whenNotMatchedBySource`` clauses:
 
-      - There can be at most one ``update`` action and one ``delete`` action in
-        `whenNotMatchedBySource` clauses.
-
-      - Each ``whenNotMatchedBySource`` clause can have an optional condition. However, if there are
-        two ``whenNotMatchedBySource`` clauses, then the first one must have a condition.
+      - Each ``whenNotMatchedBySource`` clause can have an optional condition. However, only the
+        last ``whenNotMatchedBySource`` clause may omit the condition.
 
       - Conditions and update expressions  in ``whenNotMatchedBySource`` clauses may only refer to
         columns from the target Delta table.
 
-      - When there are two ``whenNotMatchedBySource`` clauses and there are conditions (or the lack
-        of) such that a row satisfies both clauses, then the first clause/action is executed.
-        In other words, the order of the ``whenNotMatchedBySource`` clauses matter.
+      - When there are more than one ``whenNotMatchedBySource`` clauses and there are conditions (or
+        the lack of) such that a row satisfies multiple clauses, then the first clause/action
+        satisfied is executed. In other words, the order of the ``whenNotMatchedBySource`` clauses
+        matters.
 
       - If no ``whenNotMatchedBySource`` clause is present or if it is present but the
         non-matching target row does not satisfy any of the ``whenNotMatchedBySource`` clause
@@ -792,7 +790,7 @@ class DeltaMergeBuilder(object):
               "count": "1",
               "missed_count": "0"
             }
-          ).whenNotMatchedBySourceUpdate(values =
+          ).whenNotMatchedBySourceUpdate(set =
             {
               "missed_count": "events.missed_count + 1"
             }
@@ -818,7 +816,7 @@ class DeltaMergeBuilder(object):
               "count": lit("1"),
               "missed_count": lit("0")
             }
-          ).whenNotMatchedBySourceUpdate(values =
+          ).whenNotMatchedBySourceUpdate(set =
             {
               "missed_count": col("events.missed_count") + 1
             }
