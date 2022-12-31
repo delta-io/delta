@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -237,5 +238,94 @@ class DeltaTableFeatureSuite
   test("native automatically-enabled feature can't be implicitly enabled") {
     val p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
     assert(p.implicitlyEnabledFeatures.isEmpty)
+  }
+
+  test("Can enable legacy metadata table feature by setting default table property key") {
+    withSQLConf(
+      s"$DEFAULT_FEATURE_PROP_PREFIX${TestWriterFeature.name}" -> "enabled",
+      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
+      withTable("tbl") {
+        spark.range(10).write.format("delta").saveAsTable("tbl")
+        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        val protocol = log.update().protocol
+        assert(protocol.readerAndWriterFeatureNames === Set(
+          ColumnMappingTableFeature.name,
+          TestWriterFeature.name))
+      }
+    }
+  }
+
+  for(commandName <- Seq("ALTER", "REPLACE", "CREATE OR REPLACE")) {
+    test(s"Can enable legacy metadata table feature during $commandName TABLE") {
+      withSQLConf(
+        s"$DEFAULT_FEATURE_PROP_PREFIX${TestWriterFeature.name}" -> "enabled") {
+        withTable("tbl") {
+          spark.range(10).write.format("delta").saveAsTable("tbl")
+          val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+
+          val tblProperties = Seq("'delta.columnMapping.mode' = 'name'",
+            s"'delta.minReaderVersion' = $TABLE_FEATURES_MIN_READER_VERSION")
+          sql(buildTablePropertyModifyingCommand(
+            commandName, targetTableName = "tbl", dataSourceTableName = "tbl", tblProperties))
+          val protocol = log.update().protocol
+          assert(protocol.readerAndWriterFeatureNames === Set(
+            ColumnMappingTableFeature.name,
+            TestWriterFeature.name))
+        }
+      }
+    }
+  }
+
+  for(commandName <- Seq("ALTER")) {
+    test("Enabling table feature on already existing table enables all table features " +
+      s"up to the table's protocol version during $commandName TABLE") {
+      withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
+        withTable("tbl") {
+          spark.range(10).write.format("delta").saveAsTable("tbl")
+          val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+          val protocol = log.update().protocol
+          assert(protocol.minReaderVersion === 2)
+          assert(protocol.minWriterVersion === 5)
+          val tblProperties = Seq(s"'$FEATURE_PROP_PREFIX${TestWriterFeature.name}' = 'enabled'",
+            s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
+          sql(buildTablePropertyModifyingCommand(
+            commandName, targetTableName = "tbl", dataSourceTableName = "tbl", tblProperties))
+          val newProtocol = log.update().protocol
+          assert(newProtocol.readerAndWriterFeatureNames === Set(
+            AppendOnlyTableFeature.name,
+            ColumnMappingTableFeature.name,
+            InvariantsTableFeature.name,
+            CheckConstraintsTableFeature.name,
+            ChangeDataFeedTableFeature.name,
+            GeneratedColumnsTableFeature.name,
+            TestWriterFeature.name,
+            TestLegacyWriterFeature.name))
+        }
+      }
+    }
+  }
+
+  private def buildTablePropertyModifyingCommand(
+      commandName: String,
+      targetTableName: String,
+      dataSourceTableName: String,
+      tblProperties: Seq[String]): String = {
+    val (usingDeltaClause, dataSourceClause) = if (commandName != "ALTER") {
+      ("USING DELTA", s"AS SELECT * FROM $dataSourceTableName")
+    } else {
+      ("", "")
+    }
+    var tblPropertiesClause = ""
+    if (tblProperties.nonEmpty) {
+      if (commandName == "ALTER") {
+        tblPropertiesClause += "SET "
+      }
+      tblPropertiesClause += s"TBLPROPERTIES ${tblProperties.mkString("(", ",", ")")}"
+    }
+    s"""$commandName TABLE $targetTableName
+       |$usingDeltaClause
+       |$tblPropertiesClause
+       |$dataSourceClause
+       |""".stripMargin
   }
 }
