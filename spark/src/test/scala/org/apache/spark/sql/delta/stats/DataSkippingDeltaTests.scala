@@ -1821,7 +1821,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         sql(s"SELECT nested.b FROM delta.`$dir` WHERE nested.b < 2").collect()
       }
       val rddScans = plans.flatMap(_.collect {
-        case l: LogicalRDD => l
+        // Only look for the RDD containg the path, ignore the initial cached RDD for all AddFile's
+        case l: LogicalRDD if l.output.exists(_.name == "path") => l
       })
       // We should only scan the log once
       assert(rddScans.length == 1)
