@@ -192,6 +192,16 @@ class DeltaTableTests(DeltaTestCase):
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 6)]))
 
+        # Interleaved update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .whenNotMatchedBySourceUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
+
         # ============== Test clause conditions ==============
 
         # String expressions in all conditions and dicts
