@@ -523,7 +523,7 @@ trait CloneTableSuiteBase extends QueryTest
     val ex = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$clone` SHALLOW CLONE delta.`$source`")
     }
-    assert(ex.getMessage.contains("is not empty but it's not a Delta table"))
+    assert(ex.getMessage.contains("is not empty and also not a Delta table"))
   }
 
   testAllClones(

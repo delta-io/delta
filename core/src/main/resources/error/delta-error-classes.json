@@ -482,7 +482,7 @@
   },
   "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION" : {
     "message" : [
-      "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty but it's not a Delta table"
+      "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty and also not a Delta table."
     ],
     "sqlState" : "42000"
   },
@@ -1335,9 +1335,9 @@
   },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
-      "You are trying to read a table <tableName> without columns using Delta.",
+      "You are trying to read a Delta table <tableName> that does not have any columns.",
       "",
-      "Write some data with option `mergeSchema = true` to enable subsequent read access."
+      "Write some new data with the option `mergeSchema = true` to be able to read the table."
     ],
     "sqlState" : "42000"
   },

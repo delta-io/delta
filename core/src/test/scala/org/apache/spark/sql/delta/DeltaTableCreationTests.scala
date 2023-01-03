@@ -1912,7 +1912,7 @@ class DeltaTableCreationSuite
       def assertFailToRead(f: => Any): Unit = {
         try f catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("without columns"))
+            assert(e.getMessage.contains("that does not have any columns."))
         }
       }
 

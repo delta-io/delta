@@ -2332,8 +2332,8 @@ trait DeltaErrorsSuiteBase
 
       val msg =
         s"Cannot create table ('${tableId}')." +
-          s" The associated location ('${tableLocation}') is not empty but " +
-          "it's not a Delta table"
+          s" The associated location ('${tableLocation}') is not empty and " +
+          "also not a Delta table."
       assert(e.getMessage == msg)
     }
     {
