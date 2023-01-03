@@ -69,6 +69,7 @@ class DeltaOptimizeBuilder private(
    * @return DataFrame containing the OPTIMIZE execution metrics
    * @since 2.0.0
    */
+  @scala.annotation.varargs
   def executeZOrderBy(columns: String *): DataFrame = {
     val attrs = columns.map(c => UnresolvedAttribute(c))
     execute(attrs)

@@ -119,29 +119,24 @@ trait ConvertIcebergToDeltaSuiteBase
       collectStats: Boolean = true): Unit
 
   test("convert with statistics") {
-    withTempDir { dir =>
       withTable(table) {
         spark.sql(
           s"""CREATE TABLE $table (id bigint, data string)
              |USING iceberg PARTITIONED BY (data)""".stripMargin)
         spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
         spark.sql(s"INSERT INTO $table VALUES (3, 'c')")
-        ConvertToDeltaCommand(
-          TableIdentifier(tablePath, Some("iceberg")),
-          None,
-          collectStats = true,
-          Some(dir.getCanonicalPath)).run(spark)
+        convert(s"iceberg.`$tablePath`", collectStats = true)
 
         // Check statistics
-        val deltaLog = DeltaLog.forTable(spark, new Path(dir.getPath))
+        val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
         val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
-          .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
+          .select(
+            from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
           .select("stats.*")
         assert(statsDf.filter(col("numRecords").isNull).count == 0)
-        val history = io.delta.tables.DeltaTable.forPath(dir.getPath).history()
+        val history = io.delta.tables.DeltaTable.forPath(tablePath).history()
         assert(history.count == 1)
       }
-    }
   }
 
   test("table with deleted files") {

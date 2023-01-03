@@ -52,3 +52,4 @@ jobs:
       - name: Run Scala/Java and Python tests
         run: |
           pipenv run python run-tests.py --coverage
+          cd examples/scala && build/sbt "++ $SCALA_VERSION compile"

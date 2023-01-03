@@ -127,45 +127,8 @@ class DeltaLog private(
   def maxSnapshotLineageLength: Int =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
 
-  /** How long to keep around logically deleted files before physically deleting them. */
-  private[delta] def tombstoneRetentionMillis: Long =
-    DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
-
-  // TODO: There is a race here where files could get dropped when increasing the
-  // retention interval...
-  protected def metadata = Option(unsafeVolatileSnapshot).map(_.metadata).getOrElse(Metadata())
-
-  /**
-   * Tombstones before this timestamp will be dropped from the state and the files can be
-   * garbage collected.
-   */
-  def minFileRetentionTimestamp: Long = {
-    // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
-    recordFrameProfile("Delta", "DeltaLog.minFileRetentionTimestamp") {
-      clock.getTimeMillis() - tombstoneRetentionMillis
-    }
-  }
-
-  /**
-   * [[SetTransaction]]s before this timestamp will be considered expired and dropped from the
-   * state, but no files will be deleted.
-   */
-  def minSetTransactionRetentionTimestamp: Option[Long] = {
-    DeltaLog.minSetTransactionRetentionInterval(metadata).map { clock.getTimeMillis() - _ }
-  }
-
-  /**
-   * Checks whether this table only accepts appends. If so it will throw an error in operations that
-   * can remove data such as DELETE/UPDATE/MERGE.
-   */
-  def assertRemovable(): Unit = {
-    if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
-      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
-    }
-  }
-
   /** The unique identifier for this table. */
-  def tableId: String = metadata.id
+  def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
 
   /**
    * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
@@ -219,6 +182,16 @@ class DeltaLog private(
     LogicalRelation(fsRelation)
   }
 
+  /**
+   * Load the data using the FileIndex. This allows us to skip many checks that add overhead, e.g.
+   * file existence checks, partitioning schema inference.
+   */
+  def loadIndex(
+      index: DeltaLogFileIndex,
+      schema: StructType = Action.logSchema): DataFrame = {
+    Dataset.ofRows(spark, indexToRelation(index, schema))
+  }
+
   /* ------------------ *
    |  Delta Management  |
    * ------------------ */
@@ -264,8 +237,7 @@ class DeltaLog private(
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
-    if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
-        newVersion.minWriterVersion == currentVersion.minWriterVersion) {
+    if (newVersion == currentVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
@@ -282,7 +254,7 @@ class DeltaLog private(
   }
 
   // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
+  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
     upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
@@ -334,39 +306,107 @@ class DeltaLog private(
    * --------------------- */
 
   /**
-   * Asserts that the client is up to date with the protocol and
-   * allowed to read the table that is using the given `protocol`.
+   * Asserts the highest protocol supported by this client is not less than what required by the
+   * table for performing read or write operations. This ensures the client to support a
+   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
+   *
+   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
+   * `read` and `write`.
    */
-  def protocolRead(protocol: Protocol): Unit = {
-    val supportedReaderVersion =
-      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
-    if (supportedReaderVersion < protocol.minReaderVersion) {
-      recordDeltaEvent(
-        this,
-        "delta.protocol.failure.read",
-        data = Map(
-          "clientVersion" -> supportedReaderVersion,
-          "minReaderVersion" -> protocol.minReaderVersion))
-      throw new InvalidProtocolVersionException
+  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
+    val clientSupportedProtocol = Action.supportedProtocolVersion(Some(spark.sessionState.conf))
+    // Depending on the operation, pull related protocol versions out of Protocol objects.
+    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
+    val (clientSupportedVersion, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
+      case "read" => (
+          clientSupportedProtocol.minReaderVersion,
+          tableProtocol.minReaderVersion,
+          (f: Protocol) => f.readerFeatureNames)
+      case "write" => (
+          clientSupportedProtocol.minWriterVersion,
+          tableProtocol.minWriterVersion,
+          (f: Protocol) => f.writerFeatureNames)
+      case _ =>
+        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
+    }
+
+    // Check is complete when both the protocol version and all referenced features are supported.
+    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
+    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
+    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
+      clientSupportedVersion >= tableRequiredVersion) {
+      return
+    }
+
+    // Otherwise, either the protocol version, or few features referenced by the table, is
+    // unsupported.
+    val clientUnsupportedFeatureNames =
+      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
+    // Prepare event log constants and the appropriate error message handler.
+    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
+      case "read" => (
+          "delta.protocol.failure.read",
+          "minReaderVersion",
+          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
+      case "write" => (
+          "delta.protocol.failure.write",
+          "minWriterVersion",
+          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
+    }
+    recordDeltaEvent(
+      this,
+      opType,
+      data = Map(
+        "clientVersion" -> clientSupportedVersion,
+        versionKey -> tableRequiredVersion,
+        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
+        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
+    if (clientSupportedVersion < tableRequiredVersion) {
+      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersion)
+    } else {
+      throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }
   }
 
   /**
-   * Asserts that the client is up to date with the protocol and
-   * allowed to write to the table that is using the given `protocol`.
+   * Asserts that the table's protocol enabled all <b>legacy</b> features that are active in the
+   * metadata.
+   *
+   * A mismatch shouldn't happen when the table has gone through a proper write process because we
+   * require all active features during writes. However, other clients may void this guarantee.
    */
-  def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
-    val supportedWriterVersion =
-      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
-    if (supportedWriterVersion < protocol.minWriterVersion) {
-      recordDeltaEvent(
-        this,
-        "delta.protocol.failure.write",
-        data = Map(
-          "clientVersion" -> supportedWriterVersion,
-          "minWriterVersion" -> protocol.minWriterVersion))
-      throw new InvalidProtocolVersionException
+  def assertLegacyTableFeaturesMatch(targetProtocol: Protocol, targetMetadata: Metadata): Unit = {
+    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+
+    val protocolEnabledLegacyFeatures = targetProtocol.writerFeatureNames
+      .flatMap(TableFeature.featureNameToFeature)
+      .filter(_.isLegacyFeature)
+    val activeFeatures: Set[TableFeature] =
+      TableFeature.allSupportedFeaturesMap.values.collect {
+        case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
+            if f.isLegacyFeature && f.metadataRequiresFeatureToBeEnabled(targetMetadata, spark) =>
+          f
+      }.toSet
+    val activeButNotEnabled = activeFeatures.diff(protocolEnabledLegacyFeatures)
+    if (activeButNotEnabled.nonEmpty) {
+      throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
     }
+  }
+
+  /**
+   * Asserts that the client is up to date with the protocol and allowed to read the table that is
+   * using the given `protocol`.
+   */
+  def protocolRead(protocol: Protocol): Unit = {
+    protocolCheck(protocol, "read")
+  }
+
+  /**
+   * Asserts that the client is up to date with the protocol and allowed to write to the table
+   * that is using the given `protocol`.
+   */
+  def protocolWrite(protocol: Protocol): Unit = {
+    protocolCheck(protocol, "write")
   }
 
   /* ---------------------------------------- *
@@ -461,8 +501,8 @@ class DeltaLog private(
     // data.
     if (!cdcOptions.isEmpty) {
       recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
-      return CDCReader.getCDCRelation(spark,
-        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+      return CDCReader.getCDCRelation(
+        spark, snapshotToUse, isTimeTravelQuery, spark.sessionState.conf, cdcOptions)
     }
 
     val fileIndex = TahoeLogFileIndex(
@@ -690,6 +730,13 @@ object DeltaLog extends DeltaLogging {
       tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
     withFreshSnapshot { forTable(spark, tableName, _) }
 
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      dataPath: Path,
+      options: Map[String, String]): (DeltaLog, Snapshot) =
+    withFreshSnapshot { apply(spark, logPathFor(dataPath), options, _) }
+
   /**
    * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
    * partially applied DeltaLog.forTable call, which we can then wrap around with a
@@ -810,17 +857,25 @@ object DeltaLog extends DeltaLogging {
    *              information
    * @param partitionFilters Filters on the partition columns
    * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
+   *                                      [[AddFile]] schema
    */
   def filterFileList(
       partitionSchema: StructType,
       files: DataFrame,
       partitionFilters: Seq[Expression],
-      partitionColumnPrefixes: Seq[String] = Nil): DataFrame = {
-    val rewrittenFilters = rewritePartitionFilters(
-      partitionSchema,
-      files.sparkSession.sessionState.conf.resolver,
-      partitionFilters,
-      partitionColumnPrefixes)
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true): DataFrame = {
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
     val columnFilter = new Column(expr)
     files.filter(columnFilter)
@@ -861,10 +916,27 @@ object DeltaLog extends DeltaLogging {
     })
   }
 
+
+  /**
+   * Checks whether this table only accepts appends. If so it will throw an error in operations that
+   * can remove data such as DELETE/UPDATE/MERGE.
+   */
+  def assertRemovable(snapshot: Snapshot): Unit = {
+    val metadata = snapshot.metadata
+    if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
+      throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
+    }
+  }
+
+  /** How long to keep around SetTransaction actions before physically deleting them. */
   def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
     DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
       .fromMetaData(metadata)
       .map(DeltaConfigs.getMilliSeconds)
+  }
+  /** How long to keep around logically deleted files before physically deleting them. */
+  def tombstoneRetentionMillis(metadata: Metadata): Long = {
+    DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
   }
 
   /** Get a function that canonicalizes a given `path`. */

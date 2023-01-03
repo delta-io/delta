@@ -364,17 +364,25 @@ trait DescribeDeltaHistorySuiteBase
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
-        Iterator(Metadata(schemaString = spark.range(1).schema.json).json, Protocol(1, 1).json),
+        Iterator(
+          Metadata(schemaString = spark.range(1).schema.asNullable.json).json,
+          Protocol(1, 1).json),
         overwrite = false,
         log.newDeltaHadoopConf())
       log.update()
-      log.upgradeProtocol()
+      log.upgradeProtocol(
+        Action.supportedProtocolVersion(withAllFeatures = false)
+          .withFeature(TestLegacyReaderWriterFeature))
+      // scalastyle:off line.size.limit
       checkLastOperation(
         path.toString,
         Seq("UPGRADE PROTOCOL",
           s"""{"minReaderVersion":$readerVersion,""" +
-            s""""minWriterVersion":$writerVersion}"""),
+            s""""minWriterVersion":$writerVersion,""" +
+            s""""readerFeatures":["${TestLegacyReaderWriterFeature.name}"],""" +
+            s""""writerFeatures":["${TestLegacyReaderWriterFeature.name}"]}"""),
         Seq($"operation", $"operationParameters.newProtocol"))
+      // scalastyle:on line.size.limit
     }
   }
 

@@ -895,28 +895,48 @@ Deletion Vectors are basically sets of row indexes, that is 64-bit integers that
 - Bitmap-compressed, when the number of values in the block is large and scattered.
 - Run-length encoded, when the number of values in the block is large, but clustered.
 
-The serialization format is standardized, and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
+The serialization format is [standardized](https://github.com/RoaringBitmap/RoaringFormatSpec), and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
 
-Since RoaringBitmap only covers 32-bit integers, we extend the format in a simple manner by keeping an array of 32-bit RoaringBitmaps and using the upper 32-bits to index into the array.
-
-The serialization format for such a `RoaringBitmapArray` is as follows (all numerical values are written in little endian byte order):
+The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the most significant 32-bit "keys" indexing the least significant 32-bit RoaringBitmaps in ascending sequence. The spec calls these least signficant 32-bit RoaringBitmaps "buckets".
 
 Bytes | Name | Description
 -|-|-
-0 — 3 | magicNumber | 1681511376; Indicates that the following bytes are serialised in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
-4 — 7 | numBitmaps | The number of 32-bit bitmaps in the array
-`repeat for i in 0 to length` | | For each 32-bit RoaringBitmap
-`<start of i>` — `<start of i> + 3` | bitmapDataSize | Number of bytes of this bitmap’s serialized representation.
-`<start of i> + 4` — `<start of i> + 4 +  bitmapDataSize` | bitmapData | Serialized bytes in the RoaringBitmap standard serialization format.
+0 – 7 | numBuckets | The number of distinct 32-bit buckets in this bitmap.
+`repeat for each bucket b` | | For each bucket in ascending order of keys.
+`<start of b>` – `<start of b> + 3` | key | The most significant 32-bit of all the values in this bucket.
+`<start of b> + 4` – `<end of b>` | bucketData | A serialized 32-bit RoaringBitmap with all the least signficant 32-bit entries in this bucket.
 
-The format for storing DVs in file storage is one (or more) of these `RoaringBitmapArray`s per file, together with a checksum for each DV:
+The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
+This is followed by the data for each individual container in a container-specific format.
+
+Reference Implementations of the Roaring format:
+
+- [32-bit Java RoaringBitmap](https://github.com/RoaringBitmap/RoaringBitmap/blob/c7993318d7224cd3cc0244dcc99c8bbc5ddb0c87/RoaringBitmap/src/main/java/org/roaringbitmap/RoaringArray.java#L905-L949)
+- [64-bit Java RoaringNavigableBitmap](https://github.com/RoaringBitmap/RoaringBitmap/blob/c7993318d7224cd3cc0244dcc99c8bbc5ddb0c87/RoaringBitmap/src/main/java/org/roaringbitmap/longlong/Roaring64NavigableMap.java#L1253-L1260)
+
+Delta uses the format described above as a black box, but with two additions:
+
+1. We prepend a "magic number", which can be used to make sure we are reading the correct format and also retains the ability to evolve the format in the future.
+2. We require that every "key" (s. above) in the bitmap has a 0 as its most significant bit. This ensures that in Java, where values are read signed, we never read negative keys. 
+
+The concrete serialization format is as follows (all numerical values are written in little endian byte order):
+
+Bytes | Name | Description
+-|-|-
+0 — 3 | magicNumber | 1681511377; Indicates that the following bytes are serialized in this exact format. Future alternative—but related—formats must have a different magic number, for example by incrementing this one.
+4 — end | bitmap | A serialized 64-bit bitmap in the portable standard format as defined in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This can be treated as a black box by any Delta implementation that has a native, standard-compliant RoaringBitmap library available to pass these bytes to.
+
+### Deletion Vector File Storage Format
+
+Deletion Vectors can be stored in files in cloud storage or inline in the Delta log.
+The format for storing DVs in file storage is one (or more) of DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV:
 
 Bytes | Name | Description
 -|-|-
 0 — 1 | version | The format version of this file: `1` for the format described here.
 `repeat for each DV i` | | For each DV
 `<start of i>` — `<start of i> + 3` | dataSize | Size of this DV’s data (without the checksum)
-`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One `RoaringBitmapArray` serialised as described above.
+`<start of i> + 4` — `<start of i> + 4 + dataSize - 1` | bitmapData | One 64-bit RoaringBitmap serialised as described above.
 `<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
 
 ## Per-file Statistics
@@ -1019,7 +1039,7 @@ Field Name | Description
 name| Name of this (possibly nested) column
 type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
 nullable| Boolean denoting whether this field can be null
-metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that clients must handle when writing to a table.
+metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [Column Metadata](#column-metadata) for more information on column level metadata that clients must handle when writing to a table.
 
 ### Array Type
 
@@ -1040,6 +1060,17 @@ Field Name | Description
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+
+### Column Metadata
+A column metadata stores various information about the column.
+For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
+Field Name | Description
+-|-
+delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
+delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
+delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
+delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
+
 
 ### Example
 

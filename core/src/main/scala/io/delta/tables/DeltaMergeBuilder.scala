@@ -199,6 +199,40 @@ class DeltaMergeBuilder private(
   }
 
   /**
+   * Build the actions to perform when the merge condition was not matched by the source. This
+   * returns [[DeltaMergeNotMatchedBySourceActionBuilder]] object which can be used to specify how
+   * to update or delete the target table row.
+   * @since 2.3.0
+   */
+  def whenNotMatchedBySource(): DeltaMergeNotMatchedBySourceActionBuilder = {
+    DeltaMergeNotMatchedBySourceActionBuilder(this, None)
+  }
+
+  /**
+   * Build the actions to perform when the merge condition was not matched by the source and the
+   * given `condition` is true. This returns [[DeltaMergeNotMatchedBySourceActionBuilder]] object
+   * which can be used to specify how to update or delete the target table row.
+   *
+   * @param condition boolean expression as a SQL formatted string
+   * @since 2.3.0
+   */
+  def whenNotMatchedBySource(condition: String): DeltaMergeNotMatchedBySourceActionBuilder = {
+    whenNotMatchedBySource(expr(condition))
+  }
+
+  /**
+   * Build the actions to perform when the merge condition was not matched by the source and the
+   * given `condition` is true. This returns [[DeltaMergeNotMatchedBySourceActionBuilder]] object
+   * which can be used to specify how to update or delete the target table row .
+   *
+   * @param condition boolean expression as a Column object
+   * @since 2.3.0
+   */
+  def whenNotMatchedBySource(condition: Column): DeltaMergeNotMatchedBySourceActionBuilder = {
+    DeltaMergeNotMatchedBySourceActionBuilder(this, Some(condition))
+  }
+
+  /**
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 0.3.0
@@ -383,7 +417,7 @@ class DeltaMergeMatchedActionBuilder private(
 
   private def addUpdateClause(set: Map[String, Column]): DeltaMergeBuilder = {
     if (set.isEmpty && matchCondition.isEmpty) {
-      // Nothing to update = no need to add an update clause
+      // This is a catch all clause that doesn't update anything: we can ignore it.
       mergeBuilder
     } else {
       val setActions = set.toSeq
@@ -398,9 +432,8 @@ class DeltaMergeMatchedActionBuilder private(
     }
   }
 
-  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
-    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
-  }
+  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
+    map.mapValues(functions.expr(_)).toMap
 }
 
 object DeltaMergeMatchedActionBuilder {
@@ -500,9 +533,8 @@ class DeltaMergeNotMatchedActionBuilder private(
     mergeBuilder.withClause(insertClause)
   }
 
-  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
-    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
-  }
+  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
+    map.mapValues(functions.expr(_)).toMap
 }
 
 object DeltaMergeNotMatchedActionBuilder {
@@ -516,5 +548,106 @@ object DeltaMergeNotMatchedActionBuilder {
       mergeBuilder: DeltaMergeBuilder,
       notMatchCondition: Option[Column]): DeltaMergeNotMatchedActionBuilder = {
     new DeltaMergeNotMatchedActionBuilder(mergeBuilder, notMatchCondition)
+  }
+}
+
+/**
+ * Builder class to specify the actions to perform when a target table row has no match in the
+ * source table based on the given merge condition and optional match condition.
+ *
+ * See [[DeltaMergeBuilder]] for more information.
+ *
+ * @since 2.3.0
+ */
+class DeltaMergeNotMatchedBySourceActionBuilder private(
+    private val mergeBuilder: DeltaMergeBuilder,
+    private val notMatchBySourceCondition: Option[Column]) {
+
+  /**
+   * Update an unmatched target table row based on the rules defined by `set`.
+   *
+   * @param set rules to update a row as a Scala map between target column names and
+   *            corresponding update expressions as Column objects.
+   * @since 2.3.0
+   */
+  def update(set: Map[String, Column]): DeltaMergeBuilder = {
+    addUpdateClause(set)
+  }
+
+  /**
+   * Update an unmatched target table row based on the rules defined by `set`.
+   *
+   * @param set rules to update a row as a Scala map between target column names and
+   *            corresponding update expressions as SQL formatted strings.
+   * @since 2.3.0
+   */
+  def updateExpr(set: Map[String, String]): DeltaMergeBuilder = {
+    addUpdateClause(toStrColumnMap(set))
+  }
+
+  /**
+   * Update an unmatched target table row based on the rules defined by `set`.
+   *
+   * @param set rules to update a row as a Java map between target column names and
+   *            corresponding expressions as Column objects.
+   * @since 2.3.0
+   */
+  def update(set: java.util.Map[String, Column]): DeltaMergeBuilder = {
+    addUpdateClause(set.asScala)
+  }
+
+  /**
+   * Update an unmatched target table row based on the rules defined by `set`.
+   *
+   * @param set rules to update a row as a Java map between target column names and
+   *            corresponding expressions as SQL formatted strings.
+   * @since 2.3.0
+   */
+  def updateExpr(set: java.util.Map[String, String]): DeltaMergeBuilder = {
+    addUpdateClause(toStrColumnMap(set.asScala))
+  }
+
+  /**
+   * Delete an unmatched row from the target table.
+   * @since 2.3.0
+   */
+  def delete(): DeltaMergeBuilder = {
+    val deleteClause =
+      DeltaMergeIntoNotMatchedBySourceDeleteClause(notMatchBySourceCondition.map(_.expr))
+    mergeBuilder.withClause(deleteClause)
+  }
+
+  private def addUpdateClause(set: Map[String, Column]): DeltaMergeBuilder = {
+    if (set.isEmpty && notMatchBySourceCondition.isEmpty) {
+      // This is a catch all clause that doesn't update anything: we can ignore it.
+      mergeBuilder
+    } else {
+      val setActions = set.toSeq
+      val updateActions = DeltaMergeIntoClause.toActions(
+        colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
+        exprs = setActions.map(x => x._2.expr),
+        isEmptySeqEqualToStar = false)
+      val updateClause = DeltaMergeIntoNotMatchedBySourceUpdateClause(
+        notMatchBySourceCondition.map(_.expr),
+        updateActions)
+      mergeBuilder.withClause(updateClause)
+    }
+  }
+
+  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
+    map.mapValues(functions.expr(_)).toMap
+}
+
+object DeltaMergeNotMatchedBySourceActionBuilder {
+  /**
+   * :: Unstable ::
+   *
+   * Private method for internal usage only. Do not call this directly.
+   */
+  @Unstable
+  private[delta] def apply(
+      mergeBuilder: DeltaMergeBuilder,
+      notMatchBySourceCondition: Option[Column]): DeltaMergeNotMatchedBySourceActionBuilder = {
+    new DeltaMergeNotMatchedBySourceActionBuilder(mergeBuilder, notMatchBySourceCondition)
   }
 }

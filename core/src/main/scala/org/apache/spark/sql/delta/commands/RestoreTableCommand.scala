@@ -163,13 +163,11 @@ case class RestoreTableCommand(
         // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
         // time travel.
         val protocolDowngradeAllowed =
-        conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED)
-        val newProtocol = if ((sourceProtocol.minReaderVersion >= targetProtocol.minReaderVersion &&
-            sourceProtocol.minWriterVersion >= targetProtocol.minWriterVersion) ||
-            protocolDowngradeAllowed) {
+          conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED)
+        val newProtocol = if (protocolDowngradeAllowed) {
           sourceProtocol
         } else {
-          targetProtocol
+          sourceProtocol.merge(targetProtocol)
         }
 
         txn.commitLarge(
@@ -273,4 +271,9 @@ case class RestoreTableCommand(
       None
     }
   }
+}
+
+object RestoreTableCommand {
+  // Op name used by RESTORE command
+  val OP_NAME = "RESTORE"
 }

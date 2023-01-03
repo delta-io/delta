@@ -83,8 +83,8 @@ class DeltaConfigSuite extends SparkFunSuite
     withTempDir { dir =>
       sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
 
-      val retentionTimestampOpt =
-        DeltaLog.forTable(spark, dir.getCanonicalPath, clock).minSetTransactionRetentionTimestamp
+      val retentionTimestampOpt = DeltaLog.forTable(spark, dir.getCanonicalPath, clock)
+        .snapshot.minSetTransactionRetentionTimestamp
 
       assert(retentionTimestampOpt.isEmpty)
     }
@@ -99,7 +99,7 @@ class DeltaConfigSuite extends SparkFunSuite
       DeltaLog.clearCache() // we want to ensure we can use the ManualClock we pass in
 
       val log = DeltaLog.forTable(spark, dir.getCanonicalPath, clock)
-      val retentionTimestampOpt = log.minSetTransactionRetentionTimestamp
+      val retentionTimestampOpt = log.snapshot.minSetTransactionRetentionTimestamp
       assert(log.clock.getTimeMillis() == clock.getTimeMillis())
       val expectedRetentionTimestamp =
         clock.getTimeMillis() - getMilliSeconds(parseCalendarInterval("interval 1 days"))

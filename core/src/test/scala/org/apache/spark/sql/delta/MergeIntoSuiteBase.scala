@@ -5019,6 +5019,11 @@ trait MergeHelpers {
     override def clause: String = "NOT MATCHED"
   }
 
+  protected case class NotMatchedBySourceClause(condition: String, action: String)
+    extends MergeClause {
+    override def clause: String = "NOT MATCHED BY SOURCE"
+  }
+
   protected def update(set: String = null, condition: String = null): MergeClause = {
     MatchedClause(condition, s"UPDATE SET $set")
   }
@@ -5029,5 +5034,13 @@ trait MergeHelpers {
 
   protected def insert(values: String = null, condition: String = null): MergeClause = {
     NotMatchedClause(condition, s"INSERT $values")
+  }
+
+  protected def updateNotMatched(set: String = null, condition: String = null): MergeClause = {
+    NotMatchedBySourceClause(condition, s"UPDATE SET $set")
+  }
+
+  protected def deleteNotMatched(condition: String = null): MergeClause = {
+    NotMatchedBySourceClause(condition, s"DELETE")
   }
 }

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
@@ -147,31 +147,36 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Validates specified configurations and returns the normalized key -> value map.
    */
   def validateConfigurations(configurations: Map[String, String]): Map[String, String] = {
-    configurations.map {
-      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
-        // This is a CHECK constraint, we should allow it.
-        kv
-      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta."))) match {
-          case Some(deltaConfig) => deltaConfig(value) // validate the value
-          case None if
-            SparkSession.active.sessionState.conf
-              .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
-            =>
-            logConsole(s"You are setting a property: $key that is not recognized by this " +
-              s"version of Delta")
-            kv
-          case None => throw DeltaErrors.unknownConfigurationKeyException(key)
-        }
-      case keyvalue @ (key, _) =>
-        if (entries.containsKey(key.toLowerCase(Locale.ROOT))) {
-          logConsole(
-            s"""
+    val allowArbitraryProperties = SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
+
+    configurations.map { case kv @ (key, value) =>
+      key.toLowerCase(Locale.ROOT) match {
+        case lKey if lKey.startsWith("delta.constraints.") =>
+          // This is a CHECK constraint, we should allow it.
+          kv
+        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+          // This is a table feature, we should allow it.
+          lKey -> value
+        case lKey if lKey.startsWith("delta.") =>
+          Option(entries.get(lKey.stripPrefix("delta."))) match {
+            case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case None if allowArbitraryProperties =>
+              logConsole(
+                s"You are setting a property: $key that is not recognized by this " +
+                  "version of Delta")
+              kv
+            case None => throw DeltaErrors.unknownConfigurationKeyException(key)
+          }
+        case _ =>
+          if (entries.containsKey(key)) {
+            logConsole(s"""
               |You are trying to set a property the key of which is the same as Delta config: $key.
               |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
             """.stripMargin)
-        }
-        keyvalue
+          }
+          kv
+      }
     }
   }
 
@@ -199,11 +204,14 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Normalize the specified property keys if the key is for a Delta config.
    */
   def normalizeConfigKeys(propKeys: Seq[String]): Seq[String] = {
-    propKeys.map {
-      case key if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
-          .map(_.key).getOrElse(key)
-      case key => key
+    propKeys.map { key =>
+      key.toLowerCase(Locale.ROOT) match {
+        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+          lKey
+        case lKey if lKey.startsWith("delta.") =>
+          Option(entries.get(lKey.stripPrefix("delta."))).map(_.key).getOrElse(key)
+        case _ => key
+      }
     }
   }
 
@@ -211,11 +219,14 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Normalize the specified property key if the key is for a Delta config.
    */
   def normalizeConfigKey(propKey: Option[String]): Option[String] = {
-    propKey.map {
-      case key if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
-        Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
-          .map(_.key).getOrElse(key)
-      case key => key
+    propKey.map { key =>
+      key.toLowerCase(Locale.ROOT) match {
+        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+          lKey
+        case lKey if lKey.startsWith("delta.") =>
+          Option(entries.get(lKey.stripPrefix("delta."))).map(_.key).getOrElse(key)
+        case _ => key
+      }
     }
   }
 
@@ -377,12 +388,12 @@ trait DeltaConfigsBase extends DeltaLogging {
    * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
    */
   val IS_APPEND_ONLY = buildConfig[Boolean](
-    "appendOnly",
-    "false",
-    _.toBoolean,
-    _ => true,
-    "needs to be a boolean.",
-    Some(Protocol(0, 2)))
+    key = "appendOnly",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.",
+    minimumProtocolVersion = Some(AppendOnlyTableFeature.minProtocolVersion))
 
 
   /**
@@ -461,7 +472,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean.",
     alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY),
-    minimumProtocolVersion = Some(Protocol(0, minWriterVersion = 4)))
+    minimumProtocolVersion = Some(ChangeDataFeedTableFeature.minProtocolVersion))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",
@@ -469,7 +480,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     DeltaColumnMappingMode(_),
     _ => true,
     "",
-    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
+    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion))
 
   /**
    * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
@@ -481,7 +492,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toLong,
     _ => true,
     "",
-    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION),
+    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion),
     userConfigurable = false)
 
 

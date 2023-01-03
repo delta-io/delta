@@ -17,15 +17,17 @@
 package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.File
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -77,7 +79,7 @@ class CDCReaderSuite
         FileFormatWriter.write(
           sparkSession = spark,
           plan = qe.executedPlan,
-          fileFormat = log.fileFormat(),
+          fileFormat = log.fileFormat(log.unsafeVolatileMetadata),
           committer = committer,
           outputSpec = FileFormatWriter.OutputSpec(basePath, Map.empty, mappedOutput),
           hadoopConf = log.newDeltaHadoopConf(),
@@ -92,6 +94,13 @@ class CDCReaderSuite
         txn.commit(extraActions ++ cdc, DeltaOperations.ManualUpdate)
       }
     }
+  }
+
+
+  def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
+    spark.range(start, end)
+      .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
+      .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
   }
 
   test("simple CDC scan") {
@@ -375,6 +384,43 @@ class CDCReaderSuite
           .withColumn(CDCReader.CDC_TYPE_COLUMN_NAME, lit("insert"))
           .withColumn(CDCReader.CDC_COMMIT_VERSION, col("`id.num`") % 2)
         checkAnswer(actual, expected)
+      }
+    }
+  }
+
+  for (cdfEnabled <- BOOLEAN_DOMAIN)
+  test(s"Coarse-grained CDF, cdfEnabled=$cdfEnabled") {
+    withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
+      withTempDir { dir =>
+        val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+
+        // commit 0: 2 inserts
+        spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .write.format("delta").save(dir.getAbsolutePath)
+        var df = CDCReader.changesToBatchDF(log, 0, 1, spark, ignoreAddCDCFileActions = true)
+        checkAnswer(df.drop(CDC_COMMIT_TIMESTAMP),
+          createCDFDF(start = 0, end = 2, commitVersion = 0, changeType = "insert"))
+
+        // commit 1: 2 inserts
+        spark.range(start = 2, end = 4)
+          .write.mode("append").format("delta").save(dir.getAbsolutePath)
+        df = CDCReader.changesToBatchDF(log, 1, 2, spark, ignoreAddCDCFileActions = true)
+        checkAnswer(df.drop(CDC_COMMIT_TIMESTAMP),
+          createCDFDF(start = 2, end = 4, commitVersion = 1, changeType = "insert"))
+
+        // commit 2
+        sql(s"DELETE FROM delta.`$dir` WHERE id = 0")
+        df = CDCReader.changesToBatchDF(log, 2, 3, spark, ignoreAddCDCFileActions = true)
+          .drop(CDC_COMMIT_TIMESTAMP)
+
+        // Using only Add and RemoveFiles should generate 2 deletes and 1 insert. Even when CDF
+        // is enabled, we want to use only Add and RemoveFiles.
+        val dfWithDeletesFirst = df.sort(CDC_TYPE_COLUMN_NAME)
+        val expectedAnswer =
+          createCDFDF(start = 0, end = 2, commitVersion = 2, changeType = "delete")
+            .union(
+              createCDFDF(start = 1, end = 2, commitVersion = 2, changeType = "insert"))
+        checkAnswer(dfWithDeletesFirst, expectedAnswer)
       }
     }
   }

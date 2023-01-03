@@ -264,14 +264,34 @@ class SchemaUtilsSuite extends QueryTest
    *    incompatibility in all the different places within a schema (in a top-level struct,
    *    in a nested struct, for the element type of an array, etc.)
    */
-  def testNullability (scenario: String)(make: Boolean => StructType): Unit = {
+  def testNullability(scenario: String)(make: Boolean => StructType): Unit = {
     val nullable = make(true)
     val nonNullable = make(false)
-    test(s"relaxed nullability should fail read compatibility - $scenario") {
-      assert(!isReadCompatible(nonNullable, nullable))
-    }
-    test(s"restricted nullability should not fail read compatibility - $scenario") {
-      assert(isReadCompatible(nullable, nonNullable))
+    Seq(true, false).foreach { forbidTightenNullability =>
+      val (blockedCase, blockedExisting, blockedRead) = if (forbidTightenNullability) {
+        (s"tighten nullability should fail read compatibility " +
+          s"(forbidTightenNullability=$forbidTightenNullability) - $scenario",
+          nullable, nonNullable)
+      } else {
+        (s"relax nullability should fail read compatibility " +
+          s"(forbidTightenNullability=$forbidTightenNullability) - $scenario",
+          nonNullable, nullable)
+      }
+      val (allowedCase, allowedExisting, allowedRead) = if (forbidTightenNullability) {
+        (s"relax nullability should not fail read compatibility " +
+          s"(forbidTightenNullability=$forbidTightenNullability) - $scenario",
+          nonNullable, nullable)
+      } else {
+        (s"tighten nullability should not fail read compatibility " +
+          s"(forbidTightenNullability=$forbidTightenNullability) - $scenario",
+          nullable, nonNullable)
+      }
+      test(blockedCase) {
+        assert(!isReadCompatible(blockedExisting, blockedRead, forbidTightenNullability))
+      }
+      test(allowedCase) {
+        assert(isReadCompatible(allowedExisting, allowedRead, forbidTightenNullability))
+      }
     }
   }
 

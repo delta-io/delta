@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.commands.MergeStats
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceError, MergeIntoMaterializeSourceErrorType, MergeIntoMaterializeSourceReason}
@@ -74,6 +75,174 @@ trait MergeIntoMaterializeSourceTests
       s"RDD id ${rdd.id}: Message: ${ex.getMessage}")
   }
 
+
+  test("merge logs out of disk errors") {
+    {
+      val tblName = "target"
+      withTable(tblName) {
+        val targetDF = spark.range(10).toDF("id").withColumn("value", rand())
+        targetDF.write.format("delta").saveAsTable(tblName)
+        spark.range(10).mapPartitions { x =>
+          throw new java.io.IOException("No space left on device")
+          x
+        }.toDF("id").withColumn("value", rand()).createOrReplaceTempView("s")
+        val events = Log4jUsageLogger.track {
+          val ex = intercept[SparkException] {
+            sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+              s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+          }
+        }.filter { e =>
+          e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+            e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
+        }
+        assert(events.length == 1)
+        val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
+        assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
+        assert(error.attempt == 1)
+        val storageLevel = StorageLevel.fromString(
+          spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
+        assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+      }
+    }
+  }
+
+  // Runs a merge query with source materialization, while a killer thread tries to unpersist it.
+  private def testMergeMaterializedSourceUnpersist(
+      tblName: String, numKills: Int): Seq[UsageRecord] = {
+    val maxAttempts = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS)
+
+    // when we ask to join the killer thread, it should exit in the next iteration.
+    val killerThreadJoinTimeoutMs = 10000
+    // sleep between attempts to unpersist
+    val killerIntervalMs = 1
+
+    // Data does not need to be big; there is enough latency to unpersist even with small data.
+    val targetDF = spark.range(100).toDF("id")
+    targetDF.write.format("delta").saveAsTable(tblName)
+    spark.range(90, 120).toDF("id").createOrReplaceTempView("s")
+    val mergeQuery =
+      s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+      "WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *"
+
+    // Killer thread tries to unpersist any persisted mergeMaterializedSource RDDs,
+    // until it has seen more than numKills distinct ones (from distinct Merge retries)
+    @volatile var finished = false
+    @volatile var invalidStorageLevel: Option[String] = None
+    val killerThread = new Thread() {
+      override def run(): Unit = {
+        val seenSources = mutable.Set[Int]()
+        while (!finished) {
+          sparkContext.getPersistentRDDs.foreach { case (rddId, rdd) =>
+            if (rdd.name == "mergeMaterializedSource") {
+              if (!seenSources.contains(rddId)) {
+                logInfo(s"First time seeing mergeMaterializedSource with id=$rddId")
+                seenSources.add(rddId)
+              }
+              if (seenSources.size > numKills) {
+                // already unpersisted numKills different source materialization attempts,
+                // the killer can retire
+                logInfo(s"seenSources.size=${seenSources.size}. Proceeding to finish.")
+                finished = true
+              } else {
+                // Need to wait until it is actually checkpointed, otherwise if we try to unpersist
+                // before it starts to actually persist it fails with
+                // java.lang.AssertionError: assumption failed:
+                // Storage level StorageLevel(1 replicas) is not appropriate for local checkpointing
+                // (this wouldn't happen in real world scenario of losing the block because executor
+                // was lost; there nobody manipulates with StorageLevel; if failure happens during
+                // computation of the materialized rdd, the task would be reattempted using the
+                // regular task retry mechanism)
+                if (rdd.isCheckpointed) {
+                  // Use this opportunity to test if the source has the correct StorageLevel.
+                  val expectedStorageLevel = StorageLevel.fromString(
+                    if (seenSources.size == 1) {
+                      spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
+                    } else {
+                      spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
+                    }
+                  )
+                  if (rdd.getStorageLevel != expectedStorageLevel) {
+                    invalidStorageLevel =
+                      Some(s"For attempt ${seenSources.size} of materialized source expected " +
+                        s"$expectedStorageLevel but got ${rdd.getStorageLevel}")
+                    finished = true
+                  }
+                  logInfo(s"Unpersisting mergeMaterializedSource with id=$rddId")
+                  // don't make it blocking, so that the killer turns around quickly and is ready
+                  // for the next kill when Merge retries
+                  rdd.unpersist(blocking = false)
+                }
+              }
+            }
+          }
+          Thread.sleep(killerIntervalMs)
+        }
+        logInfo(s"seenSources.size=${seenSources.size}. Proceeding to finish.")
+      }
+    }
+    killerThread.start()
+
+    val events = Log4jUsageLogger.track {
+      try {
+        sql(mergeQuery)
+      } catch {
+        case NonFatal(ex) =>
+          if (numKills < maxAttempts) {
+            // The merge should succeed with retries
+            throw ex
+          }
+      } finally {
+        finished = true // put the killer to rest, if it didn't retire already
+        killerThread.join(killerThreadJoinTimeoutMs)
+        assert(!killerThread.isAlive)
+      }
+    }.filter(_.metric == MetricDefinitions.EVENT_TAHOE.name)
+
+    // If killer thread recorded an invalid StorageLevel, throw it here
+    assert(invalidStorageLevel.isEmpty, invalidStorageLevel.toString)
+
+    events
+  }
+
+  private def testMergeMaterializeSourceUnpersistRetries = {
+    val maxAttempts = DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS.defaultValue.get
+    val tblName = "target"
+
+    // For 1 to maxAttempts - 1 RDD block lost failures, merge should retry and succeed.
+    (1 to maxAttempts - 1).foreach { kills =>
+      test(s"materialize source unpersist with $kills kill attempts succeeds") {
+        withTable(tblName) {
+          val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, kills)
+          val events = allDeltaEvents.filter(_.tags.get("opType").contains("delta.dml.merge.stats"))
+          assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+          val mergeStats = JsonUtils.fromJson[MergeStats](events(0).blob)
+          assert(mergeStats.materializeSourceAttempts.isDefined,
+            s"MergeStats:\n$mergeStats")
+          assert(mergeStats.materializeSourceAttempts.get == kills + 1,
+            s"MergeStats:\n$mergeStats")
+
+          // Check query result after merge
+          val tab = sql(s"select * from $tblName order by id")
+            .collect().map(row => row.getLong(0)).toSeq
+          assert(tab == (0L until 90L) ++ (100L until 120L))
+        }
+      }
+    }
+
+    // Eventually it should fail after exceeding maximum number of attempts.
+    test(s"materialize source unpersist with $maxAttempts kill attempts fails") {
+      withTable(tblName) {
+        val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, maxAttempts)
+        val events = allDeltaEvents
+          .filter(_.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE))
+        assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+        val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
+        assert(error.errorType == MergeIntoMaterializeSourceErrorType.RDD_BLOCK_LOST.toString)
+        assert(error.attempt == maxAttempts)
+      }
+    }
+  }
+  testMergeMaterializeSourceUnpersistRetries
 
   def getHints(df: => DataFrame): Seq[(Seq[ResolvedHint], JoinHint)] = {
     val plans = withAllPlansCaptured(spark) {
@@ -295,6 +464,349 @@ trait MergeIntoMaterializeSourceTests
         }
       }
     }
+  }
+
+  test("materialize source for non-deterministic source formats") {
+    val targetSchema = StructType(Array(
+      StructField("id", IntegerType, nullable = false),
+      StructField("value", StringType, nullable = true)))
+    val targetData = Seq(
+      Row(1, "update"),
+      Row(2, "skip"),
+      Row(3, "delete"))
+    val sourceData = Seq(1, 3, 4).toDF("id")
+    val expectedResult = Seq(
+      Row(1, "new"), // Updated
+      Row(2, "skip"), // Copied
+      // 3 is deleted
+      Row(4, "new")) // Inserted
+
+    // There are more, but these are easiest to test for.
+    val nonDeterministicFormats = List("parquet", "json")
+
+    // Return MergeIntoMaterializeSourceReason string
+    def executeMerge(sourceDf: DataFrame): String = {
+      val sourceDfWithAction = sourceDf.withColumn("value", lit("new"))
+      var materializedSource: String = ""
+      withTable("target") {
+        val targetRdd = spark.sparkContext.parallelize(targetData)
+        val targetDf = spark.createDataFrame(targetRdd, targetSchema)
+        targetDf.write.format("delta").mode("overwrite").saveAsTable("target")
+        val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+        val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+          targetTable.merge(sourceDfWithAction, col("target.id") === sourceDfWithAction("id"))
+            .whenMatched(col("target.value") === lit("update")).updateAll()
+            .whenMatched(col("target.value") === lit("delete")).delete()
+            .whenNotMatched().insertAll()
+            .execute()
+        }
+
+        // Can't return values out of withTable.
+        materializedSource = mergeSourceMaterializeReason(events)
+
+        checkAnswer(
+          spark.read.format("delta").table("target"),
+          expectedResult)
+      }
+      materializedSource
+    }
+
+    def checkSourceMaterialization(
+        format: String,
+        reason: String): Unit = {
+      // Test once by name and once using path, as they produce different plans.
+      withTable("source") {
+        sourceData.write.format(format).saveAsTable("source")
+        val sourceDf = spark.read.format(format).table("source")
+        assert(executeMerge(sourceDf) == reason, s"Wrong materialization reason for $format")
+      }
+
+      withTempPath { sourcePath =>
+        sourceData.write.format(format).save(sourcePath.toString)
+        val sourceDf = spark.read.format(format).load(sourcePath.toString)
+        assert(executeMerge(sourceDf) == reason, s"Wrong materialization reason for $format")
+      }
+    }
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+      for (format <- nonDeterministicFormats) {
+        checkSourceMaterialization(
+          format,
+          reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
+      }
+
+      // Delta should not materialize source.
+      checkSourceMaterialization(
+        "delta", reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString)
+    }
+
+    // Mixed safe/unsafe queries should materialize source.
+    def checkSourceMaterializationForMixedSources(
+        format1: String,
+        format2: String,
+        shouldMaterializeSource: Boolean): Unit = {
+
+      def checkWithSources(source1Df: DataFrame, source2Df: DataFrame): Unit = {
+        val sourceDf = source1Df.union(source2Df)
+        val materializeReason = executeMerge(sourceDf)
+        if (shouldMaterializeSource) {
+          assert(materializeReason ==
+            MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString,
+            s"$format1 union $format2 are not deterministic as a source and should materialize.")
+        } else {
+          assert(materializeReason ==
+            MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString,
+            s"$format1 union $format2 is deterministic as a source and should not materialize.")
+        }
+      }
+
+      // Test once by name and once using path, as they produce different plans.
+      withTable("source1", "source2") {
+        sourceData.filter(col("id") < 2).write.format(format1).saveAsTable("source1")
+        val source1Df = spark.read.format(format1).table("source1")
+        sourceData.filter(col("id") >= 2).write.format(format2).saveAsTable("source2")
+        val source2Df = spark.read.format(format2).table("source2")
+        checkWithSources(source1Df, source2Df)
+      }
+
+      withTempPaths(2) { case Seq(source1, source2) =>
+        sourceData.filter(col("id") < 2).write
+          .mode("overwrite").format(format1).save(source1.toString)
+        val source1Df = spark.read.format(format1).load(source1.toString)
+        sourceData.filter(col("id") >= 2).write
+          .mode("overwrite").format(format2).save(source2.toString)
+        val source2Df = spark.read.format(format2).load(source2.toString)
+        checkWithSources(source1Df, source2Df)
+      }
+    }
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+      val allFormats = "delta" :: nonDeterministicFormats
+      // Try all combinations
+      for {
+        format1 <- allFormats
+        format2 <- allFormats
+      } checkSourceMaterializationForMixedSources(
+        format1 = format1,
+        format2 = format2,
+        shouldMaterializeSource = !(format1 == "delta" && format2 == "delta"))
+    }
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "none") {
+      // With "none", it should not materialize, even though parquet is non-deterministic.
+      checkSourceMaterialization(
+        "parquet",
+        reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_NONE.toString)
+    }
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "all") {
+      // With "all"", it should materialize, even though Delta is deterministic.
+      checkSourceMaterialization(
+        "delta",
+        reason = MergeIntoMaterializeSourceReason.MATERIALIZE_ALL.toString)
+    }
+  }
+
+  test("materialize source for non-deterministic source queries - rand expr") {
+    val targetSchema = StructType(Array(
+      StructField("id", IntegerType, nullable = false),
+      StructField("value", FloatType, nullable = true)))
+    val targetData = Seq(
+      Row(1, 0.5f),
+      Row(2, 0.3f),
+      Row(3, 0.8f))
+    val sourceData = Seq(1, 3).toDF("id")
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+
+      def executeMerge(sourceDf: DataFrame): Unit = {
+        val nonDeterministicSourceDf = sourceDf.withColumn("value", rand())
+        withTable("target") {
+          val targetRdd = spark.sparkContext.parallelize(targetData)
+          val targetDf = spark.createDataFrame(targetRdd, targetSchema)
+          targetDf.write.format("delta").mode("overwrite").saveAsTable("target")
+          val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+          val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+            targetTable
+              .merge(nonDeterministicSourceDf, col("target.id") === nonDeterministicSourceDf("id"))
+              .whenMatched(col("target.value") > nonDeterministicSourceDf("value")).delete()
+              .whenMatched().updateAll()
+              .whenNotMatched().insertAll()
+              .execute()
+          }
+
+          val materializeReason = mergeSourceMaterializeReason(events)
+          assert(materializeReason ==
+              MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS.toString,
+            "Source has non deterministic operations and should have materialized source.")
+        }
+      }
+
+      // Test once by name and once using path, as they produce different plans.
+      withTable("source") {
+        sourceData.write.format("delta").saveAsTable("source")
+        val sourceDf = spark.read.format("delta").table("source")
+        executeMerge(sourceDf)
+      }
+
+      withTempPath { sourcePath =>
+        sourceData.write.format("delta").save(sourcePath.toString)
+        val sourceDf = spark.read.format("delta").load(sourcePath.toString)
+        executeMerge(sourceDf)
+      }
+    }
+  }
+
+  test("don't materialize source for deterministic source queries with current_date") {
+    val targetSchema = StructType(Array(
+      StructField("id", IntegerType, nullable = false),
+      StructField("date", DateType, nullable = true)))
+    val targetData = Seq(
+      Row(1, java.sql.Date.valueOf("2022-01-01")),
+      Row(2, java.sql.Date.valueOf("2022-02-01")),
+      Row(3, java.sql.Date.valueOf("2022-03-01")))
+    val sourceData = Seq(1, 3).toDF("id")
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+
+      def executeMerge(sourceDf: DataFrame): Unit = {
+        val nonDeterministicSourceDf = sourceDf.withColumn("date", current_date())
+        withTable("target") {
+          val targetRdd = spark.sparkContext.parallelize(targetData)
+          val targetDf = spark.createDataFrame(targetRdd, targetSchema)
+          targetDf.write.format("delta").mode("overwrite").saveAsTable("target")
+          val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+          val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+            targetTable
+              .merge(nonDeterministicSourceDf, col("target.id") === nonDeterministicSourceDf("id"))
+              .whenMatched(col("target.date") < nonDeterministicSourceDf("date")).delete()
+              .whenMatched().updateAll()
+              .whenNotMatched().insertAll()
+              .execute()
+          }
+
+          val materializeReason = mergeSourceMaterializeReason(events)
+          assert(materializeReason ==
+            MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString,
+            "Source query is deterministic and should not be materialized.")
+        }
+      }
+
+      // Test once by name and once using path, as they produce different plans.
+      withTable("source") {
+        sourceData.write.format("delta").saveAsTable("source")
+        val sourceDf = spark.read.format("delta").table("source")
+        executeMerge(sourceDf)
+      }
+
+      withTempPath { sourcePath =>
+        sourceData.write.format("delta").save(sourcePath.toString)
+        val sourceDf = spark.read.format("delta").load(sourcePath.toString)
+        executeMerge(sourceDf)
+      }
+    }
+  }
+
+  test("materialize source for non-deterministic source queries - subquery") {
+    val sourceDataFrame = spark.range(0, 10)
+      .toDF("id")
+      .withColumn("value", rand())
+
+    val targetDataFrame = spark.range(0, 5)
+      .toDF("id")
+      .withColumn("value", rand())
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+
+      // Return MergeIntoMaterializeSourceReason
+      def executeMerge(sourceDf: DataFrame): Unit = {
+        withTable("target") {
+          targetDataFrame.write
+            .format("delta")
+            .saveAsTable("target")
+          val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+          val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+            targetTable.merge(sourceDf, col("target.id") === sourceDf("id"))
+              .whenMatched(col("target.value") > sourceDf("value")).delete()
+              .whenMatched().updateAll()
+              .whenNotMatched().insertAll()
+              .execute()
+          }
+
+          val materializeReason = mergeSourceMaterializeReason(events)
+          assert(materializeReason ==
+            MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS.toString,
+            "Source query has non deterministic subqueries and should materialize.")
+        }
+      }
+
+      // Test once by name and once using path, as they produce different plans.
+      withTable("source") {
+        sourceDataFrame.write.format("delta").saveAsTable("source")
+        val sourceDf = spark.sql(
+          s"""
+             |SELECT id, 0.5 AS value
+             |FROM source
+             |WHERE id IN (
+             |  SELECT id FROM source
+             |  WHERE id < rand() * ${sourceDataFrame.count()} )
+             |""".stripMargin)
+        executeMerge(sourceDf)
+      }
+
+      withTempPath { sourcePath =>
+        sourceDataFrame.write.format("delta").save(sourcePath.toString)
+        val sourceDf = spark.sql(
+          s"""
+             |SELECT id, 0.5 AS value
+             |FROM delta.`$sourcePath`
+             |WHERE id IN (
+             |  SELECT id FROM delta.`$sourcePath`
+             |  WHERE id < rand() * ${sourceDataFrame.count()} )
+             |""".stripMargin)
+        executeMerge(sourceDf)
+      }
+    }
+  }
+
+  test("don't materialize insert only merge") {
+    val tblName = "mergeTarget"
+    withTable(tblName) {
+      val targetDF = spark.range(100).toDF("id")
+      targetDF.write.format("delta").saveAsTable(tblName)
+      spark.range(90, 120).toDF("id").createOrReplaceTempView("s")
+      val mergeQuery =
+        s"MERGE INTO $tblName t USING s ON t.id = s.id WHEN NOT MATCHED THEN INSERT *"
+      val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+        withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+          sql(mergeQuery)
+        }
+      }
+
+      assert(mergeSourceMaterializeReason(events) ==
+        MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY.toString)
+
+      checkAnswer(
+        spark.read.format("delta").table(tblName),
+        (0 until 120).map(i => Row(i.toLong)))
+    }
+  }
+
+  private def mergeStats(events: Seq[UsageRecord]): MergeStats = {
+    val mergeStats = events.filter { e =>
+      e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.dml.merge.stats")
+    }
+    assert(mergeStats.size == 1)
+    JsonUtils.fromJson[MergeStats](mergeStats.head.blob)
+  }
+
+  private def mergeSourceMaterializeReason(events: Seq[UsageRecord]): String = {
+    val stats = mergeStats(events)
+    assert(stats.materializeSourceReason.isDefined)
+    stats.materializeSourceReason.get
   }
 }
 
