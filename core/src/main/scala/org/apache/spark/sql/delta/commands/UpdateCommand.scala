@@ -62,7 +62,9 @@ case class UpdateCommand(
 
   override lazy val metrics = Map[String, SQLMetric](
     "numAddedFiles" -> createMetric(sc, "number of files added."),
+    "numAddedBytes" -> createMetric(sc, "number of bytes added"),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numRemovedBytes" -> createMetric(sc, "number of bytes removed"),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
     "numCopiedRows" -> createMetric(sc, "number of rows copied."),
     "executionTimeMs" ->
@@ -96,6 +98,8 @@ case class UpdateCommand(
 
     var numTouchedFiles: Long = 0
     var numRewrittenFiles: Long = 0
+    var numAddedBytes: Long = 0
+    var numRemovedBytes: Long = 0
     var numAddedChangeFiles: Long = 0
     var changeFileBytes: Long = 0
     var scanTimeMs: Long = 0
@@ -166,6 +170,7 @@ case class UpdateCommand(
 
     val (changeActions, addActions) = newActions.partition(_.isInstanceOf[AddCDCFile])
     numRewrittenFiles = addActions.size
+    numAddedBytes = addActions.map(_.getFileSize).sum
     numAddedChangeFiles = changeActions.size
     changeFileBytes = changeActions.collect { case f: AddCDCFile => f.size }.sum
 
@@ -177,15 +182,17 @@ case class UpdateCommand(
       // files containing the updated values
       val operationTimestamp = System.currentTimeMillis()
       val deleteActions = filesToRewrite.map(_.removeWithTimestamp(operationTimestamp))
-
+      numRemovedBytes = filesToRewrite.map(_.getFileSize).sum
       deleteActions ++ newActions
     }
 
     if (totalActions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
+      metrics("numAddedBytes").set(numAddedBytes)
       metrics("numAddedChangeFiles").set(numAddedChangeFiles)
       metrics("changeFileBytes").set(changeFileBytes)
       metrics("numRemovedFiles").set(numTouchedFiles)
+      metrics("numRemovedBytes").set(numRemovedBytes)
       metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
       metrics("scanTimeMs").set(scanTimeMs)
       metrics("rewriteTimeMs").set(rewriteTimeMs)

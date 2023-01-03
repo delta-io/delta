@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -736,6 +736,14 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  def getLastCommitNumAddedAndRemovedBytes(deltaLog: DeltaLog): (Long, Long) = {
+    val changes = deltaLog.getChanges(deltaLog.update().version).flatMap(_._2).toSeq
+    val addedBytes = changes.collect { case a: AddFile => a.size }.sum
+    val removedBytes = changes.collect { case r: RemoveFile => r.getFileSize }.sum
+
+    (addedBytes, removedBytes)
+  }
+
   def metricsUpdateTest : Unit = withTempDir { tempDir =>
     // Create the initial table as a single file
     Seq(1, 2, 5, 11, 21, 3, 4, 6, 9, 7, 8, 0).toDF("key")
@@ -765,11 +773,14 @@ trait DescribeDeltaHistorySuiteBase
 
     // get operation metrics
     val operationMetrics = getOperationMetrics(deltaTable.history(1))
+    val (addedBytes, removedBytes) = getLastCommitNumAddedAndRemovedBytes(deltaLog)
     val expectedMetrics = Map(
       "numAddedFiles" -> "1",
       "numRemovedFiles" -> "1",
       "numUpdatedRows" -> "1",
-      "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
+      "numCopiedRows" -> "2", // There should be only three rows in total(updated + copied)
+      "numAddedBytes" -> addedBytes.toString,
+      "numRemovedBytes" -> removedBytes.toString
     )
     checkOperationMetrics(
       expectedMetrics,
@@ -807,11 +818,14 @@ trait DescribeDeltaHistorySuiteBase
       val newFiles = numFilesAfterUpdate - numFilesBeforeUpdate
       val oldFiles = numFilesBeforeUpdate / numPartitions
       val addedFiles = newFiles + oldFiles
+      val (addedBytes, removedBytes) = getLastCommitNumAddedAndRemovedBytes(deltaLog)
       val expectedMetrics = Map(
         "numUpdatedRows" -> (numRows / numPartitions).toString,
         "numCopiedRows" -> "0",
         "numAddedFiles" -> addedFiles.toString,
-        "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
+        "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString,
+        "numAddedBytes" -> addedBytes.toString,
+        "numRemovedBytes" -> removedBytes.toString
       )
       checkOperationMetrics(
         expectedMetrics,

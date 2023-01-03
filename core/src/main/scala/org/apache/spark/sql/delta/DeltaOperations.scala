@@ -624,7 +624,9 @@ private[delta] object DeltaOperationMetrics {
     "numCopiedRows", // number of rows just copied over in the process of updating files.
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    "numRemovedBytes", // number of bytes removed
+    "numAddedBytes" // number of bytes added
   )
 
   val OPTIMIZE = Set(
