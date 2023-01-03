@@ -477,16 +477,8 @@ Field Name | Data Type | Description
 -|-|-
 minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
 minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
-readerFeatures | Array[Feature Struct] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
-writerFeatures | Array[Feature Struct] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
-
-#### Feature Struct
-
-Field Name | Data Type | Description
--|-|-
-name | String | A globally unique _feature name_
-status | String | Indicates whether the table currently uses the feature. The only valid value is `enabled`.
-
+readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
+writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
 
 Some example Delta protocols:
 ```json
@@ -504,10 +496,7 @@ A table that is using Table Features only for writers:
   "protocol":{
     "readerVersion":2,
     "writerVersion":7,
-    "writerFeatures":[
-      {"name":"columnMapping","status":"enabled"},
-      {"name":"identityColumns","status":"enabled"}
-    ]
+    "writerFeatures":["columnMapping","identityColumns"]
   }
 }
 ```
@@ -517,13 +506,8 @@ A table that is using Table Features for both readers and writers:
   "protocol": {
     "readerVersion":3,
     "writerVersion":7,
-    "readerFeatures":[
-      {"name":"columnMapping","status":"enabled"}
-    ],
-    "writerFeatures":[
-      {"name":"columnMapping","status":"enabled"},
-      {"name":"identityColumns","status":"enabled"}
-    ]
+    "readerFeatures":["columnMapping"],
+    "writerFeatures":["columnMapping","identityColumns"]
   }
 }
 ```
@@ -576,14 +560,22 @@ Readers and writers must not ignore Table Features when they are present:
  - to write a table, writers must implement and respect all features listed in `writerFeatures`. Because writers have to read the table (or only the Delta log) before write, they must implement and respect reader features as well.
 
 ## Table Features for new and existing tables
-It is possible to enable Table Features during table creation or on existing tables. The enablement can be only for readers or both readers and writers.  When a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version up to 6 is not allowed.
+It is possible to enable Table Features during table creation or on existing tables. The enablement can be only for readers or both readers and writers.  When a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version less than 7 is not allowed.
 
-When upgrading an existing table to Reader Version 3 and/or Writer Version 7, the client should, on a best effort basis, determine which features supported by the original protocol version are used in any historical version of the table, and add only used features to Table Features. The client must assume a feature has been used, unless it can prove that the feature is *definitely* not used in any historical version of the table that is reachable by time travel.
+When upgrading an existing table to Reader Version 3 and/or Writer Version 7, the client should, on a best effort basis, determine which features supported by the original protocol version are used in any historical version of the table, and add only used features to Table Features. The client must assume a feature has been used, unless it can prove that the feature is *definitely* not used in any historical version of the table that is reachable by time travel. 
+
+For example, given a table on Reader Version 1 and Writer Version 4, along with four versions:
+ 1. Table property change: set `delta.enableChangeDataFeed` to `true`.
+ 2. Data change: three rows updated.
+ 3. Table property change: unset `delta.enableChangeDataFeed`.
+ 4. Table protocol change: upgrade protocol to Reader Version 3 and Writer Version 7.
+
+To produce Version 4, a writer could look at only Version 3 and discover that Change Data Feed has not been used. But in fact, this feature has been used and the table does contain some Change Data Files for Version 2. This means that, to determine all features that have ever been used by the table, a writer must either scan the whole history (which is very time-consuming) or assume the worst case: all features supported by protocol `(1, 4)` has been used.
 
 ## Enabled features
-A feature is `enabled` when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
+A feature is enabled when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
 
-A feature being `enabled` does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) enabled in `writerFeatures`, but does not satisfy a table property `delta.appendOnly` equals to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must implement the feature to know that the table property `delta.appendOnly` should be checked.
+A feature being enabled does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) enabled in `writerFeatures`, but does not satisfy a table property `delta.appendOnly` equals to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must implement the feature to know that the table property `delta.appendOnly` should be checked.
 
 ## Disabled features
 A feature is `disabled` if it is in neither `readerFeatures` nor `writerFeatures`. Writers are allowed to `enable` a feature for the table by adding its name to the `readerFeatures` or `writerFeatures`. Reader features should be added to both `readerFeatures` and `writerFeatures` simultaneously, while writer features should be added only to `writerFeatures`. It is not allowed to add features only to `readerFeatures` but not to `writerFeatures`.
@@ -591,7 +583,7 @@ A feature is `disabled` if it is in neither `readerFeatures` nor `writerFeatures
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
-Up to Reader Version 2 and Writer Version 6, the column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`. From Reader Version 3 and Writer Version 7, Column Mapping's on/off status is governed by the existence of a feature name `columnMapping` in both `readerFeatures` and `writerFeatures`, plus the table property `delta.columnMapping.mode` being one of `none`, `id` and `name`. In case of Reader version 2 and Writer Version 7 (a table that supports only writer Table Features), Column Mapping's on/off status for readers and writers are governed separately: table property `delta.columnMapping.mode` for readers, and feature name `columnMapping` plus table property for writers.
+Up to Reader Version 2 and Writer Version 6, the column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`. From Reader Version 3 and Writer Version 7, Column Mapping's on/off status is governed by the existence of a feature name `columnMapping` in both `readerFeatures` and `writerFeatures`, plus the table property `delta.columnMapping.mode` being one of `none`, `id` and `name`. In case of Reader version 2 and Writer Version 7 (a table that supports only writer Table Features), Column Mapping's on/off status for readers and writers are governed separately: table property `delta.columnMapping.mode` for readers, and feature name `columnMapping` plus the table property for writers.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
 ```json
@@ -816,7 +808,7 @@ Rows in a table must satisfy CHECK constraints. In other words, evaluating the S
 For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
 
 Hence, a writer must follow the rules below:
-- When adding a CHECK Constraint to a table for the first time, writers must submit a `protocol` change in the same commit so that the above enablement rules are satisfied.
+- CHECK Constraints may not be added to a table unless the above enablement rules are satisfied. When adding a CHECK Constraint to a table for the first time, writers are allowed to submit a `protocol` change in the same commit to enable the feature in the protocol.
 - When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
 - When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
 
@@ -1129,9 +1121,7 @@ JSON Encoded Table Schema:
 ```
 
 ## Checkpoint Schema
-The following examples uses a table with two partition columns: "date" and "region" of types date and string, respectively, and three data columns: "asset", "quantity", and "is_available" with data types string, double, and boolean.
-
-If the table is on a Reader Version up to 2 and a Writer Version up to 6, its checkpoint schema will look as follows:
+The following examples uses a table with two partition columns: "date" and "region" of types date and string, respectively, and three data columns: "asset", "quantity", and "is_available" with data types string, double, and boolean. The checkpoint schema will look as follows:
 
 ```
 |-- metaData: struct
@@ -1148,6 +1138,8 @@ If the table is on a Reader Version up to 2 and a Writer Version up to 6, its ch
 |-- protocol: struct
 |    |-- minReaderVersion: int
 |    |-- minWriterVersion: int
+|    |-- readerFeatures: array[string]
+|    |-- writerFeatures: array[string]
 |-- txn: struct
 |    |-- appId: string
 |    |-- version: long
@@ -1179,34 +1171,7 @@ If the table is on a Reader Version up to 2 and a Writer Version up to 6, its ch
 |    |-- dataChange: boolean
 ```
 
-If the table is on Reader Version 2 and Writer Version 7, its checkpoint schema will have one additional fields in the protocol struct compared to the previous example:
-```diff
- |-- ...
- |-- protocol: struct
- |    |-- minReaderVersion: int
- |    |-- minWriterVersion: int
-+|    |-- writerFeatures: array[struct]
-+|    |    |-- name: string
-+|    |    |-- status: string
- |-- txn: struct
- |-- ...
-```
-
-If the table is on Reader Version 3 and Writer Version 7, its checkpoint schema will have two additional fields in the protocol struct compared to the first example:
-```diff
- |-- ...
- |-- protocol: struct
- |    |-- minReaderVersion: int
- |    |-- minWriterVersion: int
-+|    |-- readerFeatures: array[struct]
-+|    |    |-- name: string
-+|    |    |-- status: string
-+|    |-- writerFeatures: array[struct]
-+|    |    |-- name: string
-+|    |    |-- status: string
- |-- txn: struct
- |-- ...
-```
+Please note, in the above example, `readerFeatures` and `writerFeatures` does exist in the schema even when the table does not support Table Features. In such a case values of these two fields are `null`.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
