@@ -737,4 +737,21 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+
+  // This is currently set up to fail once the bug is fixed (should be when upgrading to Spark 3.4)
+  // See https://github.com/delta-io/delta/issues/1479
+  test("SPARK-41154: Incorrect relation caching for queries with time travel spec") {
+    val tblName = "tab"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName USING DELTA AS SELECT 1 as c")
+      sql(s"INSERT INTO $tblName SELECT 2 as c")
+      assert(
+        sql(s"""
+              |SELECT * FROM $tblName VERSION AS OF '0'
+              |UNION ALL
+              |SELECT * FROM $tblName VERSION AS OF '1'
+              |""".stripMargin
+        ).collect() === Array(Row(1), Row(1))) // this should be Array(Row(1), Row(1), Row(2))
+    }
+  }
 }
