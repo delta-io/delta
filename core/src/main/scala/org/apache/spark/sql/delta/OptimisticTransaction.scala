@@ -977,7 +977,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isolationLevel = Serializable.toString,
         txnId = Some(txnId))
 
-      recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
+      recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
@@ -1387,7 +1387,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
       txnId = Some(txnId))
-    recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
+    recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 
     postCommitSnapshot
   }

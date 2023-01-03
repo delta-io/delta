@@ -144,3 +144,8 @@ trait DeltaLogging
   }
 }
 
+object DeltaLogging {
+
+  // The opType for delta commit stats.
+  final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+}
