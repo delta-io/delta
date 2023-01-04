@@ -792,7 +792,10 @@ object DeltaLog extends DeltaLogging {
       // - Different `authority` (e.g., different user tokens in the path)
       // - Different mount point.
       try {
-        deltaLogCache.get(path -> fileSystemOptions, () => createDeltaLog())
+        deltaLogCache.get(path -> fileSystemOptions, () => {
+            createDeltaLog()
+          }
+        )
       } catch {
         case e: com.google.common.util.concurrent.UncheckedExecutionException =>
           throw e.getCause
