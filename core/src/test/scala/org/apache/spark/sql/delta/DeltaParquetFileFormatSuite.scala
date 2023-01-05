@@ -29,7 +29,6 @@ import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.spark.sql.{Dataset, QueryTest}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 class DeltaParquetFileFormatSuite extends QueryTest
@@ -47,8 +46,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
       val metadata = deltaLog.snapshot.metadata
 
       // Add additional field that has the deleted row flag to existing data schema
-      val readingSchema = new StructType(
-        metadata.schema.fields :+ DeltaParquetFileFormat.SKIP_ROW_STRUCT_FIELD)
+      val readingSchema = metadata.schema.add(DeltaParquetFileFormat.SKIP_ROW_STRUCT_FIELD)
 
       val addFilePath = new Path(
         tempDir.toString,
@@ -130,7 +128,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
 
   private def assertParquetHasMultipleRowGroups(filePath: Path): Unit = {
     val parquetMetadata = ParquetFileReader.readFooter(
-      spark.sessionState.newHadoopConf(),
+      hadoopConf,
       filePath,
       ParquetMetadataConverter.NO_FILTER)
     assert(parquetMetadata.getBlocks.size() > 1)
