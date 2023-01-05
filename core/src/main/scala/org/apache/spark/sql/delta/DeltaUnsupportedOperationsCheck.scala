@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -38,7 +40,10 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
   with DeltaLogging {
 
   private def fail(operation: String, tableIdent: TableIdentifier): Unit = {
-    if (DeltaTableUtils.isDeltaTable(spark, tableIdent)) {
+    val metadata = try Some(spark.sessionState.catalog.getTableMetadata(tableIdent)) catch {
+      case NonFatal(_) => None
+    }
+    if (metadata.exists(DeltaTableUtils.isDeltaTable)) {
       throw DeltaErrors.operationNotSupportedException(operation, tableIdent)
     }
   }
@@ -89,7 +94,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
 
     case a: AlterTableSerDePropertiesCommand =>
       recordDeltaEvent(null, "delta.unsupported.alterSerDe")
-      fail(operation = "ALTER TABLE table SET SERDEPROPERTIES", a.tableName)
+      fail(operation = "ALTER TABLE SET SERDEPROPERTIES", a.tableName)
 
     case l: LoadDataCommand =>
       recordDeltaEvent(null, "delta.unsupported.loadData")

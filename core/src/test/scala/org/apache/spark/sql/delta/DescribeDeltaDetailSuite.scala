@@ -20,6 +20,7 @@ import java.io.File
 import java.io.FileNotFoundException
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -233,6 +234,25 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           Seq("properties")
         )
       }
+  }
+
+  test("delta table: describe detail shows table features") {
+    withTable("t1") {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+      sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
+             |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
+             |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
+             |  delta.feature.${AppendOnlyTableFeature.name} = 'enabled'
+             |)""".stripMargin)
+
+      checkResult(
+        sql(s"DESCRIBE DETAIL t1"),
+        Seq(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION,
+          Array(AppendOnlyTableFeature.name, InvariantsTableFeature.name)),
+        Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
+    }
   }
 
   // TODO: run it with OSS Delta after it's supported

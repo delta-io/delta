@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.util
 import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.delta.{DeltaHistory, DeltaHistoryManager, SerializableFileStatus, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.commands.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
@@ -69,6 +69,9 @@ private[delta] trait DeltaEncoders {
 
   private lazy val _removeFileEncoder = new DeltaEncoder[RemoveFile]
   implicit def removeFileEncoder: Encoder[RemoveFile] = _removeFileEncoder.get
+
+  private lazy val _pmfEncoder = new DeltaEncoder[(Protocol, Metadata, String)]
+  implicit def pmfEncoder: Encoder[(Protocol, Metadata, String)] = _pmfEncoder.get
 
   private lazy val _serializableFileStatusEncoder = new DeltaEncoder[SerializableFileStatus]
   implicit def serializableFileStatusEncoder: Encoder[SerializableFileStatus] =

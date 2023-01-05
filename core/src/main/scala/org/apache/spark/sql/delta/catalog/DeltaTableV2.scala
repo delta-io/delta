@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
@@ -101,6 +102,12 @@ case class DeltaTableV2(
 
   lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
+      // By default, block using CDF + time-travel
+      if (CDCReader.isCDCRead(cdcOptions) &&
+          !spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS)) {
+        throw DeltaErrors.timeTravelNotSupportedException
+      }
+
       val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog, spec)
       val source = spec.creationSource.getOrElse("unknown")

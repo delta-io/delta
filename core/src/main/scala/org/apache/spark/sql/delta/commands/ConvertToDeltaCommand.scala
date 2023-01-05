@@ -278,15 +278,23 @@ abstract class ConvertToDeltaCommandBase(
     }
   }
 
+  protected def performStatsCollection(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      addFiles: Seq[AddFile]): Iterator[AddFile] = {
+    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
+    ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, addFiles)
+  }
+
   /**
    * Given the file manifest, create corresponding AddFile actions for the entire list of files.
    */
   protected def createDeltaActions(
+      spark: SparkSession,
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
       fs: FileSystem): Iterator[AddFile] = {
-    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
     val shouldCollectStats = collectStats && statsEnabled
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     var numFiles = 0L
@@ -298,7 +306,7 @@ abstract class ConvertToDeltaCommandBase(
         logInfo(s"Collecting stats for a batch of ${batch.size} files; " +
           s"finished $numFiles so far")
         numFiles += statsBatchSize
-          ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, adds)
+        performStatsCollection(spark, txn, adds)
       } else if (collectStats) {
         logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
           s" is false. Skip statistics collection")
@@ -370,7 +378,7 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )

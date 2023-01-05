@@ -103,7 +103,7 @@ class DeltaLogSuite extends QueryTest
   testQuietly("update should pick up checkpoints") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val checkpointInterval = log.checkpointInterval
+      val checkpointInterval = log.checkpointInterval()
       for (f <- 0 until (checkpointInterval * 2)) {
         val txn = log.startTransaction()
         txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
@@ -191,7 +191,7 @@ class DeltaLogSuite extends QueryTest
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
-      val checkpointInterval = log.checkpointInterval
+      val checkpointInterval = log.checkpointInterval()
       for (f <- 0 to checkpointInterval) {
         val txn = log.startTransaction()
         txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
@@ -229,7 +229,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+            .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(
@@ -257,7 +258,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+            .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(
@@ -375,7 +377,7 @@ class DeltaLogSuite extends QueryTest
 
         val log = DeltaLog.forTable(spark, tempDir)
         assert (staleLog != log)
-        val checkpointInterval = log.checkpointInterval
+        val checkpointInterval = log.checkpointInterval()
         // Create a checkpoint regularly
         for (f <- 0 to checkpointInterval) {
           val txn = log.startTransaction()

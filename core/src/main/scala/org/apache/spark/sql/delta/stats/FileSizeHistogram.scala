@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.stats
 
+import java.util.Arrays
+
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -47,7 +49,7 @@ case class FileSizeHistogram(
    * an equals method, which requires overriding hashCode as well, so an incomplete hash is okay.
    * We only require a == b implies a.hashCode == b.hashCode
    */
-  override def hashCode(): Int = totalBytes.toSeq.hashCode
+  override def hashCode(): Int = Arrays.hashCode(totalBytes)
 
   override def equals(that: Any): Boolean = that match {
     case FileSizeHistogram(thatSB, thatFC, thatTB) =>

@@ -18,6 +18,9 @@ package org.apache.spark.sql.delta.util
 
 import scala.util.Random
 
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.actions.Metadata
+
 /**
  * Various utility methods used by Delta.
  */
@@ -31,8 +34,24 @@ object Utils {
     (res, duration)
   }
 
+  /** Returns the length of the random prefix to use for the data files of a Delta table. */
+  def getRandomPrefixLength(metadata: Metadata): Int = {
+    if (DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(metadata)) {
+      DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(metadata)
+    } else {
+      0
+    }
+  }
+
   /** Generates a string created of `randomPrefixLength` alphanumeric characters. */
   def getRandomPrefix(numChars: Int): String = {
     Random.alphanumeric.take(numChars).mkString
+  }
+
+  /**
+   * Indicates whether Delta is currently running unit tests.
+   */
+  def isTesting: Boolean = {
+    System.getenv("DELTA_TESTING") != null
   }
 }

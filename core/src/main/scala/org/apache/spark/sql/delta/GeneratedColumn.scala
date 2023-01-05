@@ -70,11 +70,8 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
  */
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
-  val MIN_WRITER_VERSION = 4
-
-  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean = {
-    protocol.minWriterVersion >= MIN_WRITER_VERSION
-  }
+  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureEnabled(GeneratedColumnsTableFeature)
 
   /**
    * Whether the field contains the generation expression. Note: this doesn't mean the column is a
@@ -94,10 +91,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   /**
    * Whether any generation expressions exist in the schema. Note: this doesn't mean the table
-   * contains generated columns. A table has generated columns only if its
-   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
-   * schema contain generation expressions. Use `enforcesGeneratedColumns` to check generated
-   * column tables instead.
+   * contains generated columns. A table has generated columns only if its protocol satisfies
+   * Generated Column (listed in Table Features or supported implicitly) and some of columns in
+   * the table schema contain generation expressions. Use `enforcesGeneratedColumns` to check
+   * generated column tables instead.
    */
   def hasGeneratedColumns(schema: StructType): Boolean = {
     schema.exists(isGeneratedColumn)
@@ -118,8 +115,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   /**
    * Whether the table has generated columns. A table has generated columns only if its
-   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
-   * schema contain generation expressions.
+   * protocol satisfies Generated Column (listed in Table Features or supported implicitly) and
+   * some of columns in the table schema contain generation expressions.
    *
    * As Spark will propagate column metadata storing the generation expression through
    * the entire plan, old versions that don't support generated columns may create tables whose
@@ -177,11 +174,11 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     // errors:
     // - Refer to a non existent column in a generation expression.
     // - Refer to a generated column in another one.
-    val df = Dataset.ofRows(spark, new LocalRelation(StructType(normalColumns).toAttributes))
+    val relation = new LocalRelation(StructType(normalColumns).toAttributes)
     val selectExprs = generatedColumns.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
-          val expr = parseGenerationExpression(df.sparkSession, exprString)
+          val expr = parseGenerationExpression(spark, exprString)
           new Column(expr).alias(f.name)
         case None =>
           // Should not happen
@@ -189,7 +186,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
     val dfWithExprs = try {
-      df.select(selectExprs: _*)
+      val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
+      Dataset.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
@@ -360,6 +358,13 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
+                case TruncTimestamp(
+                  StringLiteral(format), ExtractBaseColumn(name, TimestampType), _) =>
+                    createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
+                case TruncTimestamp(
+                  StringLiteral(format),
+                  Cast(ExtractBaseColumn(name, DateType), TimestampType, _, _), _) =>
+                    createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None

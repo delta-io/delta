@@ -47,7 +47,9 @@ case class TableDetail(
     sizeInBytes: java.lang.Long,
     properties: Map[String, String],
     minReaderVersion: java.lang.Integer,
-    minWriterVersion: java.lang.Integer)
+    minWriterVersion: java.lang.Integer,
+    enabledTableFeatures: Seq[String]
+    )
 
 object TableDetail {
   val schema = ScalaReflection.schemaFor[TableDetail].dataType.asInstanceOf[StructType]
@@ -138,38 +140,40 @@ case class DescribeDeltaDetailCommand(
   private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
     toRows(
       TableDetail(
-        table.provider.orNull,
-        null,
-        table.qualifiedName,
-        table.comment.getOrElse(""),
-        table.storage.locationUri.map(new Path(_).toString).orNull,
-        new Timestamp(table.createTime),
-        null,
-        table.partitionColumnNames,
-        null,
-        null,
-        table.properties,
-        null,
-        null
+        format = table.provider.orNull,
+        id = null,
+        name = table.qualifiedName,
+        description = table.comment.getOrElse(""),
+        location = table.storage.locationUri.map(new Path(_).toString).orNull,
+        createdAt = new Timestamp(table.createTime),
+        lastModified = null,
+        partitionColumns = table.partitionColumnNames,
+        numFiles = null,
+        sizeInBytes = null,
+        properties = table.properties,
+        minReaderVersion = null,
+        minWriterVersion = null,
+        enabledTableFeatures = null
       ))
   }
 
   private def describeNonDeltaPath(path: String): Seq[Row] = {
     toRows(
       TableDetail(
-        null,
-        null,
-        null,
-        null,
-        path,
-        null,
-        null,
-        null,
-        null,
-        null,
-        Map.empty,
-        null,
-        null))
+        format = null,
+        id = null,
+        name = null,
+        description = null,
+        location = path,
+        createdAt = null,
+        lastModified = null,
+        partitionColumns = null,
+        numFiles = null,
+        sizeInBytes = null,
+        properties = Map.empty,
+        minReaderVersion = null,
+        minWriterVersion = null,
+        enabledTableFeatures = null))
   }
 
   private def describeDeltaTable(
@@ -180,21 +184,23 @@ case class DescribeDeltaDetailCommand(
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
-    var location = deltaLog.dataPath.toString
+    val featureNames = snapshot.protocol.readerAndWriterFeatureNames.toSeq.sorted
     toRows(
       TableDetail(
-        "delta",
-        snapshot.metadata.id,
-        tableName,
-        snapshot.metadata.description,
-        location,
-        snapshot.metadata.createdTime.map(new Timestamp(_)).orNull,
-        new Timestamp(fs.getFileStatus(currentVersionPath).getModificationTime),
-        snapshot.metadata.partitionColumns,
-        snapshot.numOfFiles,
-        snapshot.sizeInBytes,
-        snapshot.metadata.configuration,
-        snapshot.protocol.minReaderVersion,
-        snapshot.protocol.minWriterVersion))
+        format = "delta",
+        id = snapshot.metadata.id,
+        name = tableName,
+        description = snapshot.metadata.description,
+        location = deltaLog.dataPath.toString,
+        createdAt = snapshot.metadata.createdTime.map(new Timestamp(_)).orNull,
+        lastModified = new Timestamp(fs.getFileStatus(currentVersionPath).getModificationTime),
+        partitionColumns = snapshot.metadata.partitionColumns,
+        numFiles = snapshot.numOfFiles,
+        sizeInBytes = snapshot.sizeInBytes,
+        properties = snapshot.metadata.configuration,
+        minReaderVersion = snapshot.protocol.minReaderVersion,
+        minWriterVersion = snapshot.protocol.minWriterVersion,
+        enabledTableFeatures = featureNames
+      ))
   }
 }

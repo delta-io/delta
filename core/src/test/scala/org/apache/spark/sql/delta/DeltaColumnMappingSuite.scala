@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -494,6 +494,39 @@ class DeltaColumnMappingSuite extends QueryTest
     assert(DeltaColumnMapping.findMaxColumnId(schemaWithIdNestedRandom) == 444)
     assert(DeltaColumnMapping.findMaxColumnId(schema) == 0)
     assert(DeltaColumnMapping.findMaxColumnId(new StructType()) == 0)
+  }
+
+  test("Enable column mapping with schema change on table with no schema") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.mode("append").format("delta").save(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+      txn.commitManually(actions.Metadata()) // Whip the schema out
+      val txn2 = deltaLog.startTransaction()
+      txn2.commitManually(Protocol(2, 5))
+      txn2.updateMetadata(actions.Metadata(
+        configuration = Map("delta.columnMapping.mode" -> "name"),
+        schemaString = new StructType().add("a", StringType).json))
+
+      // Now ensure that it is not allowed to enable column mapping with schema change
+      // on a table with a schema
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.mode("overwrite").format("delta")
+        .option("overwriteSchema", "true")
+        .save(tablePath)
+      val txn3 = deltaLog.startTransaction()
+      txn3.commitManually(Protocol(2, 5))
+      val e = intercept[DeltaColumnMappingUnsupportedException] {
+        txn3.updateMetadata(
+          actions.Metadata(
+          configuration = Map("delta.columnMapping.mode" -> "name"),
+          schemaString = new StructType().add("a", StringType).json))
+      }
+      val msg = "Schema changes are not allowed during the change of column mapping mode."
+      assert(e.getMessage.contains(msg))
+    }
   }
 
   // TODO: repurpose this once we roll out the proper semantics for CM + streaming
