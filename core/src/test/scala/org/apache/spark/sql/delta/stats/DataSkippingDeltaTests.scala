@@ -1463,6 +1463,26 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+  test("Data skipping should always return files from latest commit version") {
+    withTempDir { dir =>
+      // If this test is flacky it is broken
+      Seq("aaa").toDF().write.format("delta").save(dir.getCanonicalPath)
+      val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, dir.getPath)
+      val addFile = snapshot.allFiles.collect().head
+      val fileWithStat = snapshot.getSpecificFilesWithStats(Seq(addFile.path)).head
+      // Ensure the stats has actual stats, not {}
+      assert(fileWithStat.stats.size > 2)
+      log.startTransaction().commitManually(addFile.copy(stats = "{}"))
+
+      // Delta dedup should always keep AddFile from newer version so
+      // getSpecificFilesWithStats should return the AddFile with empty stats
+      log.update()
+      val newfileWithStat =
+        log.unsafeVolatileSnapshot.getSpecificFilesWithStats(Seq(addFile.path)).head
+      assert(newfileWithStat.stats === "{}")
+    }
+  }
+
   protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
       s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
         s""""nullCount":{"$colName":0}}""".stripMargin
