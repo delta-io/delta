@@ -25,9 +25,9 @@
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
 - [Table Features](#table-features)
-  - [Table Features for new and existing tables](#table-features-for-new-and-existing-tables)
-  - [Enabled features](#enabled-features)
-  - [Disabled features](#disabled-features)
+  - [Table Features for new and Existing Tables](#table-features-for-new-and-existing-tables)
+  - [Enabled Features](#enabled-features)
+  - [Disabled Features](#disabled-features)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -97,9 +97,9 @@ Data files that are no longer present in the latest version of the table can be 
 # Delta Table Specification
 A table has a single serial history of atomic versions, which are named using contiguous, monotonically-increasing integers.
 The state of a table at a given version is called a _snapshot_ and is defined by the following properties:
- - **Delta log protocol** consists of two **protocol versions**, and if appliable, corresponding **Table Features**, that are required to correctly read or write the table
-   - **Reader Table Features** only exists when Reader Version is 3
-   - **Writer Table Features** only exists when Writer Version is 7
+ - **Delta log protocol** consists of two **protocol versions**, and if applicable, corresponding **table features**, that are required to correctly read or write the table
+   - **Reader features** only exists when Reader Version is 3
+   - **Writer features** only exists when Writer Version is 7
  - **Metadata** of the table (e.g., the schema, a unique identifier, partition columns, and other configuration properties)
  - **Set of files** present in the table, along with metadata about those files
  - **Set of tombstones** for files that were recently deleted
@@ -469,7 +469,7 @@ In the case where a client is running an invalid protocol version, an error shou
 
 Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a Table Feature, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
 
-Reader Version 3 and Writer Version 7 add two lists of Table Features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
+Reader Version 3 and Writer Version 7 add two lists of table features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
 
 The schema of the `protocol` action is as follows:
 
@@ -490,7 +490,7 @@ Some example Delta protocols:
 }
 ```
 
-A table that is using Table Features only for writers:
+A table that is using table features only for writers:
 ```json
 {
   "protocol":{
@@ -500,7 +500,7 @@ A table that is using Table Features only for writers:
   }
 }
 ```
-A table that is using Table Features for both readers and writers:
+A table that is using table features for both readers and writers:
 ```json
 {
   "protocol": {
@@ -553,16 +553,16 @@ To achieve the requirements above, related actions from different delta files ne
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
 
 # Table Features
-Table Features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
+Table features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
 
-Readers and writers must not ignore Table Features when they are present:
+Readers and writers must not ignore table features when they are present:
  - to read a table, readers must implement and respect all features listed in `readerFeatures`;
  - to write a table, writers must implement and respect all features listed in `writerFeatures`. Because writers have to read the table (or only the Delta log) before write, they must implement and respect reader features as well.
 
-## Table Features for new and existing tables
-It is possible to enable Table Features during table creation or on existing tables. The enablement can be only for readers or both readers and writers.  When a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version less than 7 is not allowed.
+## Table Features for new and Existing Tables
+It is possible to enable table features during table creation or on existing tables. The enablement can be only for readers or both readers and writers.  When a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version less than 7 is not allowed.
 
-When upgrading an existing table to Reader Version 3 and/or Writer Version 7, the client should, on a best effort basis, determine which features supported by the original protocol version are used in any historical version of the table, and add only used features to Table Features. The client must assume a feature has been used, unless it can prove that the feature is *definitely* not used in any historical version of the table that is reachable by time travel. 
+When upgrading an existing table to Reader Version 3 and/or Writer Version 7, the client should, on a best effort basis, determine which features supported by the original protocol version are used in any historical version of the table, and add only used features to reader and/or writer feature sets. The client must assume a feature has been used, unless it can prove that the feature is *definitely* not used in any historical version of the table that is reachable by time travel. 
 
 For example, given a table on Reader Version 1 and Writer Version 4, along with four versions:
  1. Table property change: set `delta.enableChangeDataFeed` to `true`.
@@ -572,18 +572,18 @@ For example, given a table on Reader Version 1 and Writer Version 4, along with 
 
 To produce Version 4, a writer could look at only Version 3 and discover that Change Data Feed has not been used. But in fact, this feature has been used and the table does contain some Change Data Files for Version 2. This means that, to determine all features that have ever been used by the table, a writer must either scan the whole history (which is very time-consuming) or assume the worst case: all features supported by protocol `(1, 4)` has been used.
 
-## Enabled features
+## Enabled Features
 A feature is enabled when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
 
 A feature being enabled does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) enabled in `writerFeatures`, but does not satisfy a table property `delta.appendOnly` equals to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must implement the feature to know that the table property `delta.appendOnly` should be checked.
 
-## Disabled features
+## Disabled Features
 A feature is `disabled` if it is in neither `readerFeatures` nor `writerFeatures`. Writers are allowed to `enable` a feature for the table by adding its name to the `readerFeatures` or `writerFeatures`. Reader features should be added to both `readerFeatures` and `writerFeatures` simultaneously, while writer features should be added only to `writerFeatures`. It is not allowed to add features only to `readerFeatures` but not to `writerFeatures`.
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
-Up to Reader Version 2 and Writer Version 6, the column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`. From Reader Version 3 and Writer Version 7, Column Mapping's on/off status is governed by the existence of a feature name `columnMapping` in both `readerFeatures` and `writerFeatures`, plus the table property `delta.columnMapping.mode` being one of `none`, `id` and `name`. In case of Reader version 2 and Writer Version 7 (a table that supports only writer Table Features), Column Mapping's on/off status for readers and writers are governed separately: table property `delta.columnMapping.mode` for readers, and feature name `columnMapping` plus the table property for writers.
+Up to Reader Version 2 and Writer Version 6, the column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`. From Reader Version 3 and Writer Version 7, Column Mapping's on/off status is governed by the existence of a feature name `columnMapping` in both `readerFeatures` and `writerFeatures`, plus the table property `delta.columnMapping.mode` being one of `none`, `id` and `name`. In case of Reader version 2 and Writer Version 7 (a table that supports only writer features), Column Mapping's on/off status for readers and writers are governed separately: table property `delta.columnMapping.mode` for readers, and feature name `columnMapping` plus the table property for writers.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
 ```json
@@ -1202,7 +1202,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- dataChange: boolean
 ```
 
-Please note, in the above example, `readerFeatures` and `writerFeatures` does exist in the schema even when the table does not support Table Features. In such a case values of these two fields are `null`.
+Please note, as in the above example, `readerFeatures` and `writerFeatures` does exist in the schema even when the table does not support table features. In such a case values of these two fields are `null`.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
