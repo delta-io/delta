@@ -27,12 +27,13 @@ import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.sql.{Dataset, QueryTest}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 class DeltaParquetFileFormatSuite extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession with DeltaSQLCommandTest {
   import testImplicits._
 
   test("Read with DV") {
