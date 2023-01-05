@@ -63,7 +63,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
       )
 
       val broadcastHadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(spark.sessionState.newHadoopConf()))
+        new SerializableConfiguration(hadoopConf))
 
       val deltaParquetFormat = new DeltaParquetFileFormat(
         metadata,
