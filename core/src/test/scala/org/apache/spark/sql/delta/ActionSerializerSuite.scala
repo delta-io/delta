@@ -20,6 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -159,7 +160,37 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   testActionSerDe(
     "Protocol - json serialization/deserialization",
     Protocol(minReaderVersion = 1, minWriterVersion = 2),
-    expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""".stripMargin)
+    expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with writer features",
+    Protocol(minReaderVersion = 1, minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(AppendOnlyTableFeature),
+    expectedJson = """{"protocol":{"minReaderVersion":1,""" +
+      s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+      """"writerFeatures":["appendOnly"]}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(TestLegacyReaderWriterFeature),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":["testLegacyReaderWriter"],""" +
+        """"writerFeatures":["testLegacyReaderWriter"]}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with empty reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":[],"writerFeatures":[]}}""")
 
   testActionSerDe(
     "SetTransaction (lastUpdated is None) - json serialization/deserialization",
@@ -342,6 +373,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         val settings = Seq(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {

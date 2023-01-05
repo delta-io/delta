@@ -22,14 +22,15 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaThrowable, DeltaThrowableHelper, GeneratedColumn, OptimizablePartitionExpression, Snapshot}
-import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
+import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
@@ -43,43 +44,26 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
-/** Thrown when the protocol version of a table is greater than supported by this client. */
-class InvalidProtocolVersionException extends RuntimeException(
-    "Delta protocol version is too new for this version of the Databricks Runtime. " +
-    "Please upgrade to a newer release.")
-
-class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException(DeltaThrowableHelper.getMessage(
-    errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
-    messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
-  )) with DeltaThrowable {
-  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
-}
-
 object Action {
   /**
    * The maximum version of the protocol that this version of Delta understands by default.
    *
    * Use [[supportedProtocolVersion()]] instead, except to define new feature-gated versions.
    */
-  private[actions] val readerVersion = 2
-  private[actions] val writerVersion = 6
+  private[actions] val readerVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
+  private[actions] val writerVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
   private[actions] val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   /**
-   * The maximum protocol version we are currently allowed to use based on `conf`.
-   *
-   * This is used to feature-gate certain protocol versions using config values.
-   * If no `conf` is given, then this is the same all feature-gated versions being disabled and
-   * we return [[protocolVersion]].
-   *
-   * Feature-gated versions will always be the same or newer than [[protocolVersion]].
-   *
-   * In all places in the code where we are validating which version can be read, or which version
-   * we are currently writing, pass in `conf` so that features are correctly enabled.
+   * The maximum protocol version we are currently allowed to use, with or without all recognized
+   * features.
    */
-  private[delta] def supportedProtocolVersion(conf: Option[SQLConf] = None): Protocol = {
+  private[delta] def supportedProtocolVersion(withAllFeatures: Boolean = true): Protocol = {
+    if (withAllFeatures) {
+      protocolVersion.withFeatures(TableFeature.allSupportedFeaturesMap.values)
+    } else {
       protocolVersion
+    }
   }
 
   def fromJson(json: String): Action = {
@@ -101,107 +85,209 @@ sealed trait Action {
 }
 
 /**
- * Used to block older clients from reading or writing the log when backwards
- * incompatible changes are made to the protocol. Readers and writers are
- * responsible for checking that they meet the minimum versions before performing
- * any other operations.
+ * Used to block older clients from reading or writing the log when backwards incompatible changes
+ * are made to the protocol. Readers and writers are responsible for checking that they meet the
+ * minimum versions before performing any other operations.
  *
- * Since this action allows us to explicitly block older clients in the case of a
- * breaking change to the protocol, clients should be tolerant of messages and
- * fields that they do not understand.
+ * This action allows us to explicitly block older clients in the case of a breaking change to the
+ * protocol. Absent a protocol change, Clients MUST silently ignore messages and fields that they
+ * do not understand.
+ *
+ * Note: Please initialize this class using the companion object's `apply` method, which will
+ * assign correct values (`Set()` vs `None`) to [[readerFeatures]] and [[writerFeatures]].
  */
-case class Protocol(
-    minReaderVersion: Int = Action.readerVersion,
-    minWriterVersion: Int = Action.writerVersion) extends Action {
-  override def wrap: SingleAction = SingleAction(protocol = this)
-  @JsonIgnore
-  def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
+case class Protocol private (
+    minReaderVersion: Int,
+    minWriterVersion: Int,
+    @JsonInclude(Include.NON_ABSENT) // write to JSON only when the field is not `None`
+    readerFeatures: Option[Set[String]],
+    @JsonInclude(Include.NON_ABSENT)
+    writerFeatures: Option[Set[String]])
+  extends Action
+  with TableFeatureSupport {
+  // Correctness check
+  // Reader and writer versions must match the status of reader and writer features
+  require(
+    supportsReaderFeatures == readerFeatures.isDefined,
+    "Mismatched minReaderVersion and readerFeatures.")
+  require(
+    supportsWriterFeatures == writerFeatures.isDefined,
+    "Mismatched minWriterVersion and writerFeatures.")
 
-  def max(other: Protocol): Protocol = Protocol(
-    minReaderVersion = this.minReaderVersion.max(other.minReaderVersion),
-    minWriterVersion = this.minWriterVersion.max(other.minWriterVersion)
-  )
+  // When reader is on table features, writer must be on table features too
+  if (supportsReaderFeatures && !supportsWriterFeatures) {
+    throw DeltaErrors.tableFeatureReadRequiresWriteException(
+      TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+  }
+
+  override def wrap: SingleAction = SingleAction(protocol = this)
+
+  /**
+   * Return a reader-friendly string representation of this Protocol.
+   *
+   * Returns the protocol versions and referenced features when the protocol does support table
+   * features, such as `3,7,{},{appendOnly}` and `2,7,None,{appendOnly}`. Otherwise returns only
+   * the protocol version such as `2,6`.
+   */
+  @JsonIgnore
+  lazy val simpleString: String = {
+    if (!supportsReaderFeatures && !supportsWriterFeatures) {
+      s"$minReaderVersion,$minWriterVersion"
+    } else {
+      val readerFeaturesStr = readerFeatures
+        .map(_.toSeq.sorted.mkString("[", ",", "]"))
+        .getOrElse("None")
+      val writerFeaturesStr = writerFeatures
+        .map(_.toSeq.sorted.mkString("[", ",", "]"))
+        .getOrElse("None")
+      s"$minReaderVersion,$minWriterVersion,$readerFeaturesStr,$writerFeaturesStr"
+    }
+  }
+
+  override def toString: String = s"Protocol($simpleString)"
 }
 
 object Protocol {
+  import TableFeatureProtocolUtils._
+
   val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
   val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
 
-  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
-    val conf = spark.sessionState.conf
-    val minimumOpt = metadataOpt.map(m => requiredMinimumProtocol(spark, m)._1)
-    val configs = metadataOpt.map(_.configuration.map {
-      case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
-    ).getOrElse(Map.empty[String, String])
-    // Check if the protocol version is provided as a table property, or get it from the SQL confs
-    val readerVersion = configs.get(MIN_READER_VERSION_PROP.toLowerCase(Locale.ROOT))
-      .map(getVersion(MIN_READER_VERSION_PROP, _))
-      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
-    val writerVersion = configs.get(MIN_WRITER_VERSION_PROP.toLowerCase(Locale.ROOT))
-      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
-      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
-
-    Protocol(
-      minReaderVersion = math.max(minimumOpt.map(_.minReaderVersion).getOrElse(0), readerVersion),
-      minWriterVersion = math.max(minimumOpt.map(_.minWriterVersion).getOrElse(0), writerVersion))
+  /**
+   * Construct a [[Protocol]] case class of the given reader and writer versions. This method will
+   * initialize table features fields when reader and writer versions are capable.
+   */
+  def apply(
+      minReaderVersion: Int = Action.readerVersion,
+      minWriterVersion: Int = Action.writerVersion): Protocol = {
+    new Protocol(
+      minReaderVersion = minReaderVersion,
+      minWriterVersion = minWriterVersion,
+      readerFeatures = if (supportsReaderFeatures(minReaderVersion)) Some(Set()) else None,
+      writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
-  /** Picks the protocol version for a new table given potential feature usage. */
+  /**
+   * Given the Delta table metadata, returns the minimum required table protocol that satisfies
+   * all active features in the metadata plus protocol-related configs in table properties or
+   * session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
+   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   */
+  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+    val sessionConf = spark.sessionState.conf
+    val tableConf = metadataOpt.map(_.configuration).getOrElse(Map.empty[String, String])
+
+    // There might be features enabled by the table properties aka
+    // `CREATE TABLE ... TBLPROPERTIES ...` or by session defaults.
+    val tablePropEnabledFeatures =
+      getEnabledFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
+    val sessionEnabledFeatures =
+      getEnabledFeaturesFromConfigs(sessionConf.getAllConfs, DEFAULT_FEATURE_PROP_PREFIX)
+    val featuresFromMetadata =
+      metadataOpt.map(extractAutomaticallyEnabledFeatures(spark, _)).getOrElse(Set[TableFeature]())
+    val allEnabledFeatures =
+      tablePropEnabledFeatures ++ sessionEnabledFeatures ++ featuresFromMetadata
+
+    // Determine the min reader and writer version required by features in table properties,
+    // session defaults or metadata. If all features are legacy, we start from (0, 0). If any
+    // feature is native and reader-writer, we start from (3, 7). Otherwise we start from (0, 7)
+    // because there must exist a native writer-only feature.
+    val initialProtocol = if (allEnabledFeatures.forall(_.isLegacyFeature)) {
+      Protocol(0, 0)
+    } else if (allEnabledFeatures.exists(f =>
+        !f.isLegacyFeature && f.isReaderWriterFeature)) {
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+    } else {
+      Protocol(0, TABLE_FEATURES_MIN_WRITER_VERSION)
+    }
+    val minProtocolFromFeatures = initialProtocol.merge(
+      allEnabledFeatures.map(_.minProtocolVersion).toSeq: _*)
+
+    // If the protocol version is provided in table properties, they will take priority over
+    // versions in `minProtocolFromTablePropAndSession`.
+    val readerVersionFromTableConfOpt = tableConf
+      .get(MIN_READER_VERSION_PROP)
+      .map(getVersion(MIN_READER_VERSION_PROP, _))
+    val writerVersionFromTableConfOpt = tableConf
+      .get(MIN_WRITER_VERSION_PROP)
+      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
+
+    // Decide the final protocol version:
+    // 1. Get the version defined as properties: table property takes precedence over
+    //   session defaults
+    // 2. Get the max of these three:
+    //   a. version defined as properties
+    //   b. version required by manually enabled features and metadata features
+    val finalReaderVersion = {
+      val minReaderVersionFromNumbers: Int = readerVersionFromTableConfOpt.getOrElse(
+        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
+      minReaderVersionFromNumbers // 2a
+        .max(minProtocolFromFeatures.minReaderVersion) // 2b
+    }
+    val finalWriterVersion = {
+      val minWriterVersionFromNumbers: Int = writerVersionFromTableConfOpt.getOrElse(
+        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+      minWriterVersionFromNumbers // 2a
+        .max(minProtocolFromFeatures.minWriterVersion) // 2b
+    }
+
+    Protocol(finalReaderVersion, finalWriterVersion)
+      .withFeatures(allEnabledFeatures)
+  }
+
+  /**
+   * Picks the protocol version for a new table given potential feature usage. The result
+   * satisfies all active features in the metadata and protocol-related configs in table
+   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
+   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   */
   def forNewTable(spark: SparkSession, metadata: Metadata): Protocol = {
     Protocol(spark, Some(metadata))
   }
 
   /**
-   * Given the Delta table metadata, returns the minimum required table protocol version
-   * and the features used that require the protocol.
+   * Extracts all table features that are enabled by the given metadata.
    */
-  private def requiredMinimumProtocol(
-      spark: SparkSession,
-      metadata: Metadata): (Protocol, Seq[String]) = {
-    val featuresUsed = new ArrayBuffer[String]()
-    var minimumRequired = Protocol(0, 0)
-    // Check for invariants in the schema
-    if (Invariants.getFromSchema(metadata.schema, spark).nonEmpty) {
-      minimumRequired = Protocol(0, minWriterVersion = 2)
-      featuresUsed.append("Setting column level invariants")
+  private def extractAutomaticallyEnabledFeatures(
+      spark: SparkSession, metadata: Metadata): Set[TableFeature] = {
+    val enabledFeatures = mutable.Set[TableFeature]()
+    TableFeature.allSupportedFeaturesMap.values.foreach {
+      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
+        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
+          enabledFeatures += feature
+        }
+      case _ => () // Do nothing. We only care about features that can be activated in metadata.
     }
 
-    val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
-    if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {
-      minimumRequired = Protocol(0, minWriterVersion = 2)
-      featuresUsed.append(s"Append only tables (${DeltaConfigs.IS_APPEND_ONLY.key})")
-    }
-
-    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
-      minimumRequired = Protocol(0, minWriterVersion = 3)
-      featuresUsed.append("Setting CHECK constraints")
-    }
-
-    if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
-      minimumRequired = Protocol(0, minWriterVersion = GeneratedColumn.MIN_WRITER_VERSION)
-      featuresUsed.append("Using Generated Columns")
-    }
-
-    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
-      minimumRequired = Protocol(0, minWriterVersion = 4)
-      featuresUsed.append("Change data feed")
-    }
-
-    if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
-      minimumRequired = Protocol(
-        minReaderVersion = 0,
-        minWriterVersion = ColumnWithDefaultExprUtils.IDENTITY_MIN_WRITER_VERSION
-      )
-      featuresUsed.append("Using IDENTITY Columns")
+    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
       throw DeltaErrors.identityColumnNotSupported()
     }
+    enabledFeatures.toSet
+  }
 
-    if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
-      minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
+  /**
+   * Given the Delta table metadata, returns the minimum required reader and writer version
+   * that satisfies all enabled table features in the metadata plus all enabled features as a set.
+   *
+   * This function returns the protocol versions and features individually instead of
+   * a [[Protocol]] so the caller can identify the features that caused the protocol version. For
+   * example, if the return values are (2, 5, columnMapping), the caller can safely ignore all
+   * other features required by the protocol with a reader and writer version of 2 and 5.
+   *
+   * This method does not process protocol-related configs in table properties or session
+   * defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]], [[MIN_WRITER_VERSION_PROP]],
+   * [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   */
+  def minProtocolVersionsFromAutomaticallyEnabledFeatures(
+      spark: SparkSession, metadata: Metadata): (Int, Int, Set[TableFeature]) = {
+    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+    var (readerVersion, writerVersion) = (0, 0)
+    enabledFeatures.foreach { feature =>
+      readerVersion = math.max(readerVersion, feature.minReaderVersion)
+      writerVersion = math.max(writerVersion, feature.minWriterVersion)
     }
 
-
-    minimumRequired -> featuresUsed.toSeq
+    (readerVersion, writerVersion, enabledFeatures)
   }
 
   /** Cast the table property for the protocol version to an integer. */
@@ -219,17 +305,28 @@ object Protocol {
       spark: SparkSession,
       metadata: Metadata,
       current: Protocol): Option[Protocol] = {
-    assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
-      s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
-    assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
-      s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
-    val (required, features) = requiredMinimumProtocol(spark, metadata)
-    if (current.minWriterVersion < required.minWriterVersion ||
-        current.minReaderVersion < required.minReaderVersion) {
-      Some(required.copy(
-        minReaderVersion = math.max(current.minReaderVersion, required.minReaderVersion),
-        minWriterVersion = math.max(current.minWriterVersion, required.minWriterVersion))
-      )
+    assert(
+      !metadata.configuration.contains(MIN_READER_VERSION_PROP),
+      "Should not have the " +
+        s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
+    assert(
+      !metadata.configuration.contains(MIN_WRITER_VERSION_PROP),
+      "Should not have the " +
+        s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
+    assert(
+      !metadata.configuration.keys.exists(_.startsWith(FEATURE_PROP_PREFIX)),
+      "Should not have " +
+        s"table features (starts with '$FEATURE_PROP_PREFIX') as part of table properties")
+    val (readerVersion, writerVersion, enabledFeatures) =
+      minProtocolVersionsFromAutomaticallyEnabledFeatures(spark, metadata)
+
+    // Increment the reader and writer version to accurately add enabled legacy table features
+    // either to the implicitly enabled table features or the table feature lists
+    val required = Protocol(
+        readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
+        .withFeatures(enabledFeatures)
+    if (!required.canUpgradeTo(current)) {
+      Some(required.merge(current))
     } else {
       None
     }

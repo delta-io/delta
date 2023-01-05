@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
 
 import org.apache.spark.sql.{AnalysisException, Row}
@@ -51,27 +52,27 @@ abstract class HiveConvertToDeltaSuiteBase
 
   test("convert with statistics") {
     val tbl = "hive_parquet"
-    withTable(tbl) {
-      sql(
-        s"""
-           |CREATE TABLE $tbl (id int, str string)
-           |PARTITIONED BY (part string)
-           |STORED AS PARQUET
+      withTable(tbl) {
+        sql(
+          s"""
+             |CREATE TABLE $tbl (id int, str string)
+             |PARTITIONED BY (part string)
+             |STORED AS PARQUET
          """.stripMargin)
 
-      sql(s"insert into $tbl VALUES (1, 'a', 1)")
+        sql(s"insert into $tbl VALUES (1, 'a', 1)")
 
-      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
-      convertToDelta(tbl, Some("part string"), collectStats = true)
-      val deltaLog = DeltaLog.forTable(spark, catalogTable)
-      val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
-        .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
-        .select("stats.*")
-      assert(statsDf.filter(col("numRecords").isNull).count == 0)
-      val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
-      assert(history.count == 1)
-
-    }
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl))
+        convertToDelta(tbl, Some("part string"), collectStats = true)
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(
+            from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
+          .select("stats.*")
+        assert(statsDf.filter(col("numRecords").isNull).count == 0)
+        val history = io.delta.tables.DeltaTable.forPath(catalogTable.location.getPath).history()
+        assert(history.count == 1)
+      }
   }
 
   test("convert without statistics") {

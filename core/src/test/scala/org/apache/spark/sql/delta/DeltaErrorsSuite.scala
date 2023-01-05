@@ -26,7 +26,8 @@ import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -84,7 +85,19 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
     "columnMappingAdviceMessage" ->
       DeltaErrors.columnRenameNotSupported,
-    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable())
+    "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable()),
+    "tableFeatureReadRequiresWriteException" ->
+      DeltaErrors.tableFeatureReadRequiresWriteException(requiredWriterVersion = 7),
+    "tableFeatureRequiresHigherReaderProtocolVersion" ->
+      DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
+        feature = "feature",
+        currentVersion = 1,
+        requiredVersion = 7),
+    "tableFeatureRequiresHigherWriterProtocolVersion" ->
+      DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
+        feature = "feature",
+        currentVersion = 1,
+        requiredVersion = 7)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -490,27 +503,41 @@ trait DeltaErrorsSuiteBase
         "when using CONVERT TO DELTA.")
     }
     {
-      val e = intercept[DeltaColumnMappingUnsupportedException] {
-        throw DeltaErrors.changeColumnMappingModeOnOldProtocol(Protocol())
+      val oldAndNew = Seq(
+        (Protocol(2, 4), ColumnMappingTableFeature.minProtocolVersion),
+        (
+          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+            .withFeature(ColumnMappingTableFeature)))
+      for ((oldProtocol, newProtocol) <- oldAndNew) {
+        val e = intercept[DeltaColumnMappingUnsupportedException] {
+          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
+        }
+        // scalastyle:off line.size.limit
+        assert(e.getMessage ==
+          s"""
+             |Your current table protocol version does not support changing column mapping modes
+             |using delta.columnMapping.mode.
+             |
+             |Required Delta protocol version for column mapping:
+             |${newProtocol.toString}
+             |Your table's current Delta protocol version:
+             |${oldProtocol.toString}
+             |
+             |Please enable Column Mapping on your Delta table with mapping mode 'name'.
+             |You can use one of the following commands.
+             |
+             |If your table is already on the required protocol version:
+             |ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+             |
+             |If your table is not on the required protocol version and requires a protocol upgrade:
+             |ALTER TABLE <table_name> SET TBLPROPERTIES (
+             |   'delta.columnMapping.mode' = 'name',
+             |   'delta.minReaderVersion' = '${newProtocol.minReaderVersion}',
+             |   'delta.minWriterVersion' = '${newProtocol.minWriterVersion}')
+             |""".stripMargin)
+          // scalastyle:off line.size.limit
       }
-      assert(e.getMessage ==
-        s"""
-           |Your current table protocol version does not support changing column mapping modes
-           |using delta.columnMapping.mode.
-           |
-           |Required Delta protocol version for column mapping:
-           |Protocol(2,5)
-           |Your table's current Delta protocol version:
-           |Protocol(2,6)
-           |
-           |Please upgrade your Delta table to reader version 2 and writer version 5
-           |and change the column mapping mode to 'name' mapping. You can use the following command:
-           |
-           |ALTER TABLE <table_name> SET TBLPROPERTIES (
-           |   'delta.columnMapping.mode' = 'name',
-           |   'delta.minReaderVersion' = '2',
-           |   'delta.minWriterVersion' = '5')
-           |""".stripMargin)
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
@@ -614,9 +641,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         var msg =
           s"""Detected schema change:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -634,9 +661,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
           s"""Detected schema change in version 10:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -654,9 +681,9 @@ trait DeltaErrorsSuiteBase
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
           s"""Detected schema change in version 10:
-             #old schema: ${DeltaErrors.formatSchema(oldSchema)}
+             #streaming source schema: ${DeltaErrors.formatSchema(oldSchema)}
              #
-             #new schema: ${DeltaErrors.formatSchema(newSchema)}
+             #data file schema: ${DeltaErrors.formatSchema(newSchema)}
              #
              #Please try restarting the query. If this issue repeats across query restarts without
              #making progress, you have made an incompatible schema change and need to start your
@@ -1325,8 +1352,8 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[ProtocolDowngradeException] {
-        val p1 = new Protocol(1, 1)
-        val p2 = new Protocol(2, 2)
+        val p1 = Protocol(1, 1)
+        val p2 = Protocol(2, 2)
         throw new ProtocolDowngradeException(p1, p2)
       }
       assert(e.getErrorClass == "DELTA_INVALID_PROTOCOL_DOWNGRADE")
@@ -1405,7 +1432,8 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage == "Cannot time travel views, subqueries or streams.")
+      assert(e.getMessage ==
+        "Cannot time travel views, subqueries, streams or change data feed queries.")
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -1428,15 +1456,6 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Interval cannot be null or blank.")
-    }
-    {
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.invalidMergeClauseWhenNotMatched("MAGIC")
-      }
-      assert(e.getErrorClass == "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE")
-      assert(e.getSqlState == "42000")
-      assert(e.getMessage == "MAGIC clauses cannot be part of the WHEN NOT MATCHED clause" +
-        " in MERGE INTO.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1864,7 +1883,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_SCHEMA_NOT_PROVIDED")
       assert(e.getMessage ==
         "Table schema is not provided. Please provide the schema (column definition) " +
-        "of the table when using REPLACE table and an AS SELECT query is not provided.")
+          "of the table when using REPLACE table and an AS SELECT query is not provided.")
       assert(e.getSqlState == "22000")
     }
     {
@@ -2313,8 +2332,8 @@ trait DeltaErrorsSuiteBase
 
       val msg =
         s"Cannot create table ('${tableId}')." +
-          s" The associated location ('${tableLocation}') is not empty but " +
-          "it's not a Delta table"
+          s" The associated location ('${tableLocation}') is not empty and " +
+          "also not a Delta table."
       assert(e.getMessage == msg)
     }
     {
@@ -2449,8 +2468,9 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNEXPECTED_CHANGE_FILES_FOUND")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage == """Change files found in a dataChange = false transaction. Files:
-                               |a.parquet""".stripMargin)
+      assert(e.getMessage ==
+        """Change files found in a dataChange = false transaction. Files:
+          |a.parquet""".stripMargin)
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2458,7 +2478,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_TXN_LOG_FAILED_INTEGRITY")
       assert(e.getSqlState == "22000")
-      assert(e.getMessage ==  "The transaction log has failed integrity checks. Failed " +
+      assert(e.getMessage == "The transaction log has failed integrity checks. Failed " +
         "verification at version 2 of:\noption1")
     }
     {
@@ -2478,7 +2498,7 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW")
       assert(e.getSqlState == "0A000")
-      assert(e.getMessage ==  "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
+      assert(e.getMessage == "`customer` is a view. DESCRIBE DETAIL is only supported for tables.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2677,7 +2697,7 @@ trait DeltaErrorsSuiteBase
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
       assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key)
       assert(e.additionalProperties("detectedDuringStreaming").toBoolean)
     }
     {
@@ -2695,24 +2715,8 @@ trait DeltaErrorsSuiteBase
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
       assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
+        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key)
       assert(!e.additionalProperties("detectedDuringStreaming").toBoolean)
-    }
-    {
-      val e = intercept[DeltaColumnMappingUnsupportedSchemaIncompatibleException] {
-        throw DeltaErrors.blockBatchCdfReadOnColumnMappingEnabledTable(
-          readSchema = StructType.fromDDL("id int"),
-          incompatibleSchema = StructType.fromDDL("id2 int"))
-      }
-      assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION")
-      assert(e.getSqlState == "0A000")
-      assert(e.opName == "Change Data Feed (CDF) read")
-      assert(e.readSchema == StructType.fromDDL("id int"))
-      assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
-      assert(e.escapeConfigName ==
-        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key)
-      assert(e.additionalProperties.isEmpty)
-
     }
     {
       val e = intercept[DeltaUnsupportedOperationException] {
@@ -2737,6 +2741,48 @@ trait DeltaErrorsSuiteBase
       val prefixStr = DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]")
       assert(e.getMessage == "Currently DeltaTable.forPath only supports hadoop configuration " +
         s"keys starting with $prefixStr but got ${options.mkString(",")}")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneOnRelativePath("path")
+      }
+      assert(e.getMessage ==
+        """The target location for CLONE needs to be an absolute path or table name. Use an
+          |absolute path instead of path.""".stripMargin)
+    }
+    {
+      val e = intercept[AnalysisException] {
+        throw DeltaErrors.cloneFromUnsupportedSource( "table-0", "CSV")
+      }
+      assert(e.getErrorClass == "DELTA_CLONE_UNSUPPORTED_SOURCE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Unsupported clone source 'table-0', whose format is CSV.\n" +
+        "The supported formats are 'delta' and 'parquet'.")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneReplaceUnsupported(TableIdentifier("customer"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        s"""
+           |You tried to REPLACE an existing table (`customer`) with CLONE. This operation is
+           |unsupported. Try a different target for CLONE or delete the table at the current target.
+           |""".stripMargin)
+
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cloneAmbiguousTarget("external-location", TableIdentifier("table1"))
+      }
+      assert(e.getErrorClass == "DELTA_CLONE_AMBIGUOUS_TARGET")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""
+           |Two paths were provided as the CLONE target so it is ambiguous which to use. An external
+           |location for CLONE was provided at external-location at the same time as the path
+           |`table1`.""".stripMargin)
     }
   }
 }

@@ -52,6 +52,15 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
           tt.version,
           tt.creationSource))
 
+    case ct @ CloneTableStatement(
+        tt @ TimeTravel(ur: UnresolvedRelation, _, _, _), _,
+          _, _, _, _, _) =>
+      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+      ct.copy(source = TimeTravel(
+        sourceRelation,
+        tt.timestamp,
+        tt.version,
+        tt.creationSource))
   }
 
   /**

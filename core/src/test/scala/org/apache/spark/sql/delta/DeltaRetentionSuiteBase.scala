@@ -20,6 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
@@ -66,7 +67,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       startTxnWithManualLogCleanup(log).commit(Nil, testOp)
-      assert(!log.enableExpiredLogCleanup)
+      assert(!log.enableExpiredLogCleanup())
     }
   }
 }

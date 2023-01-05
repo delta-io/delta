@@ -111,11 +111,12 @@ trait MergeIntoMetricsBase
     // otherwise.
     {
       val numFilesAdded = metrics("numTargetFilesAdded").toLong
+      val numBytesAdded = metrics("numTargetBytesAdded").toLong
       val numRowsWritten =
         metrics("numTargetRowsInserted").toLong +
           metrics("numTargetRowsUpdated").toLong +
           metrics("numTargetRowsCopied").toLong
-      lazy val assertMsg = {
+      lazy val assertMsgNumFiles = {
         val expectedNumFilesAdded =
           if (numRowsWritten == 0) "0" else s"between 1 and $numRowsWritten"
         s"""Unexpected value for numTargetFilesAdded metric.
@@ -124,11 +125,24 @@ trait MergeIntoMetricsBase
            | numRowsWritten: $numRowsWritten
            | Metrics: ${metrics.toString}
            |""".stripMargin
+
+      }
+      lazy val assertMsgBytes = {
+        val expected = if (numRowsWritten == 0) "0" else "greater than 0"
+        s"""Unexpected value for numTargetBytesAdded metric.
+           | Expected: $expected
+           | Actual: $numBytesAdded
+           | numRowsWritten: $numRowsWritten
+           | numFilesAdded: $numFilesAdded
+           | Metrics: ${metrics.toString}
+           |""".stripMargin
       }
       if (numRowsWritten == 0) {
-        assert(numFilesAdded === 0, assertMsg)
+        assert(numFilesAdded === 0, assertMsgNumFiles)
+        assert(numBytesAdded === 0, assertMsgBytes)
       } else {
-        assert(numFilesAdded > 0 && numFilesAdded <= numRowsWritten, assertMsg)
+        assert(numFilesAdded > 0 && numFilesAdded <= numRowsWritten, assertMsgNumFiles)
+        assert(numBytesAdded > 0, assertMsgBytes)
       }
     }
 
@@ -138,11 +152,12 @@ trait MergeIntoMetricsBase
     // updated/deleted.
     {
       val numFilesRemoved = metrics("numTargetFilesRemoved").toLong
+      val numBytesRemoved = metrics("numTargetBytesRemoved").toLong
       val numRowsTouched =
         metrics("numTargetRowsDeleted").toLong +
           metrics("numTargetRowsUpdated").toLong +
           metrics("numTargetRowsCopied").toLong
-      lazy val assertMsg = {
+      lazy val assertMsgNumFiles = {
         val expectedNumFilesRemoved =
           if (numRowsTouched == 0) "0" else s"between 1 and $numRowsTouched"
         s"""Unexpected value for numTargetFilesRemoved metric.
@@ -152,10 +167,23 @@ trait MergeIntoMetricsBase
            | Metrics: ${metrics.toString}
            |""".stripMargin
       }
+      lazy val assertMsgBytes = {
+        val expectedNumBytesRemoved =
+          if (numRowsTouched == 0) "0" else "greater than 0"
+        s"""Unexpected value for numTargetBytesRemoved metric.
+           | Expected: $expectedNumBytesRemoved
+           | Actual: $numBytesRemoved
+           | numRowsTouched: $numRowsTouched
+           | Metrics: ${metrics.toString}
+           |""".stripMargin
+      }
+
       if (numRowsTouched == 0) {
-        assert(numFilesRemoved === 0, assertMsg)
+        assert(numFilesRemoved === 0, assertMsgNumFiles)
+        assert(numBytesRemoved === 0, assertMsgBytes)
       } else {
-        assert(numFilesRemoved > 0 && numFilesRemoved <= numRowsTouched, assertMsg)
+        assert(numFilesRemoved > 0 && numFilesRemoved <= numRowsTouched, assertMsgNumFiles)
+        assert(numBytesRemoved > 0, assertMsgBytes)
       }
     }
   }
@@ -1157,7 +1185,8 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
     "numOutputRows"
   )
   // Metrics related with affected number of files. Values depend on the file layout.
-  val mergeFileMetrics = Set("numTargetFilesAdded", "numTargetFilesRemoved")
+  val mergeFileMetrics = Set(
+    "numTargetFilesAdded", "numTargetFilesRemoved", "numTargetBytesAdded", "numTargetBytesRemoved")
   // Metrics related with execution times.
   val mergeTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
   // Metrics related with CDF. Available only when CDF is available.

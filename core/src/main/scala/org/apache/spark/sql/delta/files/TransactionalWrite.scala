@@ -226,7 +226,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     // and will be stripped out later in [[DelayedCommitProtocolEdge]].
     // Note that the ordering of the partition schema is relevant - CDC_PARTITION_COL must
     // come first in order to ensure CDC data lands in the right place.
-    if (CDCReader.isCDCEnabledOnTable(metadata) &&
+    if (CDCReader.isCDCEnabledOnTable(metadata, spark) &&
       inputData.schema.fieldNames.contains(CDCReader.CDC_TYPE_COLUMN_NAME)) {
       val augmentedData = inputData.withColumn(
         CDCReader.CDC_PARTITION_COL, col(CDCReader.CDC_TYPE_COLUMN_NAME).isNotNull)
@@ -306,6 +306,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override def dataSchema = statsDataSchema.toStructType
         override val spark: SparkSession = data.sparkSession
         override val numIndexedCols = indexedCols
+        override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
       }
 
       val statsColExpr = getStatsColExpr(statsDataSchema, statsCollection)

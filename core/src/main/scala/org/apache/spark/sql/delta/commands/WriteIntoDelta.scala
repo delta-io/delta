@@ -35,6 +35,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
 
 /**
@@ -89,9 +90,7 @@ case class WriteIntoDelta(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
-      // If this batch has already been executed within this query, then return.
-      var skipExecution = hasBeenExecuted(txn)
-      if (skipExecution) {
+      if (writeHasBeenExecuted(txn, sparkSession, Some(options))) {
         return Seq.empty
       }
 
@@ -101,6 +100,21 @@ case class WriteIntoDelta(
       txn.commit(actions, operation)
     }
     Seq.empty
+  }
+
+  /**
+   * Determines whether this delta write command has been executed by comparing the current
+   * transaction version with the transaction version of the options of this write command.
+   * If the current transaction version is greater or equal to the transaction version of this
+   * write command, then this command has been executed and can be skipped.
+   */
+  def writeHasBeenExecuted(
+      txn: OptimisticTransaction,
+      sparkSession: SparkSession,
+      options: Option[DeltaOptions]): Boolean = {
+    // If this batch has already been executed within this query, then return.
+    var skipExecution = hasBeenExecuted(txn)
+    skipExecution
   }
 
   // TODO: replace the method below with `CharVarcharUtils.replaceCharWithVarchar`, when 3.3 is out.
@@ -194,14 +208,21 @@ case class WriteIntoDelta(
       } else if (mode == SaveMode.Ignore) {
         return Nil
       } else if (mode == SaveMode.Overwrite) {
-        deltaLog.assertRemovable()
+        DeltaLog.assertRemovable(txn.snapshot)
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    // Delta does not support char padding and we should only have varchar type. This does not
-    // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
-    val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
-      replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    // TODO: use `SQLConf.READ_SIDE_CHAR_PADDING` after Spark 3.4 is released.
+    val charPadding = sparkSession.conf.get("spark.sql.readSideCharPadding", "false") == "true"
+    val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
+    val dataSchema = if (!charAsVarchar && charPadding) {
+      data.schema
+    } else {
+      // If READ_SIDE_CHAR_PADDING is not enabled, CHAR type is the same as VARCHAR. The change
+      // below makes DESC TABLE to show VARCHAR instead of CHAR.
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(
+        replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    }
     var finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
@@ -284,7 +305,8 @@ case class WriteIntoDelta(
         // the CDF protocol requires either (i) all CDF data are generated explicitly as AddCDCFile,
         // or (ii) all CDF data can be deduced from [[AddFile]] and [[RemoveFile]].
         val dataToWrite =
-          if (containsDataFilters && CDCReader.isCDCEnabledOnTable(txn.metadata) &&
+          if (containsDataFilters &&
+              CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
               sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED) &&
               cdcExistsInRemoveOp) {
             var dataWithDefaultExprs = data

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.{Calendar, TimeZone}
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -28,20 +29,20 @@ trait MetadataCleanup extends DeltaLogging {
   self: DeltaLog =>
 
   /** Whether to clean up expired log files and checkpoints. */
-  def enableExpiredLogCleanup: Boolean =
+  def enableExpiredLogCleanup(metadata: Metadata): Boolean =
     DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.fromMetaData(metadata)
 
   /**
    * Returns the duration in millis for how long to keep around obsolete logs. We may keep logs
    * beyond this duration until the next calendar day to avoid constantly creating checkpoints.
    */
-  def deltaRetentionMillis: Long = {
+  def deltaRetentionMillis(metadata: Metadata): Long = {
     val interval = DeltaConfigs.LOG_RETENTION.fromMetaData(metadata)
     DeltaConfigs.getMilliSeconds(interval)
   }
 
   override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
-    if (enableExpiredLogCleanup) {
+    if (enableExpiredLogCleanup(snapshot.metadata)) {
       cleanUpExpiredLogs(snapshotToCleanup)
     }
   }
@@ -49,7 +50,8 @@ trait MetadataCleanup extends DeltaLogging {
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   private[delta] def cleanUpExpiredLogs(snapshotToCleanup: Snapshot): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
-      val fileCutOffTime = truncateDay(clock.getTimeMillis() - deltaRetentionMillis).getTime
+      val retentionMillis = deltaRetentionMillis(snapshot.metadata)
+      val fileCutOffTime = truncateDay(clock.getTimeMillis() - retentionMillis).getTime
       val formattedDate = fileCutOffTime.toGMTString
       logInfo(s"Starting the deletion of log files older than $formattedDate")
 

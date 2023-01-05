@@ -21,7 +21,7 @@ import java.util.Objects
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshot, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.OptimizeMetadataOnlyDeltaQuery

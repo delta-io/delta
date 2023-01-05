@@ -258,7 +258,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4, 5, 6))
+      .checkValues(Set(1, 2, 3, 4, 5, 6, 7))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -266,7 +266,7 @@ trait DeltaSQLConfBase {
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2))
+      .checkValues(Set(1, 2, 3))
       .createWithDefault(1)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
@@ -879,8 +879,8 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
-  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
-    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
         "Streaming read on Delta table with column mapping schema operations " +
           "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
@@ -890,6 +890,29 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChangesDuringStreamStart.enabled")
+      .doc(
+        """A legacy config to disable schema read-compatibility check on the start version schema
+          |when starting a streaming query. The config is added to allow legacy problematic queries
+          |disabling the check to keep running if users accept the potential risks of incompatible
+          |schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
+    buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
+      .doc(
+        """A legacy config to disable unsafe nullability check. The config is added to allow legacy
+          |problematic queries disabling the check to keep running if users accept the potential
+          |risks of incompatible schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -897,6 +920,28 @@ trait DeltaSQLConfBase {
           "column mapping schema operations is currently blocked due to potential data loss and " +
           "schema confusion. However, existing users may use this flag to force unblock " +
           "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
+    buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
+      .doc(
+        """Reading batch CDF on column mapping enabled table requires schema mode to be set to
+           |`endVersion` so the ending version's schema will be used.
+           |Set this to `latest` to use the schema of the latest available table version,
+           |or to `legacy` to fallback to the non column-mapping default behavior, in which
+           |the time travel option can be used to select the version of the schema.""".stripMargin)
+      .internal()
+      .stringConf
+      .createWithDefault("endVersion")
+
+  val DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS =
+    buildConf("changeDataFeed.allowTimeTravelOptionsForSchema")
+      .doc(
+        s"""If allowed, user can specify time-travel reader options such as
+           |'versionAsOf' or 'timestampAsOf' to specify the read schema while
+           |reading change data feed.""".stripMargin)
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -946,7 +991,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  // TODO(SC-109291): Force wipe history, too.
   val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
     buildConf("restore.protocolDowngradeAllowed")
       .doc("Whether a table may be restored to a lower protocol version than the current." +
@@ -957,6 +1001,13 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CLONE_REPLACE_ENABLED =
+    buildConf("clone.replaceEnabled")
+      .internal()
+      .doc("If enabled, the table will be replaced when cloning over an existing Delta table.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
     buildConf("optimizeMetadataQuery.enabled")

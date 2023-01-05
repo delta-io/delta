@@ -22,8 +22,13 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
-import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
+import com.databricks.spark.util.TagDefinitions.{
+  TAG_OP_TYPE,
+  TAG_TAHOE_ID,
+  TAG_TAHOE_PATH
+}
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -68,9 +73,7 @@ trait DeltaLogging
     try {
       val json = if (data != null) JsonUtils.toJson(data) else ""
       val tableTags = if (deltaLog != null) {
-        Map(
-          TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
-          TAG_TAHOE_ID -> Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+        getCommonTags(deltaLog, Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
       } else if (path.isDefined) {
         Map(TAG_TAHOE_PATH -> path.get.toString)
       } else {
@@ -112,9 +115,7 @@ trait DeltaLogging
       tags: Map[TagDefinition, String] = Map.empty)(
       thunk: => A): A = {
     val tableTags: Map[TagDefinition, String] = if (deltaLog != null) {
-      Map(
-        TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
-        TAG_TAHOE_ID -> Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+      getCommonTags(deltaLog, Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
     } else {
       Map.empty
     }
@@ -142,5 +143,20 @@ trait DeltaLogging
   private def withDmqTag[T](thunk: => T): T = {
     thunk
   }
+
+  // Extract common tags from the delta log and snapshot.
+  def getCommonTags(deltaLog: DeltaLog, tahoeId: String): Map[TagDefinition, String] = {
+    (
+      Map(
+        TAG_TAHOE_ID -> tahoeId,
+        TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null)
+      )
+    )
+  }
 }
 
+object DeltaLogging {
+
+  // The opType for delta commit stats.
+  final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+}
