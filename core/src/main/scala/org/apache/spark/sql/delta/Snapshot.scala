@@ -137,7 +137,8 @@ class Snapshot(
             col("add.modificationTime"),
             col("add.dataChange"),
             col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
-            col("add.tags")
+            col("add.tags"),
+            col("add.deletionVector")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,

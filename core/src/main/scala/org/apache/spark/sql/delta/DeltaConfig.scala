@@ -395,6 +395,16 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.",
     minimumProtocolVersion = Some(AppendOnlyTableFeature.minProtocolVersion))
 
+  /**
+   * Whether commands modifying this Delta table are allowed to create new deletion vectors.
+   */
+  val ENABLE_DELETION_VECTORS_CREATION = buildConfig[Boolean](
+    key = "enableDeletionVectors",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.",
+    minimumProtocolVersion = Some(DeletionVectorsTableFeature.minProtocolVersion))
 
   /**
    * Whether this table will automatically optimize the layout of files during writes.

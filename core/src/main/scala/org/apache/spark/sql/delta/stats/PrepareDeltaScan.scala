@@ -51,7 +51,8 @@ import org.apache.spark.sql.types.StructType
 trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
   with DeltaLogging
-  with OptimizeMetadataOnlyDeltaQuery { self: PrepareDeltaScan =>
+  with OptimizeMetadataOnlyDeltaQuery
+  with PreprocessTableWithDVs { self: PrepareDeltaScan =>
 
   /**
    * Tracks the first-access snapshots of other logs planned by this rule. The snapshots are
@@ -139,33 +140,15 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     // delta scans.
     val deltaScans = new mutable.HashMap[LogicalPlan, DeltaScan]()
 
-    /*
-     * We need to first prepare the scans in the subqueries of a node. Otherwise, because of the
-     * short-circuiting nature of the pattern matching in the transform method, if a
-     * PhysicalOperation node is matched, its subqueries that may contain other PhysicalOperation
-     * nodes will be skipped.
-     */
-    def transformSubqueries(plan: LogicalPlan): LogicalPlan = {
-      import org.apache.spark.sql.delta.implicits._
-
-      plan transformAllExpressionsUp {
-        case subquery: SubqueryExpression =>
-          subquery.withNewPlan(transform(subquery.plan))
-      }
-    }
-
-    def transform(plan: LogicalPlan): LogicalPlan =
-      transformSubqueries(plan) transform {
-        case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
+    transformWithSubqueries(plan) {
+        case scan @ DeltaTableScan(planWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
           val scanGenerator = getDeltaScanGenerator(fileIndex)
-          val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
+          val preparedScan = deltaScans.getOrElseUpdate(planWithRemovedProjections,
               filesForScan(scanGenerator, limit, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
           optimizeGeneratedColumns(scan, preparedIndex, filters, limit, delta)
       }
-
-    transform(plan)
   }
 
   protected def optimizeGeneratedColumns(
@@ -204,9 +187,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     val shouldPrepareDeltaScan = (
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
     )
-    if (shouldPrepareDeltaScan) {
+    val updatedPlan = if (shouldPrepareDeltaScan) {
       // Should not be applied to subqueries to avoid duplicate delta jobs.
-      val isSubquery = plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]
+      val isSubquery = isSubqueryRoot(plan)
       // Should not be applied to DataSourceV2 write plans, because they'll be planned later
       // through a V1 fallback and only that later planning takes place within the transaction.
       val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
@@ -217,7 +200,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED)) {
         plan = optimizeQueryWithMetadata(plan)
       }
-
       prepareDeltaScan(plan)
     } else {
       // If this query is running inside an active transaction and is touching the same table
@@ -233,6 +215,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       // It will fall back to just partition pruning at planning time.
       plan
     }
+    preprocessTablesWithDVs(updatedPlan)
   }
 
   /**

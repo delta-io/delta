@@ -24,7 +24,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
-import org.apache.spark.sql.functions.{col, count, sum, when}
+import org.apache.spark.sql.functions.{coalesce, col, count, lit, sum, when}
 
 trait OptimizeMetadataOnlyDeltaQuery {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
@@ -48,10 +48,13 @@ trait OptimizeMetadataOnlyDeltaQuery {
 
     /** Return the number of rows in the table or `None` if we cannot calculate it from stats */
     private def extractGlobalCount(tahoeLogFileIndex: TahoeLogFileIndex): Option[Long] = {
-      // TODO Update this to work with DV (https://github.com/delta-io/delta/issues/1485)
+      // account for deleted rows according to deletion vectors
+      val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
+      val numLogicalRecords = (col("stats.numRecords") - dvCardinality).as("numLogicalRecords")
+
       val row = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
         .agg(
-          sum("stats.numRecords"),
+          sum(numLogicalRecords),
           // Calculate the number of files missing `numRecords`
           count(when(col("stats.numRecords").isNull, 1)))
         .first

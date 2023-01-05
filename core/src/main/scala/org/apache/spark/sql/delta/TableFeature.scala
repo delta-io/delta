@@ -196,7 +196,8 @@ object TableFeature {
       IdentityColumnsTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
-      ColumnMappingTableFeature)
+      ColumnMappingTableFeature,
+      DeletionVectorsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -292,6 +293,16 @@ object IdentityColumnsTableFeature
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
+  }
+}
+
+object DeletionVectorsTableFeature
+  extends ReaderWriterFeature(name = "deletionVectors")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
 }
 

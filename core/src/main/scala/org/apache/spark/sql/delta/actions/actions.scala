@@ -389,7 +389,8 @@ case class AddFile(
     modificationTime: Long,
     override val dataChange: Boolean,
     stats: String = null,
-    override val tags: Map[String, String] = null
+    override val tags: Map[String, String] = null,
+    deletionVector: DeletionVectorDescriptor = null
 ) extends FileAction {
   require(path.nonEmpty)
 
@@ -526,7 +527,8 @@ case class RemoveFile(
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
-    override val tags: Map[String, String] = null
+    override val tags: Map[String, String] = null,
+    deletionVector: DeletionVectorDescriptor = null
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
