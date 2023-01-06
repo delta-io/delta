@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.pathToString
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -27,7 +28,6 @@ import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.sql.{Dataset, QueryTest}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{SerializableConfiguration, Utils}
