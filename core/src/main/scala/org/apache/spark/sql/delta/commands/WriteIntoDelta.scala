@@ -223,7 +223,7 @@ case class WriteIntoDelta(
       CharVarcharUtils.replaceCharVarcharWithStringInSchema(
         replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
     }
-    var finalSchema = schemaInCatalog.getOrElse(dataSchema)
+    val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
