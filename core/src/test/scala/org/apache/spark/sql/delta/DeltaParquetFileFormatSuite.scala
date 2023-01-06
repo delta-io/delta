@@ -47,7 +47,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
       val metadata = deltaLog.snapshot.metadata
 
       // Add additional field that has the deleted row flag to existing data schema
-      val readingSchema = metadata.schema.add(DeltaParquetFileFormat.SKIP_ROW_STRUCT_FIELD)
+      val readingSchema = metadata.schema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
 
       val addFilePath = new Path(
         tempDir.toString,

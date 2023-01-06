@@ -19,8 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.DeltaParquetFileFormat.newVector
-import org.apache.spark.sql.delta.DeltaParquetFileFormat.trySafely
+import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata}
 import org.apache.spark.sql.delta.deletionvectors.DeletedRowsMarkingFilter
 import org.apache.hadoop.conf.Configuration
@@ -38,7 +37,13 @@ import org.apache.spark.sql.types.{ByteType, StructField, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
-/** A thin wrapper over the Parquet file format to support columns names without restrictions. */
+/**
+ * A thin wrapper over the Parquet file format to support
+ *  - columns names without restrictions.
+ *  - populated a column from the deletion vector of this file (if exists) to indicate
+ *    whether the row is deleted or not according to the deletion vector. Consumers
+ *    of this scan can use the column values to filter out the deleted rows.
+ */
 class DeltaParquetFileFormat(
     metadata: Metadata,
     val isSplittable: Boolean = true,
@@ -47,6 +52,9 @@ class DeltaParquetFileFormat(
     val broadcastDvMap: Option[Broadcast[Map[String, DeletionVectorDescriptor]]] = None,
     val broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
   extends ParquetFileFormat {
+  // Validate either we have all arguments for DV enabled read or none of them.
+  require(!(broadcastHadoopConf.isDefined ^ broadcastDvMap.isDefined ^ tablePath .isDefined ^
+    !isSplittable ^ disablePushDowns))
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
@@ -110,11 +118,12 @@ class DeltaParquetFileFormat(
       return parquetDataReader
     }
 
-    val skipRowColumnTypeIdx = requiredSchema.fields.zipWithIndex
-      .find(_._1.name == DeltaParquetFileFormat.SKIP_ROW_NAME)
+    val isRowDeletedColumnTypeIdx = requiredSchema.fields.zipWithIndex
+      .find(_._1.name == IS_ROW_DELETED_COLUMN_NAME)
 
-    if (skipRowColumnTypeIdx.isEmpty) {
-      throw new IllegalArgumentException("Expected a column for skipping row in reader output")
+    if (isRowDeletedColumnTypeIdx.isEmpty) {
+      throw new IllegalArgumentException(
+        s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
     }
 
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
@@ -122,11 +131,11 @@ class DeltaParquetFileFormat(
     (partitionedFile: PartitionedFile) => {
       val rowIteratorFromParquet = parquetDataReader(partitionedFile)
       val iterToReturn =
-        iteratorWithRowIndexColumnAppended(
+        iteratorWithIsRowDeletedColumnPopulated(
           partitionedFile,
           rowIteratorFromParquet,
-          skipRowColumnTypeIdx.get._1,
-          skipRowColumnTypeIdx.get._2,
+          isRowDeletedColumnTypeIdx.get._1,
+          isRowDeletedColumnTypeIdx.get._2,
           useOffHeapBuffers)
       iterToReturn.asInstanceOf[Iterator[InternalRow]]
     }
@@ -149,11 +158,15 @@ class DeltaParquetFileFormat(
       Some(broadcastHadoopConf))
   }
 
-  private def iteratorWithRowIndexColumnAppended(
+  /**
+   * Modifies the data read from underlying Parquet reader by populating the row deleted status from
+   * deletion vector corresponding to this file in the [[IS_ROW_DELETED_COLUMN_NAME]] column.
+   */
+  private def iteratorWithIsRowDeletedColumnPopulated(
       partitionedFile: PartitionedFile,
       iterator: Iterator[Object],
-      skipRowColumnType: StructField,
-      skipRowColumnIndex: Int,
+      isRowDeletedColumnType: StructField,
+      isRowDeletedColumnIdx: Int,
       useOffHeapBuffers: Boolean): Iterator[Object] = {
     val filePath = partitionedFile.filePath
     val absolutePath = new Path(filePath).toString
@@ -174,18 +187,18 @@ class DeltaParquetFileFormat(
       val newRow = row match {
         case batch: ColumnarBatch =>
           val size = batch.numRows()
-          // Create a new vector for the skip row column. We can't use the one from Parquet reader
-          // as it set the [[WritableColumnVector.isAllNulls]] to true and it can't be reset
-          // with using any public APIs. In this new vector, fill the values using the row
-          // index filter and replace the vector corresponding to skip row column in ColumnBatch
-          val newBatch = trySafely(newVector(useOffHeapBuffers, size, skipRowColumnType)) {
+          // Create a new vector for the `is row deleted` column. We can't use the one from Parquet
+          // reader as it set the [[WritableColumnVector.isAllNulls]] to true and it can't be reset
+          // with using any public APIs. In this new vector, fill the values using the row index
+          // filter and replace the vector corresponding to `is row deleted` column in ColumnBatch
+          val newBatch = trySafely(newVector(useOffHeapBuffers, size, isRowDeletedColumnType)) {
             writableVector =>
               rowIndexFilter.materializeIntoVector(rowIndex, rowIndex + size, writableVector)
               rowIndex += size
 
               val vectors = ArrayBuffer[ColumnVector]()
               for (i <- 0 until batch.numCols()) {
-                if (i == skipRowColumnIndex) {
+                if (i == isRowDeletedColumnIdx) {
                   vectors += writableVector
                   // Make sure to close the existing vector allocated in the Parquet
                   batch.column(i).close()
@@ -206,7 +219,7 @@ class DeltaParquetFileFormat(
           // reader that automatically generates the row index column.
           trySafely(new OnHeapColumnVector(1, ByteType)) { tempVector =>
             rowIndexFilter.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
-            rest.setLong(skipRowColumnIndex, tempVector.getByte(0))
+            rest.setLong(isRowDeletedColumnIdx, tempVector.getByte(0))
             rowIndex += 1
             rest
           }
@@ -225,8 +238,8 @@ object DeltaParquetFileFormat {
    * Column name used to identify whether the row read from the parquet file is marked
    * as deleted according to the Delta table deletion vectors
    */
-  val SKIP_ROW_NAME = "__delta_internal_skip_row__"
-  val SKIP_ROW_STRUCT_FIELD = StructField(SKIP_ROW_NAME, ByteType)
+  val IS_ROW_DELETED_COLUMN_NAME = "__delta_internal_is_row_deleted"
+  val IS_ROW_DELETED_STRUCT_FIELD = StructField(IS_ROW_DELETED_COLUMN_NAME, ByteType)
 
   /** Utility method to create a new writable vector */
   private def newVector(
