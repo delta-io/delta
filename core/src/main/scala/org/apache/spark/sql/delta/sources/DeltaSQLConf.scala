@@ -294,6 +294,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_VACUUM_LOGGING_ENABLED =
+    buildConf("vacuum.logging.enabled")
+      .doc("Whether to log vacuum information into the Delta transaction log." +
+        " 'spark.databricks.delta.commitInfo.enabled' should be enabled when using this config.")
+      .booleanConf
+      .createOptional
+
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
       .doc("Adds a check preventing users from running vacuum with a very short retention " +

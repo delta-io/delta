@@ -448,6 +448,39 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CLONE
   }
 
+  /**
+   * @param retentionCheckEnabled - whether retention check was enabled for this run of vacuum.
+   * @param specifiedRetentionMillis - specified retention interval
+   * @param defaultRetentionMillis - default retention period for the table
+   */
+  case class VacuumStart(
+      retentionCheckEnabled: Boolean,
+      specifiedRetentionMillis: Option[Long],
+      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+    override val parameters: Map[String, Any] = if (specifiedRetentionMillis.isEmpty) {
+      Map(
+        "retentionCheckEnabled" -> retentionCheckEnabled,
+        "defaultRetentionMillis" -> defaultRetentionMillis
+      )
+    } else {
+      Map(
+        "retentionCheckEnabled" -> retentionCheckEnabled,
+        "specifiedRetentionMillis" -> specifiedRetentionMillis.get,
+        "defaultRetentionMillis" -> defaultRetentionMillis
+      )
+    }
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
+  }
+
+  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+    override val parameters: Map[String, Any] = Map(
+      "status" -> status
+    )
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
+  }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
@@ -658,6 +691,16 @@ private[delta] object DeltaOperationMetrics {
     "numCopiedFiles", // number of files that were cloned - 0 for shallow tables
     "removedFilesSize", // size in bytes of files removed from an existing Delta table if one exists
     "copiedFilesSize" // size of files copied - 0 for shallow tables
+  )
+
+  val VACUUM_START = Set(
+    "numFilesToDelete", // number of files that will be deleted by vacuum
+    "sizeOfDataToDelete" // total size in bytes of files that will be deleted by vacuum
+  )
+
+  val VACUUM_END = Set(
+    "numDeletedFiles", // number of files deleted by vacuum
+    "numVacuumedDirectories" // number of directories vacuumed
   )
 
 }
