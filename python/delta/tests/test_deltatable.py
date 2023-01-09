@@ -1053,7 +1053,7 @@ class DeltaTableTests(DeltaTestCase):
         self.assertEqual(0, metrics.totalFilesSkipped)
         self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
         self.assertEqual('all', metrics.zOrderStats.strategyName)
-        self.assertEqual(10, metrics.zOrderStats.numOutputCubes) # one for each partition
+        self.assertEqual(10, metrics.zOrderStats.numOutputCubes)  # one for each partition
 
         # negative test: Z-Order on partition column
         def optimize() -> None:
@@ -1094,7 +1094,7 @@ class DeltaTableTests(DeltaTestCase):
         # expected to consider all input files for Z-Order
         self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
         self.assertEqual('all', metrics.zOrderStats.strategyName)
-        self.assertEqual(1, metrics.zOrderStats.numOutputCubes) # one per each affected partition
+        self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
