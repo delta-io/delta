@@ -36,62 +36,68 @@ class DeltaParquetFileFormatSuite extends QueryTest
   with SharedSparkSession with DeltaSQLCommandTest {
   import testImplicits._
 
-  test("Read with DV") {
-    withTempDir { tempDir =>
-      val tablePath = tempDir.toString
+  // Read with deletion vectors has separate code paths based on vectorized Parquet
+  // reader is enabled or not. Test both the combinations
+  for (enableVectorizedParquetReader <- Seq("true", "false")) {
+    test(s"read with DVs (vectorized Parquet reader enabled=$enableVectorizedParquetReader)") {
+      withTempDir { tempDir =>
+        spark.conf.set("spark.sql.parquet.enableVectorizedReader", enableVectorizedParquetReader)
 
-      // Generate a table with one parquet file containing multiple row groups.
-      generateData(tablePath)
+        val tablePath = tempDir.toString
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val metadata = deltaLog.snapshot.metadata
+        // Generate a table with one parquet file containing multiple row groups.
+        generateData(tablePath)
 
-      // Add additional field that has the deleted row flag to existing data schema
-      val readingSchema = metadata.schema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val metadata = deltaLog.snapshot.metadata
 
-      val addFilePath = new Path(
-        tempDir.toString,
-        deltaLog.snapshot.allFiles.collect()(0).path)
-      assertParquetHasMultipleRowGroups(addFilePath)
+        // Add additional field that has the deleted row flag to existing data schema
+        val readingSchema = metadata.schema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
 
-      val dv = generateDV(tablePath, 0, 200, 300, 756, 10352, 19999)
+        val addFilePath = new Path(
+          tempDir.toString,
+          deltaLog.snapshot.allFiles.collect()(0).path)
+        assertParquetHasMultipleRowGroups(addFilePath)
 
-      val fs = addFilePath.getFileSystem(hadoopConf)
-      val broadcastDvMap = spark.sparkContext.broadcast(
-        Map(fs.getFileStatus(addFilePath).getPath().toString() -> dv)
-      )
+        val dv = generateDV(tablePath, 0, 200, 300, 756, 10352, 19999)
 
-      val broadcastHadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(hadoopConf))
+        val fs = addFilePath.getFileSystem(hadoopConf)
+        val broadcastDvMap = spark.sparkContext.broadcast(
+          Map(fs.getFileStatus(addFilePath).getPath().toString() -> dv)
+        )
 
-      val deltaParquetFormat = new DeltaParquetFileFormat(
-        metadata,
-        isSplittable = false,
-        disablePushDowns = false,
-        Some(tablePath),
-        Some(broadcastDvMap),
-        Some(broadcastHadoopConf))
+        val broadcastHadoopConf = spark.sparkContext.broadcast(
+          new SerializableConfiguration(hadoopConf))
 
-      val fileIndex = DeltaLogFileIndex(deltaParquetFormat, fs, addFilePath :: Nil)
+        val deltaParquetFormat = new DeltaParquetFileFormat(
+          metadata,
+          isSplittable = false,
+          disablePushDowns = false,
+          Some(tablePath),
+          Some(broadcastDvMap),
+          Some(broadcastHadoopConf))
 
-      val relation = HadoopFsRelation(
-        fileIndex,
-        fileIndex.partitionSchema,
-        readingSchema,
-        bucketSpec = None,
-        deltaParquetFormat,
-        options = Map.empty)(spark)
-      val plan = LogicalRelation(relation)
+        val fileIndex = DeltaLogFileIndex(deltaParquetFormat, fs, addFilePath :: Nil)
 
-      // Select some rows that are deleted and some rows not deleted
-      // Deleted row `value`: 0, 200, 300, 756, 10352, 19999
-      // Not deleted row `value`: 7, 900
-      checkDatasetUnorderly(
-        Dataset.ofRows(spark, plan)
-          .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
-          .as[(Int, Int)],
-        (0, 1), (7, 0), (200, 1), (300, 1), (756, 1), (900, 0), (10352, 1), (19999, 1)
-      )
+        val relation = HadoopFsRelation(
+          fileIndex,
+          fileIndex.partitionSchema,
+          readingSchema,
+          bucketSpec = None,
+          deltaParquetFormat,
+          options = Map.empty)(spark)
+        val plan = LogicalRelation(relation)
+
+        // Select some rows that are deleted and some rows not deleted
+        // Deleted row `value`: 0, 200, 300, 756, 10352, 19999
+        // Not deleted row `value`: 7, 900
+        checkDatasetUnorderly(
+          Dataset.ofRows(spark, plan)
+            .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
+            .as[(Int, Int)],
+          (0, 1), (7, 0), (200, 1), (300, 1), (756, 1), (900, 0), (10352, 1), (19999, 1)
+        )
+      }
     }
   }
 

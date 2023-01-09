@@ -53,7 +53,7 @@ class DeltaParquetFileFormat(
     val broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
-  require(!(broadcastHadoopConf.isDefined ^ broadcastDvMap.isDefined ^ tablePath .isDefined ^
+  require(!(broadcastHadoopConf.isDefined ^ broadcastDvMap.isDefined ^ tablePath.isDefined ^
     !isSplittable ^ disablePushDowns))
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
@@ -185,7 +185,7 @@ class DeltaParquetFileFormat(
 
     val newIter = iterator.map { row =>
       val newRow = row match {
-        case batch: ColumnarBatch =>
+        case batch: ColumnarBatch => // When vectorized Parquet reader is enabled
           val size = batch.numRows()
           // Create a new vector for the `is row deleted` column. We can't use the one from Parquet
           // reader as it set the [[WritableColumnVector.isAllNulls]] to true and it can't be reset
@@ -210,7 +210,7 @@ class DeltaParquetFileFormat(
           }
           newBatch
 
-        case rest: InternalRow =>
+        case rest: InternalRow => // When vectorized Parquet reader is disabled
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.

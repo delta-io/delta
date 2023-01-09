@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.io.FileNotFoundException
 
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

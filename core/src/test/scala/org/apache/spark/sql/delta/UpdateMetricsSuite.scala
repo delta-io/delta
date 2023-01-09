@@ -21,6 +21,7 @@ import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{Dataset, QueryTest}
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession

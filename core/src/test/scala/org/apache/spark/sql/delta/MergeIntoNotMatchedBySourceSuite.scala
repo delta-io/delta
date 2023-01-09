@@ -266,6 +266,42 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     ),
     cdc = Seq((2, 20, "update_preimage"), (2, 21, "update_postimage")))
 
+  testExtendedMergeWithCDC("not matched by source update and delete with skipping")(
+    source = (0, 0) :: (1, 1) :: (2, 2) :: (5, 5) :: Nil,
+    target = (1, 10) :: (2, 20) :: (4, 40) :: (5, 50) :: Nil,
+    mergeOn = "s.key = t.key and t.key > 4",
+    updateNotMatched(condition = "t.key = 1", set = "t.value = t.value + 1"),
+    deleteNotMatched(condition = "t.key = 4"))(
+    result = Seq(
+      (1, 11), // Not matched by source based on merge condition, updated
+      (2, 20), // Not matched by source based on merge condition, no change
+      // (4, 40), Not matched by source, deleted
+      (5, 50) // Matched, no change
+    ),
+    cdc = Seq(
+      (1, 10, "update_preimage"),
+      (1, 11, "update_postimage"),
+      (4, 40, "delete")))
+
+  testExtendedMergeWithCDC(
+    "matched delete and not matched by source update with skipping")(
+    source = (0, 0) :: (1, 1) :: (2, 2) :: (5, 5) :: (6, 6) :: Nil,
+    target = (1, 10) :: (2, 20) :: (4, 40) :: (5, 50) :: (6, 60) :: Nil,
+    mergeOn = "s.key = t.key and t.key > 4",
+    delete(condition = "t.key = 5"),
+    updateNotMatched(condition = "t.key = 1", set = "t.value = t.value + 1"))(
+    result = Seq(
+      (1, 11), // Not matched by source based on merge condition, updated
+      (2, 20), // Not matched by source based on merge condition, no change
+      (4, 40), // Not matched by source, no change
+      // (5, 50), Matched, deleted
+      (6, 60) // Matched, no change
+    ),
+    cdc = Seq(
+      (1, 10, "update_preimage"),
+      (1, 11, "update_postimage"),
+      (5, 50, "delete")))
+
   testExtendedMergeWithCDC("not matched by source update + delete clauses")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
     target = (1, 10) :: (2, 20) :: (7, 70) :: Nil,
