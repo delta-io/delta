@@ -473,6 +473,9 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
   }
 
+  /**
+   * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
+   */
   case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
     override val parameters: Map[String, Any] = Map(
       "status" -> status
