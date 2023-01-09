@@ -22,7 +22,7 @@ from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
-from pyspark.sql.functions import col, lit, expr, floor, countDistinct
+from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
 
