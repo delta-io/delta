@@ -365,6 +365,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                   StringLiteral(format),
                   Cast(ExtractBaseColumn(name, DateType), TimestampType, _, _), _) =>
                     createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
+                case Floor(ExtractBaseColumn(name, DoubleType)) =>
+                  createExpr(name)(FloorPartitionExpr(partColName))
+                case Floor(ExtractBaseColumn(name, LongType)) =>
+                  createExpr(name)(FloorPartitionExpr(partColName))
+                case Floor(ExtractBaseColumn(name, DecimalType.Fixed(_, _))) =>
+                  createExpr(name)(FloorPartitionExpr(partColName))
                 case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
