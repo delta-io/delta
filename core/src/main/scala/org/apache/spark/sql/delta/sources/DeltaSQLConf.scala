@@ -789,6 +789,43 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  //////////////////
+  // Idempotent DML
+  //////////////////
+
+  val DELTA_IDEMPOTENT_DML_TXN_APP_ID =
+    buildConf("write.txnAppId")
+      .internal()
+      .doc("""
+             |The application ID under which this write will be committed.
+             | If specified, spark.databricks.delta.write.txnVersion also needs to
+             | be set.
+             |""".stripMargin)
+      .stringConf
+      .createOptional
+
+  val DELTA_IDEMPOTENT_DML_TXN_VERSION =
+    buildConf("write.txnVersion")
+      .internal()
+      .doc("""
+             |The user-defined version under which this write will be committed.
+             | If specified, spark.databricks.delta.write.txnAppId also needs to
+             | be set. To ensure idempotency, txnVersions across different writes
+             | need to be monotonically increasing.
+             |""".stripMargin)
+      .longConf
+      .createOptional
+
+  val DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED =
+    buildConf("write.txnVersion.autoReset.enabled")
+      .internal()
+      .doc("""
+             |If true, will automatically reset spark.databricks.delta.write.txnVersion
+             |after every write. This is false by default.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

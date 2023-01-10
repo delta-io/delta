@@ -29,9 +29,8 @@ import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, If, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{input_file_name, lit, typedLit, udf}
 
@@ -85,6 +84,11 @@ case class DeleteCommand(
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
       deltaLog.assertRemovable()
       deltaLog.withNewTransaction { txn =>
+        if (hasBeenExecuted(txn, sparkSession)) {
+          sendDriverMetrics(sparkSession, metrics)
+          return Seq.empty
+        }
+
         val deleteActions = performDelete(sparkSession, deltaLog, txn)
         if (deleteActions.nonEmpty) {
           txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
@@ -277,10 +281,7 @@ case class DeleteCommand(
     numPartitionsRemovedFrom.foreach(metrics("numPartitionsRemovedFrom").set)
     numCopiedRows.foreach(metrics("numCopiedRows").set)
     txn.registerSQLMetrics(sparkSession, metrics)
-    // This is needed to make the SQL metrics visible in the Spark UI
-    val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-    SQLMetrics.postDriverMetricUpdates(
-      sparkSession.sparkContext, executionId, metrics.values.toSeq)
+    sendDriverMetrics(sparkSession, metrics)
 
     recordDeltaEvent(
       deltaLog,
@@ -309,7 +310,11 @@ case class DeleteCommand(
         rewriteTimeMs)
     )
 
-    deleteActions
+    if (deleteActions.nonEmpty) {
+      createSetTransaction(sparkSession, deltaLog).toSeq ++ deleteActions
+    } else {
+      Seq.empty
+    }
   }
 
   /**
