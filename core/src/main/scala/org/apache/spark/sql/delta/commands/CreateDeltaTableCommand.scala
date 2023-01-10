@@ -55,6 +55,7 @@ case class CreateDeltaTableCommand(
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil)
   extends LeafRunnableCommand
+  with DeltaCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -124,15 +125,17 @@ case class CreateDeltaTableCommand(
         // we are creating a table as part of a RunnableCommand
         query.get match {
           case writer: WriteIntoDelta =>
-            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
-            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-            if (!isV1Writer) {
-              replaceMetadataIfNecessary(
-                txn, tableWithLocation, options, writer.data.schema.asNullable)
+            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
+              // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+              // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+              if (!isV1Writer) {
+                replaceMetadataIfNecessary(
+                  txn, tableWithLocation, options, writer.data.schema.asNullable)
+              }
+              val actions = writer.write(txn, sparkSession)
+              val op = getOperation(txn.metadata, isManagedTable, Some(options))
+                txn.commit(actions, op)
             }
-            val actions = writer.write(txn, sparkSession)
-            val op = getOperation(txn.metadata, isManagedTable, Some(options))
-              txn.commit(actions, op)
           case cmd: RunnableCommand =>
             result = cmd.run(sparkSession)
           case other =>
@@ -155,8 +158,10 @@ case class CreateDeltaTableCommand(
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data).write(txn, sparkSession)
 
-            val op = getOperation(txn.metadata, isManagedTable, Some(options))
-            txn.commit(actions, op)
+            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
+              val op = getOperation(txn.metadata, isManagedTable, Some(options))
+              txn.commit(actions, op)
+            }
         }
       } else {
         def createTransactionLogOrVerify(): Unit = {
