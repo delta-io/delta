@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeRef
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -317,6 +316,10 @@ case class MergeIntoCommand(
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>
+        if (hasBeenExecuted(deltaTxn, spark)) {
+          sendDriverMetrics(spark, metrics)
+          return Seq.empty
+        }
         if (target.schema.size != deltaTxn.metadata.schema.size) {
           throw DeltaErrors.schemaChangedSinceAnalysis(
             atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
@@ -341,6 +344,7 @@ case class MergeIntoCommand(
           }
         }
 
+        val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ deltaActions
         // Metrics should be recorded before commit (where they are written to delta logs).
         metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
         deltaTxn.registerSQLMetrics(spark, metrics)
@@ -356,7 +360,7 @@ case class MergeIntoCommand(
         }
 
         deltaTxn.commit(
-          deltaActions,
+          finalActions,
           DeltaOperations.Merge(
             Option(condition.sql),
             matchedClauses.map(DeltaOperations.MergePredicate(_)),
@@ -371,10 +375,7 @@ case class MergeIntoCommand(
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
-    // This is needed to make the SQL metrics visible in the Spark UI. Also this needs
-    // to be outside the recordMergeOperation because this method will update some metric.
-    val executionId = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-    SQLMetrics.postDriverMetricUpdates(spark.sparkContext, executionId, metrics.values.toSeq)
+    sendDriverMetrics(spark, metrics)
     Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
             metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
             metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
