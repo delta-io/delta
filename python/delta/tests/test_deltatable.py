@@ -1031,6 +1031,10 @@ class DeltaTableTests(DeltaTestCase):
             .withColumn("p", floor(col("value") % 10)) \
             .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -1039,12 +1043,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        self.assertTrue(metrics.numFilesAdded == 10)
-        self.assertTrue(metrics.numFilesRemoved == 37)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 37)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 10)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        # for each partition. Ther are 10 partitions in the table, so expect 10 final files
+        numDataFilesPostZOrder = 10
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(10, metrics.zOrderStats.numOutputCubes)  # one for each partition
 
         # negative test: Z-Order on partition column
         def optimize() -> None:
@@ -1063,6 +1072,10 @@ class DeltaTableTests(DeltaTestCase):
 
         df.format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version in partition p = 2
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .filter("p=2").select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -1071,15 +1084,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        expectedFilesRemoved = 4
-        expectedFilesConsidered = 4
-        # assertions (partition 'p = 2' has four files)
-        self.assertTrue(metrics.numFilesAdded == 1)
-        self.assertTrue(metrics.numFilesRemoved == expectedFilesRemoved)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == expectedFilesConsidered)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        numDataFilesPostZOrder = 1
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        # expected to consider all input files for Z-Order
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
