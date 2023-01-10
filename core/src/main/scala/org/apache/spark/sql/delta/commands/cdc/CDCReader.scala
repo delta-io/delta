@@ -353,7 +353,7 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param changes - changes is an iterator of all FileActions for a particular commit version.
    * @param spark - SparkSession
    * @param isStreaming - indicates whether the DataFrame returned is a streaming DataFrame
-   * @param ignoreAddCDCFileActions - ignores checks related to CDC being disabled in any of the
+   * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
    *         versions and computes CDC entirely from AddFiles/RemoveFiles (ignoring
    *         AddCDCFile actions)
    * @return CDCInfo which contains the DataFrame of the changes as well as the statistics
@@ -366,7 +366,7 @@ trait CDCReaderImpl extends DeltaLogging {
       changes: Iterator[(Long, Seq[Action])],
       spark: SparkSession,
       isStreaming: Boolean = false,
-      ignoreAddCDCFileActions: Boolean = false): CDCVersionDiffInfo = {
+      useCoarseGrainedCDC: Boolean = false): CDCVersionDiffInfo = {
     val deltaLog = readSchemaSnapshot.deltaLog
 
     if (end < start) {
@@ -382,7 +382,7 @@ trait CDCReaderImpl extends DeltaLogging {
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!ignoreAddCDCFileActions && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
+    if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -439,7 +439,7 @@ trait CDCReaderImpl extends DeltaLogging {
           case _ => false
         }
 
-        if (cdcDisabled && !ignoreAddCDCFileActions) {
+        if (cdcDisabled && !useCoarseGrainedCDC) {
           throw DeltaErrors.changeDataNotRecordedException(v, start, end)
         }
 
@@ -486,7 +486,7 @@ trait CDCReaderImpl extends DeltaLogging {
 
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
-        if (cdcActions.nonEmpty && !ignoreAddCDCFileActions) {
+        if (cdcActions.nonEmpty && !useCoarseGrainedCDC) {
           changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq))
         } else {
           val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
@@ -619,7 +619,7 @@ trait CDCReaderImpl extends DeltaLogging {
       end: Long,
       spark: SparkSession,
       readSchemaSnapshot: Option[Snapshot] = None,
-      ignoreAddCDCFileActions: Boolean = false): DataFrame = {
+      useCoarseGrainedCDC: Boolean = false): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
       version <= end
@@ -631,7 +631,7 @@ trait CDCReaderImpl extends DeltaLogging {
       changesWithinRange,
       spark,
       isStreaming = false,
-      ignoreAddCDCFileActions)
+      useCoarseGrainedCDC)
       .fileChangeDf
   }
 
