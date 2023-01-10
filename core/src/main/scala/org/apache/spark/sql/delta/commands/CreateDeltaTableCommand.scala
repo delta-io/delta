@@ -55,6 +55,7 @@ case class CreateDeltaTableCommand(
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil)
   extends LeafRunnableCommand
+  with DeltaCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -142,7 +143,7 @@ case class CreateDeltaTableCommand(
         // we are creating a table as part of a RunnableCommand
         query.get match {
           case deltaWriter: WriteIntoDelta =>
-              if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+              if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
                 val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
                 txn.commit(actions, op)
               }
@@ -159,7 +160,7 @@ case class CreateDeltaTableCommand(
               partitionColumns = table.partitionColumnNames,
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data)
-            if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
               val (actions, op) = doDeltaWrite(deltaWriter, other.schema.asNullable)
               txn.commit(actions, op)
             }
