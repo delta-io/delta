@@ -1016,6 +1016,17 @@ trait DeltaSQLConfBase {
         " optimize queries that can be run purely on metadata.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_SKIP_RECORDING_EMPTY_COMMITS =
+    buildConf("skipRecordingEmptyCommits")
+      .internal()
+      .doc(
+        """
+          | Whether to skip recording an empty commit in the Delta Log. This only works when table
+          | is using SnapshotIsolation or Serializable Isolation Mode.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -394,7 +394,7 @@ case class MergeIntoCommand(
           }
         }
 
-        deltaTxn.commit(
+        deltaTxn.commitIfNeeded(
           deltaActions,
           DeltaOperations.Merge(
             Option(condition.sql),

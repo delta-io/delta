@@ -225,6 +225,7 @@ trait MergeIntoMetricsBase
   ): Unit = {
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> testConfig.cdfEnabled.toString
     ) {
       withTempDir { tempDir =>

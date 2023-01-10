@@ -113,9 +113,7 @@ case class DeleteCommand(
       deltaLog.withNewTransaction { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
         val deleteActions = performDelete(sparkSession, deltaLog, txn)
-        if (deleteActions.nonEmpty) {
-          txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
-        }
+        txn.commitIfNeeded(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.

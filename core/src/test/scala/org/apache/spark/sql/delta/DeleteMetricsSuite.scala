@@ -107,6 +107,7 @@ class DeleteMetricsSuite extends QueryTest
     var operationMetrics: Map[String, Long] = null
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey ->
         testConfig.cdfEnabled.toString) {
       withTable(tableName) {
@@ -241,13 +242,11 @@ class DeleteMetricsSuite extends QueryTest
         where = where,
         expectedNumAffectedRows = 0,
         expectedOperationMetrics = Map(
-          "numCopiedRows" -> -1,
-          "numDeletedRows" -> -1,
-          "numOutputRows" -> 0,
-          "numFiles" -> 0,
-          "numAddedFiles" -> -1,
-          "numRemovedFiles" -> -1,
-          "numAddedChangeFiles" -> -1,
+          "numCopiedRows" -> 0,
+          "numDeletedRows" -> 0,
+          "numAddedFiles" -> 0,
+          "numRemovedFiles" -> 0,
+          "numAddedChangeFiles" -> 0,
           "scanTimeMs" -> -1,
           "rewriteTimeMs" -> -1,
           "executionTimeMs" -> -1
@@ -255,16 +254,7 @@ class DeleteMetricsSuite extends QueryTest
         testConfig = testConfig
       )
 
-      // TODO: for some reason, when the table is not partitioned, the operation metrics is missing
-      //       fields `numFiles` and `numOutputRows`
-      var shouldFail = !testConfig.partitioned
-      if (shouldFail) {
-        assertThrows[TestFailedException] {
-          executeTest
-        }
-      } else {
-        executeTest
-      }
+      executeTest
     }
   }
 
@@ -294,13 +284,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "1 != 1",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -315,13 +303,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "id < 0 or id > 100",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -336,13 +322,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "id / 200 > 1 ",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1

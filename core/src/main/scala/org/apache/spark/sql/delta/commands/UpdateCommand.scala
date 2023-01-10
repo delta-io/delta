@@ -186,41 +186,39 @@ case class UpdateCommand(
       deleteActions ++ newActions
     }
 
-    if (totalActions.nonEmpty) {
-      metrics("numAddedFiles").set(numRewrittenFiles)
-      metrics("numAddedBytes").set(numAddedBytes)
-      metrics("numAddedChangeFiles").set(numAddedChangeFiles)
-      metrics("changeFileBytes").set(changeFileBytes)
-      metrics("numRemovedFiles").set(numTouchedFiles)
-      metrics("numRemovedBytes").set(numRemovedBytes)
-      metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
-      metrics("scanTimeMs").set(scanTimeMs)
-      metrics("rewriteTimeMs").set(rewriteTimeMs)
-      // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
-      // the BasicWriteStatsTracker. This is for case 2 where the update condition contains only
-      // metadata predicates and so the entire partition is re-written.
-      val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
-      if (metrics("numUpdatedRows").value == 0 && outputRows != 0 &&
-        metrics("numCopiedRows").value == 0) {
-        // We know that numTouchedRows = numCopiedRows + numUpdatedRows.
-        // Since an entire partition was re-written, no rows were copied.
-        // So numTouchedRows == numUpdateRows
-        metrics("numUpdatedRows").set(metrics("numTouchedRows").value)
-      } else {
-        // This is for case 3 where the update condition contains both metadata and data predicates
-        // so relevant files will have some rows updated and some rows copied. We don't need to
-        // consider case 1 here, where no files match the update condition, as we know that
-        // `totalActions` is empty.
-        metrics("numCopiedRows").set(
-          metrics("numTouchedRows").value - metrics("numUpdatedRows").value)
-      }
-      txn.registerSQLMetrics(sparkSession, metrics)
-      txn.commit(totalActions, DeltaOperations.Update(condition.map(_.toString)))
-      // This is needed to make the SQL metrics visible in the Spark UI
-      val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-      SQLMetrics.postDriverMetricUpdates(
-        sparkSession.sparkContext, executionId, metrics.values.toSeq)
+    metrics("numAddedFiles").set(numRewrittenFiles)
+    metrics("numAddedBytes").set(numAddedBytes)
+    metrics("numAddedChangeFiles").set(numAddedChangeFiles)
+    metrics("changeFileBytes").set(changeFileBytes)
+    metrics("numRemovedFiles").set(numTouchedFiles)
+    metrics("numRemovedBytes").set(numRemovedBytes)
+    metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
+    metrics("scanTimeMs").set(scanTimeMs)
+    metrics("rewriteTimeMs").set(rewriteTimeMs)
+    // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
+    // the BasicWriteStatsTracker. This is for case 2 where the update condition contains only
+    // metadata predicates and so the entire partition is re-written.
+    val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
+    if (metrics("numUpdatedRows").value == 0 && outputRows != 0 &&
+      metrics("numCopiedRows").value == 0) {
+      // We know that numTouchedRows = numCopiedRows + numUpdatedRows.
+      // Since an entire partition was re-written, no rows were copied.
+      // So numTouchedRows == numUpdateRows
+      metrics("numUpdatedRows").set(metrics("numTouchedRows").value)
+    } else {
+      // This is for case 3 where the update condition contains both metadata and data predicates
+      // so relevant files will have some rows updated and some rows copied. We don't need to
+      // consider case 1 here, where no files match the update condition, as we know that
+      // `totalActions` is empty.
+      metrics("numCopiedRows").set(
+        metrics("numTouchedRows").value - metrics("numUpdatedRows").value)
     }
+    txn.registerSQLMetrics(sparkSession, metrics)
+    txn.commitIfNeeded(totalActions, DeltaOperations.Update(condition.map(_.toString)))
+    // This is needed to make the SQL metrics visible in the Spark UI
+    val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(
+      sparkSession.sparkContext, executionId, metrics.values.toSeq)
 
     recordDeltaEvent(
       deltaLog,
