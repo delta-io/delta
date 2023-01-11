@@ -168,12 +168,50 @@ object Protocol {
   }
 
   /**
-   * Given the Delta table metadata, returns the minimum required table protocol that satisfies
-   * all active features in the metadata plus protocol-related configs in table properties or
-   * session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
+   * Picks the protocol version for a new table given the Delta table metadata. The result
+   * satisfies all active features in the metadata and protocol-related configs in table
+   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
    * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
    */
-  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+  def forNewTable(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+    val (readerVersion, writerVersion, enabledFeatures) = minProtocolComponentsForNewTable(
+        spark, metadataOpt)
+    Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
+  }
+
+  /**
+   * Extracts all table features that are enabled by the given metadata.
+   */
+  def extractAutomaticallyEnabledFeatures(
+      spark: SparkSession, metadata: Metadata): Set[TableFeature] = {
+    val enabledFeatures = mutable.Set[TableFeature]()
+    TableFeature.allSupportedFeaturesMap.values.foreach {
+      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
+        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
+          enabledFeatures += feature
+        }
+      case _ => () // Do nothing. We only care about features that can be activated in metadata.
+    }
+
+    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
+      throw DeltaErrors.identityColumnNotSupported()
+    }
+    enabledFeatures.toSet
+  }
+
+  /**
+   * Given the Delta table metadata, returns the minimum required reader and writer version that
+   * satisfies all enabled features in the metadata and protocol-related configs in table
+   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
+   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   *
+   * This function returns the protocol versions and features individually instead of a
+   * [[Protocol]], so the caller can identify the features that caused the protocol version. For
+   * example, if the return values are (2, 5, columnMapping), the caller can safely ignore all
+   * other features required by the protocol with a reader and writer version of 2 and 5.
+   */
+  def minProtocolComponentsForNewTable(
+      spark: SparkSession, metadataOpt: Option[Metadata]): (Int, Int, Set[TableFeature]) = {
     val sessionConf = spark.sessionState.conf
     val tableConf = metadataOpt.map(_.configuration).getOrElse(Map.empty[String, String])
 
@@ -204,7 +242,7 @@ object Protocol {
       allEnabledFeatures.map(_.minProtocolVersion).toSeq: _*)
 
     // If the protocol version is provided in table properties, they will take priority over
-    // versions in `minProtocolFromTablePropAndSession`.
+    // versions in `minProtocolFromFeatures`.
     val readerVersionFromTableConfOpt = tableConf
       .get(MIN_READER_VERSION_PROP)
       .map(getVersion(MIN_READER_VERSION_PROP, _))
@@ -215,7 +253,7 @@ object Protocol {
     // Decide the final protocol version:
     // 1. Get the version defined as properties: table property takes precedence over
     //   session defaults
-    // 2. Get the max of these three:
+    // 2. Get the max of these two:
     //   a. version defined as properties
     //   b. version required by manually enabled features and metadata features
     val finalReaderVersion = {
@@ -231,38 +269,7 @@ object Protocol {
         .max(minProtocolFromFeatures.minWriterVersion) // 2b
     }
 
-    Protocol(finalReaderVersion, finalWriterVersion)
-      .withFeatures(allEnabledFeatures)
-  }
-
-  /**
-   * Picks the protocol version for a new table given potential feature usage. The result
-   * satisfies all active features in the metadata and protocol-related configs in table
-   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
-   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
-   */
-  def forNewTable(spark: SparkSession, metadata: Metadata): Protocol = {
-    Protocol(spark, Some(metadata))
-  }
-
-  /**
-   * Extracts all table features that are enabled by the given metadata.
-   */
-  private def extractAutomaticallyEnabledFeatures(
-      spark: SparkSession, metadata: Metadata): Set[TableFeature] = {
-    val enabledFeatures = mutable.Set[TableFeature]()
-    TableFeature.allSupportedFeaturesMap.values.foreach {
-      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
-        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-          enabledFeatures += feature
-        }
-      case _ => () // Do nothing. We only care about features that can be activated in metadata.
-    }
-
-    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-      throw DeltaErrors.identityColumnNotSupported()
-    }
-    enabledFeatures.toSet
+    (finalReaderVersion, finalWriterVersion, allEnabledFeatures)
   }
 
   /**
@@ -278,7 +285,7 @@ object Protocol {
    * defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]], [[MIN_WRITER_VERSION_PROP]],
    * [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
    */
-  def minProtocolVersionsFromAutomaticallyEnabledFeatures(
+  def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession, metadata: Metadata): (Int, Int, Set[TableFeature]) = {
     val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     var (readerVersion, writerVersion) = (0, 0)
@@ -318,7 +325,7 @@ object Protocol {
       "Should not have " +
         s"table features (starts with '$FEATURE_PROP_PREFIX') as part of table properties")
     val (readerVersion, writerVersion, enabledFeatures) =
-      minProtocolVersionsFromAutomaticallyEnabledFeatures(spark, metadata)
+      minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
 
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists

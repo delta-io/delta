@@ -384,6 +384,19 @@ trait CloneIcebergSuiteBase extends QueryTest
         spark.sql(s"SELECT * FROM $table"))
     }
   }
+
+  testIceberg("Enables column mapping table feature") { (mode, source) =>
+    withTable(table, cloneTable) {
+      spark.sql(
+        s"""CREATE TABLE $table (id bigint, data string)
+           |USING iceberg PARTITIONED BY (data)""".stripMargin)
+
+      spark.sql(s"CREATE TABLE $cloneTable $mode CLONE $source")
+      val log = DeltaLog.forTable(spark, TableIdentifier(cloneTable))
+      val protocol = log.update().protocol
+      assert(protocol.isFeatureEnabled(ColumnMappingTableFeature))
+    }
+  }
 }
 
 class CloneIcebergSuite extends CloneIcebergSuiteBase

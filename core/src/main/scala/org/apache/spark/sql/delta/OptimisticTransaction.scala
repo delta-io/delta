@@ -398,7 +398,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (isCreatingNewTable) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
-      newProtocol = Some(Protocol.forNewTable(spark, latestMetadata))
+      newProtocol = Some(Protocol.forNewTable(spark, Some(latestMetadata)))
     } else if (latestMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
       latestMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
       // If the request contains protocol bump for an existing table, we must apply this change to

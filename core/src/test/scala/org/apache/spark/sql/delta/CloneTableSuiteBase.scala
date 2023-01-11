@@ -667,7 +667,7 @@ trait CloneTableSuiteBase extends QueryTest
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
     // Change protocol versions of (read, write) = (2, 3). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
-    val defaultNewTableProtocol = Protocol(spark, metadataOpt = None)
+    val defaultNewTableProtocol = Protocol.forNewTable(spark, metadataOpt = None)
     val sourceProtocol = Protocol(2, 3)
     // Make sure this is actually an upgrade. Downgrades are not supported, and if it's the same
     // version, we aren't testing anything there.

@@ -276,6 +276,14 @@ object TableFeatureProtocolUtils {
   /** Min reader version that supports writer features. */
   val TABLE_FEATURES_MIN_WRITER_VERSION = 7
 
+  /** Get the table property config key for the `feature`. */
+  def propertyKey(feature: TableFeature): String =
+    s"$FEATURE_PROP_PREFIX${feature.name}"
+
+  /** Get the session default config key for the `feature`. */
+  def defaultPropertyKey(feature: TableFeature): String =
+    s"$DEFAULT_FEATURE_PROP_PREFIX${feature.name}"
+
   /**
    * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
    * features into its `readerFeatures` field.
