@@ -715,15 +715,12 @@ class DeltaMergeBuilder(object):
 
     - Constraints in the ``whenMatched`` clauses:
 
-      - There can be at most one ``update`` action and one ``delete`` action in `whenMatched`
-        clauses.
+      - The condition in a ``whenMatched`` clause is optional. However, if there are multiple
+        ``whenMatched`` clauses, then only the last one may omit the condition.
 
-      - Each ``whenMatched`` clause can have an optional condition. However, if there are two
-        ``whenMatched`` clauses, then the first one must have a condition.
-
-      - When there are two ``whenMatched`` clauses and there are conditions (or the lack of)
-        such that a row matches both clauses, then the first clause/action is executed.
-        In other words, the order of the ``whenMatched`` clauses matters.
+      - When there are more than one ``whenMatched`` clauses and there are conditions (or the lack
+        of) such that a row satisfies multiple clauses, then the action for the first clause
+        satisfied is executed. In other words, the order of the ``whenMatched`` clauses matters.
 
       - If none of the ``whenMatched`` clauses match a source-target row pair that satisfy
         the merge condition, then the target rows will not be updated or deleted.
@@ -740,10 +737,15 @@ class DeltaMergeBuilder(object):
 
     - Constraints in the ``whenNotMatched`` clauses:
 
-      - This clause can have only an ``insert`` action, which can have an optional condition.
+      - The condition in a ``whenNotMatched`` clause is optional. However, if there are
+        multiple ``whenNotMatched`` clauses, then only the last one may omit the condition.
 
-      - If ``whenNotMatchedInsert`` is not present or if it is present but the non-matching
-        source row does not satisfy the condition, then the source row is not inserted.
+      - When there are more than one ``whenNotMatched`` clauses and there are conditions (or the
+        lack of) such that a row satisfies multiple clauses, then the action for the first clause
+        satisfied is executed. In other words, the order of the ``whenNotMatched`` clauses matters.
+
+      - If no ``whenNotMatched`` clause is present or if it is present but the non-matching source
+        row does not satisfy the condition, then the source row is not inserted.
 
       - If you want to insert all the columns of the target Delta table with the
         corresponding column of the source DataFrame, then you can use
@@ -757,16 +759,17 @@ class DeltaMergeBuilder(object):
 
     - Constraints in the ``whenNotMatchedBySource`` clauses:
 
-      - Each ``whenNotMatchedBySource`` clause can have an optional condition. However, only the
-        last ``whenNotMatchedBySource`` clause may omit the condition.
+      - The condition in a ``whenNotMatchedBySource`` clause is optional. However, if there are
+        multiple ``whenNotMatchedBySource`` clauses, then only the last ``whenNotMatchedBySource``
+        clause may omit the condition.
 
       - Conditions and update expressions  in ``whenNotMatchedBySource`` clauses may only refer to
         columns from the target Delta table.
 
       - When there are more than one ``whenNotMatchedBySource`` clauses and there are conditions (or
-        the lack of) such that a row satisfies multiple clauses, then the first clause/action
-        satisfied is executed. In other words, the order of the ``whenNotMatchedBySource`` clauses
-        matters.
+        the lack of) such that a row satisfies multiple clauses, then the action for the first
+        clause satisfied is executed. In other words, the order of the ``whenNotMatchedBySource``
+        clauses matters.
 
       - If no ``whenNotMatchedBySource`` clause is present or if it is present but the
         non-matching target row does not satisfy any of the ``whenNotMatchedBySource`` clause

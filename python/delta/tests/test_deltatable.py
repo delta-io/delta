@@ -166,6 +166,64 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
+        # Multiple matched update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 0), ('c', 3), ('d', 4)]))
+
+        # Multiple matched delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Redundant matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "0"}) \
+            .whenMatchedUpdate(condition="key = 'b'", set={"value": "6"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 6), ('c', 3), ('d', 4)]))
+
+        # Interleaved matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .whenMatchedUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Multiple not matched insert clauses
+        reset_table()
+        dt.alias("t")\
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
+            .whenNotMatchedInsert(condition="s.key = 'e'",
+                                  values={"t.key": "s.key", "t.value": "5"}) \
+            .whenNotMatchedInsertAll() \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', -6)]))
+
+        # Redundant not matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "5"}) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "6"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "7"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "8"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', 7)]))
+
         # Multiple not matched by source update clauses
         reset_table()
         dt.merge(source, expr("key = k")) \
