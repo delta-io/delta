@@ -293,7 +293,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 trait VacuumCommandImpl extends DeltaCommand {
 
   private val supportedFsForLogging = Seq(
-    "wasbs", "wasbss", "abfs", "abfss", "adl", "gs", "file"
+    "wasbs", "wasbss", "abfs", "abfss", "adl", "gs", "file", "hdfs"
   )
 
   private def shouldLogVacuum(
@@ -365,8 +365,10 @@ trait VacuumCommandImpl extends DeltaCommand {
    *
    * @param deltaLog - DeltaLog of the table
    * @param spark - spark session
-   * @param filesDeleted - if the vacuum completed this will contain the number of files deleted
-   * @param dirCounts - if the vacuum completed this will contain the number of directories vacuumed
+   * @param filesDeleted - if the vacuum completed this will contain the number of files deleted.
+   *                       if the vacuum failed, this will be None.
+   * @param dirCounts - if the vacuum completed this will contain the number of directories
+   *                    vacuumed. if the vacuum failed, this will be None.
    */
   protected def logVacuumEnd(
       deltaLog: DeltaLog,

@@ -457,18 +457,10 @@ object DeltaOperations {
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
       defaultRetentionMillis: Long) extends Operation("VACUUM START") {
-    override val parameters: Map[String, Any] = if (specifiedRetentionMillis.isEmpty) {
-      Map(
-        "retentionCheckEnabled" -> retentionCheckEnabled,
-        "defaultRetentionMillis" -> defaultRetentionMillis
-      )
-    } else {
-      Map(
-        "retentionCheckEnabled" -> retentionCheckEnabled,
-        "specifiedRetentionMillis" -> specifiedRetentionMillis.get,
-        "defaultRetentionMillis" -> defaultRetentionMillis
-      )
-    }
+    override val parameters: Map[String, Any] = Map(
+      "retentionCheckEnabled" -> retentionCheckEnabled,
+      "defaultRetentionMillis" -> defaultRetentionMillis
+    ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
   }
