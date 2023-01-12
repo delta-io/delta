@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -771,6 +771,104 @@ trait DeltaVacuumSuiteBase extends QueryTest
   test("vacuum for cdc - delete tombstones") {
     testCDCVacuumForTombstones()
   }
+
+  private def getFromHistory(history: DataFrame, key: String, pos: Integer): Map[String, String] = {
+    val op = history.select(key).take(pos + 1)
+    if (pos == 0) {
+      op.head.getMap(0).asInstanceOf[Map[String, String]]
+    } else {
+      op.tail.head.getMap(0).asInstanceOf[Map[String, String]]
+    }
+  }
+
+  private def testEventLogging(
+      isDryRun: Boolean,
+      loggingEnabled: Boolean,
+      retentionHours: Long,
+      timeGapHours: Long): Unit = {
+
+    test(s"vacuum event logging dryRun=$isDryRun loggingEnabled=$loggingEnabled" +
+      s" retentionHours=$retentionHours timeGap=$timeGapHours") {
+      withSQLConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> loggingEnabled.toString) {
+
+        withEnvironment { (dir, clock) =>
+          spark.range(2).write.format("delta").save(dir.getAbsolutePath)
+          val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath, clock)
+          val expectedReturn = if (isDryRun) {
+            // dry run returns files that will be deleted
+            Seq(new Path(dir.getAbsolutePath, "file1.txt").toString)
+          } else {
+            Seq(dir.getAbsolutePath)
+          }
+
+          gcTest(deltaLog, clock)(
+            CreateFile("file1.txt", commitToActionLog = true),
+            CreateFile("file2.txt", commitToActionLog = true),
+            LogicallyDeleteFile("file1.txt"),
+            AdvanceClock(timeGapHours * 1000 * 60 * 60),
+            GC(dryRun = isDryRun, expectedReturn, Some(retentionHours))
+          )
+          val deltaTable = io.delta.tables.DeltaTable.forPath(deltaLog.dataPath.toString)
+          val history = deltaTable.history()
+          if (isDryRun || !loggingEnabled) {
+            // We do not record stats when logging is disabled or dryRun
+            assert(history.select("operation").head() == Row("DELETE"))
+          } else {
+            assert(history.select("operation").head() == Row("VACUUM END"))
+            assert(history.select("operation").collect()(1) == Row("VACUUM START"))
+
+            val operationParamsBegin = getFromHistory(history, "operationParameters", 1)
+            val operationParamsEnd = getFromHistory(history, "operationParameters", 0)
+            val operationMetricsBegin = getFromHistory(history, "operationMetrics", 1)
+            val operationMetricsEnd = getFromHistory(history, "operationMetrics", 0)
+
+            val filesDeleted = if (retentionHours > timeGapHours) { 0 } else { 1 }
+            assert(operationParamsBegin("retentionCheckEnabled") === "false")
+            assert(operationMetricsBegin("numFilesToDelete") === filesDeleted.toString)
+            assert(operationMetricsBegin("sizeOfDataToDelete") === (filesDeleted * 9).toString)
+            assert(
+              operationParamsBegin("specifiedRetentionMillis") ===
+                (retentionHours * 60 * 60 * 1000).toString)
+            assert(
+              operationParamsBegin("defaultRetentionMillis") ===
+                deltaLog.tombstoneRetentionMillis.toString)
+
+            assert(operationParamsEnd === Map("status" -> "COMPLETED"))
+            assert(operationMetricsEnd === Map("numDeletedFiles" -> filesDeleted.toString,
+              "numVacuumedDirectories" -> "1"))
+          }
+        }
+      }
+    }
+  }
+
+  testEventLogging(
+    isDryRun = false,
+    loggingEnabled = true,
+    retentionHours = 5,
+    timeGapHours = 10
+  )
+
+  testEventLogging(
+    isDryRun = true, // dry run will not record the vacuum
+    loggingEnabled = true,
+    retentionHours = 5,
+    timeGapHours = 10
+  )
+
+  testEventLogging(
+    isDryRun = false,
+    loggingEnabled = false,
+    retentionHours = 5,
+    timeGapHours = 0
+  )
+
+  testEventLogging(
+    isDryRun = false,
+    loggingEnabled = true,
+    retentionHours = 20, // vacuum will not delete any files
+    timeGapHours = 10
+  )
 }
 
 class DeltaVacuumSuite

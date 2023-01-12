@@ -379,6 +379,34 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
+  /**
+   * @param retentionCheckEnabled - whether retention check was enabled for this run of vacuum.
+   * @param specifiedRetentionMillis - specified retention interval
+   * @param defaultRetentionMillis - default retention period for the table
+   */
+  case class VacuumStart(
+      retentionCheckEnabled: Boolean,
+      specifiedRetentionMillis: Option[Long],
+      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+    override val parameters: Map[String, Any] = Map(
+      "retentionCheckEnabled" -> retentionCheckEnabled,
+      "defaultRetentionMillis" -> defaultRetentionMillis
+    ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
+  }
+
+  /**
+   * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
+   */
+  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+    override val parameters: Map[String, Any] = Map(
+      "status" -> status
+    )
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
+  }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
@@ -497,4 +525,15 @@ private[delta] object DeltaOperationMetrics {
     "removedFilesSize", // size in bytes of files removed by the restore
     "restoredFilesSize" // size in bytes of files added by the restore
   )
+
+  val VACUUM_START = Set(
+    "numFilesToDelete", // number of files that will be deleted by vacuum
+    "sizeOfDataToDelete" // total size in bytes of files that will be deleted by vacuum
+  )
+
+  val VACUUM_END = Set(
+    "numDeletedFiles", // number of files deleted by vacuum
+    "numVacuumedDirectories" // number of directories vacuumed
+  )
+
 }
