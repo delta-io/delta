@@ -1937,10 +1937,10 @@ trait DeltaErrorsBase
        |You can use one of the following commands.
        |
        |If your table is already on the required protocol version:
-       |ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+       |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
        |
        |If your table is not on the required protocol version and requires a protocol upgrade:
-       |ALTER TABLE <table_name> SET TBLPROPERTIES (
+       |ALTER TABLE table_name SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
        |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
        |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
