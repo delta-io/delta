@@ -631,7 +631,13 @@ private[delta] object DeltaOperationMetrics {
     "numSourceRows", // number of rows in the source dataframe
     "numTargetRowsInserted", // number of rows inserted into the target table.
     "numTargetRowsUpdated", // number of rows updated in the target table.
+    "numTargetRowsMatchedUpdated", // number of rows updated by a matched clause.
+    // number of rows updated by a not matched by source clause.
+    "numTargetRowsNotMatchedBySourceUpdated",
     "numTargetRowsDeleted", // number of rows deleted in the target table.
+    "numTargetRowsMatchedDeleted", // number of rows deleted by a matched clause.
+    // number of rows deleted by a not matched by source clause.
+    "numTargetRowsNotMatchedBySourceDeleted",
     "numTargetRowsCopied", // number of target rows copied
     "numTargetBytesAdded", // number of target bytes added
     "numTargetBytesRemoved", // number of target bytes removed

@@ -102,6 +102,22 @@ trait MergeIntoMetricsBase
   }
 
   /**
+   * Check invariants for row metrics of MERGE INTO command.
+   *
+   * @param metrics The merge operation metrics from the Delta history.
+   */
+  private def checkMergeOperationRowMetricsInvariants(metrics: Map[String, String]): Unit = {
+    assert(
+      metrics("numTargetRowsUpdated").toLong ===
+        metrics("numTargetRowsMatchedUpdated").toLong +
+        metrics("numTargetRowsNotMatchedBySourceUpdated").toLong)
+    assert(
+      metrics("numTargetRowsDeleted").toLong ===
+        metrics("numTargetRowsMatchedDeleted").toLong +
+        metrics("numTargetRowsNotMatchedBySourceDeleted").toLong)
+  }
+
+  /**
    * Check invariants for file metrics of MERGE INTO command.
    *
    * @param metrics The merge operation metrics from the Delta history.
@@ -283,6 +299,8 @@ trait MergeIntoMetricsBase
           operationMetrics,
           DeltaOperationMetrics.MERGE
         )
+        // Check row metrics invariants.
+        checkMergeOperationRowMetricsInvariants(operationMetrics)
         // Check file metrics invariants.
         checkMergeOperationFileMetricsInvariants(operationMetrics)
         // Check time metrics invariants.
@@ -541,6 +559,7 @@ trait MergeIntoMetricsBase
     val expectedOpMetrics = Map[String, Int](
       "numSourceRows" -> 100,
       "numTargetRowsDeleted" -> 50,
+      "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numOutputRows" -> 10,
       "numTargetRowsCopied" -> 10,
@@ -572,6 +591,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 10,
       "numTargetRowsCopied" -> 10,
       "numTargetRowsDeleted" -> 50,
+      "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 3
@@ -626,6 +646,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 0,
       "numTargetRowsCopied" -> 0,
       "numTargetRowsDeleted" -> 100,
+      "numTargetRowsMatchedDeleted" -> 100,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 0,
       "numTargetFilesRemoved" -> 5
@@ -655,6 +676,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 15,
       "numTargetRowsCopied" -> 15,
       "numTargetRowsDeleted" -> 25,
+      "numTargetRowsMatchedDeleted" -> 25,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 2
@@ -687,6 +709,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 15,
       "numTargetRowsCopied" -> 15,
       "numTargetRowsDeleted" -> 25,
+      "numTargetRowsMatchedDeleted" -> 25,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 2
@@ -721,6 +744,7 @@ trait MergeIntoMetricsBase
         "numOutputRows" -> 75,
         "numTargetRowsCopied" -> 75,
         "numTargetRowsDeleted" -> 25,
+        "numTargetRowsMatchedDeleted" -> 25,
         "numTargetRowsRemoved" -> -1,
         "numTargetFilesRemoved" -> 5
       )
@@ -775,6 +799,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 5,
       "numTargetRowsCopied" -> 5,
       "numTargetRowsDeleted" -> 55,
+      "numTargetRowsMatchedDeleted" -> 55,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 3
@@ -804,6 +829,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 10,
       "numTargetRowsCopied" -> 10,
       "numTargetRowsDeleted" -> 30,
+      "numTargetRowsMatchedDeleted" -> 30,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 2
@@ -910,6 +936,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 10,
       "numTargetRowsCopied" -> 10,
       "numTargetRowsDeleted" -> 50,
+      "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 3
@@ -939,6 +966,7 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 10,
       "numTargetRowsCopied" -> 10,
       "numTargetRowsDeleted" -> 50,
+      "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numTargetFilesAdded" -> 1,
       "numTargetFilesRemoved" -> 3
@@ -971,6 +999,7 @@ trait MergeIntoMetricsBase
       "numSourceRows" -> 100,
       "numOutputRows" -> 10,
       "numTargetRowsDeleted" -> 50,
+      "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numTargetRowsCopied" -> 10,
       "numTargetFilesAdded" -> 2,
@@ -1009,6 +1038,7 @@ trait MergeIntoMetricsBase
       "numSourceRows" -> 100,
       "numOutputRows" -> 60,
       "numTargetRowsUpdated" -> 50,
+      "numTargetRowsMatchedUpdated" -> 50,
       "numTargetRowsCopied" -> 10,
       "numTargetFilesRemoved" -> 3
     )
@@ -1036,6 +1066,7 @@ trait MergeIntoMetricsBase
       "numSourceRows" -> 100,
       "numOutputRows" -> 60,
       "numTargetRowsUpdated" -> 50,
+      "numTargetRowsMatchedUpdated" -> 50,
       "numTargetRowsCopied" -> 10,
       "numTargetFilesRemoved" -> 3
     )
@@ -1067,6 +1098,7 @@ trait MergeIntoMetricsBase
       "numSourceRows" -> 100,
       "numOutputRows" -> 60,
       "numTargetRowsUpdated" -> 50,
+      "numTargetRowsMatchedUpdated" -> 50,
       "numTargetRowsCopied" -> 10,
       "numTargetFilesRemoved" -> 3
     )
@@ -1103,6 +1135,37 @@ trait MergeIntoMetricsBase
     )
   }}
 
+  /////////////////////////////////////////////
+  // not matched by source only merge tests  //
+  /////////////////////////////////////////////
+  testMergeMetrics("not matched by source update only") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenNotMatchedBySource("t.id < 20")
+        .updateExpr(Map("t.extraCol" -> "t.extraCol + 1"))
+        .execute()
+    }
+    val expectedOpMetrics = Map[String, Int](
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 100,
+      "numTargetRowsUpdated" -> 20,
+      "numTargetRowsNotMatchedBySourceUpdated" -> 20,
+      "numTargetRowsCopied" -> 80,
+      "numTargetFilesRemoved" -> 5
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+   }}
+
   /////////////////////////////
   //    full merge tests     //
   /////////////////////////////
@@ -1124,8 +1187,44 @@ trait MergeIntoMetricsBase
       "numOutputRows" -> 110,
       "numTargetRowsInserted" -> 50,
       "numTargetRowsUpdated" -> 50,
+      "numTargetRowsMatchedUpdated" -> 50,
       "numTargetRowsCopied" -> 10,
       "numTargetFilesRemoved" -> 3
+    )
+    runMergeCmdAndTestMetrics(
+      targetDf = targetDf,
+      sourceDf = sourceDf,
+      mergeCmdFn = mergeCmdFn,
+      expectedOpMetrics = expectedOpMetrics,
+      testConfig = testConfig
+    )
+  }}
+
+  testMergeMetrics("replace target with source") { testConfig => {
+    val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+    val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+    val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+        .as("t")
+        .merge(sourceDf.as("s"), "s.id = t.id")
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
+        .whenNotMatchedBySource()
+        .delete()
+        .execute()
+    }
+    val expectedOpMetrics = Map(
+      "numSourceRows" -> 100,
+      "numOutputRows" -> 100,
+      "numTargetRowsInserted" -> 50,
+      "numTargetRowsUpdated" -> 50,
+      "numTargetRowsMatchedUpdated" -> 50,
+      "numTargetRowsDeleted" -> 50,
+      "numTargetRowsNotMatchedBySourceDeleted" -> 50,
+      "numTargetRowsCopied" -> 0,
+      "numTargetFilesRemoved" -> 5
     )
     runMergeCmdAndTestMetrics(
       targetDf = targetDf,
@@ -1149,16 +1248,24 @@ trait MergeIntoMetricsBase
         .delete()
         .whenNotMatched()
         .insertAll()
+        .whenNotMatchedBySource("t.id < 10")
+        .updateExpr(Map("t.extraCol" -> "t.extraCol + 1"))
+        .whenNotMatchedBySource("t.id >= 45")
+        .delete()
         .execute()
     }
     val expectedOpMetrics = Map(
       "numSourceRows" -> 100,
-      "numOutputRows" -> 85,
+      "numOutputRows" -> 130,
       "numTargetRowsInserted" -> 50,
-      "numTargetRowsUpdated" -> 5,
-      "numTargetRowsDeleted" -> 15,
-      "numTargetRowsCopied" -> 30,
-      "numTargetFilesRemoved" -> 5
+      "numTargetRowsUpdated" -> 15,
+      "numTargetRowsMatchedUpdated" -> 5,
+      "numTargetRowsNotMatchedBySourceUpdated" -> 10,
+      "numTargetRowsDeleted" -> 20,
+      "numTargetRowsMatchedDeleted" -> 15,
+      "numTargetRowsNotMatchedBySourceDeleted" -> 5,
+      "numTargetRowsCopied" -> 65,
+      "numTargetFilesRemoved" -> 10
     )
     runMergeCmdAndTestMetrics(
       targetDf = targetDf,
@@ -1168,6 +1275,42 @@ trait MergeIntoMetricsBase
       testConfig = testConfig
     )
   }}
+
+  testMergeMetrics(
+    "update/delete/insert with some unsatisfied conditions") {
+    testConfig => {
+      val targetDf = spark.range(start = 0, end = 100, step = 1, numPartitions = 5).toDF()
+      val sourceDf = spark.range(start = 50, end = 150, step = 1, numPartitions = 10).toDF()
+      val mergeCmdFn: MergeCmd = (targetTable, sourceDf) => {
+      targetTable
+          .as("t")
+          .merge(sourceDf.as("s"), "s.id = t.id")
+          .whenMatched("s.id + t.id > 1000")
+          .delete()
+          .whenNotMatchedBySource("t.id > 1000")
+          .delete()
+          .whenNotMatchedBySource("t.id < 1000")
+          .updateExpr(Map("t.extraCol" -> "t.extraCol + 1"))
+          .whenNotMatched("s.id > 1000")
+          .insertAll()
+          .execute()
+      }
+      val expectedOpMetrics = Map[String, Int](
+        "numSourceRows" -> 100,
+        "numOutputRows" -> 100,
+        "numTargetRowsUpdated" -> 50,
+        "numTargetRowsNotMatchedBySourceUpdated" -> 50,
+        "numTargetRowsCopied" -> 50,
+        "numTargetFilesRemoved" -> 5
+      )
+      runMergeCmdAndTestMetrics(
+        targetDf = targetDf,
+        sourceDf = sourceDf,
+        mergeCmdFn = mergeCmdFn,
+        expectedOpMetrics = expectedOpMetrics,
+        testConfig = testConfig
+      )
+   }}
 }
 
 object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
@@ -1181,7 +1324,11 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
     "numSourceRows",
     "numTargetRowsInserted",
     "numTargetRowsUpdated",
+    "numTargetRowsMatchedUpdated",
+    "numTargetRowsNotMatchedBySourceUpdated",
     "numTargetRowsDeleted",
+    "numTargetRowsMatchedDeleted",
+    "numTargetRowsNotMatchedBySourceDeleted",
     "numTargetRowsCopied",
     "numOutputRows"
   )
