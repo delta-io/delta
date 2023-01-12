@@ -242,9 +242,13 @@ abstract class CloneTableBase(
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.
     // We need to look at the metadata of the transaction to see the entire set of table properties
-    // for the post-transaction state and decide a version based on that
+    // for the post-transaction state and decide a version based on that. We also need to re-add
+    // the table property overrides as table features set by it won't be in the transaction
+    // metadata anymore.
+    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
+    val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
-      minProtocolComponentsForNewTable(spark, Some(txn.metadata))
+      minProtocolComponentsForNewTable(spark, Some(metadataWithOverrides))
 
     // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
     // time travel.

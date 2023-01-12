@@ -313,12 +313,12 @@ class DeltaTableFeatureSuite
     }
   }
 
-  for(commandName <- Seq("ALTER")) {
+  for(commandName <- Seq("ALTER", "CLONE")) {
     test("Enabling table feature on already existing table enables all table features " +
       s"up to the table's protocol version during $commandName TABLE") {
       withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
         withTable("tbl") {
-          spark.range(10).write.format("delta").saveAsTable("tbl")
+          spark.range(0).write.format("delta").saveAsTable("tbl")
           val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
           val protocol = log.update().protocol
           assert(protocol.minReaderVersion === 2)

@@ -22,13 +22,14 @@ import java.net.URI
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, deltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -874,6 +875,29 @@ trait CloneTableSuiteBase extends QueryTest
       }
   }
 
+  for(targetExists <- BOOLEAN_DOMAIN)
+  testAllClones(s"CLONE respects table features set by table property override, " +
+    s"targetExists=$targetExists", TAG_MODIFY_PROTOCOL) {
+    (source, target, isShallow) =>
+      spark.range(10).write.format("delta").save(source)
+
+      if (targetExists) {
+        spark.range(0).write.format("delta").save(target)
+      }
+
+      val tblPropertyOverrides =
+        Seq(
+          s"delta.feature.${TestWriterFeature.name}" -> "enabled",
+          "delta.minWriterVersion" -> s"$TABLE_FEATURES_MIN_WRITER_VERSION").toMap
+      cloneTable(
+        source,
+        target,
+        isReplace = true,
+        tableProperties = tblPropertyOverrides)
+
+      val targetLog = DeltaLog.forTable(spark, target)
+      assert(targetLog.update().protocol.isFeatureEnabled(TestWriterFeature))
+  }
 }
 
 
