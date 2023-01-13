@@ -1002,12 +1002,11 @@ trait DeltaSQLConfBase {
 
   val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
     buildConf("restore.protocolDowngradeAllowed")
-      .doc("Whether a table may be restored to a lower protocol version than the current." +
-        " This setting also affects CLONE TABLE." +
-        " Note that allowing protocol downgrades may make the history unreadable. It is strongly" +
-        " recommended to wipe the table history with VACUUM RETAIN 0 HOURS after running a" +
-        " RESTORE or CLONE with this setting enabled. This command should also be run without any" +
-        " concurrent queries accessing the table until the history wipe is complete.")
+      .doc("""
+        | Whether a table RESTORE or CLONE operation may downgrade the protocol of the table.
+        | Note that depending on the protocol and the enabled table features, downgrading the
+        | protocol may break snapshot reconstruction and make the table unreadable. Protocol
+        | downgrades may also make the history unreadable.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 
@@ -1036,6 +1035,17 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
+  buildConf("replace.protocolDowngradeAllowed")
+    .internal()
+    .doc("""
+       | Whether a REPLACE operation may downgrade the protocol of the table.
+       | Note that depending on the protocol and the enabled table features, downgrading the
+       | protocol may break snapshot reconstruction and make the table unreadable. Protocol
+       | downgrades may also make the history unreadable.""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

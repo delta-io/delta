@@ -582,8 +582,17 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
           "Should've picked up the protocol from the configuration")
 
-        // Replace with the old writer again
+        // Cannot downgrade without special flag.
         withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+          assertThrows[ProtocolDowngradeException] {
+            sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
+          }
+        }
+
+        // Replace with the old writer again
+        withSQLConf(
+            DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
+            DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> "true") {
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
           assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
             "Should've created a new protocol")
@@ -661,13 +670,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
         assert(deltaLog.snapshot.protocol.minWriterVersion === 3)
-        assertPropertiesAndShowTblProperties(deltaLog)
-
-        // Can downgrade using REPLACE
-        sql(s"REPLACE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
-          "TBLPROPERTIES (delta.MINWRITERVERSION=1)")
-        assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 1)
         assertPropertiesAndShowTblProperties(deltaLog)
       }
     }
@@ -1099,18 +1101,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion=1, delta.appendOnly=true)")
 
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
-        assertPropertiesAndShowTblProperties(deltaLog)
-
-        sql(s"REPLACE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
-          "TBLPROPERTIES (delta.minWriterVersion=1)")
-
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 1)
-        assertPropertiesAndShowTblProperties(deltaLog)
-
-        // Works with REPLACE too
-        sql(s"REPLACE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
-          "TBLPROPERTIES (delta.minWriterVersion=1, delta.appendOnly=true)")
         assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
         assertPropertiesAndShowTblProperties(deltaLog)
       }

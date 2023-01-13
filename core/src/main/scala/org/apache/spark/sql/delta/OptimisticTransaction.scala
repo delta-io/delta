@@ -265,6 +265,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
+  // Whether this is a transaction that can select any new protocol, potentially downgrading
+  // the existing protocol of the table during REPLACE table operations.
+  private def canAssignAnyNewProtocol: Boolean =
+    readVersion == -1 ||
+      (isCreatingNewTable && spark.conf.get(DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED))
+
   /**
    * Tracks the start time since we started trying to write a particular commit.
    * Used for logging duration of retried transactions.
@@ -395,7 +401,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
 
-    if (isCreatingNewTable) {
+    if (canAssignAnyNewProtocol) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
       newProtocol = Some(Protocol.forNewTable(spark, Some(latestMetadata)))
@@ -1145,7 +1151,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case newVersion: Protocol =>
         require(newVersion.minReaderVersion > 0, "The reader version needs to be greater than 0")
         require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
-        if (!isCreatingNewTable) {
+        if (!canAssignAnyNewProtocol) {
           val currentVersion = snapshot.protocol
           if (!currentVersion.canUpgradeTo(newVersion)) {
             throw new ProtocolDowngradeException(currentVersion, newVersion)

@@ -313,7 +313,7 @@ class DeltaTableFeatureSuite
     }
   }
 
-  for(commandName <- Seq("ALTER", "CLONE")) {
+  for(commandName <- Seq("ALTER", "CLONE", "REPLACE", "CREATE OR REPLACE")) {
     test("Enabling table feature on already existing table enables all table features " +
       s"up to the table's protocol version during $commandName TABLE") {
       withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
