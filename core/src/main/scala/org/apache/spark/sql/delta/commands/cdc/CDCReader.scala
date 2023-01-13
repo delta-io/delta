@@ -391,29 +391,56 @@ trait CDCReaderImpl extends DeltaLogging {
       spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES)
 
-    /**
-     * Check any metadata (which may contain schema change) against a snapshot pointing to data
-     * schema of the querying range, it can be either:
-     * 1. The start version snapshot - this is used to detect if a metadata action actually contains
-     *    a read-incompatible schema CHANGE.
-     * 2. The read schema's snapshot - typically 1. could suffice, but we have corner cases in which
-     *    all schema changes are compatible but the read schema still diverges. So we need to run
-     *    another check against the read schema as well.
-     */
-    def checkBatchReadColumnMappingSchemaIncompatibility(
-        metadata: Metadata,
-        metadataVer: Long,
-        snapshotWithDataSchema: Snapshot,
-        isSchemaChange: Boolean): Unit = {
-      val shouldCheckToBlockBatchReadOnColumnMappingTable =
+    val shouldCheckSchemaToBlockBatchRead =
         !isStreaming && !forceEnableUnsafeBatchReadOnIncompatibleSchemaChanges
-
+    /**
+     * Check metadata (which may contain schema change)'s read compatibility with read schema.
+     */
+    def checkBatchCdfReadSchemaIncompatibility(
+        metadata: Metadata, metadataVer: Long, isSchemaChange: Boolean): Unit = {
       // We do not check for any incompatibility if the global "I don't care" flag is turned on
-      if (shouldCheckToBlockBatchReadOnColumnMappingTable) {
-        // If there's schema incompatibility ...
-        if (!DeltaColumnMapping.isMetadataSchemaReadCompatible(
-            metadataVer, metadata,
-            snapshotWithDataSchema.version, snapshotWithDataSchema.metadata)) {
+      if (shouldCheckSchemaToBlockBatchRead) {
+        // Column mapping incompatibilities
+        val compatible = {
+          // For column mapping schema change, the order matters because we don't want to treat
+          // an ADD COLUMN as an inverse DROP COLUMN.
+          if (metadataVer <= readSchemaSnapshot.version) {
+            DeltaColumnMapping.hasColumnMappingSchemaChange(
+              newMetadata = readSchemaSnapshot.metadata, oldMetadata = metadata)
+          } else {
+            DeltaColumnMapping.hasColumnMappingSchemaChange(
+              newMetadata = metadata, oldMetadata = readSchemaSnapshot.metadata)
+          }
+        } && {
+          // Other standard read incompatibilities
+          if (metadataVer <= readSchemaSnapshot.version) {
+            // If the metadata is before the read schema version, make sure:
+            // a) metadata schema is a part of the read schema, i.e. only ADD COLUMN can evolve
+            //    metadata schema into read schema
+            // b) data type for common fields remain the same
+            // c) metadata schema should not contain field that is nullable=true but the read schema
+            //    is nullable=false.
+            SchemaUtils.isReadCompatible(
+              existingSchema = metadata.schema,
+              readSchema = readSchemaSnapshot.schema,
+              forbidTightenNullability = true)
+          } else {
+            // If the metadata is POST the read schema version, which can happen due to time-travel
+            // or simply a divergence between analyzed version and the actual latest
+            // version during scan, we will make sure the other way around:
+            // a) the metadata must be a super set of the read schema, i.e. only ADD COLUMN can
+            //    evolve read schema into metadata schema
+            // b) data type for common fields remain the same
+            // c) read schema should not contain field that is nullable=false but the metadata
+            //    schema has nullable=true.
+            SchemaUtils.isReadCompatible(
+              existingSchema = readSchemaSnapshot.schema,
+              readSchema = metadata.schema,
+              forbidTightenNullability = false)
+          }
+        }
+
+        if (!compatible) {
           throw DeltaErrors.blockBatchCdfReadWithIncompatibleSchemaChange(
             start, end,
             // The consistent read schema
@@ -456,8 +483,7 @@ trait CDCReaderImpl extends DeltaLogging {
             // Verify with start snapshot to check for any read-incompatible changes
             // This also detects the corner case in that there's only one schema change between
             // start and end, which looks exactly like the end schema.
-            checkBatchReadColumnMappingSchemaIncompatibility(
-              metadata, v, startVersionSnapshot, isSchemaChange = true)
+            checkBatchCdfReadSchemaIncompatibility(metadata, v, isSchemaChange = true)
           }
         }
 
@@ -514,10 +540,8 @@ trait CDCReaderImpl extends DeltaLogging {
     //    the range, BUT time-travel is used so the read schema could also be arbitrary.
     // It is sufficient to just verify with the start version schema because we have already
     // verified that all data being queries is read-compatible with start schema.
-    checkBatchReadColumnMappingSchemaIncompatibility(
-      startVersionSnapshot.metadata, startVersionSnapshot.version,
-      readSchemaSnapshot, isSchemaChange = false
-    )
+    checkBatchCdfReadSchemaIncompatibility(
+      startVersionSnapshot.metadata, startVersionSnapshot.version, isSchemaChange = false)
 
     val dfs = ListBuffer[DataFrame]()
     if (changeFiles.nonEmpty) {
