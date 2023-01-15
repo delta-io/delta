@@ -26,9 +26,6 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, 
 
 trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteUtils {
 
-  override protected val supportedModes =
-    Seq("name")
-
   protected val simpleNestedSchema = new StructType()
     .add("a", StringType, true)
     .add("b",
@@ -178,6 +175,11 @@ trait DeltaArbitraryColumnNameSuiteBase extends DeltaColumnMappingSuiteUtils {
     val e = intercept[Exception](block)
 
     assert(e.getMessage.contains(message))
+  }
+
+  protected def assertExceptionOneOf(messages: Seq[String])(block: => Unit): Unit = {
+    val e = intercept[Exception](block)
+    assert(messages.exists(x => e.getMessage.contains(x)))
   }
 }
 

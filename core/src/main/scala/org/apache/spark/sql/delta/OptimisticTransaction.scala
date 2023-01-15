@@ -31,12 +31,14 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
@@ -88,6 +90,31 @@ case class CommitStats(
 )
 
 /**
+ * Represents a partition read predicate on a Delta table.
+ *
+ * Partition predicates can either reference the table's logical partition columns, or the
+ * physical [[AddFile]]'s schema. When a predicate refers to the logical partition columns it needs
+ * to be rewritten to be over the [[AddFile]]'s schema before filtering files. This is indicated
+ * with shouldRewriteFilter=true.
+ *
+ * Currently the only path for a predicate with shouldRewriteFilter=false is through DPO
+ * (dynamic partition overwrite) since we filter directly on [[AddFile.partitionValues]].
+ *
+ * For example, consider a table with the schema below and partition column "a"
+ * |-- a: integer {physicalName = "XX"}
+ * |-- b: integer {physicalName = "YY"}
+ *
+ * An example of a predicate that needs to be written is: (a = 0)
+ * Before filtering the [[AddFile]]s, this predicate needs to be rewritten to:
+ * (partitionValues.XX = 0)
+ *
+ * An example of a predicate that does not need to be rewritten is:
+ * (partitionValues = Map(XX -> 0))
+ */
+private[delta] case class DeltaTablePartitionReadPredicate(
+  predicate: Expression, shouldRewriteFilter: Boolean = true)
+
+/**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
  * state of the log.  All reads from the [[DeltaLog]], MUST go through this instance rather
  * than directly to the [[DeltaLog]] otherwise they will not be check for logical conflicts
@@ -107,9 +134,11 @@ class OptimisticTransaction
   /** Creates a new OptimisticTransaction.
    *
    * @param deltaLog The Delta Log for the table this transaction is modifying.
+   * @param snapshotOpt The most recent snapshot of the table, if available.
    */
-  def this(deltaLog: DeltaLog)(implicit clock: Clock) {
-    this(deltaLog, deltaLog.update())
+  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
+  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
+    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
   }
 }
 
@@ -188,7 +217,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the data that could have been seen by recording the partition
    * predicates by which files have been queried by this transaction.
    */
-  protected val readPredicates = new ArrayBuffer[Expression]
+  protected val readPredicates = new ArrayBuffer[DeltaTablePartitionReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
@@ -199,7 +228,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
-  /** Stores the updated metadata (if any) that will result from this txn. */
+  /**
+   * Stores the updated metadata (if any) that will result from this txn.
+   *
+   * This is just one way to change metadata.
+   * New metadata can also be added during commit from actions.
+   * But metadata should *not* be updated via both paths.
+   */
   protected var newMetadata: Option[Metadata] = None
 
   /** Stores the updated protocol (if any) that will result from this txn. */
@@ -363,24 +398,34 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (isCreatingNewTable) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
-      newProtocol = Some(Protocol.forNewTable(spark, latestMetadata))
+      newProtocol = Some(Protocol.forNewTable(spark, Some(latestMetadata)))
+    } else if (latestMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
+      latestMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
+      // If the request contains protocol bump for an existing table, we must apply this change to
+      // the `newProtocol` variable so that it can be committed by the transaction.
+
+      // Collect new reader and writer versions from table properties, or maintain the existing
+      // version.
+      val newReaderVersion = latestMetadata.configuration
+        .get(Protocol.MIN_READER_VERSION_PROP)
+        .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
+        .getOrElse(protocolBeforeUpdate.minReaderVersion)
+      val newWriterVersion = latestMetadata.configuration
+        .get(Protocol.MIN_WRITER_VERSION_PROP)
+        .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
+        .getOrElse(protocolBeforeUpdate.minWriterVersion)
+      val newProtocolFromMetadata = Protocol(newReaderVersion, newWriterVersion)
+
+      // Check protocol downgrade before protocol merge to throw the appropriate error message.
+      if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
+        newWriterVersion < protocolBeforeUpdate.minWriterVersion) {
+        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolFromMetadata)
+      }
+      // Use the merge logic (when newReaderVersion and newWriterVersion support table features)
+      // to explicitly enable implicitly-enabled features of the old protocol.
+      newProtocol = Some(protocolBeforeUpdate.merge(newProtocolFromMetadata))
     }
-    // Remove the protocol version properties
-    val configs = latestMetadata.configuration.filter {
-      case (Protocol.MIN_READER_VERSION_PROP, value) =>
-        if (!isCreatingNewTable) {
-          newProtocol = Some(protocol.copy(
-            minReaderVersion = Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, value)))
-        }
-        false
-      case (Protocol.MIN_WRITER_VERSION_PROP, value) =>
-        if (!isCreatingNewTable) {
-          newProtocol = Some(protocol.copy(
-            minWriterVersion = Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, value)))
-        }
-        false
-      case _ => true
-    }
+
     latestMetadata = if (isCreatingNewTable) {
       // Creating a new table will drop all existing data, so we don't need to fix the old
       // metadata.
@@ -389,20 +434,21 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // This is not a new table. The new schema may be merged from the existing schema. We
       // decide whether we should keep the Generated or IDENTITY columns by checking whether the
       // protocol satisfies the requirements.
-      val (keepGeneratedColumns, keepIdentityColumns) =
-        ColumnWithDefaultExprUtils.satisfyProtocol(protocolBeforeUpdate)
-      if (keepIdentityColumns) {
-        // If a protocol satisfies IDENTITY column requirement, it must also satisfies Generated
-        // column requirement because IDENTITY columns are introduced after Generated columns. In
-        // this case we do nothing here.
-        assert(keepGeneratedColumns)
+      val keepGeneratedColumns =
+        GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)
+      val keepIdentityColumns =
+        ColumnWithDefaultExprUtils.satisfiesIdentityColumnProtocol(protocolBeforeUpdate)
+      if (keepGeneratedColumns && keepIdentityColumns) {
+        // If a protocol satisfies both requirements, we do nothing here.
         latestMetadata
       } else {
         // As the protocol doesn't match, this table is created by an old version that doesn't
         // support generated columns or identity columns. We should remove the generation
         // expressions to fix the schema to avoid bumping the writer version incorrectly.
-        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(latestMetadata
-          .schema, keepGeneratedColumns)
+        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(
+          latestMetadata.schema,
+          keepGeneratedColumns = keepGeneratedColumns,
+          keepIdentityColumns = keepIdentityColumns)
         if (newSchema ne latestMetadata.schema) {
           latestMetadata.copy(schemaString = newSchema.json)
         } else {
@@ -410,9 +456,39 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         }
       }
     }
-    latestMetadata = latestMetadata.copy(configuration = configs)
+
+    // This transaction's new metadata might contain some table properties to enable some
+    // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
+    // action.
+    // Unlike auto-enabled features, the following logic will not auto upgrade protocol version
+    // silently to which the feature requests. In other words, here we will explicitly list the
+    // table features that are required to be added, and assume it's supported by the protocol.
+    // When this turns out to be not true, the `withFeatures` method will fail and ask users to
+    // upgrade their table.
+    //
+    // Note: automatically-enabled features are left to the `verifyNewMetadata` call.
+    val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
+    val newFeaturesFromTableConf =
+      TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
+        latestMetadata.configuration,
+        TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+    val featuresFromTableConf = newFeaturesFromTableConf.map(_.name)
+    val existingFeatures = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
+    if (!featuresFromTableConf.subsetOf(existingFeatures)) {
+      newProtocol = Some(newProtocolBeforeAddingFeatures.withFeatures(newFeaturesFromTableConf))
+    }
+
+    // We are done with protocol versions and features, time to remove related table properties.
+    val configsWithoutProtocolProps = latestMetadata.configuration.filter {
+      case (Protocol.MIN_READER_VERSION_PROP, _) => false
+      case (Protocol.MIN_WRITER_VERSION_PROP, _) => false
+      case (k, _) if k.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) => false
+      case _ => true
+    }
+    latestMetadata = latestMetadata.copy(configuration = configsWithoutProtocolProps)
     verifyNewMetadata(latestMetadata)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
+
 
     newMetadata = Some(latestMetadata)
   }
@@ -489,18 +565,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * given log
    */
   def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
-    if (index.deltaLog.isSameLogAs(deltaLog)) {
-      this
-    } else {
-      if (spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)) {
-        readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
-          // Will be called only when the log is accessed the first time
-          index.getSnapshot
-        })
-      } else {
-        index.getSnapshot
-      }
-    }
+    if (index.deltaLog.isSameLogAs(deltaLog)) return this
+
+    // Will be called only when the log is accessed the first time
+    readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */
@@ -512,14 +580,40 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
+    readFiles ++= scan.files
+    scan
+  }
+
+  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
+  override def filesForScan(limit: Long): DeltaScan = {
+    val scan = snapshot.filesForScan(limit)
+    readFiles ++= scan.files
+    scan
+  }
+
+  /** Returns a[[DeltaScan]] based on the given partition filters, projections and limits. */
+  override def filesForScan(
+      limit: Long,
+      partitionFilters: Seq[Expression]): DeltaScan = {
+    partitionFilters.foreach { f =>
+      assert(
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark),
+        s"Only filters on partition columns [${metadata.partitionColumns.mkString(", ")}]" +
+          s" expected, found $f")
+    }
+    val scan = snapshot.filesForScan(limit, partitionFilters)
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
     readFiles ++= scan.files
     scan
   }
 
   override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
     val metadata = snapshot.filesWithStatsForScan(partitionFilters)
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
     withFilesRead(filterFiles(partitionFilters))
     metadata
   }
@@ -528,31 +622,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
   /** Returns files matching the given predicates. */
-  def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    val scan = snapshot.filesForScan(filters)
+  def filterFiles(filters: Seq[Expression], keepNumRecords: Boolean = false): Seq[AddFile] = {
+    val scan = snapshot.filesForScan(filters, keepNumRecords)
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    readPredicates += DeltaTablePartitionReadPredicate(
+      partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral))
     readFiles ++= scan.files
     scan.files
   }
 
-  /** Returns files within the given partitions. */
+  /**
+   * Returns files within the given partitions.
+   *
+   * `partitions` is a set of the `partitionValues` stored in [[AddFile]]s. This means they refer to
+   * the physical column names, and values are stored as strings.
+   * */
   def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
-    import org.apache.spark.sql.functions.{array, col}
-    val partitionValues = partitions.map { partition =>
-      metadata.physicalPartitionColumns.map(partition).toArray
-    }
-    val predicate = array(metadata.partitionColumns.map(col): _*)
-      .isInCollection(partitionValues)
-      .expr
-    filterFiles(Seq(predicate))
+    import org.apache.spark.sql.functions.col
+    val df = snapshot.allFiles.toDF()
+    val isFileInTouchedPartitions =
+      DeltaUDF.booleanFromMap(partitions.contains)(col("partitionValues"))
+    val filteredFiles = df
+      .filter(isFileInTouchedPartitions)
+      .withColumn("stats", DataSkippingReader.nullStringLiteral)
+      .as[AddFile]
+      .collect()
+    readPredicates += DeltaTablePartitionReadPredicate(isFileInTouchedPartitions.expr,
+      shouldRewriteFilter = false)
+    filteredFiles
   }
 
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
-    readPredicates += Literal.TrueLiteral
+    readPredicates += DeltaTablePartitionReadPredicate(Literal.TrueLiteral)
     readTheWholeTable = true
   }
 
@@ -597,12 +701,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def performCdcMetadataCheck(): Unit = {
     if (newMetadata.nonEmpty) {
-      if (CDCReader.isCDCEnabledOnTable(newMetadata.get)) {
+      if (CDCReader.isCDCEnabledOnTable(newMetadata.get, spark)) {
         val schema = newMetadata.get.schema.fieldNames
         val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
           .intersect(schema)
         if (reservedColumnsUsed.length > 0) {
-          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata)) {
+          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata, spark)) {
             // cdc was not enabled previously but reserved columns are present in the new schema.
             throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
           } else {
@@ -652,7 +756,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val _newMetadata = newMetadata.get
       val _currentMetadata = snapshot.metadata
 
-      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata)
+      val cdcEnabled = CDCReader.isCDCEnabledOnTable(_newMetadata, spark)
 
       val columnMappingEnabled = _newMetadata.columnMappingMode != NoMapping
 
@@ -679,16 +783,36 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /**
    * Modifies the state of the log by adding a new commit that is based on a read at
-   * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
+   * [[readVersion]]. In the case of a conflict with a concurrent writer this
+   * method will throw an exception.
+   *
+   * Also skips creating the commit if the configured [[IsolationLevel]] doesn't need us to record
+   * the commit from correctness perspective.
+   */
+  def commitIfNeeded(actions: Seq[Action], op: DeltaOperations.Operation): Unit = {
+    commitImpl(actions, op, canSkipEmptyCommits = true)
+  }
+
+  /**
+   * Modifies the state of the log by adding a new commit that is based on a read at
+   * [[readVersion]]. In the case of a conflict with a concurrent writer this
    * method will throw an exception.
    *
    * @param actions     Set of actions to commit
    * @param op          Details of operation that is performing this transactional commit
    */
+  def commit(actions: Seq[Action], op: DeltaOperations.Operation): Long = {
+    commitImpl(actions, op, canSkipEmptyCommits = false).getOrElse {
+      throw new SparkException(s"Unknown error while trying to commit for operation $op")
+    }
+  }
+
   @throws(classOf[ConcurrentModificationException])
-  def commit(actions: Seq[Action], op: DeltaOperations.Operation): Long = recordDeltaOperation(
-      deltaLog,
-      "delta.commit") {
+  protected def commitImpl(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation,
+      canSkipEmptyCommits: Boolean
+  ): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
     commitStartNano = System.nanoTime()
 
     val (version, postCommitSnapshot, actualCommittedActions) = try {
@@ -747,6 +871,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
 
       commitAttemptStartTime = clock.getTimeMillis()
+      if (preparedActions.isEmpty && canSkipEmptyCommits &&
+          skipRecordingEmptyCommitAllowed(isolationLevelToUse)) {
+        return None
+      }
+
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(snapshot.version + 1, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
@@ -763,7 +892,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
 
-    version
+    Some(version)
+  }
+
+  /** Whether to skip recording the commit in DeltaLog */
+  protected def skipRecordingEmptyCommitAllowed(isolationLevelToUse: IsolationLevel): Boolean = {
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS)) {
+      return false
+    }
+    // Recording of empty commits in deltalog can be skipped only for SnapshotIsolation and
+    // Serializable mode.
+    Seq(SnapshotIsolation, Serializable).contains(isolationLevelToUse)
   }
 
   /**
@@ -874,7 +1013,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isolationLevel = Serializable.toString,
         txnId = Some(txnId))
 
-      recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
+      recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
@@ -933,6 +1072,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(!committed, "Transaction already committed.")
 
     // If the metadata has changed, add that to the set of actions
+    // New metadata can come either from `newMetadata` or from the `actions` there.
     var finalActions = newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
     if (metadataChanges.length > 1) {
@@ -942,8 +1082,36 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       assert(
         metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
     }
-    metadataChanges.foreach(m => verifyNewMetadata(m))
+    // There be at most one metadata entry at this point.
+    metadataChanges.foreach { m =>
+      verifyNewMetadata(m)
+      // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
+      // metadata was set via `updateMetadata` or `actions`.
+      newMetadata = Some(m)
+    }
+
+    // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
+    // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
+    // new table properties that enable features that require a protocol upgrade. These implicit
+    // changes are usually captured in newProtocol. In case there is more than one protocol action,
+    // it is likely that it is due to a mix of explicit and implicit changes.
     finalActions = newProtocol.toSeq ++ finalActions
+    val protocolChanges = finalActions.collect { case p: Protocol => p }
+    if (protocolChanges.length > 1) {
+      recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
+        "protocolChanges" -> protocolChanges
+      ))
+      assert(protocolChanges.length <= 1, "Cannot change the protocol more than once in a " +
+        "transaction. More than one protocol change in a transaction is likely due to an " +
+        "explicitly specified Protocol action and an implicit protocol upgrade triggered by " +
+        "a table property.")
+    }
+    // Update newProtocol so that the behaviour later is consistent irrespective of whether
+    // the protocol was set via update/verifyMetadata or actions.
+    // NOTE: There is at most one protocol change at this point.
+    protocolChanges.foreach { p =>
+      newProtocol = Some(p)
+    }
 
 
     // Block future cases of CDF + Column Mapping changes + file changes
@@ -979,8 +1147,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
         if (!isCreatingNewTable) {
           val currentVersion = snapshot.protocol
-          if (newVersion.minReaderVersion < currentVersion.minReaderVersion ||
-              newVersion.minWriterVersion < currentVersion.minWriterVersion) {
+          if (!currentVersion.canUpgradeTo(newVersion)) {
             throw new ProtocolDowngradeException(currentVersion, newVersion)
           }
         }
@@ -1006,14 +1173,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    deltaLog.protocolWrite(
-      snapshot.protocol,
-      logUpgradeMessage = !actions.headOption.exists(_.isInstanceOf[Protocol]))
+    deltaLog.protocolWrite(snapshot.protocol)
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.
     val removes = actions.collect { case r: RemoveFile => r }
-    if (removes.exists(_.dataChange)) deltaLog.assertRemovable()
+    if (removes.exists(_.dataChange)) DeltaLog.assertRemovable(snapshot)
 
     finalActions
   }
@@ -1089,7 +1254,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Returns true if we should checkpoint the version that has just been committed.
    */
   protected def shouldCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = {
-    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+    def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   private[delta] def isCommitLockEnabled: Boolean = {
@@ -1257,7 +1423,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
       txnId = Some(txnId))
-    recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
+    recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 
     postCommitSnapshot
   }

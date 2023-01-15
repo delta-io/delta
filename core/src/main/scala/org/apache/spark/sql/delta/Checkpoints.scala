@@ -47,6 +47,7 @@ import org.apache.hadoop.mapreduce.{Job, TaskType}
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -296,13 +297,13 @@ trait Checkpoints extends DeltaLogging {
   def logPath: Path
   def dataPath: Path
   protected def store: LogStore
-  protected def metadata: Metadata
 
   /** Used to clean up stale log files. */
   protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
-  def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
+  def checkpointInterval(metadata: Metadata): Int =
+    DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)
@@ -544,7 +545,9 @@ object Checkpoints extends DeltaLogging {
         }
         action
       }
+      // commitInfo, cdc and remove.tags are not included in the checkpoint
       .drop("commitInfo", "cdc")
+      .withColumn("remove", col("remove").dropFields("tags"))
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -556,8 +559,9 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    val finalCheckpointFiles = chk
-      .queryExecution // This is a hack to get spark to write directly to a file.
+    // This is a hack to get spark to write directly to a file.
+    val qe = chk.queryExecution
+    def executeFinalCheckpointFiles(): Array[SerializableFileStatus] = qe
       .executedPlan
       .execute()
       .mapPartitionsWithIndex { case (index, iter) =>
@@ -625,6 +629,10 @@ object Checkpoints extends DeltaLogging {
 
         Iterator(SerializableFileStatus.fromStatus(finalPathFileStatus))
       }.collect()
+
+    val finalCheckpointFiles = SQLExecution.withNewExecutionId(qe, Some("Delta checkpoint")) {
+      executeFinalCheckpointFiles()
+    }
 
     val checkpointSizeInBytes = finalCheckpointFiles.map(_.length).sum
     if (numOfFiles.value != snapshot.numOfFiles) {

@@ -88,7 +88,7 @@ class DeltaSink(
 
     val deletedFiles = outputMode match {
       case o if o == OutputMode.Complete() =>
-        deltaLog.assertRemovable()
+        DeltaLog.assertRemovable(txn.snapshot)
         txn.filterFiles().map(_.remove)
       case _ => Nil
     }

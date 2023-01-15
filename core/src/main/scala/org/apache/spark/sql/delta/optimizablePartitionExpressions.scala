@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, UnixTimestamp, Year}
+import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.types.{DateType, DoubleType, IntegerType, StringType, TimestampType, LongType, DecimalType}
 
@@ -598,6 +598,55 @@ case class DateFormatPartitionExpr(
   }
 }
 
+/** The rules for the generation expression `date_trunc(field, col)`. */
+case class TimestampTruncPartitionExpr(format: String, partitionColumn: String)
+  extends OptimizablePartitionExpression {
+  override def lessThan(lit: Literal): Option[Expression] = {
+    // As the partition column has truncated information, we need to turn "<" to "<=".
+    lessThanOrEqual(lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType => Some(partitionColumn.toPartCol <= TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol <= TruncTimestamp(format, Cast(lit, TimestampType)))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType => Some(partitionColumn.toPartCol === TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol === TruncTimestamp(format, Cast(lit, TimestampType)))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    // As the partition column has truncated information, we need to turn ">" to ">=".
+    greaterThanOrEqual(lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType => Some(partitionColumn.toPartCol >= TruncTimestamp(format, lit))
+      case DateType => Some(
+        partitionColumn.toPartCol >= TruncTimestamp(format, Cast(lit, TimestampType)))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
+}
+
 /**
  * The rules for the generation of identity expressions, used for partitioning on a nested column.
  * Note:
@@ -630,4 +679,54 @@ case class IdentityPartitionExpr(partitionColumn: String)
   }
 
   override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
+}
+
+/**
+ * The rules for generation expression that use the function trunc(col, format) such as
+ * trunc(timestamp, 'year'), trunc(date, 'week') and trunc(timestampStr, 'hour')
+ * @param partitionColumn partition column using trunc function in the generation expression
+ * @param format the format that specifies the unit of truncation applied to the partitionColumn
+ */
+case class TruncDatePartitionExpr(partitionColumn: String, format: String)
+  extends OptimizablePartitionExpression {
+
+  override def lessThan(lit: Literal): Option[Expression] = {
+    lessThanOrEqual(lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType | DateType | StringType =>
+        Some(partitionColumn.toPartCol <= TruncDate(lit, Literal(format)))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType | DateType | StringType =>
+        Some(partitionColumn.toPartCol === TruncDate(lit, Literal(format)))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    greaterThanOrEqual(lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case TimestampType | DateType | StringType =>
+        Some(partitionColumn.toPartCol >= TruncDate(lit, Literal(format)))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def isNull(): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull)
+  }
+
 }

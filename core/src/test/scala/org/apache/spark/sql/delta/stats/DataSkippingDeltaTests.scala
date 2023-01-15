@@ -639,9 +639,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     def rStats: DataFrame =
       getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-    // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-    val expectedStats = Seq(Row(4, 0, 8), Row(6, 1, 9))
-    checkAnswer(rStats, expectedStats)
+    checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
     sql(s"OPTIMIZE '$tempDir'")
     checkAnswer(rStats, Seq(Row(10, 0, 9)))
   }
@@ -1465,6 +1463,26 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+  test("Data skipping should always return files from latest commit version") {
+    withTempDir { dir =>
+      // If this test is flacky it is broken
+      Seq("aaa").toDF().write.format("delta").save(dir.getCanonicalPath)
+      val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, dir.getPath)
+      val addFile = snapshot.allFiles.collect().head
+      val fileWithStat = snapshot.getSpecificFilesWithStats(Seq(addFile.path)).head
+      // Ensure the stats has actual stats, not {}
+      assert(fileWithStat.stats.size > 2)
+      log.startTransaction().commitManually(addFile.copy(stats = "{}"))
+
+      // Delta dedup should always keep AddFile from newer version so
+      // getSpecificFilesWithStats should return the AddFile with empty stats
+      log.update()
+      val newfileWithStat =
+        log.unsafeVolatileSnapshot.getSpecificFilesWithStats(Seq(addFile.path)).head
+      assert(newfileWithStat.stats === "{}")
+    }
+  }
+
   protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
       s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
         s""""nullCount":{"$colName":0}}""".stripMargin
@@ -1709,11 +1727,8 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
     Given("appending data and collecting stats")
     withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
       data.write.format("delta").mode("append").save(r.dataPath.toString)
-      // scalastyle:off line.size.limit
-      // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-      val expectedStats = Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9))
-      // scalastyle:on line.size.limit
-      checkAnswer(rStats, expectedStats)
+      checkAnswer(rStats,
+        Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
     }
 
     Given("querying reservoir without using stats")

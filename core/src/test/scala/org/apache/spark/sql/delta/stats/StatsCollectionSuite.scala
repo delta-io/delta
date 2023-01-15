@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -46,6 +47,7 @@ class StatsCollectionSuite
 
       val data = Seq(1, 2, 3).toDF().coalesce(1)
       data.write.format("delta").save(dir.getAbsolutePath)
+      val snapshot = deltaLog.update()
       val statsJson = deltaLog.update().allFiles.head().stats
 
       // convert data schema to physical name if possible
@@ -58,6 +60,7 @@ class StatsCollectionSuite
         override def dataSchema = dataRenamed.schema
         override val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
           DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
+        override val protocol: Protocol = snapshot.protocol
       }
 
       val correctAnswer = dataRenamed
@@ -128,8 +131,7 @@ class StatsCollectionSuite
         val statsDf = statsDF(deltaLog)
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
         // scalastyle:off line.size.limit
-        // TODO(delta-lake-oss): Fix test on migrating to Spark 3.4
-        val expectedStats = Seq(Row(4, Row(10, 20), Row(17, 27)), Row(2, Row(11, 21), Row(19, 29)), Row(4, Row(12, 22), Row(18, 28)))
+        val expectedStats = Seq(Row(3, Row(10, 20), Row(19, 29)), Row(4, Row(12, 22), Row(17, 27)), Row(3, Row(11, 21), Row(18, 28)))
         // scalastyle:on line.size.limit
         checkAnswer(statsDf, expectedStats)
       }

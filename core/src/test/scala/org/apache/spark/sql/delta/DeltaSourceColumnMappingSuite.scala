@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -280,16 +281,24 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
       }
 
       // upgrade to name mode
+      val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
+      val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
       sql(
         s"""
            |ALTER TABLE delta.`${tablePath}`
            |SET TBLPROPERTIES (
            |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
-           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
-           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "$readerVersion",
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "$writerVersion")""".stripMargin)
 
       // write more data post upgrade
       writeDeltaData(5 until 10, deltaLog)
+    }
+    // For id mapping, we could only create the table from scratch
+    else if (columnMappingModeString == IdMapping.name) {
+      withColumnMappingConf("id") {
+        writeDeltaData(0 until 10, deltaLog, Some(StructType.fromDDL("id string, value string")))
+      }
     }
   }
 
@@ -486,32 +495,6 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
       }
     }
   }
-}
-
-
-class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
-  with ColumnMappingStreamingWorkflowSuiteBase
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def isCdcTest: Boolean = false
-
-  override protected def runOnlyTests = Seq(
-    "basic",
-    "maxBytesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: metadata checkpoint",
-    "allow to change schema before starting a streaming query",
-
-    // streaming blocking semantics test
-    "deltaLog snapshot should not be updated outside of the stream",
-    "column mapping + streaming - allowed workflows - column addition",
-    "column mapping + streaming - allowed workflows - upgrade to name mode",
-    "column mapping + streaming: blocking workflow - drop column",
-    "column mapping + streaming: blocking workflow - rename column",
-    "column mapping + streaming: blocking workflow - " +
-      "should not generate latestOffset past schema change"
-  )
-
-  import testImplicits._
 
   test("column mapping + streaming: blocking workflow - " +
     "should not generate latestOffset past schema change") {
@@ -532,10 +515,9 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
       // Since we had a rename, the data files prior to that should not be served with the renamed
       // schema <id, value2>, but the original schema <id, value>. latestOffset() should not create
       // a new offset moves past the schema change.
-      val df1 = spark.readStream
-        .format("delta")
-        .option("startingVersion", "1") // start from 1 to ignore the initial schema change
-        .load(inputDir.getCanonicalPath)
+      val df1 = dropCDCFields(
+        dsr.option("startingVersion", "1") // start from 1 to ignore the initial schema change
+           .load(inputDir.getCanonicalPath))
       testStream(df1)(
         StartStream(), // fresh checkpoint
         ProcessAllAvailableIgnoreError,
@@ -553,10 +535,9 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
       // write more data
       writeDeltaData(10 until 15, deltaLog)
 
-      val df2 = spark.readStream
-        .format("delta")
-        .option("startingVersion", renameVersion + 1) // so we could detect drop column
-        .load(inputDir.getCanonicalPath)
+      val df2 = dropCDCFields(
+        dsr.option("startingVersion", renameVersion + 1) // so we could detect drop column
+          .load(inputDir.getCanonicalPath))
       testStream(df2)(
         StartStream(), // fresh checkpoint
         ProcessAllAvailableIgnoreError,
@@ -570,10 +551,9 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
 
       // Case 2 - in stream failure should not progress latest offset too
       // This is the handle prior to SC-111607, which should cover the major cases.
-      val df3 = spark.readStream
-        .format("delta")
-        .option("startingVersion", dropVersion + 1) // so we could move on to in stream failure
-        .load(inputDir.getCanonicalPath)
+      val df3 = dropCDCFields(
+        dsr.option("startingVersion", dropVersion + 1) // so we could move on to in stream failure
+           .load(inputDir.getCanonicalPath))
 
       val ckpt = Utils.createTempDir().getCanonicalPath
       var latestAvailableOffsets: Seq[String] = null
@@ -618,5 +598,43 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
       )
     }
   }
+}
+
+
+trait DeltaSourceColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
+  override protected def runOnlyTests = Seq(
+    "basic",
+    "maxBytesPerTrigger: metadata checkpoint",
+    "maxFilesPerTrigger: metadata checkpoint",
+    "allow to change schema before starting a streaming query",
+
+    // streaming blocking semantics test
+    "deltaLog snapshot should not be updated outside of the stream",
+    "column mapping + streaming - allowed workflows - column addition",
+    "column mapping + streaming - allowed workflows - upgrade to name mode",
+    "column mapping + streaming: blocking workflow - drop column",
+    "column mapping + streaming: blocking workflow - rename column",
+    "column mapping + streaming: blocking workflow - " +
+      "should not generate latestOffset past schema change"
+  )
+}
+
+class DeltaSourceIdColumnMappingSuite extends DeltaSourceSuite
+  with ColumnMappingStreamingWorkflowSuiteBase
+  with DeltaColumnMappingEnableIdMode
+  with DeltaSourceColumnMappingSuiteBase {
+
+  override protected def isCdcTest: Boolean = false
+
+}
+
+class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
+  with ColumnMappingStreamingWorkflowSuiteBase
+  with DeltaColumnMappingEnableNameMode
+  with DeltaSourceColumnMappingSuiteBase {
+
+  override protected def isCdcTest: Boolean = false
+
+  import testImplicits._
 
 }

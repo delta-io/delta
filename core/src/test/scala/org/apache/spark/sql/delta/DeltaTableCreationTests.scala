@@ -25,9 +25,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
@@ -950,8 +950,8 @@ trait DeltaTableCreationTests
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -971,8 +971,8 @@ trait DeltaTableCreationTests
       val snapshot = deltaLog.update()
       assertEqual(snapshot.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "delta.checkpointInterval" -> "20"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -1008,8 +1008,8 @@ trait DeltaTableCreationTests
           "delta.logRetentionDuration" -> "2 weeks",
           "delta.checkpointInterval" -> "20",
           "key" -> "value"))
-        assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-        assert(deltaLog.checkpointInterval == 20)
+        assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+        assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
       }
     }
   }
@@ -1336,8 +1336,8 @@ trait DeltaTableCreationTests
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -1359,8 +1359,8 @@ trait DeltaTableCreationTests
       val snapshot = deltaLog.update()
       assertEqual(snapshot.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "delta.checkpointInterval" -> "20"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot.metadata) == 20)
     }
   }
 
@@ -1704,6 +1704,7 @@ class DeltaTableCreationSuite
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
   }
 
@@ -1786,7 +1787,8 @@ class DeltaTableCreationSuite
                |LOCATION '${dir.getAbsolutePath}'
            """.stripMargin)
         }
-        assert(e.getMessage.contains("cannot be replaced as it did not exist"))
+        assert(e.getMessage.contains("cannot be replaced as it did not exist") ||
+          e.getMessage.contains(s"table or view `default`.`delta_test` cannot be found"))
       }
     }
   }
@@ -1910,7 +1912,7 @@ class DeltaTableCreationSuite
       def assertFailToRead(f: => Any): Unit = {
         try f catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("without columns"))
+            assert(e.getMessage.contains("that does not have any columns."))
         }
       }
 
@@ -2298,15 +2300,7 @@ class DeltaTableCreationSuite
   }
 }
 
-
-class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def getTableProperties(tableName: String): Map[String, String] = {
-    // ignore comparing column mapping properties
-    dropColumnMappingConfigurations(super.getTableProperties(tableName))
-  }
-
+trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] = Seq(
     "create table with schema and path",
     "create external table without schema",
@@ -2322,5 +2316,20 @@ class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
     } ++ Seq("a b", "a:b", "a%b").map { specialChars =>
       s"location uri contains $specialChars for datasource table"
     }
+}
 
+class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableIdMode {
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
+}
+
+class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableNameMode {
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
 }

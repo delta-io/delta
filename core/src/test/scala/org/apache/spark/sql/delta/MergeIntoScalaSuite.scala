@@ -29,10 +29,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
+class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+  with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
+
 
   test("basic scala API") {
     withTable("source") {
@@ -236,7 +238,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .execute()
       }
-      errorContains(e.getMessage, "cannot resolve `*`")
+      errorContains(e.getMessage, "cannot resolve `*` in UPDATE clause")
 
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -245,7 +247,15 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           .whenNotMatched().insertExpr(Map("*" -> "*"))
           .execute()
       }
-      errorContains(e.getMessage, "cannot resolve `*`")
+      errorContains(e.getMessage, "cannot resolve `*` in INSERT clause")
+
+      e = intercept[AnalysisException] {
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "srcKey = trgKey")
+          .whenNotMatchedBySource().updateExpr(Map("*" -> "*"))
+          .execute()
+      }
+      errorContains(e.getMessage, "cannot resolve `*` in UPDATE clause")
     }
   }
 
@@ -586,8 +596,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       tgt = target,
       src = source,
       cond = condition,
-      MergeClause(isMatched = true, condition = null, action = s"UPDATE SET $update"),
-      MergeClause(isMatched = false, condition = null, action = s"INSERT $insert"))
+      this.update(set = update),
+      this.insert(values = insert))
   }
 
   override protected def executeMerge(
@@ -615,11 +625,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       }
     }
 
-    def buildClause(
-      clause: MergeClause,
-      mergeBuilder: DeltaMergeBuilder): DeltaMergeBuilder = {
-
-      if (clause.isMatched) {
+    def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
+      : DeltaMergeBuilder = clause match {
+      case _: MatchedClause =>
         val actionBuilder: DeltaMergeMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenMatched(clause.condition)
           else mergeBuilder.whenMatched()
@@ -637,7 +645,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
             actionBuilder.updateExpr(setColExprPairs)
           }
         }
-      } else {                                        // INSERT clause
+      case _: NotMatchedClause =>                     // INSERT clause
         val actionBuilder: DeltaMergeNotMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
           else mergeBuilder.whenNotMatched()
@@ -648,8 +656,23 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           val valueColExprsPairs = parseInsert(valueStr, Some(clause))
           actionBuilder.insertExpr(valueColExprsPairs)
         }
+      case _: NotMatchedBySourceClause =>
+        val actionBuilder: DeltaMergeNotMatchedBySourceActionBuilder =
+          if (clause.condition != null) mergeBuilder.whenNotMatchedBySource(clause.condition)
+          else mergeBuilder.whenNotMatchedBySource()
+        if (clause.action.startsWith("DELETE")) { // DELETE clause
+          actionBuilder.delete()
+        } else { // UPDATE clause
+          val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
+          if (setColExprStr.contains("array_")) { // UPDATE SET x = array_union(..)
+            val setColExprPairs = parseUpdate(setColExprStr)
+            actionBuilder.updateExpr(setColExprPairs)
+          } else { // UPDATE SET x = a, y = b, z = c
+            val setColExprPairs = parseUpdate(setColExprStr.split(","))
+            actionBuilder.updateExpr(setColExprPairs)
+          }
+        }
       }
-    }
 
     val deltaTable = {
       val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)

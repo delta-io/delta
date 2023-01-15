@@ -20,6 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -28,6 +29,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class ActionSerializerSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
@@ -159,7 +161,37 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   testActionSerDe(
     "Protocol - json serialization/deserialization",
     Protocol(minReaderVersion = 1, minWriterVersion = 2),
-    expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""".stripMargin)
+    expectedJson = """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with writer features",
+    Protocol(minReaderVersion = 1, minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(AppendOnlyTableFeature),
+    expectedJson = """{"protocol":{"minReaderVersion":1,""" +
+      s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+      """"writerFeatures":["appendOnly"]}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(TestLegacyReaderWriterFeature),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":["testLegacyReaderWriter"],""" +
+        """"writerFeatures":["testLegacyReaderWriter"]}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with empty reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":[],"writerFeatures":[]}}""")
 
   testActionSerDe(
     "SetTransaction (lastUpdated is None) - json serialization/deserialization",
@@ -283,21 +315,21 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         partitionBy = Seq("a", "b"),
         collectStats = false,
         catalogTable = Some("t1"),
-        sourceType = Some("parquet"))
+        sourceFormat = Some("parquet"))
       val commitInfo1 = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
       val expectedCommitInfoJson1 = // TODO JSON ordering differs between 2.12 and 2.13
         if (scala.util.Properties.versionNumberString.startsWith("2.13")) {
           """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
-            """:{"catalogTable":"t1","partitionedBy":"[\"a\",\"b\"]","collectStats":false,""" +
-            """"numFiles":23,"sourceType":"parquet"},"clusterId":"23","readVersion":23,""" +
-            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
+            """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         } else {
           """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
-            """:{"catalogTable":"t1","numFiles":23,"sourceType":"parquet","partitionedBy":""" +
-            """"[\"a\",\"b\"]","collectStats":false},"clusterId":"23","readVersion":23,""" +
-            """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+            """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
+            """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
+            """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         }
@@ -336,12 +368,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       expectedJson: String,
       extraSettings: Seq[(String, String)] = Seq.empty,
       testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+    import org.apache.spark.sql.delta.test.DeltaTestImplicits._
     test(name, testTags: _*) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         val settings = Seq(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
@@ -350,7 +385,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val protocol = Protocol(
             minReaderVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
             minWriterVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
-          deltaLog.startTransaction().commit(Seq(protocol, Metadata()), ManualUpdate)
+          deltaLog.startTransaction().commitManually(protocol, Metadata())
 
           // Commit the actual action.
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)

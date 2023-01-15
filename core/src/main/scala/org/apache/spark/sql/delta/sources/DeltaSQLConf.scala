@@ -17,10 +17,12 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -55,6 +57,16 @@ trait DeltaSQLConfBase {
     buildConf("stats.collect")
       .internal()
       .doc("When true, statistics are collected while writing files into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DML_METRICS_FROM_METADATA =
+    buildConf("dmlMetricsFromMetadata.enabled")
+      .internal()
+      .doc(
+        """ When enabled, metadata only Delete, ReplaceWhere and Truncate operations will report row
+        | level operation metrics by reading the file statistics for number of rows.
+        | """.stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -233,14 +245,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_SNAPSHOT_ISOLATION =
-    buildConf("snapshotIsolation.enabled")
-      .internal()
-      .doc("Controls whether queries on Delta tables are guaranteed to have " +
-        "snapshot isolation.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -254,7 +258,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4, 5, 6))
+      .checkValues(Set(1, 2, 3, 4, 5, 6, 7))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -262,7 +266,7 @@ trait DeltaSQLConfBase {
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2))
+      .checkValues(Set(1, 2, 3))
       .createWithDefault(1)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
@@ -289,6 +293,15 @@ trait DeltaSQLConfBase {
         "Operation Metrics.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_VACUUM_LOGGING_ENABLED =
+    buildConf("vacuum.logging.enabled")
+      .doc("Whether to log vacuum information into the Delta transaction log." +
+        " 'spark.databricks.delta.commitInfo.enabled' should be enabled when using this config." +
+        " Users should only set this config to 'true' when the underlying file system safely" +
+        " supports concurrent writes.")
+      .booleanConf
+      .createOptional
 
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
@@ -428,6 +441,68 @@ trait DeltaSQLConfBase {
       """.stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  final object MergeMaterializeSource {
+    // See value explanations in the doc below.
+    final val NONE = "none"
+    final val ALL = "all"
+    final val AUTO = "auto"
+
+    final val list = Set(NONE, ALL, AUTO)
+  }
+
+  val MERGE_MATERIALIZE_SOURCE =
+    buildConf("merge.materializeSource")
+      .internal()
+      .doc("When to materializes source plan during MERGE execution. " +
+        "The value 'none' means source will never be materialized. " +
+        "The value 'all' means source will always be materialized. " +
+        "The value 'auto' means sources will not be materialized when they are certain to be " +
+        "deterministic."
+      )
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(MergeMaterializeSource.list)
+      .createWithDefault(MergeMaterializeSource.AUTO)
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
+    buildConf("merge.materializeSource.rddStorageLevel")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevel" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY")
+
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+        "Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
+  val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
+    buildStaticConf("merge.materializeSource.maxAttempts")
+      .doc("How many times to try MERGE with in case of lost RDD materialized source data")
+      .intConf
+      .createWithDefault(4)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
@@ -627,16 +702,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val STREAMING_AVAILABLE_NOW_OFFSET_INITIALIZATION_FIX =
-    buildConf("streaming.availableNow.offsetInitializationFix.enabled")
-      .internal()
-      .doc(
-        """Whether to enable the offset initializaion fix for AvailableNow.
-          |This is just a flag to provide the mitigation option if the fix introduces
-          |any bugs.""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()
@@ -731,6 +796,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_ICEBERG_ENABLED =
+    buildConf("convert.iceberg.enabled")
+      .internal()
+      .doc("If enabled, Iceberg tables can be converted into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED =
+    buildConf("convert.iceberg.partitionEvolution.enabled")
+      .doc("If enabled, support conversion of iceberg tables experienced partition evolution.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -810,8 +888,8 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
   }
 
-  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
-    buildConf("streaming.unsafeReadOnIncompatibleSchemaChanges.enabled")
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
+    buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
         "Streaming read on Delta table with column mapping schema operations " +
           "(e.g. rename or drop column) is currently blocked due to potential data loss and " +
@@ -821,6 +899,29 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+
+  val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT =
+    buildConf("streaming.unsafeReadOnIncompatibleSchemaChangesDuringStreamStart.enabled")
+      .doc(
+        """A legacy config to disable schema read-compatibility check on the start version schema
+          |when starting a streaming query. The config is added to allow legacy problematic queries
+          |disabling the check to keep running if users accept the potential risks of incompatible
+          |schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
+    buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
+      .doc(
+        """A legacy config to disable unsafe nullability check. The config is added to allow legacy
+          |problematic queries disabling the check to keep running if users accept the potential
+          |risks of incompatible schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -828,6 +929,28 @@ trait DeltaSQLConfBase {
           "column mapping schema operations is currently blocked due to potential data loss and " +
           "schema confusion. However, existing users may use this flag to force unblock " +
           "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
+    buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
+      .doc(
+        """Reading batch CDF on column mapping enabled table requires schema mode to be set to
+           |`endVersion` so the ending version's schema will be used.
+           |Set this to `latest` to use the schema of the latest available table version,
+           |or to `legacy` to fallback to the non column-mapping default behavior, in which
+           |the time travel option can be used to select the version of the schema.""".stripMargin)
+      .internal()
+      .stringConf
+      .createWithDefault("endVersion")
+
+  val DELTA_CDF_ALLOW_TIME_TRAVEL_OPTIONS =
+    buildConf("changeDataFeed.allowTimeTravelOptionsForSchema")
+      .doc(
+        s"""If allowed, user can specify time-travel reader options such as
+           |'versionAsOf' or 'timestampAsOf' to specify the read schema while
+           |reading change data feed.""".stripMargin)
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -877,7 +1000,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  // TODO(SC-109291): Force wipe history, too.
   val RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED =
     buildConf("restore.protocolDowngradeAllowed")
       .doc("Whether a table may be restored to a lower protocol version than the current." +
@@ -888,6 +1010,32 @@ trait DeltaSQLConfBase {
         " concurrent queries accessing the table until the history wipe is complete.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CLONE_REPLACE_ENABLED =
+    buildConf("clone.replaceEnabled")
+      .internal()
+      .doc("If enabled, the table will be replaced when cloning over an existing Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
+    buildConf("optimizeMetadataQuery.enabled")
+      .internal()
+      .doc("Whether we can use the metadata in the DeltaLog to" +
+        " optimize queries that can be run purely on metadata.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_SKIP_RECORDING_EMPTY_COMMITS =
+    buildConf("skipRecordingEmptyCommits")
+      .internal()
+      .doc(
+        """
+          | Whether to skip recording an empty commit in the Delta Log. This only works when table
+          | is using SnapshotIsolation or Serializable Isolation Mode.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

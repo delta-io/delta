@@ -20,7 +20,7 @@ organizationName := "example"
 
 val scala212 = "2.12.15"
 val scala213 = "2.13.8"
-val deltaVersion = "2.0.0"
+val deltaVersion = "2.1.0"
 
 def getMajorMinor(version: String): (Int, Int) = {
   val majorMinor = Try {
@@ -77,7 +77,7 @@ getDeltaVersion := {
       println(s"Using Delta version $v")
       v
     case None =>
-      "1.2.0"
+      deltaVersion
   }
 }
 

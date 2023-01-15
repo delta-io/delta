@@ -52,7 +52,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
   def apply(mergeInto: DeltaMergeInto, transformToCommand: Boolean): LogicalPlan = {
     val DeltaMergeInto(
-    target, source, condition, matched, notMatched, migrateSchema, finalSchemaOpt) = mergeInto
+      target,
+      source,
+      condition,
+      matched,
+      notMatched,
+      notMatchedBySource,
+      migrateSchema,
+      finalSchemaOpt) = mergeInto
 
     if (finalSchemaOpt.isEmpty) {
       throw DeltaErrors.targetTableFinalSchemaEmptyException()
@@ -76,7 +83,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
 
     checkCondition(condition, "search")
-    (matched ++ notMatched).filter(_.condition.nonEmpty).foreach { clause =>
+    (matched ++ notMatched ++ notMatchedBySource).filter(_.condition.nonEmpty).foreach { clause =>
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
     }
 
@@ -94,84 +101,33 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     var additionalColumns = Seq[StructField]()
 
     val processedMatched = matched.map {
-      case m: DeltaMergeIntoUpdateClause =>
-        // Get any new columns which are in the update/insert clauses, but not the target output
-        val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
-          target.output.map(_.name)
-        val newColumns = (matched ++ notMatched).toSeq.flatMap {
-          _.resolvedActions.filterNot { action =>
-            existingColumns.exists { colName =>
-              conf.resolver(action.targetColNameParts.head, colName)
-            }
-          }
-        }
-
-        // TODO: Remove this once Scala 2.13 is available in Spark.
-        def distinctBy[A : ClassTag, B](a: Seq[A])(f: A => B): Seq[A] = {
-          val builder = mutable.ArrayBuilder.make[A]
-          val seen = mutable.HashSet.empty[B]
-          a.foreach { x =>
-            if (seen.add(f(x))) {
-              builder += x
-            }
-          }
-          builder.result()
-        }
-
-        val newColumnsDistinct = distinctBy(newColumns)(_.targetColNameParts).map { action =>
-          AttributeReference(action.targetColNameParts.head, action.dataType)()
-        }
-
-        // Get the operations for columns that already exist...
-        val existingUpdateOps = m.resolvedActions.map { a =>
-          UpdateOperation(a.targetColNameParts, a.expr)
-        }
-
-        // And construct operations for columns that the insert/update clauses will add.
-        val newUpdateOps = newColumnsDistinct.map { col =>
-          UpdateOperation(Seq(col.name), Literal(null, col.dataType))
-        }
-
-        // Get expressions for the final schema for alignment. Note that attributes which already
-        // exist in the target need to use the same expression ID, even if the schema will evolve.
-        val finalSchemaExprs =
-          finalSchema.map { field =>
-            target.resolve(Seq(field.name), conf.resolver).map { r =>
-              AttributeReference(field.name, field.dataType)(r.exprId)
-            }.getOrElse {
-              AttributeReference(field.name, field.dataType)()
-            }
-          }
-
-        // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
-        // that nested fields can be updated (only for existing columns).
-        val alignedExprs = generateUpdateExpressions(
-          finalSchemaExprs,
-          existingUpdateOps ++ newUpdateOps,
-          conf.resolver,
+      case m: DeltaMergeIntoMatchedUpdateClause =>
+        val alignedActions = alignUpdateActions(
+          target,
+          m.resolvedActions,
+          whenClauses = matched ++ notMatched ++ notMatchedBySource,
+          identityColumns = additionalColumns,
+          generatedColumns = generatedColumns,
           allowStructEvolution = migrateSchema,
-          generatedColumns = generatedColumns)
-
-        val alignedExprsWithGenerationExprs =
-          if (alignedExprs.forall(_.nonEmpty)) {
-            alignedExprs.map(_.get)
-          } else {
-            generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
-              Some(finalSchemaExprs))
-          }
-
-        val alignedActions: Seq[DeltaMergeAction] = alignedExprsWithGenerationExprs
-          .zip(finalSchemaExprs)
-          .map { case (expr, attrib) =>
-            DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
-          }
-
+          finalSchema = finalSchema)
         m.copy(m.condition, alignedActions)
-
-      case m: DeltaMergeIntoDeleteClause => m    // Delete does not need reordering
+      case m: DeltaMergeIntoMatchedDeleteClause => m // Delete does not need reordering
+    }
+    val processedNotMatchedBySource = notMatchedBySource.map {
+      case m: DeltaMergeIntoNotMatchedBySourceUpdateClause =>
+        val alignedActions = alignUpdateActions(
+          target,
+          m.resolvedActions,
+          whenClauses = matched ++ notMatched ++ notMatchedBySource,
+          identityColumns = additionalColumns,
+          generatedColumns,
+          migrateSchema,
+          finalSchema)
+        m.copy(m.condition, alignedActions)
+      case m: DeltaMergeIntoNotMatchedBySourceDeleteClause => m // Delete does not need reordering
     }
 
-    val processedNotMatched = notMatched.map { m =>
+    val processedNotMatched = notMatched.map { case m: DeltaMergeIntoNotMatchedInsertClause =>
       // Check if columns are distinct. All actions should have targetColNameParts.size = 1.
       m.resolvedActions.foreach { a =>
         if (a.targetColNameParts.size > 1) {
@@ -252,11 +208,19 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           condition,
           processedMatched,
           processedNotMatched,
+          processedNotMatchedBySource,
           finalSchemaOpt),
         now)
     } else {
-      DeltaMergeInto(source, target, condition,
-        processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
+      DeltaMergeInto(
+        source,
+        target,
+        condition,
+        processedMatched,
+        processedNotMatched,
+        processedNotMatchedBySource,
+        migrateSchema,
+        finalSchemaOpt)
     }
   }
 
@@ -279,6 +243,104 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             Literal.create(localDateTimeToMicros(asDateTime), TimestampNTZType)
         }
     }
+  }
+
+  /**
+   * Generates update expressions for columns that are not present in the target table and are
+   * introduced by one of the update or insert merge clauses. The generated update expressions and
+   * the update expressions for the existing columns are aligned to match the order in the
+   * target output schema.
+   *
+   * @param target Logical plan node of the target table of merge.
+   * @param resolvedActions Merge actions of the update clause being processed.
+   * @param whenClauses All merge clauses of the merge operation.
+   * @param identityColumns Additional identity columns present in the table.
+   * @param generatedColumns List of the generated columns in the table. See
+   *                         [[UpdateExpressionsSupport]].
+   * @param allowStructEvolution Whether to allow structs to evolve. See
+   *                             [[UpdateExpressionsSupport]].
+   * @param finalSchema The schema of the target table after the merge operation.
+   * @return Update actions aligned on the target output schema `finalSchema`.
+   */
+  private def alignUpdateActions(
+      target: LogicalPlan,
+      resolvedActions: Seq[DeltaMergeAction],
+      whenClauses: Seq[DeltaMergeIntoClause],
+      identityColumns: Seq[StructField],
+      generatedColumns: Seq[StructField],
+      allowStructEvolution: Boolean,
+      finalSchema: StructType)
+    : Seq[DeltaMergeAction] = {
+    // Get any new columns which are in the update/insert clauses, but not the target output
+    val existingColumns = resolvedActions.map(_.targetColNameParts.head) ++
+      target.output.map(_.name)
+    val newColumns = whenClauses.toSeq.flatMap {
+      _.resolvedActions.filterNot { action =>
+        existingColumns.exists { colName =>
+          conf.resolver(action.targetColNameParts.head, colName)
+        }
+      }
+    }
+
+    // TODO: Remove this once Scala 2.13 is available in Spark.
+    def distinctBy[A : ClassTag, B](a: Seq[A])(f: A => B): Seq[A] = {
+      val builder = mutable.ArrayBuilder.make[A]
+      val seen = mutable.HashSet.empty[B]
+      a.foreach { x =>
+        if (seen.add(f(x))) {
+          builder += x
+        }
+      }
+      builder.result()
+    }
+
+    val newColumnsDistinct = distinctBy(newColumns)(_.targetColNameParts).map { action =>
+      AttributeReference(action.targetColNameParts.head, action.dataType)()
+    }
+
+    // Get the operations for columns that already exist...
+    val existingUpdateOps = resolvedActions.map { a =>
+      UpdateOperation(a.targetColNameParts, a.expr)
+    }
+
+    // And construct operations for columns that the insert/update clauses will add.
+    val newUpdateOps = newColumnsDistinct.map { col =>
+      UpdateOperation(Seq(col.name), Literal(null, col.dataType))
+    }
+
+    // Get expressions for the final schema for alignment. Note that attributes which already
+    // exist in the target need to use the same expression ID, even if the schema will evolve.
+    val finalSchemaExprs =
+    finalSchema.map { field =>
+      target.resolve(Seq(field.name), conf.resolver).map { r =>
+        AttributeReference(field.name, field.dataType)(r.exprId)
+      }.getOrElse {
+        AttributeReference(field.name, field.dataType)()
+      }
+    }
+
+    // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
+    // that nested fields can be updated (only for existing columns).
+    val alignedExprs = generateUpdateExpressions(
+      finalSchemaExprs,
+      existingUpdateOps ++ newUpdateOps,
+      conf.resolver,
+      allowStructEvolution = allowStructEvolution,
+      generatedColumns = generatedColumns)
+
+    val alignedExprsWithGenerationExprs =
+      if (alignedExprs.forall(_.nonEmpty)) {
+        alignedExprs.map(_.get)
+      } else {
+        generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
+          Some(finalSchemaExprs))
+      }
+
+    alignedExprsWithGenerationExprs
+      .zip(finalSchemaExprs)
+      .map { case (expr, attrib) =>
+        DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
+      }
   }
 
   /**

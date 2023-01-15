@@ -33,7 +33,7 @@ import org.apache.spark.sql.types.StructType
  * and CDC type on a per-file basis.
  */
 class CdcAddFileIndex(
-    override val spark: SparkSession,
+    spark: SparkSession,
     filesByVersion: Seq[CDCDataSpec[AddFile]],
     deltaLog: DeltaLog,
     path: Path,
@@ -68,5 +68,4 @@ class CdcAddFileIndex(
   override val partitionSchema: StructType =
     CDCReader.cdcReadSchema(snapshot.metadata.partitionSchema)
 
-  override def getSnapshot: Snapshot = snapshot
 }

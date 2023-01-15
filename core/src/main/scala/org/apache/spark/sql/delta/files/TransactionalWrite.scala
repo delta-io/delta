@@ -226,7 +226,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     // and will be stripped out later in [[DelayedCommitProtocolEdge]].
     // Note that the ordering of the partition schema is relevant - CDC_PARTITION_COL must
     // come first in order to ensure CDC data lands in the right place.
-    if (CDCReader.isCDCEnabledOnTable(metadata) &&
+    if (CDCReader.isCDCEnabledOnTable(metadata, spark) &&
       inputData.schema.fieldNames.contains(CDCReader.CDC_TYPE_COLUMN_NAME)) {
       val augmentedData = inputData.withColumn(
         CDCReader.CDC_PARTITION_COL, col(CDCReader.CDC_TYPE_COLUMN_NAME).isNotNull)
@@ -306,6 +306,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override def dataSchema = statsDataSchema.toStructType
         override val spark: SparkSession = data.sparkSession
         override val numIndexedCols = indexedCols
+        override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
       }
 
       val statsColExpr = getStatsColExpr(statsDataSchema, statsCollection)
@@ -410,6 +411,15 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val resultFiles = committer.addedStatuses.map { a =>
       a.copy(stats = optionalStatsTracker.map(
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
+    }.filter {
+      // In some cases, we can write out an empty `inputData`. Some examples of this (though, they
+      // may be fixed in the future) are the MERGE command when you delete with empty source, or
+      // empty target, or on disjoint tables. This is hard to catch before the write without
+      // collecting the DF ahead of time. Instead, we can return only the AddFiles that
+      // a) actually add rows, or
+      // b) don't have any stats so we don't know the number of rows at all
+      case a: AddFile => a.numLogicalRecords.forall(_ > 0)
+      case _ => true
     }
 
     resultFiles.toSeq ++ committer.changeFiles

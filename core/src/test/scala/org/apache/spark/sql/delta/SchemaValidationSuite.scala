@@ -262,7 +262,9 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
    * Removing a column(referenced in condition) while performing a delete will
    * result in a no-op.
    */
-  testConcurrentChange("delete - remove condition column concurrently")(
+  testConcurrentChange("test delete query against a concurrent query which removes the" +
+    " delete condition column"
+  )(
     createTable = (spark: SparkSession, tblPath: String) => {
       spark.range(10).withColumn("col2", lit(1))
         .repartition(2)
@@ -275,8 +277,8 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
       deltaTable.delete(col("id") === 1)
       // check if delete is no-op
       checkAnswer(
-        deltaTable.history.select("operation"),
-        Seq(Row("WRITE"), Row("WRITE")))
+        sql(s"SELECT * FROM delta.`$tblPath`"),
+        Seq(Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1)))
     },
     concurrentChange = dropColFromSampleTable("id")
   )
@@ -306,7 +308,9 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
    * Removing a column(referenced in condition) while performing a update will
    * result in a no-op.
    */
-  testConcurrentChange("update - remove condition column concurrently")(
+    testConcurrentChange("test update query against a concurrent query which removes the" +
+      " update condition column"
+    )(
     createTable = (spark: SparkSession, tblPath: String) => {
       spark.range(10).withColumn("col2", lit(1))
         .repartition(2)
@@ -319,8 +323,8 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
       deltaTable.update(col("id") === 1, Map("id" -> lit("2")))
       // check if update is no-op
       checkAnswer(
-        deltaTable.history.select("operation"),
-        Seq(Row("WRITE"), Row("WRITE")))
+        sql(s"SELECT * FROM delta.`$tblPath`"),
+        Seq(Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1), Row(1)))
     },
     concurrentChange = dropColFromSampleTable("id")
   )

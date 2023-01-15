@@ -19,11 +19,11 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
+// scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -40,22 +40,23 @@ import org.apache.spark.util.Utils
  * Stats calculated within a snapshot, which we store along individual transactions for
  * verification.
  *
+ * @param txnId Optional transaction identifier
  * @param tableSizeBytes The size of the table in bytes
  * @param numFiles Number of `AddFile` actions in the snapshot
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
  * @param histogramOpt Optional file size histogram
- * @param txnId Optional transaction identifier
  */
 case class VersionChecksum(
+    txnId: Option[String],
     tableSizeBytes: Long,
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
-    protocol: Protocol,
+    setTransactions: Option[Seq[SetTransaction]],
     metadata: Metadata,
+    protocol: Protocol,
     histogramOpt: Option[FileSizeHistogram],
-    txnId: Option[String],
     allFiles: Option[Seq[AddFile]])
 
 /**
@@ -77,6 +78,7 @@ trait RecordChecksum extends DeltaLogging {
     val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
     val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
     eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
+    eventData("numSetTransactionActions") = checksum.setTransactions.map(_.size).getOrElse(-1)
     val startTimeMs = System.currentTimeMillis()
     try {
       val toWrite = JsonUtils.toJson(checksum) + "\n"

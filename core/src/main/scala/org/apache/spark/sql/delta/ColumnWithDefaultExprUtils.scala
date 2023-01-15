@@ -39,9 +39,6 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  */
 object ColumnWithDefaultExprUtils extends DeltaLogging {
 
-  // Min writer version that supports writing to IDENTITY columns.
-  val IDENTITY_MIN_WRITER_VERSION = 6
-
   // Returns true if column `field` is defined as an IDENTITY column.
   def isIdentityColumn(field: StructField): Boolean = {
     val md = field.metadata
@@ -58,13 +55,9 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
   // Return true if `schema` contains any number of IDENTITY column.
   def hasIdentityColumn(schema: StructType): Boolean = schema.exists(isIdentityColumn)
 
-  // Return a pair of Booleans indicating:
-  // (true if `protocol` satisfies the requirement for Generated columns,
-  //  true if `protocol` satisfies the requirement for IDENTITY columns).
-  def satisfyProtocol(protocol: Protocol): (Boolean, Boolean) = {
-    (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol),
-      protocol.minWriterVersion >= IDENTITY_MIN_WRITER_VERSION)
-  }
+  // Return if `protocol` satisfies the requirement for IDENTITY columns.
+  def satisfiesIdentityColumnProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureEnabled(IdentityColumnsTableFeature)
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
   // insertion list).
@@ -146,10 +139,12 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
   }
 
   // Removes the default expressions properties from the schema. If `keepGeneratedColumns` is
-  // true, generated column expressions are kept (so only IDENTITY column properties are removed).
+  // true, generated column expressions are kept. If `keepIdentityColumns` is true, IDENTITY column
+  // properties are kept.
   def removeDefaultExpressions(
       schema: StructType,
-      keepGeneratedColumns: Boolean = false): StructType = {
+      keepGeneratedColumns: Boolean = false,
+      keepIdentityColumns: Boolean = false): StructType = {
     var updated = false
     val updatedSchema = schema.map { field =>
       if (!keepGeneratedColumns && GeneratedColumn.isGeneratedColumn(field)) {
@@ -159,7 +154,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
           .remove(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY)
           .build()
         field.copy(metadata = newMetadata)
-      } else if (isIdentityColumn(field)) {
+      } else if (!keepIdentityColumns && isIdentityColumn(field)) {
         updated = true
         val newMetadata = new MetadataBuilder()
           .withMetadata(field.metadata)

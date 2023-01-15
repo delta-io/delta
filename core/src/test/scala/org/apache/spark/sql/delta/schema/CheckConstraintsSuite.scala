@@ -38,7 +38,9 @@ class CheckConstraintsSuite extends QueryTest
   import testImplicits._
 
   private def withTestTable(thunk: String => Unit) = {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "3") {
       withTable("checkConstraintsTest") {
         Seq(
           (1, "a"), (2, "b"), (3, "c"),
@@ -289,7 +291,9 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   testQuietly("constraints with nulls") {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "3") {
       withTable("checkConstraintsTest") {
         val rows = Range(0, 10).map { i =>
           Row(
@@ -355,7 +359,9 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   testQuietly("complex constraints") {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "3") {
       withTable("checkConstraintsTest") {
         val rows = Range(0, 10).map { i =>
           Row(

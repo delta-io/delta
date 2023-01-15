@@ -16,10 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.DataFrame
 
@@ -174,7 +172,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
 
     val cdcInfo = CDCReader.changesToDF(
-      deltaLog,
+      snapshotAtSourceInit,
       startVersion,
       endOffset.reservoirVersion,
       groupedFileActions,
@@ -299,9 +297,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           if (verifyMetadataAction) {
             checkColumnMappingSchemaChangesDuringStreaming(m, version)
             val cdcSchema = CDCReader.cdcReadSchema(m.schema)
-            if (!SchemaUtils.isReadCompatible(cdcSchema, schema)) {
-              throw DeltaErrors.schemaChangedException(schema, cdcSchema, false)
-            }
+            verifySchemaChange(cdcSchema, version)
           }
           false
         case protocol: Protocol =>

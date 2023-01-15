@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.BeforeAndAfter
 
-import org.apache.spark.{SparkConf, SparkContext, SparkException}
+import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{lit, struct}
@@ -35,6 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
 import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
@@ -676,7 +677,9 @@ trait InsertIntoSQLOnlyTests
           sql(s"INSERT INTO $t2 VALUES (2L, 'dummy')")
         }
         assert(e.getMessage.contains(t2))
-        assert(e.getMessage.contains("Table not found"))
+        assert(e.getMessage.contains("Table not found") ||
+          e.getMessage.contains(s"table or view `$t2` cannot be found")
+        )
       }
     }
 

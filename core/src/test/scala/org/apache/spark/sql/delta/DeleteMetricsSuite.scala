@@ -107,6 +107,7 @@ class DeleteMetricsSuite extends QueryTest
     var operationMetrics: Map[String, Long] = null
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey ->
         testConfig.cdfEnabled.toString) {
       withTable(tableName) {
@@ -204,19 +205,31 @@ class DeleteMetricsSuite extends QueryTest
     import testImplicits._
 
     Seq(true, false).foreach { cdfEnabled =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
-        withTable("t1") {
-          spark.range(100).withColumn("part", 'id % 10).toDF().write
-            .partitionBy("part").format("delta").saveAsTable("t1")
-          val result = spark.sql("DELETE FROM t1 WHERE part=1").take(1).head(0).toString.toLong
-          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics("t1")
+      Seq(true, false).foreach { deltaCollectStatsEnabled =>
+        Seq(true, false).foreach { deltaDmlMetricsFromMetadataEnabled =>
+          withSQLConf(
+            DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString,
+            DeltaSQLConf.DELTA_COLLECT_STATS.key -> deltaCollectStatsEnabled.toString,
+            DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA.key
+              -> deltaDmlMetricsFromMetadataEnabled.toString
+          ) {
+            withTable("t1") {
+              spark.range(100).withColumn("part", 'id % 10).toDF().write
+                .partitionBy("part").format("delta").saveAsTable("t1")
+              val result = spark.sql("DELETE FROM t1 WHERE part=1")
+                .take(1).head(0).toString.toLong
+              val opMetrics = DeltaMetricsUtils.getLastOperationMetrics("t1")
 
-          // This is a metadata operation. We expect the result (i.e. numAffectedRows) to be -1 and
-          // the operation metric for `numDeletedRows` not to exist. This metric is filtered out
-          // explicitly inside of [[DeltaOperations.Delete.transformMetrics]].
-          assert(opMetrics("numRemovedFiles") > 0)
-          assert(!opMetrics.contains("numDeletedRows"))
-          assert(result == -1)
+              assert(opMetrics("numRemovedFiles") > 0)
+              if (deltaCollectStatsEnabled && deltaDmlMetricsFromMetadataEnabled) {
+                assert(opMetrics("numDeletedRows") == 10)
+                assert(result == 10)
+              } else {
+                assert(!opMetrics.contains("numDeletedRows"))
+                assert(result == -1)
+              }
+            }
+          }
         }
       }
     }
@@ -229,13 +242,11 @@ class DeleteMetricsSuite extends QueryTest
         where = where,
         expectedNumAffectedRows = 0,
         expectedOperationMetrics = Map(
-          "numCopiedRows" -> -1,
-          "numDeletedRows" -> -1,
-          "numOutputRows" -> 0,
-          "numFiles" -> 0,
-          "numAddedFiles" -> -1,
-          "numRemovedFiles" -> -1,
-          "numAddedChangeFiles" -> -1,
+          "numCopiedRows" -> 0,
+          "numDeletedRows" -> 0,
+          "numAddedFiles" -> 0,
+          "numRemovedFiles" -> 0,
+          "numAddedChangeFiles" -> 0,
           "scanTimeMs" -> -1,
           "rewriteTimeMs" -> -1,
           "executionTimeMs" -> -1
@@ -243,16 +254,7 @@ class DeleteMetricsSuite extends QueryTest
         testConfig = testConfig
       )
 
-      // TODO: for some reason, when the table is not partitioned, the operation metrics is missing
-      //       fields `numFiles` and `numOutputRows`
-      var shouldFail = !testConfig.partitioned
-      if (shouldFail) {
-        assertThrows[TestFailedException] {
-          executeTest
-        }
-      } else {
-        executeTest
-      }
+      executeTest
     }
   }
 
@@ -261,10 +263,10 @@ class DeleteMetricsSuite extends QueryTest
       runDeleteAndCheckMetrics(
         table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
         where = whereClause,
-        expectedNumAffectedRows = -1L,
+        expectedNumAffectedRows = 100,
         expectedOperationMetrics = Map(
           "numCopiedRows" -> -1,
-          "numDeletedRows" -> -1,
+          "numDeletedRows" -> 100,
           "numOutputRows" -> -1,
           "numFiles" -> -1,
           "numAddedFiles" -> -1,
@@ -282,13 +284,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "1 != 1",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -303,13 +303,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "id < 0 or id > 100",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -324,13 +322,11 @@ class DeleteMetricsSuite extends QueryTest
       where = "id / 200 > 1 ",
       expectedNumAffectedRows = 0L,
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numDeletedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numDeletedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -393,16 +389,7 @@ class DeleteMetricsSuite extends QueryTest
       testConfig = testConfig
     )
 
-    // TODO: for some reason, when the table is not partitioned and CDF is disabled, the operation
-    //       metric 'numAddedFiles' is 1 instead of 0.
-    var shouldFail = !testConfig.partitioned && !testConfig.cdfEnabled
-    if (shouldFail) {
-      assertThrows[TestFailedException] {
-        executeTest
-      }
-    } else {
-      executeTest
-    }
+    executeTest
   }
 
   testDeleteMetrics("delete one row per file") { testConfig =>

@@ -22,7 +22,8 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
-import org.apache.spark.sql.delta.PreprocessTableRestore
+import org.apache.spark.sql.delta.PreprocessTimeTravel
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -78,9 +79,14 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTableRestore(session)
+      new PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
+      // To ensure the parquet field id reader is turned on, these fields are required to support
+      // id column mapping mode for Delta.
+      // Spark has the read flag default off, so we have to turn it on manually for Delta.
+      session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED, true)
+      session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED, true)
       new DeltaAnalysis(session)
     }
     extensions.injectCheckRule { session =>

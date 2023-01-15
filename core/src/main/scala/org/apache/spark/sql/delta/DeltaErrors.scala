@@ -21,7 +21,7 @@ import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
@@ -30,13 +30,13 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{ChecksumException, Path}
 import org.json4s.JValue
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -98,7 +98,11 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage"
+    "columnMappingAdviceMessage",
+    "icebergClassMissing",
+    "tableFeatureReadRequiresWriteException",
+    "tableFeatureRequiresHigherReaderProtocolVersion",
+    "tableFeatureRequiresHigherWriterProtocolVersion"
   )
 }
 
@@ -915,25 +919,36 @@ trait DeltaErrorsBase
       messageParameters = Array(action, version.toString))
   }
 
+
   def schemaChangedException(
-      oldSchema: StructType,
-      newSchema: StructType,
-      retryable: Boolean): Throwable = {
-    val msg =
-      s"""Detected schema change:
-        |old schema: ${formatSchema(oldSchema)}
-        |
-        |new schema: ${formatSchema(newSchema)}
-        |
-        |Please try restarting the query. If this issue repeats across query restarts without
-        |making progress, you have made an incompatible schema change and need to start your
-        |query from scratch using a new checkpoint directory.
-        |""".stripMargin
-    new DeltaIllegalStateException(
-      errorClass = "DELTA_SCHEMA_CHANGED",
-      messageParameters = Array(
-        formatSchema(oldSchema),
-        formatSchema(newSchema)))
+      readSchema: StructType,
+      dataSchema: StructType,
+      retryable: Boolean,
+      version: Option[Long],
+      includeStartingVersionOrTimestampMessage: Boolean): Throwable = {
+    def newException(errorClass: String, messageParameters: Array[String]): Throwable = {
+      new DeltaIllegalStateException(errorClass, messageParameters)
+    }
+
+    if (version.isEmpty) {
+      newException("DELTA_SCHEMA_CHANGED", Array(
+        formatSchema(readSchema),
+        formatSchema(dataSchema)
+        ))
+    } else if (!includeStartingVersionOrTimestampMessage) {
+      newException("DELTA_SCHEMA_CHANGED_WITH_VERSION", Array(
+        version.get.toString,
+        formatSchema(readSchema),
+        formatSchema(dataSchema)
+      ))
+    } else {
+      newException("DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS", Array(
+        version.get.toString,
+        formatSchema(readSchema),
+        formatSchema(dataSchema),
+        version.get.toString
+      ))
+    }
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -1384,13 +1399,6 @@ trait DeltaErrorsBase
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY",
       messageParameters = Array.empty
-    )
-  }
-
-  def invalidMergeClauseWhenNotMatched(clause: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE",
-      messageParameters = Array(clause)
     )
   }
 
@@ -1886,6 +1894,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
   }
 
+  def convertToDeltaNoPartitionFound(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONVERSION_NO_PARTITION_FOUND",
+      messageParameters = Array(tableName)
+    )
+  }
+
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING",
@@ -1895,34 +1910,50 @@ trait DeltaErrorsBase
   }
 
   def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+    val requiredProtocol = {
+      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
+        Protocol(
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(ColumnMappingTableFeature)
+      } else {
+        ColumnMappingTableFeature.minProtocolVersion
+      }
+    }
+
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
       messageParameters = Array(
         s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
+        s"$requiredProtocol",
         s"$oldProtocol",
-        columnMappingAdviceMessage))
+        columnMappingAdviceMessage(requiredProtocol)))
   }
 
-  private def columnMappingAdviceMessage: String = {
+  private def columnMappingAdviceMessage(
+      requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
     s"""
-       |Please upgrade your Delta table to reader version 2 and writer version 5
-       |and change the column mapping mode to 'name' mapping. You can use the following command:
+       |Please enable Column Mapping on your Delta table with mapping mode 'name'.
+       |You can use one of the following commands.
        |
+       |If your table is already on the required protocol version:
+       |ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+       |
+       |If your table is not on the required protocol version and requires a protocol upgrade:
        |ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '2',
-       |   'delta.minWriterVersion' = '5')
+       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
+       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
        |""".stripMargin
   }
 
   def columnRenameNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage
+    val adviceMsg = columnMappingAdviceMessage()
     new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
-    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage else ""
+    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage() else ""
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
@@ -1950,7 +1981,7 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array(columnMappingAdviceMessage),
+      messageParameters = Array(columnMappingAdviceMessage()),
       cause = Some(cause))
 
   def foundViolatingConstraintsForColumnChange(
@@ -2057,6 +2088,76 @@ trait DeltaErrorsBase
         additionalInfo + "Please try the operation again.",
       conflictingCommit)
     new io.delta.exceptions.ProtocolChangedException(message)
+  }
+
+  def unsupportedReaderTableFeaturesInTableException(
+    unsupported: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
+      messageParameters = Array(unsupported.mkString(", ")))
+  }
+
+  def unsupportedWriterTableFeaturesInTableException(
+    unsupported: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
+      messageParameters = Array(unsupported.mkString(", ")))
+  }
+
+  def unsupportedTableFeatureConfigsException(
+      configs: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG",
+      messageParameters = Array(configs.mkString(", ")))
+  }
+
+  def unsupportedTableFeatureStatusException(
+      feature: String,
+      status: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_UNSUPPORTED_FEATURE_STATUS",
+      messageParameters = Array(feature, status))
+  }
+
+  def tableFeatureReadRequiresWriteException(
+      requiredWriterVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE",
+      messageParameters = Array(
+        requiredWriterVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureRequiresHigherReaderProtocolVersion(
+      feature: String,
+      currentVersion: Int,
+      requiredVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION",
+      messageParameters = Array(
+        feature,
+        currentVersion.toString,
+        requiredVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureRequiresHigherWriterProtocolVersion(
+      feature: String,
+      currentVersion: Int,
+      requiredVersion: Int): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION",
+      messageParameters = Array(
+        feature,
+        currentVersion.toString,
+        requiredVersion.toString,
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+  }
+
+  def tableFeatureMismatchException(features: Iterable[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH",
+      messageParameters = Array(features.mkString(", ")))
   }
 
   def concurrentAppendException(
@@ -2406,14 +2507,37 @@ trait DeltaErrorsBase
     // scalastyle:on line.size.limit
   }
 
-  def blockBatchCdfReadOnColumnMappingEnabledTable(
+  /**
+   * If `isSchemaChange` is false, this means the `incompatVersion` actually refers to a data schema
+   * instead of a schema change. This happens when we could not find any read-incompatible schema
+   * changes within the querying range, but the read schema is still NOT compatible with the data
+   * files being queried, which could happen if user falls back to `legacy` mode and read past data
+   * using some diverged latest schema or time-travelled schema. In this uncommon case, we should
+   * tell the user to try setting it back to endVersion, OR ask us to give them the flag to force
+   * unblock.
+   */
+  def blockBatchCdfReadWithIncompatibleSchemaChange(
+      start: Long,
+      end: Long,
       readSchema: StructType,
-      incompatibleSchema: StructType): Throwable = {
-    new DeltaColumnMappingUnsupportedSchemaIncompatibleException(
-      "Change Data Feed (CDF) read",
-      readSchema,
-      incompatibleSchema,
-      DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key
+      readVersion: Long,
+      incompatVersion: Long,
+      isSchemaChange: Boolean = true): Throwable = {
+    new DeltaUnsupportedOperationException(
+      if (isSchemaChange) {
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE"
+      } else {
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA"
+      },
+      messageParameters = Array(
+        start.toString, end.toString,
+        readSchema.json, readVersion.toString, incompatVersion.toString) ++ {
+          if (isSchemaChange) {
+            Array(start.toString, incompatVersion.toString, incompatVersion.toString, end.toString)
+          } else {
+            Array(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key)
+          }
+        }
     )
   }
 
@@ -2426,7 +2550,7 @@ trait DeltaErrorsBase
       if (isCdfRead) "Streaming read of Change Data Feed (CDF)" else "Streaming read",
       readSchema,
       incompatibleSchema,
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key,
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString
       ))
@@ -2435,7 +2559,8 @@ trait DeltaErrorsBase
   def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
-      Array(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key),
+      Array(DeltaSQLConf
+        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key),
       Some(cause))
   }
 
@@ -2451,6 +2576,72 @@ trait DeltaErrorsBase
         DeltaTableUtils.validDeltaTableHadoopPrefixes.mkString("[", ",", "]"),
         unsupportedOptions.mkString(","))
     )
+  }
+
+  def cloneOnRelativePath(path: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_CLONE_PATH",
+      messageParameters = Array(path))
+  }
+
+  def cloneAmbiguousTarget(externalLocation: String, targetIdent: TableIdentifier): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CLONE_AMBIGUOUS_TARGET",
+      messageParameters = Array(externalLocation, s"$targetIdent")
+    )
+  }
+
+  def cloneFromUnsupportedSource(name: String, format: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_UNSUPPORTED_SOURCE",
+      messageParameters = Array(name, format)
+    )
+  }
+
+  def cloneReplaceUnsupported(tableIdentifier: TableIdentifier): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE",
+      messageParameters = Array(s"$tableIdentifier")
+    )
+  }
+
+  def cloneReplaceNonEmptyTable: Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNSUPPORTED_NON_EMPTY_CLONE"
+    )
+  }
+
+  def partitionSchemaInIcebergTables: Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
+  }
+
+  def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_ICEBERG_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
+  }
+
+  def cannotReconstructPathFromURI(uri: String): Throwable =
+    new DeltaRuntimeException(
+      errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
+      messageParameters = Array(uri))
+
+
+  def deletionVectorSizeMismatch(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_SIZE_MISMATCH",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
+  def deletionVectorChecksumMismatch(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH",
+      messageParameters = Array.empty,
+      pos = 0)
   }
 }
 
@@ -2681,6 +2872,28 @@ class DeltaIndexOutOfBoundsException(
   override def getErrorClass: String = errorClass
 }
 
+/** Thrown when the protocol version of a table is greater than supported by this client. */
+class InvalidProtocolVersionException(requiredVersion: Int, supportedVersion: Int)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
+    messageParameters = Array(requiredVersion.toString, supportedVersion.toString)))
+  with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
+}
+
+class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+    messageParameters = Array(s"(${oldProtocol.simpleString})", s"(${newProtocol.simpleString})")
+  )) with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+}
+
+class DeltaTableFeatureException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends DeltaRuntimeException(errorClass, messageParameters)
+
 class DeltaRuntimeException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
@@ -2703,7 +2916,7 @@ class DeltaSparkException(
 class DeltaNoSuchTableException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
-  extends NoSuchTableException(
+  extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
@@ -2714,6 +2927,16 @@ class ColumnMappingUnsupportedException(msg: String)
   extends UnsupportedOperationException(msg)
 case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
   extends AnalysisException(msg)
+
+class DeltaChecksumException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty,
+    pos: Long)
+  extends ChecksumException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters), pos)
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
 
 /**
  * Errors thrown when an operation is not supported with column mapping schema changes
@@ -2730,5 +2953,10 @@ class DeltaColumnMappingUnsupportedSchemaIncompatibleException(
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
     errorClass = "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION",
-    messageParameters = Array(opName, readSchema.json, incompatibleSchema.json, escapeConfigName)
+    messageParameters = Array(
+      opName,
+      readSchema.json,
+      incompatibleSchema.json,
+      opName,
+      escapeConfigName)
   )

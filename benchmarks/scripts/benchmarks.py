@@ -441,8 +441,9 @@ fi
 
             # Upload JARs to cluster's local maven cache
             remote_maven_dir = ".ivy2/local/"  # must have "/" at the end
-            run_cmd_over_ssh(f"rm -rf {remote_maven_dir}/*", cluster_hostname,
-                             ssh_id_file, ssh_user, stream_output=True, throw_on_error=False)
+            run_cmd_over_ssh(
+                f"rm -rf {remote_maven_dir}/* .ivy2/cache/io.delta .ivy2/jars/io.delta*",
+                cluster_hostname, ssh_id_file, ssh_user, stream_output=True, throw_on_error=False)
             run_cmd_over_ssh(f"mkdir -p {remote_maven_dir}", cluster_hostname,
                              ssh_id_file, ssh_user, stream_output=True)
             scp_cmd = f"""scp -r -C -i {ssh_id_file} {local_maven_delta_dir.rstrip("/")} """ +\

@@ -9,14 +9,14 @@ jobs:
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: install java
-        uses: actions/setup-java@v2
+        uses: actions/setup-java@v3
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: "zulu"
+          java-version: "8"
       - name: Cache Scala, SBT
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/.sbt
@@ -52,3 +52,4 @@ jobs:
       - name: Run Scala/Java and Python tests
         run: |
           pipenv run python run-tests.py --coverage
+          cd examples/scala && build/sbt "++ $SCALA_VERSION compile"

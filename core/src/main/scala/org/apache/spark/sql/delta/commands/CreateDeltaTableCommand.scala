@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -116,43 +117,52 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
+
+        // Execute write command for `deltaWriter` by
+        //   - replacing the metadata new target table for DataFrameWriterV2 writer if it is a
+        //     REPLACE or CREATE_OR_REPLACE command,
+        //   - running the write procedure of DataFrameWriter command and returning the
+        //     new created actions,
+        //   - returning the Delta Operation type of this DataFrameWriter
+        def doDeltaWrite(
+            deltaWriter: WriteIntoDelta,
+            schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
+          // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+          // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+          if (!isV1Writer) {
+            replaceMetadataIfNecessary(
+              txn, tableWithLocation, options, schema)
+          }
+          val actions = deltaWriter.write(txn, sparkSession)
+          val op = getOperation(txn.metadata, isManagedTable, Some(options))
+          (actions, op)
+        }
+
         // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
         // we are creating a table as part of a RunnableCommand
         query.get match {
-          case writer: WriteIntoDelta =>
-            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
-            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-            if (!isV1Writer) {
-              replaceMetadataIfNecessary(
-                txn, tableWithLocation, options, writer.data.schema.asNullable)
-            }
-            val actions = writer.write(txn, sparkSession)
-            val op = getOperation(txn.metadata, isManagedTable, Some(options))
-              txn.commit(actions, op)
+          case deltaWriter: WriteIntoDelta =>
+              if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+                val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
+                txn.commit(actions, op)
+              }
           case cmd: RunnableCommand =>
             result = cmd.run(sparkSession)
           case other =>
             // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
             // to once again go through analysis
             val data = Dataset.ofRows(sparkSession, other)
-
-            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
-            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-            if (!isV1Writer) {
-              replaceMetadataIfNecessary(
-                txn, tableWithLocation, options, other.schema.asNullable)
-            }
-
-            val actions = WriteIntoDelta(
+            val deltaWriter = WriteIntoDelta(
               deltaLog = deltaLog,
               mode = mode,
               options,
               partitionColumns = table.partitionColumnNames,
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-              data = data).write(txn, sparkSession)
-
-            val op = getOperation(txn.metadata, isManagedTable, Some(options))
-            txn.commit(actions, op)
+              data = data)
+            if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+              val (actions, op) = doDeltaWrite(deltaWriter, other.schema.asNullable)
+              txn.commit(actions, op)
+            }
         }
       } else {
         def createTransactionLogOrVerify(): Unit = {

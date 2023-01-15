@@ -211,7 +211,7 @@ class CheckpointsSuite extends QueryTest
     }
   }
 
-  test("checkpoint does not contain remove.numRecords field") {
+  test("checkpoint does not contain remove.tags and remove.numRecords") {
     withTempDir { tempDir =>
       var expectedRemoveFileSchema = Seq(
         "path",
@@ -219,8 +219,7 @@ class CheckpointsSuite extends QueryTest
         "dataChange",
         "extendedFileMetadata",
         "partitionValues",
-        "size",
-        "tags")
+        "size")
       val tablePath = tempDir.getAbsolutePath
       // Append rows [0, 9] to table and merge tablePath.
       spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)

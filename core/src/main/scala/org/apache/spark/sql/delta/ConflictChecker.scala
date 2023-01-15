@@ -42,7 +42,7 @@ import org.apache.spark.sql.types.StructType
  */
 private[delta] class CurrentTransactionInfo(
     val txnId: String,
-    val readPredicates: Seq[Expression],
+    val readPredicates: Seq[DeltaTablePartitionReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
@@ -161,10 +161,8 @@ private[delta] class ConflictChecker(
         deltaLog.protocolRead(p)
         deltaLog.protocolWrite(p)
       }
-      currentTransactionInfo.actions.foreach {
-        case Protocol(_, _) =>
-          throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
-        case _ =>
+      if (currentTransactionInfo.actions.exists(_.isInstanceOf[Protocol])) {
+        throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
       }
     }
   }
@@ -196,16 +194,28 @@ private[delta] class ConflictChecker(
       }
 
       import org.apache.spark.sql.delta.implicits._
-      val predicatesMatchingAddedFiles = ExpressionSet(
-          currentTransactionInfo.readPredicates).iterator.flatMap { p =>
-        // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
-        // beginning.
-        val conflictingFile = DeltaLog.filterFileList(
-          partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
-          addedFilesToCheckForConflicts.toDF(spark), p :: Nil).as[AddFile].take(1)
+      // we need to canonicalize the read predicates per each group of rewrites vs. nonRewrites
+      val canonicalPredicates = currentTransactionInfo.readPredicates
+        .partition(_.shouldRewriteFilter) match {
+        case (rewrites, nonRewrites) =>
+          val canonicalRewrites = ExpressionSet(rewrites.map(_.predicate))
+          val canonicalNonRewrites = ExpressionSet(nonRewrites.map(_.predicate))
+          canonicalRewrites.map(DeltaTablePartitionReadPredicate(_)) ++
+          canonicalNonRewrites.map(DeltaTablePartitionReadPredicate(_, shouldRewriteFilter = false))
+      }
 
-        conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
-      }.take(1).toArray
+      val predicatesMatchingAddedFiles = canonicalPredicates.iterator
+        .flatMap { readPredicate =>
+
+          val conflictingFile = DeltaLog.filterFileList(
+            partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
+            files = addedFilesToCheckForConflicts.toDF(spark),
+            partitionFilters = readPredicate.predicate :: Nil,
+            shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
+          ).as[AddFile].take(1)
+
+          conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
+        }.take(1).toArray
 
       if (predicatesMatchingAddedFiles.nonEmpty) {
         val isWriteSerializable = isolationLevel == WriteSerializable

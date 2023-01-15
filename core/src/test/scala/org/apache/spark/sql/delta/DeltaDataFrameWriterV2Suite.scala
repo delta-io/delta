@@ -19,9 +19,9 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.SparkConf
@@ -68,8 +68,7 @@ trait OpenSourceDataFrameWriterV2Tests
   protected def getProperties(table: Table): Map[String, String] = {
     table.properties().asScala.toMap
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
-      .filterKeys(k =>
-        k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
   }
 
@@ -686,20 +685,33 @@ class DeltaDataFrameWriterV2Suite
   }
 }
 
-
-class DeltaDataFrameWriterV2NameColumnMappingSuite extends DeltaDataFrameWriterV2Suite
-  with DeltaColumnMappingEnableNameMode {
-
-  override protected def getProperties(table: Table): Map[String, String] = {
-    // ignore column mapping configurations
-    dropColumnMappingConfigurations(super.getProperties(table))
-  }
-
+trait DeltaDataFrameWriterV2ColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests = Seq(
     "Append: basic append",
     "Create: with using",
     "Overwrite: overwrite by expression: true",
     "Replace: partitioned table"
   )
+}
+
+class DeltaDataFrameWriterV2IdColumnMappingSuite extends DeltaDataFrameWriterV2Suite
+  with DeltaColumnMappingEnableIdMode
+  with DeltaDataFrameWriterV2ColumnMappingSuiteBase {
+
+  override protected def getProperties(table: Table): Map[String, String] = {
+    // ignore column mapping configurations
+    dropColumnMappingConfigurations(super.getProperties(table))
+  }
+
+}
+
+class DeltaDataFrameWriterV2NameColumnMappingSuite extends DeltaDataFrameWriterV2Suite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaDataFrameWriterV2ColumnMappingSuiteBase {
+
+  override protected def getProperties(table: Table): Map[String, String] = {
+    // ignore column mapping configurations
+    dropColumnMappingConfigurations(super.getProperties(table))
+  }
 
 }

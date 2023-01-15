@@ -230,23 +230,45 @@ object SchemaUtils extends DeltaLogging {
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
-   *   - Dropping any column that was present in the DataFrame schema
-   *   - Converting nullable=false to nullable=true for any column
+   *   - Dropping any column that was present in the existing schema
    *   - Any change of datatype
+   *   - If `forbidTightenNullability` = true:
+   *      - Forbids tightening the nullability (existing nullable=true -> read nullable=false)
+   *      - Typically Used when the existing schema refers to the schema of written data, such as
+   *        when a Delta streaming source reads a schema change (existingSchema) which
+   *        has nullable=true, using the latest schema which has nullable=false, so we should not
+   *        project nulls from the data into the non-nullable read schema.
+   *   - Otherwise:
+   *      - Forbids relaxing the nullability (existing nullable=false -> read nullable=true)
+   *      - Typically Used when the read schema refers to the schema of written data, such as during
+   *        Delta scan, the latest schema during execution (readSchema) has nullable=true but during
+   *        analysis phase the schema (existingSchema) was nullable=false, so we should not project
+   *        nulls from the later data onto a non-nullable schema analyzed in the past.
    */
-  def isReadCompatible(existingSchema: StructType, readSchema: StructType): Boolean = {
+  def isReadCompatible(
+      existingSchema: StructType,
+      readSchema: StructType,
+      forbidTightenNullability: Boolean = false): Boolean = {
+
+    def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
+      if (forbidTightenNullability) {
+        readNullable || !existingNullable
+      } else {
+        existingNullable || !readNullable
+      }
+    }
 
     def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
       (existing, newtype) match {
         case (e: StructType, n: StructType) =>
-          isReadCompatible(e, n)
+          isReadCompatible(e, n, forbidTightenNullability)
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
-          (e.containsNull || !n.containsNull) &&
+          isNullabilityCompatible(e.containsNull, n.containsNull) &&
             isDatatypeReadCompatible(e.elementType, n.elementType)
         case (e: MapType, n: MapType) =>
           // if existing value is non-nullable, so should be the new value
-          (e.valueContainsNull || !n.valueContainsNull) &&
+          isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
         case (a, b) => a == b
@@ -254,13 +276,13 @@ object SchemaUtils extends DeltaLogging {
     }
 
     def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
-      val existing = toFieldMap(existingSchema)
+      val existingFields = toFieldMap(existing)
       // scalastyle:off caselocale
-      val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
-      assert(existingFieldNames.size == existingSchema.length,
+      val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
+      assert(existingFieldNames.size == existing.length,
         "Delta tables don't allow field names that only differ by case")
-      val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
-      assert(newFields.size == readSchema.length,
+      val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == newtype.length,
         "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
@@ -268,13 +290,13 @@ object SchemaUtils extends DeltaLogging {
         // Dropped a column that was present in the DataFrame schema
         return false
       }
-      readSchema.forall { newField =>
+      newtype.forall { newField =>
         // new fields are fine, they just won't be returned
-        existing.get(newField.name).forall { existingField =>
+        existingFields.get(newField.name).forall { existingField =>
           // we know the name matches modulo case - now verify exact match
           (existingField.name == newField.name
             // if existing value is non-nullable, so should be the new value
-            && (existingField.nullable || !newField.nullable)
+            && isNullabilityCompatible(existingField.nullable, newField.nullable)
             // and the type of the field must be compatible, too
             && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
         }
