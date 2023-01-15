@@ -76,7 +76,9 @@
   },
   "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" : {
     "message" : [
-      "<opName> is not supported on tables with column mapping schema changes (e.g. rename or drop). Read schema: <readSchema>. Incompatible schema: <incompatibleSchema>. You may force enable streaming read at your own risk by turning on <config>."
+      "<opName> is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>.",
+      "Although strongly not recommended, you may also force ignore the schema checks during <opName> at your own risk of potentially incorrect results by turning on the SQL conf <escapeConfig>."
     ],
     "sqlState" : "0A000"
   },
@@ -170,6 +172,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
+    "message" : [
+      "A uri (<uri>) which cannot be turned into a relative path was found in the transaction log."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_RENAME_PATH" : {
     "message" : [
       "Cannot rename <currentPath> to <newPath>"
@@ -260,6 +268,22 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
+    "message" : [
+      "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
+      "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible data schema at version <incompatibleVersion>.",
+      "If possible, please retrieve the table changes using the end version's schema by setting <config> to `endVersion`, or contact support."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE" : {
+    "message" : [
+      "Retrieving table changes between version <start> and <end> failed because of an incompatible schema change.",
+      "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible schema change at version <incompatibleVersion>.",
+      "If possible, please query table changes separately from version <start> to <incompatibleVersion> - 1, and from version <incompatibleVersion> to <end>."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_CHANGE_TABLE_FEED_DISABLED" : {
     "message" : [
       "Cannot write to table with delta.enableChangeDataFeed set. Change data feed from Delta is not available."
@@ -277,6 +301,22 @@
       "State of the checkpoint doesn't match that of the snapshot."
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_CLONE_AMBIGUOUS_TARGET" : {
+    "message" : [
+      "",
+      "Two paths were provided as the CLONE target so it is ambiguous which to use. An external",
+      "location for CLONE was provided at <externalLocation> at the same time as the path",
+      "<targetIdentifier>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
+    "message" : [
+      "Unsupported clone source '<name>', whose format is <format>.",
+      "The supported formats are 'delta' and 'parquet'."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
@@ -442,7 +482,7 @@
   },
   "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION" : {
     "message" : [
-      "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty but it's not a Delta table"
+      "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty and also not a Delta table."
     ],
     "sqlState" : "42000"
   },
@@ -451,6 +491,18 @@
       "Cannot change table metadata because the 'dataChange' option is set to false. Attempted operation: '<op>'."
     ],
     "sqlState" : "42000"
+  },
+  "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH" : {
+    "message" : [
+      "Could not verify deletion vector integrity, CRC checksum verification failed."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered a size mismatch."
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
@@ -571,6 +623,24 @@
       "<config> to true.",
       "Using this SQL configuration could lead to accidental data loss, therefore we do",
       "not recommend the use of this flag unless this is for testing purposes."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
+    "message" : [
+      "Unable to operate on this table because the following table features are enabled in metadata but not listed in protocol: <features>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
+    "message" : [
+      "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
+    "message" : [
+      "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
     ],
     "sqlState" : "42000"
   },
@@ -731,6 +801,13 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_INVALID_CLONE_PATH" : {
+    "message" : [
+      "The target location for CLONE needs to be an absolute path or table name. Use an",
+      "absolute path instead of <path>."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."
@@ -829,6 +906,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_INVALID_PROTOCOL_VERSION" : {
+    "message" : [
+      "Delta protocol version is too new for this version of Delta Lake: table requires <required>, client supports up to <supported>. Please upgrade to a newer release."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_INVALID_SOURCE_VERSION" : {
     "message" : [
       "sourceVersion(<version>) is invalid"
@@ -889,12 +972,6 @@
       "Failed to merge decimal types with incompatible <decimalRanges>"
     ],
     "sqlState" : "22005"
-  },
-  "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE" : {
-    "message" : [
-      "<clause> clauses cannot be part of the WHEN NOT MATCHED clause in MERGE INTO."
-    ],
-    "sqlState" : "42000"
   },
   "DELTA_MERGE_MISSING_WHEN" : {
     "message" : [
@@ -1065,6 +1142,12 @@
   "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one MATCHED clauses in a MERGE statement, only the last MATCHED clause can omit the condition."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" : {
+    "message" : [
+      "When there are more than one NOT MATCHED BY SOURCE clauses in a MERGE statement, only the last NOT MATCHED BY SOURCE clause can omit the condition."
     ],
     "sqlState" : "42000"
   },
@@ -1244,11 +1327,17 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE" : {
+    "message" : [
+      "Unable to upgrade only the reader protocol version to use table features. Writer protocol version must be at least <writerVersion> to proceed. Refer to <docLink> for more information on table protocol versions."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
-      "You are trying to read a table <tableName> without columns using Delta.",
+      "You are trying to read a Delta table <tableName> that does not have any columns.",
       "",
-      "Write some data with option `mergeSchema = true` to enable subsequent read access."
+      "Write some new data with the option `mergeSchema = true` to be able to read the table."
     ],
     "sqlState" : "42000"
   },
@@ -1293,9 +1382,40 @@
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [
       "Detected schema change:",
-      "old schema: <oldSchema>",
+      "streaming source schema: <readSchema>",
       "",
-      "new schema: <newSchema>",
+      "data file schema: <dataSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS" : {
+    "message" : [
+      "Detected schema change in version <version>:",
+      "streaming source schema: <readSchema>",
+      "",
+      "data file schema: <dataSchema>",
+      "",
+      "Please try restarting the query. If this issue repeats across query restarts without",
+      "making progress, you have made an incompatible schema change and need to start your",
+      "query from scratch using a new checkpoint directory. If the issue persists after",
+      "changing to a new checkpoint directory, you may need to change the existing",
+      "'startingVersion' or 'startingTimestamp' option to start from a version newer than",
+      "<version> with a new checkpoint directory.",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_SCHEMA_CHANGED_WITH_VERSION" : {
+    "message" : [
+      "Detected schema change in version <version>:",
+      "streaming source schema: <readSchema>",
+      "",
+      "data file schema: <dataSchema>",
       "",
       "Please try restarting the query. If this issue repeats across query restarts without",
       "making progress, you have made an incompatible schema change and need to start your",
@@ -1633,6 +1753,15 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
+    "message" : [
+      "",
+      "You tried to REPLACE an existing table (<tableName>) with CLONE. This operation is",
+      "unsupported. Try a different target for CLONE or delete the table at the current target.",
+      ""
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE" : {
     "message" : [
       "Changing column mapping mode from '<oldMode>' to '<newMode>' is not supported."
@@ -1717,6 +1846,30 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
+    "message" : [
+      "Unable to read this table because it requires reader table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
+    "message" : [
+      "Unable to write this table because it requires writer table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG" : {
+    "message" : [
+      "Table features configured in the following Spark configs or Delta table properties are not recognized by this version of Delta Lake: <configs>."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_FEATURE_STATUS" : {
+    "message" : [
+      "Expecting the status for table feature <feature> to be \"enabled\", but got \"<status>\"."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT" : {
     "message" : [
       "Updating nested fields is only supported for StructType, but you are trying to update a field of <columnName>, which is of type: <dataType>."
@@ -1756,6 +1909,12 @@
   "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
     "message" : [
       "Nested field is not supported in the <operation> (field = <fieldName>)."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_NON_EMPTY_CLONE" : {
+    "message" : [
+      "The clone destination table is non-empty. Please TRUNCATE or DELETE FROM the table before running CLONE."
     ],
     "sqlState" : "0A000"
   },
@@ -1815,7 +1974,7 @@
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [
-      "Cannot time travel views, subqueries or streams."
+      "Cannot time travel views, subqueries, streams or change data feed queries."
     ],
     "sqlState" : "0A000"
   },

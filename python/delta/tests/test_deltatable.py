@@ -151,6 +151,7 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, "key = k") \
             .whenMatchedUpdate(set={"value": "v + 0"}) \
             .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
@@ -160,9 +161,104 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # Multiple matched update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 0), ('c', 3), ('d', 4)]))
+
+        # Multiple matched delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Redundant matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "0"}) \
+            .whenMatchedUpdate(condition="key = 'b'", set={"value": "6"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 6), ('c', 3), ('d', 4)]))
+
+        # Interleaved matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .whenMatchedUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Multiple not matched insert clauses
+        reset_table()
+        dt.alias("t")\
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
+            .whenNotMatchedInsert(condition="s.key = 'e'",
+                                  values={"t.key": "s.key", "t.value": "5"}) \
+            .whenNotMatchedInsertAll() \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', -6)]))
+
+        # Redundant not matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "5"}) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "6"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "7"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "8"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', 7)]))
+
+        # Multiple not matched by source update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 0)]))
+
+        # Multiple not matched by source delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
+
+        # Redundant not matched by source update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'd'", set={"value": "6"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 6)]))
+
+        # Interleaved update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .whenNotMatchedBySourceUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
 
         # ============== Test clause conditions ==============
 
@@ -172,8 +268,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate(condition="k = 'a'", set={"value": "v + 0"}) \
             .whenMatchedDelete(condition="k = 'b'") \
             .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Column expressions in all conditions and dicts
         reset_table()
@@ -185,8 +283,12 @@ class DeltaTableTests(DeltaTestCase):
             .whenNotMatchedInsert(
                 condition=expr("k = 'e'"),
                 values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(
+                condition=expr("key = 'c'"),
+                set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition=expr("key = 'd'")) \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Positional arguments
         reset_table()
@@ -194,8 +296,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate("k = 'a'", {"value": "v + 0"}) \
             .whenMatchedDelete("k = 'b'") \
             .whenNotMatchedInsert("k = 'e'", {"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate("key = 'c'", {"value": "value + 0"}) \
+            .whenNotMatchedBySourceDelete("key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # ============== Test updateAll/insertAll ==============
 
@@ -318,6 +422,51 @@ class DeltaTableTests(DeltaTestCase):
             (dt  # type: ignore[call-overload]
                 .merge(source, "key = k")
                 .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
+
+        # ---- bad args in whenNotMatchedBySourceUpdate()
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate({"value": "value"}))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(condition="key = 'a'"))
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1, {"value": "value"}))
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate("key = 'a'", 1))
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={"value": 1}))  # type: ignore[dict-item]
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={1: ""}))  # type: ignore[dict-item]
+
+        with self.assertRaises(TypeError):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set="key = 'a'", condition={"value": 1}))
+
+        # bad args in whenNotMatchedBySourceDelete()
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
 
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -940,6 +1089,10 @@ class DeltaTableTests(DeltaTestCase):
             .withColumn("p", floor(col("value") % 10)) \
             .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -948,12 +1101,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        self.assertTrue(metrics.numFilesAdded == 10)
-        self.assertTrue(metrics.numFilesRemoved == 37)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 37)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 10)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        # for each partition. Ther are 10 partitions in the table, so expect 10 final files
+        numDataFilesPostZOrder = 10
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(10, metrics.zOrderStats.numOutputCubes)  # one for each partition
 
         # negative test: Z-Order on partition column
         def optimize() -> None:
@@ -972,6 +1130,10 @@ class DeltaTableTests(DeltaTestCase):
 
         df.format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version in partition p = 2
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .filter("p=2").select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -980,15 +1142,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        expectedFilesRemoved = 4
-        expectedFilesConsidered = 4
-        # assertions (partition 'p = 2' has four files)
-        self.assertTrue(metrics.numFilesAdded == 1)
-        self.assertTrue(metrics.numFilesRemoved == expectedFilesRemoved)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == expectedFilesConsidered)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        numDataFilesPostZOrder = 1
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        # expected to consider all input files for Z-Order
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],

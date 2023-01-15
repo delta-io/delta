@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -212,7 +213,9 @@ trait SnapshotManagement { self: DeltaLog =>
       if (deltaVersions.nonEmpty) {
         if (deltaVersions.head != newCheckpointVersion + 1) {
           throw DeltaErrors.logFileNotFoundException(
-            deltaFile(logPath, newCheckpointVersion + 1), deltaVersions.last, metadata)
+            deltaFile(logPath, newCheckpointVersion + 1),
+            deltaVersions.last,
+            unsafeVolatileMetadata) // metadata is best-effort only
         }
         verifyDeltaVersions(spark, deltaVersions, Some(newCheckpointVersion + 1), versionToLoad)
       }
@@ -273,7 +276,6 @@ trait SnapshotManagement { self: DeltaLog =>
     val snapshot = initSegment.map { segment =>
       val snapshot = createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = lastCheckpointOpt,
         checksumOpt = None)
       snapshot
@@ -306,9 +308,16 @@ trait SnapshotManagement { self: DeltaLog =>
     "Use unsafeVolatileSnapshot instead", "12.0")
   def snapshot: Snapshot = unsafeVolatileSnapshot
 
+  /**
+   * Unsafe due to thread races that can change it at any time without notice, even between two
+   * calls in the same method. Like [[unsafeVolatileSnapshot]] it depends on, this method should be
+   * used only with extreme care in production code (or by unit tests where no races are possible).
+   */
+  private[delta] def unsafeVolatileMetadata =
+    Option(unsafeVolatileSnapshot).map(_.metadata).getOrElse(Metadata())
+
   protected def createSnapshot(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long,
       checkpointMetadataOptHint: Option[CheckpointMetaData],
       checksumOpt: Option[VersionChecksum]): Snapshot = {
     val startingFrom = initSegment.checkpointVersionOpt
@@ -319,11 +328,9 @@ trait SnapshotManagement { self: DeltaLog =>
         path = logPath,
         version = segment.version,
         logSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt.orElse(readChecksum(segment.version)),
-        minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
         checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
   }
@@ -607,7 +614,6 @@ trait SnapshotManagement { self: DeltaLog =>
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp,
           checkpointMetadataOptHint = previousSnapshot.getCheckpointMetadataOpt,
           checksumOpt = None)
         logMetadataTableIdChange(previousSnapshot, newSnapshot)
@@ -651,14 +657,12 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def createSnapshotAfterCommit(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long,
       newChecksumOpt: Option[VersionChecksum],
       committedVersion: Long,
       checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
     logInfo(s"Creating a new snapshot v${initSegment.version} for commit version $committedVersion")
     createSnapshot(
       initSegment,
-      minFileRetentionTimestamp,
       checkpointMetadataOptHint,
       checksumOpt = newChecksumOpt
     )
@@ -695,7 +699,6 @@ trait SnapshotManagement { self: DeltaLog =>
 
       val newSnapshot = createSnapshotAfterCommit(
         segment,
-        minFileRetentionTimestamp,
         newChecksumOpt,
         committedVersion,
         previousSnapshot.getCheckpointMetadataOpt)
@@ -722,7 +725,6 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp,
         checkpointMetadataOptHint = None,
         checksumOpt = None)
     }.getOrElse {

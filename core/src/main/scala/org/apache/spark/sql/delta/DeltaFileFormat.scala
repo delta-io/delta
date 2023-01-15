@@ -23,10 +23,9 @@ import org.apache.spark.sql.execution.datasources.FileFormat
 
 trait DeltaFileFormat {
   // TODO: Add support for column mapping
-  /** Return the current metadata for preparing this file format */
-  protected def metadata: Metadata
   /** Return the current Spark session used. */
   protected def spark: SparkSession
+
   /**
    * Build the underlying Spark `FileFormat` of the Delta table with specified metadata.
    *
@@ -34,6 +33,5 @@ trait DeltaFileFormat {
    * transaction, so if possible, we should always pass in the latest transaction's metadata
    * instead of one from a past snapshot.
    */
-  def fileFormat(metadata: Metadata = metadata): FileFormat =
-    new DeltaParquetFileFormat(metadata.columnMappingMode, metadata.schema)
+  def fileFormat(metadata: Metadata): FileFormat = new DeltaParquetFileFormat(metadata)
 }

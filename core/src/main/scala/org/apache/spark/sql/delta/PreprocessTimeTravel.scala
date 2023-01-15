@@ -32,18 +32,43 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * Preprocesses the [[RestoreTableStatement]] logical plan before converting it to
- * [[RestoreTableCommand]].
- * - Resolves the [[UnresolvedRelation]] in [[RestoreTableStatement]]'s child [[TimeTravel]].
+ * Resolves the [[UnresolvedRelation]] in command 's child [[TimeTravel]].
  *   Currently Delta depends on Spark 3.2 which does not resolve the [[UnresolvedRelation]]
  *   in [[TimeTravel]]. Once Delta upgrades to Spark 3.3, this code can be removed.
+ *
+ * TODO: refactoring this analysis using Spark's native [[TimeTravelRelation]] logical plan
  */
-case class PreprocessTableRestore(sparkSession: SparkSession) extends Rule[LogicalPlan] {
+case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[LogicalPlan] {
 
   override def conf: SQLConf = sparkSession.sessionState.conf
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case _ @ RestoreTableStatement(tt @ TimeTravel(ur @ UnresolvedRelation(_, _, _), _, _, _)) =>
+      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+      return RestoreTableStatement(
+        TimeTravel(
+          sourceRelation,
+          tt.timestamp,
+          tt.version,
+          tt.creationSource))
+
+    case ct @ CloneTableStatement(
+        tt @ TimeTravel(ur: UnresolvedRelation, _, _, _), _,
+          _, _, _, _, _) =>
+      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+      ct.copy(source = TimeTravel(
+        sourceRelation,
+        tt.timestamp,
+        tt.version,
+        tt.creationSource))
+  }
+
+  /**
+   * Helper to resolve a [[TimeTravel]] logical plan to Delta DSv2 relation.
+   */
+  private def resolveTimeTravelTable(
+      sparkSession: SparkSession,
+      ur: UnresolvedRelation): DataSourceV2Relation = {
       val tableId = ur.multipartIdentifier match {
         case Seq(tbl) => TableIdentifier(tbl)
         case Seq(db, tbl) => TableIdentifier(tbl, Some(db))
@@ -64,19 +89,13 @@ case class PreprocessTableRestore(sparkSession: SparkSession) extends Rule[Logic
           // If table exists and not found to be a view, throw not supported error
           throw DeltaErrors.notADeltaTableException("RESTORE")
         } else {
-          ur.failAnalysis(s"Table not found: " +
+          ur.failAnalysis(msg = s"Table not found: " +
             s"${ur.multipartIdentifier.map(quoteIfNeeded).mkString(".")}")
         }
       }
 
       val identifier = deltaTableV2.getTableIdentifierIfExists.map(
         id => Identifier.of(id.database.toArray, id.table))
-      val sourceRelation = DataSourceV2Relation.create(deltaTableV2, None, identifier)
-      return RestoreTableStatement(
-        TimeTravel(
-          sourceRelation,
-          tt.timestamp,
-          tt.version,
-          tt.creationSource))
+      DataSourceV2Relation.create(deltaTableV2, None, identifier)
   }
 }

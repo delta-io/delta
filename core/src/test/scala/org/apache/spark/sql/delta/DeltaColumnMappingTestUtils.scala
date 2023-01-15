@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
@@ -37,6 +39,8 @@ import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
 
   import testImplicits._
+
+  protected def columnMappingMode: String = NoMapping.name
 
   private val PHYSICAL_NAME_REGEX =
     "col-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}".r
@@ -359,8 +363,8 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    */
   protected def withStreamingReadOnColumnMappingTableEnabled(f: => Unit): Unit = {
     if (columnMappingEnabled) {
-      withSQLConf(
-        DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "true") {
+      withSQLConf(DeltaSQLConf
+        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key -> "true") {
         f
       }
     } else {
@@ -413,20 +417,29 @@ trait DeltaColumnMappingEnableNameMode extends SharedSparkSession
       super.convertToDelta(tableOrPath)
     }
 
-    val deltaPath = if (tableOrPath.contains("parquet") && tableOrPath.contains("`")) {
-      // parquet.`PATH`
-      s"""delta.${tableOrPath.split('.').last}"""
-    } else {
-      tableOrPath
-    }
+    val (deltaPath, deltaLog) =
+      if (tableOrPath.contains("parquet") && tableOrPath.contains("`")) {
+        // parquet.`PATH`
+        val plainPath = tableOrPath.split('.').last.drop(1).dropRight(1)
+        (s"delta.`$plainPath`", DeltaLog.forTable(spark, plainPath))
+      } else {
+        (tableOrPath, DeltaLog.forTable(spark, TableIdentifier(tableOrPath)))
+      }
 
+    val tableReaderVersion = deltaLog.unsafeVolatileSnapshot.protocol.minReaderVersion
+    val tableWriterVersion = deltaLog.unsafeVolatileSnapshot.protocol.minWriterVersion
     val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
     val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
-    sql(s"""ALTER TABLE $deltaPath SET TBLPROPERTIES (
-         |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
-         |${DeltaConfigs.MIN_READER_VERSION.key} = '$readerVersion',
-         |${DeltaConfigs.MIN_WRITER_VERSION.key} = '$writerVersion'
-         |)""".stripMargin)
+
+    val properties = mutable.ListBuffer(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name")
+    if (tableReaderVersion < readerVersion) {
+      properties += DeltaConfigs.MIN_READER_VERSION.key -> readerVersion.toString
+    }
+    if (tableWriterVersion < writerVersion) {
+      properties += DeltaConfigs.MIN_WRITER_VERSION.key -> writerVersion.toString
+    }
+    val propertiesStr = properties.map(kv => s"'${kv._1}' = '${kv._2}'").mkString(", ")
+    sql(s"ALTER TABLE $deltaPath SET TBLPROPERTIES ($propertiesStr)")
   }
 
 }

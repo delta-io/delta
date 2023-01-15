@@ -418,10 +418,12 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   }
 
   Seq(true, false).foreach { readChangeFeed =>
-    test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
+    test(s"streams updating latest offset with " +
+        s"readChangeFeed=$readChangeFeed") {
       withTempDirs { (inputDir, checkpointDir, outputDir) =>
         withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
 
+          sql(s"CREATE TABLE delta.`$inputDir` (id BIGINT, value STRING) USING DELTA")
           // save some rows to input table.
           spark.range(10).withColumn("value", lit("a"))
             .write.format("delta").mode("overwrite")
@@ -481,8 +483,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           val endOffset = JsonUtils.mapper.readValue[DeltaSourceOffset](
             query1.lastProgress.sources.head.endOffset
           )
-          assert(endOffset.reservoirVersion === 11)
-          assert(endOffset.index === -1)
+          var expectedReservoirVersion = 1
+          var expectedIndex = 1
+          assert(endOffset.reservoirVersion === expectedReservoirVersion)
+          assert(endOffset.index === expectedIndex)
         }
       }
     }

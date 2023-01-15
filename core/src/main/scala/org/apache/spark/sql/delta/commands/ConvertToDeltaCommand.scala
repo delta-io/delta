@@ -26,6 +26,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -66,12 +67,16 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  *
  * @param tableIdentifier the target parquet table.
  * @param partitionSchema the partition schema of the table, required when table is partitioned.
+ * @param collectStats Should collect column stats per file on convert.
  * @param deltaPath if provided, the delta log will be written to this location.
  */
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
+    collectStats: Boolean,
     deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
+
+  protected lazy val statsEnabled: Boolean = conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
 
   protected lazy val icebergEnabled: Boolean =
     conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
@@ -273,20 +278,42 @@ abstract class ConvertToDeltaCommandBase(
     }
   }
 
+  protected def performStatsCollection(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      addFiles: Seq[AddFile]): Iterator[AddFile] = {
+    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
+    ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, addFiles)
+  }
+
   /**
    * Given the file manifest, create corresponding AddFile actions for the entire list of files.
    */
   protected def createDeltaActions(
+      spark: SparkSession,
       manifest: ConvertTargetFileManifest,
       partitionSchema: StructType,
       txn: OptimisticTransaction,
       fs: FileSystem): Iterator[AddFile] = {
+    val shouldCollectStats = collectStats && statsEnabled
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
+    var numFiles = 0L
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
         ConvertToDeltaCommand.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
-      adds.toIterator
+      if (shouldCollectStats) {
+        logInfo(s"Collecting stats for a batch of ${batch.size} files; " +
+          s"finished $numFiles so far")
+        numFiles += statsBatchSize
+        performStatsCollection(spark, txn, adds)
+      } else if (collectStats) {
+        logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
+          s" is false. Skip statistics collection")
+        adds.toIterator
+      } else {
+        adds.toIterator
+      }
     }
   }
 
@@ -351,7 +378,7 @@ abstract class ConvertToDeltaCommandBase(
       checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
       val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
@@ -388,7 +415,7 @@ abstract class ConvertToDeltaCommandBase(
     DeltaOperations.Convert(
       numFilesConverted,
       partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil),
-      collectStats = false,
+      collectStats = collectStats && statsEnabled,
       convertProperties.catalogTable.map(t => t.identifier.toString),
       sourceFormat = Some(sourceFormat))
   }
@@ -412,8 +439,9 @@ abstract class ConvertToDeltaCommandBase(
 case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
+    collectStats: Boolean,
     deltaPath: Option[String])
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, collectStats, deltaPath)
 
 /**
  * An interface for the file to be included during conversion.
@@ -691,19 +719,21 @@ class CatalogFileManifest(
   serializableConf: SerializableConfiguration)
   extends ConvertTargetFileManifest {
 
+  // List of partition directories and corresponding partition values.
   private lazy val partitionList = {
     if (catalogTable.partitionSchema.isEmpty) {
       // Not a partitioned table.
-      Seq(basePath)
+      Seq(basePath -> Map.empty[String, String])
     } else {
       val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
       partitions.map { partition =>
-        partition.storage.locationUri.map(_.toString())
+        val partitionDir = partition.storage.locationUri.map(_.toString())
           .getOrElse {
             val partitionDir =
               PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
             basePath.stripSuffix("/") + "/" + partitionDir
           }
+        partitionDir -> partition.spec
       }
     }
   }
@@ -719,11 +749,13 @@ class CatalogFileManifest(
     val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
     val rdd = spark.sparkContext.parallelize(partitionList)
       .repartition(math.min(parallelism, partitionList.length))
-      .mapPartitions { dirs =>
-        DeltaFileOperations
-          .localListDirs(conf.value.value, dirs.toSeq, recursive = false).filter(!_.isDir)
-          .map(ConvertTargetFile(_))
-      }
+      .mapPartitions { partitions =>
+        partitions.flatMap ( partition =>
+          DeltaFileOperations
+            .localListDirs(conf.value.value, Seq(partition._1), recursive = false).filter(!_.isDir)
+            .map(ConvertTargetFile(_, Some(partition._2)))
+        )
+    }
     spark.createDataset(rdd).cache()
   }
 
@@ -862,6 +894,21 @@ trait ConvertToDeltaCommandUtils extends DeltaLogging {
   def hiddenDirNameFilter(fileName: String): Boolean = {
     // Allow partition column name starting with underscore and dot
     DeltaFileOperations.defaultHiddenFileFilter(fileName) && !fileName.contains("=")
+  }
+
+  def computeStats(
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      addFiles: Seq[AddFile]): Iterator[AddFile] = {
+    import org.apache.spark.sql.functions._
+    val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
+      .groupBy(input_file_name()).agg(to_json(snapshot.statsCollector))
+
+    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
+    filesWithStats.collect().iterator.map { row =>
+      val addFile = getTouchedFile(deltaLog.dataPath, row.getString(0), pathToAddFileMap)
+      addFile.copy(stats = row.getString(1))
+    }
   }
 
   def getParquetTable(

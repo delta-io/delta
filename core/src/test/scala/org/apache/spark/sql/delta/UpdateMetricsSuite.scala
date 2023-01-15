@@ -21,6 +21,7 @@ import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{Dataset, QueryTest}
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
@@ -119,6 +120,7 @@ class UpdateMetricsSuite extends QueryTest
     import testImplicits._
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> testConfig.cdfEnabled.toString) {
       withTable(tableName) {
         createTempTable(table, tableName, testConfig)
@@ -209,13 +211,11 @@ class UpdateMetricsSuite extends QueryTest
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "1 != 1",
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numUpdatedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numUpdatedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -229,13 +229,11 @@ class UpdateMetricsSuite extends QueryTest
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id < 0 or id > 100",
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numUpdatedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numUpdatedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1
@@ -249,13 +247,11 @@ class UpdateMetricsSuite extends QueryTest
       table = spark.range(start = 0, end = 100, step = 1, numPartitions = 5),
       where = "id / 200 > 1 ",
       expectedOperationMetrics = Map(
-        "numCopiedRows" -> -1,
-        "numUpdatedRows" -> -1,
-        "numOutputRows" -> 100,
-        "numFiles" -> 5,
-        "numAddedFiles" -> -1,
-        "numRemovedFiles" -> -1,
-        "numAddedChangeFiles" -> -1,
+        "numCopiedRows" -> 0,
+        "numUpdatedRows" -> 0,
+        "numAddedFiles" -> 0,
+        "numRemovedFiles" -> 0,
+        "numAddedChangeFiles" -> 0,
         "scanTimeMs" -> -1,
         "rewriteTimeMs" -> -1,
         "executionTimeMs" -> -1

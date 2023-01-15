@@ -18,36 +18,35 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.collection.mutable.ArrayBuffer
-
+import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
+import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
+import org.apache.spark.util.Utils
 
 trait DeltaTestUtilsBase {
 
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
 
-  class LogicalPlanCapturingListener(optimized: Boolean) extends QueryExecutionListener {
-    val plans = new ArrayBuffer[LogicalPlan]
-    override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
-      if (optimized) plans.append(qe.optimizedPlan) else plans.append(qe.analyzed)
-    }
+  class PlanCapturingListener() extends QueryExecutionListener {
 
-    override def onFailure(
-      funcName: String, qe: QueryExecution, error: Exception): Unit = {}
-  }
+    private[this] var capturedPlans = List.empty[Plans]
 
-  class PhysicalPlanCapturingListener() extends QueryExecutionListener {
-    val plans = new ArrayBuffer[SparkPlan]
+    def plans: Seq[Plans] = capturedPlans.reverse
+
     override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
-      plans.append(qe.sparkPlan)
+      capturedPlans ::= Plans(
+          qe.analyzed,
+          qe.optimizedPlan,
+          qe.sparkPlan,
+          qe.executedPlan)
     }
 
     override def onFailure(
@@ -60,15 +59,17 @@ trait DeltaTestUtilsBase {
   def withLogicalPlansCaptured[T](
       spark: SparkSession,
       optimizedPlan: Boolean)(
-      thunk: => Unit): ArrayBuffer[LogicalPlan] = {
-    val planCapturingListener = new LogicalPlanCapturingListener(optimizedPlan)
+      thunk: => Unit): Seq[LogicalPlan] = {
+    val planCapturingListener = new PlanCapturingListener
 
     spark.sparkContext.listenerBus.waitUntilEmpty(15000)
     spark.listenerManager.register(planCapturingListener)
     try {
       thunk
       spark.sparkContext.listenerBus.waitUntilEmpty(15000)
-      planCapturingListener.plans
+      planCapturingListener.plans.map { plans =>
+        if (optimizedPlan) plans.optimized else plans.analyzed
+      }
     } finally {
       spark.listenerManager.unregister(planCapturingListener)
     }
@@ -79,8 +80,28 @@ trait DeltaTestUtilsBase {
    */
   def withPhysicalPlansCaptured[T](
       spark: SparkSession)(
-      thunk: => Unit): ArrayBuffer[SparkPlan] = {
-    val planCapturingListener = new PhysicalPlanCapturingListener()
+      thunk: => Unit): Seq[SparkPlan] = {
+    val planCapturingListener = new PlanCapturingListener
+
+    spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+    spark.listenerManager.register(planCapturingListener)
+    try {
+      thunk
+      spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+      planCapturingListener.plans.map(_.sparkPlan)
+    } finally {
+      spark.listenerManager.unregister(planCapturingListener)
+    }
+  }
+
+  /**
+   * Run a thunk with logical and physical plans for all queries captured and passed
+   * into a provided buffer.
+   */
+  def withAllPlansCaptured[T](
+      spark: SparkSession)(
+      thunk: => Unit): Seq[Plans] = {
+    val planCapturingListener = new PlanCapturingListener
 
     spark.sparkContext.listenerBus.waitUntilEmpty(15000)
     spark.listenerManager.register(planCapturingListener)
@@ -114,9 +135,50 @@ trait DeltaTestUtilsBase {
     }
     jobCount.get()
   }
+
+  protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
+    // The expected plan for touched file computation is of the format below.
+    // The data column should be pruned from both leaves.
+    // HashAggregate(output=[count#3463L])
+    // +- HashAggregate(output=[count#3466L])
+    //   +- Project
+    //      +- Filter (isnotnull(count#3454L) AND (count#3454L > 1))
+    //         +- HashAggregate(output=[count#3454L])
+    //            +- HashAggregate(output=[_row_id_#3418L, sum#3468L])
+    //               +- Project [_row_id_#3418L, UDF(_file_name_#3422) AS one#3448]
+    //                  +- BroadcastHashJoin [id#3342L], [id#3412L], Inner, BuildLeft
+    //                     :- Project [id#3342L]
+    //                     :  +- Filter isnotnull(id#3342L)
+    //                     :     +- FileScan parquet [id#3342L,part#3343L]
+    //                     +- Filter isnotnull(id#3412L)
+    //                        +- Project [...]
+    //                           +- Project [...]
+    //                             +- FileScan parquet [id#3412L,part#3413L]
+    // Note: It can be RDDScanExec instead of FileScan if the source was materialized.
+    // We pick the first plan starting from FileScan and ending in HashAggregate as a
+    // stable heuristic for the one we want.
+    plans.map(_.executedPlan)
+      .filter {
+        case WholeStageCodegenExec(hash: HashAggregateExec) =>
+          hash.collectLeaves().size == 2 &&
+            hash.collectLeaves()
+              .forall { s =>
+                s.isInstanceOf[FileSourceScanExec] ||
+                  s.isInstanceOf[RDDScanExec]
+              }
+        case _ => false
+      }.head
+  }
 }
 
-object DeltaTestUtils extends DeltaTestUtilsBase
+object DeltaTestUtils extends DeltaTestUtilsBase {
+  case class Plans(
+      analyzed: LogicalPlan,
+      optimized: LogicalPlan,
+      sparkPlan: SparkPlan,
+      executedPlan: SparkPlan)
+}
+
 trait DeltaTestUtilsForTempViews
   extends SharedSparkSession
 {

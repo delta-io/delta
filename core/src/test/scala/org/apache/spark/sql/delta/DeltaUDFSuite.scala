@@ -96,4 +96,9 @@ class DeltaUDFSuite extends QueryTest with SharedSparkSession {
     func = DeltaUDF.stringFromMap(x => x.toString),
     input = Map("foo" -> "bar"),
     expected = "Map(foo -> bar)")
+  testUDF(
+    name = "booleanFromMap",
+    func = DeltaUDF.booleanFromMap(x => x.isEmpty),
+    input = Map("foo" -> "bar"),
+    expected = false)
 }

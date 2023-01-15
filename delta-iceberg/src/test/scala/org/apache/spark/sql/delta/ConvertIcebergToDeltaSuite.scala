@@ -39,7 +39,7 @@ import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -55,6 +55,9 @@ trait ConvertIcebergToDeltaUtils extends SharedSparkSession
   protected lazy val nestedTable: String = "local.db.nested_table"
   protected lazy val nestedTablePath: String =
     "file://" + warehousePath.getCanonicalPath + "/db/nested_table"
+
+  protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
+    .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
 
 
   override def beforeAll(): Unit = {
@@ -112,7 +115,29 @@ trait ConvertIcebergToDeltaSuiteBase
   with ConvertIcebergToDeltaUtils
   with StatsUtils {
 
-  protected def convert(tableIdentifier: String, partitioning: Option[String] = None): Unit
+  protected def convert(tableIdentifier: String, partitioning: Option[String] = None,
+      collectStats: Boolean = true): Unit
+
+  test("convert with statistics") {
+      withTable(table) {
+        spark.sql(
+          s"""CREATE TABLE $table (id bigint, data string)
+             |USING iceberg PARTITIONED BY (data)""".stripMargin)
+        spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $table VALUES (3, 'c')")
+        convert(s"iceberg.`$tablePath`", collectStats = true)
+
+        // Check statistics
+        val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(
+            from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
+          .select("stats.*")
+        assert(statsDf.filter(col("numRecords").isNull).count == 0)
+        val history = io.delta.tables.DeltaTable.forPath(tablePath).history()
+        assert(history.count == 1)
+      }
+  }
 
   test("table with deleted files") {
     withTable(table) {
@@ -188,6 +213,7 @@ trait ConvertIcebergToDeltaSuiteBase
         ConvertToDeltaCommand(
           TableIdentifier(tablePath, Some("iceberg")),
           None,
+          collectStats = true,
           Some(dir.getCanonicalPath)).run(spark)
 
         checkAnswer(
@@ -744,6 +770,7 @@ trait ConvertIcebergToDeltaSuiteBase
           ConvertToDeltaCommand(
             tableIdentifier = TableIdentifier(tablePath, Some("iceberg")),
             partitionSchema = None,
+            collectStats = true,
             Some(deltaPath)).run(spark)
           // check that all the partition value types can be converted correctly
           checkAnswer(spark.table(s"delta.`$deltaPath`"), spark.table(table))
@@ -795,7 +822,8 @@ trait ConvertIcebergToDeltaSuiteBase
 class ConvertIcebergToDeltaScalaSuite extends ConvertIcebergToDeltaSuiteBase {
   override protected def convert(
       tableIdentifier: String,
-      partitioning: Option[String] = None): Unit = {
+      partitioning: Option[String] = None,
+      collectStats: Boolean = true): Unit = {
     if (partitioning.isDefined) {
       io.delta.tables.DeltaTable.convertToDelta(spark, tableIdentifier, partitioning.get)
     } else {
@@ -807,9 +835,38 @@ class ConvertIcebergToDeltaScalaSuite extends ConvertIcebergToDeltaSuiteBase {
 class ConvertIcebergToDeltaSQLSuite extends ConvertIcebergToDeltaSuiteBase {
   override protected def convert(
       tableIdentifier: String,
-      partitioning: Option[String] = None): Unit = {
+      partitioning: Option[String] = None,
+      collectStats: Boolean = true): Unit = {
     val statement = partitioning.map(p => s" PARTITIONED BY ($p)").getOrElse("")
-    spark.sql(s"CONVERT TO DELTA ${tableIdentifier}${statement}")
+    spark.sql(s"CONVERT TO DELTA ${tableIdentifier}${statement} " +
+      s"${collectStatisticsStringOption(collectStats)}")
+  }
+
+  // TODO: Move to base once DeltaAPI support collectStats parameter
+  test("convert without statistics") {
+    withTempDir { dir =>
+      withTable(table) {
+        spark.sql(
+          s"""CREATE TABLE $table (id bigint, data string)
+             |USING iceberg PARTITIONED BY (data)""".stripMargin)
+        spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $table VALUES (3, 'c')")
+        ConvertToDeltaCommand(
+          TableIdentifier(tablePath, Some("iceberg")),
+          None,
+          collectStats = false,
+          Some(dir.getCanonicalPath)).run(spark)
+
+        // Check statistics
+        val deltaLog = DeltaLog.forTable(spark, new Path(dir.getPath))
+        val statsDf = deltaLog.unsafeVolatileSnapshot.allFiles
+          .select(from_json(col("stats"), deltaLog.unsafeVolatileSnapshot.statsSchema).as("stats"))
+          .select("stats.*")
+        assert(statsDf.filter(col("numRecords").isNotNull).count == 0)
+        val history = io.delta.tables.DeltaTable.forPath(dir.getPath).history()
+        assert(history.count == 1)
+      }
+    }
   }
 }
 
@@ -870,12 +927,14 @@ class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
       tablePath: String,
       partitionSchemaDDL: String,
       checkSkipping: Map[String, Int] = Map(),
-      deltaDir: Option[File] = None): Unit = withTempDir { dir =>
+      deltaDir: Option[File] = None,
+      collectStats: Boolean = true): Unit = withTempDir { dir =>
     val deltaPath = deltaDir.getOrElse(dir).getCanonicalPath
     // for easy testing, convert it at an external location
     ConvertToDeltaCommand(
       tableIdentifier = TableIdentifier(tablePath, Some("iceberg")),
       partitionSchema = None,
+      collectStats,
       Some(deltaPath)).run(spark)
 
     // no stats collection on new writes too
@@ -1226,6 +1285,7 @@ class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
     ConvertToDeltaCommand(
       tableIdentifier = TableIdentifier(tablePath, Some("iceberg")),
       partitionSchema = None,
+      collectStats = true,
       Some(deltaPath)).run(spark)
 
     // no stats collection on new writes too

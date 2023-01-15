@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -91,7 +92,7 @@ trait DeltaCommand extends DeltaLogging {
    * rewrite files such as delete, merge, update. We expect file names to be unique, because
    * each file contains a UUID.
    */
-  protected def generateCandidateFileMap(
+  def generateCandidateFileMap(
       basePath: Path,
       candidateFiles: Seq[AddFile]): Map[String, AddFile] = {
     val nameToAddFileMap = candidateFiles.map(add =>
@@ -154,7 +155,7 @@ trait DeltaCommand extends DeltaLogging {
    * @param filePath The path to a file. Can be either absolute or relative
    * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
    */
-  protected def getTouchedFile(
+  def getTouchedFile(
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
@@ -188,6 +189,8 @@ trait DeltaCommand extends DeltaLogging {
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
         // is table
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) => true
+        // is iceberg table
+        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)

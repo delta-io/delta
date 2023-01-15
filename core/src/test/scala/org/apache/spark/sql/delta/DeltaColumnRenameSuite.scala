@@ -126,8 +126,8 @@ class DeltaColumnRenameSuite extends QueryTest
        val e = intercept[AnalysisException] {
         spark.sql(s"Alter table t1 RENAME COLUMN map to map1")
        }
-      assert(e.getMessage.contains("upgrade your Delta table") &&
-        e.getMessage.contains("change the column mapping mode"))
+      assert(e.getMessage.contains("enable Column Mapping") &&
+        e.getMessage.contains("mapping mode 'name'"))
 
       alterTableWithProps("t1", Map(
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
@@ -179,8 +179,8 @@ class DeltaColumnRenameSuite extends QueryTest
        val e = intercept[AnalysisException] {
         spark.sql(s"Alter table t1 RENAME COLUMN map to map1")
        }
-      assert(e.getMessage.contains("upgrade your Delta table") &&
-        e.getMessage.contains("change the column mapping mode"))
+      assert(e.getMessage.contains("enable Column Mapping") &&
+        e.getMessage.contains("mapping mode 'name'"))
 
       // Upgrading this schema shouldn't cause any errors even if there are leaf column name
       // duplications such as a.c, b.c.
@@ -408,7 +408,8 @@ class DeltaColumnRenameSuite extends QueryTest
         assertException("A generated column cannot use a non-existent column") {
           spark.sql("alter table t1 rename column arr to arr1")
         }
-        assertException("No such struct field d in c1, d1") {
+        assertExceptionOneOf(Seq("No such struct field d in c1, d1",
+          "No such struct field `d` in `c1`, `d1`")) {
           spark.sql("alter table t1 rename column b.d to d1")
         }
       }

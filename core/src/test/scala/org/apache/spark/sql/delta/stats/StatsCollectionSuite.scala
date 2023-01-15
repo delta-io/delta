@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -46,6 +47,7 @@ class StatsCollectionSuite
 
       val data = Seq(1, 2, 3).toDF().coalesce(1)
       data.write.format("delta").save(dir.getAbsolutePath)
+      val snapshot = deltaLog.update()
       val statsJson = deltaLog.update().allFiles.head().stats
 
       // convert data schema to physical name if possible
@@ -58,6 +60,7 @@ class StatsCollectionSuite
         override def dataSchema = dataRenamed.schema
         override val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
           DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
+        override val protocol: Protocol = snapshot.protocol
       }
 
       val correctAnswer = dataRenamed

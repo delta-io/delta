@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -824,6 +824,32 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("batch write: append, dynamic partition overwrite string and integer partition column") {
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq((5, "x"), (7, "y")).toDF("value", "part2")
+          .withColumn("part1", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 2, 3, 5, 7)
+      }
+    }
+  }
+
   test("batch write: append, dynamic partition overwrite overwrites nothing") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
@@ -1061,6 +1087,32 @@ class DeltaSuite extends QueryTest
           .format("delta")
           .mode("overwrite")
           .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+      }
+    }
+  }
+
+  test("batch write: append, dynamic partition with 'partitionValues' column") {
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(1, 2, 3).toDF
+          .withColumn("partitionValues", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("partitionValues")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq(1, 5).toDF
+          .withColumn("partitionValues", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("partitionValues")
+          .mode("overwrite")
           .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
           .save(tempDir.getCanonicalPath)
         checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
@@ -1498,7 +1550,7 @@ class DeltaSuite extends QueryTest
         }
 
         val thrown = intercept[SparkException] {
-          data.toDF().count()
+          data.toDF().collect()
         }
         assert(thrown.getMessage.contains("is not a Parquet file"))
       }
@@ -1528,12 +1580,12 @@ class DeltaSuite extends QueryTest
         // We don't have a good way to tell which specific values got deleted, so just check that
         // the right number remain. (Note that this works because there's 1 value per append, which
         // means 1 value per file.)
-        assert(data.toDF().count() == 6)
+        assert(data.toDF().collect().size == 6)
       }
     }
   }
 
-  test("deleted files cause failure by default") {
+  testQuietly("deleted files cause failure by default") {
     withTempDir { tempDir =>
       val tempDirPath = new Path(tempDir.getCanonicalPath)
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
@@ -1553,7 +1605,7 @@ class DeltaSuite extends QueryTest
       }
 
       val thrown = intercept[SparkException] {
-        data.toDF().count()
+        data.toDF().collect()
       }
       assert(thrown.getMessage.contains("FileNotFound"))
     }
@@ -2013,7 +2065,7 @@ class DeltaSuite extends QueryTest
 
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(Protocol(), newMetadata) ++ files.map(_.remove)
+    val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2209,45 +2261,122 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("idempotent Dataframe writes") {
-    withTempDir{ dir =>
+  def idempotentWrite(
+      mode: String,
+      appId: String,
+      seq: DataFrame,
+      path: String,
+      name: String,
+      version: Long,
+      expectedCount: Long,
+      commitVersion: Int,
+      isSaveAsTable: Boolean = true): Unit = {
+    val df = seq.write.format("delta")
+      .option(DeltaOptions.TXN_VERSION, version)
+      .option(DeltaOptions.TXN_APP_ID, appId)
+      .mode(mode)
+    if (isSaveAsTable) {
+      df.option("path", path).saveAsTable(name)
+    } else {
+      df.save(path)
+    }
+    val i = spark.read.format("delta").load(path).count()
+    assert(i == expectedCount)
+    val snapshot = DeltaLog.forTable(spark, path).update()
+    assert(snapshot.version == (commitVersion - 1))
+  }
+
+  Seq((true, true), (true, false), (false, true), (false, false))
+    .foreach {case (isSaveAsTable, isLegacy) =>
+      val op = if (isSaveAsTable) "saveAsTable" else "save"
+      val version = if (isLegacy) "legacy" else "non-legacy"
       val appId1 = "myAppId1"
       val appId2 = "myAppId2"
-      def runQuery(appId: String, seq: Seq[Int], version: Long, expectedCount: Long): Unit = {
-        seq.toDF().write.format("delta")
-          .option(DeltaOptions.TXN_VERSION, version)
-          .option(DeltaOptions.TXN_APP_ID, appId)
-          .mode("append")
-          .save(dir.getCanonicalPath)
-        val i = spark.read.format("delta").load(dir.getCanonicalPath).count()
-        assert(i == expectedCount)
+      val confs = if (isLegacy) Seq(SQLConf.USE_V1_SOURCE_LIST.key -> "tahoe,delta") else Seq.empty
+
+      if (!(isSaveAsTable && isLegacy)) {
+        test(s"Idempotent $version Dataframe $op: append") {
+          withSQLConf(confs: _*) {
+            withTempDir { dir =>
+              val path = dir.getCanonicalPath
+              val name = "append_table_t1"
+              val mode = "append"
+              sql("DROP TABLE IF EXISTS append_table_t1")
+              val df = Seq((1, 2, 3), (4, 5, 6), (7, 8, 9)).toDF("a", "b", "c")
+              // The first 2 runs must succeed increasing the expected count.
+              idempotentWrite(mode, appId1, df, path, name, 1, 3, 1, isSaveAsTable)
+              idempotentWrite(mode, appId1, df, path, name, 2, 6, 2, isSaveAsTable)
+
+              // Even if the version is not consecutive, higher versions should commit successfully.
+              idempotentWrite(mode, appId1, df, path, name, 5, 9, 3, isSaveAsTable)
+
+              // This run should be ignored because it uses an older version.
+              idempotentWrite(mode, appId1, df, path, name, 5, 9, 3, isSaveAsTable)
+
+              // Use a different app ID, but same version. This should succeed.
+              idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
+              idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
+
+              // Verify that specifying only one of the options -- either appId or version -- fails.
+              val e1 = intercept[Exception] {
+                val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
+                if (isSaveAsTable) {
+                  stage.option("path", path).saveAsTable(name)
+                } else {
+                  stage.save(path)
+                }
+              }
+              assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+              val e2 = intercept[Exception] {
+                val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
+                if (isSaveAsTable) {
+                  stage.option("path", path).saveAsTable(name)
+                } else {
+                  stage.save(path)
+                }
+              }
+              assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            }
+          }
+        }
       }
-      var s = Seq(1, 2, 3)
-      // The first 2 runs must succeed increasing the expected count.
-      runQuery(appId1, s, 1, 3)
-      runQuery(appId1, s, 2, 6)
 
-      // Even if the version is not consecutive, higher versions should commit successfully.
-      runQuery(appId1, s, 5, 9)
+      test(s"Idempotent $version Dataframe $op: overwrite") {
+        withSQLConf(confs: _*) {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            val name = "overwrite_table_t1"
+            val mode = "overwrite"
+            sql("DROP TABLE IF EXISTS overwrite_table_t1")
+            val df = Seq((1, 2, 3), (4, 5, 6), (7, 8, 9)).toDF("a", "b", "c")
+            // The first 2 runs must succeed increasing the expected count.
+            idempotentWrite(mode, appId1, df, path, name, 1, 3, 1, isSaveAsTable)
+            idempotentWrite(mode, appId1, df, path, name, 2, 3, 2, isSaveAsTable)
 
-      // This run should be ignored because it uses an older version.
-      runQuery(appId1, s, 5, 9)
+            // Even if the version is not consecutive, higher versions should commit successfully.
+            idempotentWrite(mode, appId1, df, path, name, 5, 3, 3, isSaveAsTable)
 
-      // Use a different app ID, but same version. This should succeed.
-      runQuery(appId2, s, 5, 12)
+            // This run should be ignored because it uses an older version.
+            idempotentWrite(mode, appId1, df, path, name, 5, 3, 3, isSaveAsTable)
 
-      // Verify that specifying only one of the options -- either appId or version -- fails.
-      val e1 = intercept[Exception] {
-        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_APP_ID, 1)
-          .mode("append").save(dir.getCanonicalPath)
+            // Use a different app ID, but same version. This should succeed.
+            idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
+            idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
+
+            // Verify that specifying only one of the options -- either appId or version -- fails.
+            val e1 = intercept[Exception] {
+              val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
+              if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
+            }
+            assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            val e2 = intercept[Exception] {
+              val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
+              if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
+            }
+            assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+          }
+        }
       }
-      assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-      val e2 = intercept[Exception] {
-        Seq(1, 2, 3).toDF().write.format("delta").option(DeltaOptions.TXN_VERSION, 1)
-          .mode("append").save(dir.getCanonicalPath)
-      }
-      assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-    }
   }
 
   test("idempotent writes in streaming foreachBatch") {
@@ -2336,6 +2465,8 @@ class DeltaSuite extends QueryTest
 class DeltaNameColumnMappingSuite extends DeltaSuite
   with DeltaColumnMappingEnableNameMode {
 
+  import testImplicits._
+
   override protected def runOnlyTests = Seq(
     "handle partition filters and data filters",
     "query with predicates should skip partitions",
@@ -2345,4 +2476,59 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
     "isBlindAppend with save and saveAsTable"
   )
 
+
+  test(
+    "dynamic partition overwrite with conflicting logical vs. physical named partition columns") {
+    // It isn't sufficient to just test with column mapping enabled because the physical names are
+    // generated automatically and thus are unique w.r.t. the logical names.
+    // Instead we need to have: ColA.logicalName = ColB.physicalName,
+    // which means we need to start with columnMappingMode=None, and then upgrade to
+    // columnMappingMode=name and rename our columns
+
+    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true",
+      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey-> NoMapping.name) {
+      withTempDir { tempDir =>
+        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+        Seq(("a", "x", 1), ("b", "y", 2), ("c", "x", 3)).toDF("part1", "part2", "value")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` SET TBLPROPERTIES (
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5',
+             |  'delta.columnMapping.mode' = 'name'
+             |)
+             |""".stripMargin)
+
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN part1 TO temp
+             |""".stripMargin)
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN part2 TO part1
+             |""".stripMargin)
+        spark.sql(
+          s"""
+             |ALTER TABLE delta.`${tempDir.getCanonicalPath}` RENAME COLUMN temp TO part2
+             |""".stripMargin)
+
+        Seq(("a", "x", 4), ("d", "x", 5)).toDF("part2", "part1", "value")
+          .write
+          .format("delta")
+          .partitionBy("part2", "part1")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .save(tempDir.getCanonicalPath)
+        checkDatasetUnorderly(data.select("part2", "part1", "value").as[(String, String, Int)],
+          ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
+      }
+    }
+  }
 }

@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta.catalog
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.sql.Timestamp
 import java.util
 import java.util.Locale
-
-// scalastyle:off import.ordering.noEmptyLine
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -179,9 +178,15 @@ class DeltaCatalog extends DelegatingCatalogExtension
         case o => o
       }
     } catch {
-      case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
-          if isPathIdentifier(ident) =>
-        newDeltaPathTable(ident)
+      case e @ (
+        _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException) =>
+          if (isPathIdentifier(ident)) {
+            newDeltaPathTable(ident)
+          } else if (isIcebergPathIdentifier(ident)) {
+            IcebergTablePlaceHolder(TableIdentifier(ident.name(), Some("iceberg")))
+          } else {
+            throw e
+          }
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning("Received an access denied error from Glue. Assuming this " +
           s"identifier ($ident) is path based.", e)
@@ -648,6 +653,13 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     ident.namespace().length == 1 && DeltaSourceUtils.isDeltaDataSourceName(ident.namespace().head)
   }
 
+  private def hasIcebergNamespace(ident: Identifier): Boolean = {
+    ident.namespace().length == 1 && ident.namespace().head.equalsIgnoreCase("iceberg")
+  }
+
+  protected def isIcebergPathIdentifier(ident: Identifier): Boolean = {
+    hasIcebergNamespace(ident) && new Path(ident.name()).isAbsolute
+  }
 
   protected def isPathIdentifier(ident: Identifier): Boolean = {
     // Should be a simple check of a special PathIdentifier class in the future

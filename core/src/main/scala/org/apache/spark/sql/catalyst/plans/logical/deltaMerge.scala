@@ -199,7 +199,6 @@ case class DeltaMergeIntoMatchedUpdateClause(
 case class DeltaMergeIntoMatchedDeleteClause(condition: Option[Expression])
     extends DeltaMergeIntoMatchedClause {
   def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
-  children
 
   override def clauseType: String = "Delete"
   override def actions: Seq[Expression] = Seq.empty
@@ -232,6 +231,45 @@ case class DeltaMergeIntoNotMatchedInsertClause(
     }
 }
 
+/** Trait that represents WHEN NOT MATCHED BY SOURCE clause in MERGE. See [[DeltaMergeInto]]. */
+sealed trait DeltaMergeIntoNotMatchedBySourceClause extends DeltaMergeIntoClause
+
+/** Represents the clause WHEN NOT MATCHED BY SOURCE THEN UPDATE in MERGE. See
+ * [[DeltaMergeInto]]. */
+case class DeltaMergeIntoNotMatchedBySourceUpdateClause(
+    condition: Option[Expression],
+    actions: Seq[Expression])
+  extends DeltaMergeIntoNotMatchedBySourceClause {
+
+  def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
+    this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
+
+  override def clauseType: String = "Update"
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoNotMatchedBySourceUpdateClause = {
+    if (condition.isDefined) {
+      copy(condition = Some(newChildren.head), actions = newChildren.tail)
+    } else {
+      copy(condition = None, actions = newChildren)
+    }
+  }
+}
+
+/** Represents the clause WHEN NOT MATCHED BY SOURCE THEN DELETE in MERGE. See
+ * [[DeltaMergeInto]]. */
+case class DeltaMergeIntoNotMatchedBySourceDeleteClause(condition: Option[Expression])
+  extends DeltaMergeIntoNotMatchedBySourceClause {
+  def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
+
+  override def clauseType: String = "Delete"
+  override def actions: Seq[Expression] = Seq.empty
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoNotMatchedBySourceDeleteClause =
+    copy(condition = if (condition.isDefined) Some(newChildren.head) else None)
+}
+
 /**
  * Merges changes specified in the source plan into a target table, based on the given search
  * condition and the actions to perform when the condition is matched or not matched by the rows.
@@ -244,9 +282,13 @@ case class DeltaMergeIntoNotMatchedInsertClause(
  *    [ WHEN MATCHED [ AND <condition> ] THEN <matched_action> ]
  *    [ WHEN MATCHED [ AND <condition> ] THEN <matched_action> ]
  *    ...
- *    [ WHEN NOT MATCHED [ AND <condition> ] THEN <not_matched_action> ]
- *    [ WHEN NOT MATCHED [ AND <condition> ] THEN <not_matched_action> ]
+ *    [ WHEN NOT MATCHED [BY TARGET] [ AND <condition> ] THEN <not_matched_action> ]
+ *    [ WHEN NOT MATCHED [BY TARGET] [ AND <condition> ] THEN <not_matched_action> ]
  *    ...
+ *    [ WHEN NOT MATCHED BY SOURCE [ AND <condition> ] THEN <not_matched_by_source_action> ]
+ *    [ WHEN NOT MATCHED BY SOURCE [ AND <condition> ] THEN <not_matched_by_source_action> ]
+ *    ...
+ *
  *
  *    where
  *    <matched_action> =
@@ -254,6 +296,9 @@ case class DeltaMergeIntoNotMatchedInsertClause(
  *      UPDATE SET column1 = value1 [, column2 = value2 ...] |
  *      UPDATE SET * [EXCEPT (column1, ...)]
  *    <not_matched_action> = INSERT (column1 [, column2 ...]) VALUES (expr1 [, expr2 ...])
+ *    <not_matched_by_source_action> =
+ *      DELETE |
+ *      UPDATE SET column1 = value1 [, column2 = value2 ...]
  * }}}
  *
  * - There can be any number of WHEN clauses.
@@ -268,6 +313,11 @@ case class DeltaMergeIntoNotMatchedInsertClause(
  * clauses, only the last can omit the condition.
  *    - WHEN NOT MATCHED clauses are dependent on their ordering; that is, the first clause that
  * satisfies the clause's condition has its corresponding action executed.
+ * - WHEN NOT MATCHED BY SOURCE clauses:
+ *    - Each WHEN NOT MATCHED BY SOURCE clause can have an optional condition. However, if there are
+ * multiple WHEN NOT MATCHED BY SOURCE clauses, only the last can omit the condition.
+ *    - WHEN NOT MATCHED BY SOURCE clauses are dependent on their ordering; that is, the first
+ * clause that satisfies the clause's condition has its corresponding action executed.
  */
 case class DeltaMergeInto(
     target: LogicalPlan,
@@ -275,11 +325,12 @@ case class DeltaMergeInto(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
+    notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
     migrateSchema: Boolean,
     finalSchema: Option[StructType])
   extends Command with SupportsSubquery {
 
-  (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
+  (matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses).foreach(_.verifyActions())
 
   // TODO: extend BinaryCommand once the new Spark version is released
   override def children: Seq[LogicalPlan] = Seq(target, source)
@@ -297,6 +348,8 @@ object DeltaMergeInto {
       whenClauses: Seq[DeltaMergeIntoClause]): DeltaMergeInto = {
     val notMatchedClauses = whenClauses.collect { case x: DeltaMergeIntoNotMatchedClause => x }
     val matchedClauses = whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }
+    val notMatchedBySourceClauses =
+      whenClauses.collect { case x: DeltaMergeIntoNotMatchedBySourceClause => x }
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
@@ -306,17 +359,25 @@ object DeltaMergeInto {
       )
     }
 
-    // check that only last MATCHED clause omits the condition
+    // Check that only the last MATCHED clause omits the condition.
     if (matchedClauses.length > 1 && !matchedClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
         errorClass = "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
-    // check that only last NOT MATCHED clause omits the condition
+    // Check that only the last NOT MATCHED clause omits the condition.
     if (notMatchedClauses.length > 1 && !notMatchedClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
         errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+        messageParameters = Array.empty)
+    }
+
+    // Check that only the last NOT MATCHED BY SOURCE clause omits the condition.
+    if (notMatchedBySourceClauses.length > 1 &&
+      !notMatchedBySourceClauses.init.forall(_.condition.nonEmpty)) {
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
@@ -326,13 +387,22 @@ object DeltaMergeInto {
       condition,
       matchedClauses,
       notMatchedClauses,
+      notMatchedBySourceClauses,
       migrateSchema = false,
       finalSchema = Some(target.schema))
   }
 
   def resolveReferencesAndSchema(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClauses, _, _) = merge
+    val DeltaMergeInto(
+      target,
+      source,
+      condition,
+      matchedClauses,
+      notMatchedClauses,
+      notMatchedBySourceClauses,
+      _,
+      _) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -353,7 +423,7 @@ object DeltaMergeInto {
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
         val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
-        a.failAnalysis(s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
+        a.failAnalysis(msg = s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
       }
       resolvedExpr
     }
@@ -458,7 +528,7 @@ object DeltaMergeInto {
             Seq(d)
 
           case _ =>
-            action.failAnalysis(s"Unexpected action expression '$action' in clause $clause")
+            action.failAnalysis(msg = s"Unexpected action expression '$action' in clause $clause")
         }
       }
 
@@ -475,7 +545,11 @@ object DeltaMergeInto {
     val resolvedNotMatchedClauses = notMatchedClauses.map {
       resolveClause(_, fakeSourcePlan)
     }
-    val actions = (matchedClauses ++ notMatchedClauses).flatMap(_.actions)
+    val resolvedNotMatchedBySourceClauses = notMatchedBySourceClauses.map {
+      resolveClause(_, fakeTargetPlan)
+    }
+    val actions = (matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses)
+      .flatMap(_.actions)
     val containsStarAction = actions.exists(_.isInstanceOf[UnresolvedStar])
 
     val migrateSchema = canAutoMigrate && containsStarAction
@@ -493,8 +567,12 @@ object DeltaMergeInto {
     }
 
     val resolvedMerge = DeltaMergeInto(
-      target, source, resolvedCond,
-      resolvedMatchedClauses, resolvedNotMatchedClauses,
+      target,
+      source,
+      resolvedCond,
+      resolvedMatchedClauses,
+      resolvedNotMatchedClauses,
+      resolvedNotMatchedBySourceClauses,
       migrateSchema = migrateSchema,
       finalSchema = Some(finalSchema))
 
@@ -506,7 +584,7 @@ object DeltaMergeInto {
       val input = resolvedMerge.inputSet.mkString(",")
       val msgForMissingAttributes = s"Resolved attribute(s) $missingAttributes missing " +
         s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
-      resolvedMerge.failAnalysis(msgForMissingAttributes)
+      resolvedMerge.failAnalysis(msg = msgForMissingAttributes)
     }
 
     resolvedMerge

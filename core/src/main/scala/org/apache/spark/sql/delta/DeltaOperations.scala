@@ -183,15 +183,18 @@ object DeltaOperations {
    * Recorded when a merge operation is committed to the table.
    *
    * `updatePredicate`, `deletePredicate`, and `insertPredicate` are DEPRECATED.
-   * Only use `predicate`, `matchedPredicates`, and `notMatchedPredicates` to record the merge.
+   * Only use `predicate`, `matchedPredicates`, `notMatchedPredicates` and
+   * `notMatchedBySourcePredicates` to record the merge.
    */
+  val OP_MERGE = "MERGE"
   case class Merge(
       predicate: Option[String],
       updatePredicate: Option[String],
       deletePredicate: Option[String],
       insertPredicate: Option[String],
       matchedPredicates: Seq[MergePredicate],
-      notMatchedPredicates: Seq[MergePredicate]) extends Operation("MERGE") {
+      notMatchedPredicates: Seq[MergePredicate],
+      notMatchedBySourcePredicates: Seq[MergePredicate]) extends Operation(OP_MERGE) {
 
     override val parameters: Map[String, Any] = {
       predicate.map("predicate" -> _).toMap ++
@@ -199,7 +202,8 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap +
         ("matchedPredicates" -> JsonUtils.toJson(matchedPredicates)) +
-        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
+        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates)) +
+        ("notMatchedBySourcePredicates" -> JsonUtils.toJson(notMatchedBySourcePredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
 
@@ -228,13 +232,15 @@ object DeltaOperations {
     def apply(
         predicate: Option[String],
         matchedPredicates: Seq[MergePredicate],
-        notMatchedPredicates: Seq[MergePredicate]): Merge = Merge(
+        notMatchedPredicates: Seq[MergePredicate],
+        notMatchedBySourcePredicates: Seq[MergePredicate]): Merge = Merge(
           predicate,
           updatePredicate = None,
           deletePredicate = None,
           insertPredicate = None,
           matchedPredicates,
-          notMatchedPredicates)
+          notMatchedPredicates,
+          notMatchedBySourcePredicates)
   }
 
   /** Recorded when an update operation is committed to the table. */
@@ -347,7 +353,9 @@ object DeltaOperations {
   case class UpgradeProtocol(newProtocol: Protocol) extends Operation("UPGRADE PROTOCOL") {
     override val parameters: Map[String, Any] = Map("newProtocol" -> JsonUtils.toJson(Map(
       "minReaderVersion" -> newProtocol.minReaderVersion,
-      "minWriterVersion" -> newProtocol.minWriterVersion
+      "minWriterVersion" -> newProtocol.minWriterVersion,
+      "readerFeatures" -> newProtocol.readerFeatures,
+      "writerFeatures" -> newProtocol.writerFeatures
     )))
   }
 
@@ -425,6 +433,47 @@ object DeltaOperations {
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
+  }
+
+  /** Recorded when cloning a Delta table into a new location. */
+  case class Clone(
+      source: String,
+      sourceVersion: Long
+  ) extends Operation("CLONE") {
+    override val parameters: Map[String, Any] = Map(
+      "source" -> source,
+      "sourceVersion" -> sourceVersion
+    )
+    override def changesData: Boolean = true
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.CLONE
+  }
+
+  /**
+   * @param retentionCheckEnabled - whether retention check was enabled for this run of vacuum.
+   * @param specifiedRetentionMillis - specified retention interval
+   * @param defaultRetentionMillis - default retention period for the table
+   */
+  case class VacuumStart(
+      retentionCheckEnabled: Boolean,
+      specifiedRetentionMillis: Option[Long],
+      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+    override val parameters: Map[String, Any] = Map(
+      "retentionCheckEnabled" -> retentionCheckEnabled,
+      "defaultRetentionMillis" -> defaultRetentionMillis
+    ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
+  }
+
+  /**
+   * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
+   */
+  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+    override val parameters: Map[String, Any] = Map(
+      "status" -> status
+    )
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
   }
 
 
@@ -584,6 +633,8 @@ private[delta] object DeltaOperationMetrics {
     "numTargetRowsUpdated", // number of rows updated in the target table.
     "numTargetRowsDeleted", // number of rows deleted in the target table.
     "numTargetRowsCopied", // number of target rows copied
+    "numTargetBytesAdded", // number of target bytes added
+    "numTargetBytesRemoved", // number of target bytes removed
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
     "numTargetFilesRemoved", // number of files removed from the sink(target)
@@ -601,19 +652,22 @@ private[delta] object DeltaOperationMetrics {
     "numCopiedRows", // number of rows just copied over in the process of updating files.
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    "numRemovedBytes", // number of bytes removed
+    "numAddedBytes" // number of bytes added
   )
 
   val OPTIMIZE = Set(
-    "numAddedFiles", // number of files added
-    "numRemovedFiles", // number of files removed
-    "numAddedBytes", // number of bytes added by optimize
-    "numRemovedBytes", // number of bytes removed by optimize
+    "numAddedFiles", // number of data files added
+    "numRemovedFiles", // number of data files removed
+    "numAddedBytes", // number of data bytes added by optimize
+    "numRemovedBytes", // number of data bytes removed by optimize
     "minFileSize", // the size of the smallest file
     "p25FileSize", // the size of the 25th percentile file
     "p50FileSize", // the median file size
     "p75FileSize", // the 75th percentile of the file sizes
-    "maxFileSize" // the size of the largest file
+    "maxFileSize", // the size of the largest file
+    "numDeletionVectorsRemoved" // number of deletion vectors removed by optimize
   )
 
   val RESTORE = Set(
@@ -624,4 +678,24 @@ private[delta] object DeltaOperationMetrics {
     "removedFilesSize", // size in bytes of files removed by the restore
     "restoredFilesSize" // size in bytes of files added by the restore
   )
+
+  val CLONE = Set(
+    "sourceTableSize", // size in bytes of source table at version
+    "sourceNumOfFiles", // number of files in source table at version
+    "numRemovedFiles", // number of files removed from target table if delta table was replaced
+    "numCopiedFiles", // number of files that were cloned - 0 for shallow tables
+    "removedFilesSize", // size in bytes of files removed from an existing Delta table if one exists
+    "copiedFilesSize" // size of files copied - 0 for shallow tables
+  )
+
+  val VACUUM_START = Set(
+    "numFilesToDelete", // number of files that will be deleted by vacuum
+    "sizeOfDataToDelete" // total size in bytes of files that will be deleted by vacuum
+  )
+
+  val VACUUM_END = Set(
+    "numDeletedFiles", // number of files deleted by vacuum
+    "numVacuumedDirectories" // number of directories vacuumed
+  )
+
 }

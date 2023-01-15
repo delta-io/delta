@@ -45,9 +45,11 @@ class DeltaSourceSnapshot(
 
   protected lazy val (partitionFilters, dataFilters) = {
     val partitionCols = snapshot.metadata.partitionColumns
-    filters.partition { e =>
+    val (part, data) = filters.partition { e =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(e, partitionCols, spark)
     }
+    logInfo(s"Classified filters: partition: $part, data: $data")
+    (part, data)
   }
 
   protected def initialFiles: Dataset[IndexedFile] = {

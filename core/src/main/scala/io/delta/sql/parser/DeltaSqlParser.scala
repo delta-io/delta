@@ -59,9 +59,11 @@ import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.internal.VariableSubstitution
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
+import org.apache.spark.sql.errors.QueryParsingErrors
+import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
 import org.apache.spark.sql.types._
 
 /**
@@ -153,6 +155,151 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
  */
 class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
+  import org.apache.spark.sql.catalyst.parser.ParserUtils._
+
+  /**
+   * Convert a property list into a key-value map.
+   * This should be called through [[visitPropertyKeyValues]] or [[visitPropertyKeys]].
+   */
+  override def visitPropertyList(
+      ctx: PropertyListContext): Map[String, String] = withOrigin(ctx) {
+    val properties = ctx.property.asScala.map { property =>
+      val key = visitPropertyKey(property.key)
+      val value = visitPropertyValue(property.value)
+      key -> value
+    }
+    // Check for duplicate property names.
+    checkDuplicateKeys(properties.toSeq, ctx)
+    properties.toMap
+  }
+
+  /**
+   * Parse a key-value map from a [[PropertyListContext]], assuming all values are specified.
+   */
+  def visitPropertyKeyValues(ctx: PropertyListContext): Map[String, String] = {
+    val props = visitPropertyList(ctx)
+    val badKeys = props.collect { case (key, null) => key }
+    if (badKeys.nonEmpty) {
+      operationNotAllowed(
+        s"Values must be specified for key(s): ${badKeys.mkString("[", ",", "]")}", ctx)
+    }
+    props
+  }
+
+  /**
+   * Parse a list of keys from a [[PropertyListContext]], assuming no values are specified.
+   */
+  def visitPropertyKeys(ctx: PropertyListContext): Seq[String] = {
+    val props = visitPropertyList(ctx)
+    val badKeys = props.filter { case (_, v) => v != null }.keys
+    if (badKeys.nonEmpty) {
+      operationNotAllowed(
+        s"Values should not be specified for key(s): ${badKeys.mkString("[", ",", "]")}", ctx)
+    }
+    props.keys.toSeq
+  }
+
+  /**
+   * A property key can either be String or a collection of dot separated elements. This
+   * function extracts the property key based on whether its a string literal or a property
+   * identifier.
+   */
+  override def visitPropertyKey(key: PropertyKeyContext): String = {
+    if (key.stringLit() != null) {
+      string(visitStringLit(key.stringLit()))
+    } else {
+      key.getText
+    }
+  }
+
+  /**
+   * A property value can be String, Integer, Boolean or Decimal. This function extracts
+   * the property value based on whether its a string, integer, boolean or decimal literal.
+   */
+  override def visitPropertyValue(value: PropertyValueContext): String = {
+    if (value == null) {
+      null
+    } else if (value.identifier != null) {
+      value.identifier.getText
+    } else if (value.value != null) {
+      string(visitStringLit(value.value))
+    } else if (value.booleanValue != null) {
+      value.getText.toLowerCase(Locale.ROOT)
+    } else {
+      value.getText
+    }
+  }
+
+  override def visitStringLit(ctx: StringLitContext): Token = {
+    if (ctx != null) {
+      if (ctx.STRING != null) {
+        ctx.STRING.getSymbol
+      } else {
+        ctx.DOUBLEQUOTED_STRING.getSymbol
+      }
+    } else {
+      null
+    }
+  }
+
+  /**
+   * Parse either create table header or replace table header.
+   * @return TableIdentifier for the target table
+   *         Boolean for whether we are creating a table
+   *         Boolean for whether we are replacing a table
+   *         Boolean for whether we are creating a table if not exists
+   */
+  override def visitCloneTableHeader(
+      ctx: CloneTableHeaderContext): (TableIdentifier, Boolean, Boolean, Boolean) = withOrigin(ctx) {
+    ctx.children.asScala.head match {
+      case createHeader: CreateTableHeaderContext =>
+        (visitTableIdentifier(createHeader.table), true, false, createHeader.EXISTS() != null)
+      case replaceHeader: ReplaceTableHeaderContext =>
+        (visitTableIdentifier(replaceHeader.table), replaceHeader.CREATE() != null, true, false)
+      case _ =>
+        throw new ParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
+    }
+  }
+
+  /**
+   * Creates a [[CloneTableStatement]] logical plan. Example SQL:
+   * {{{
+   *   CREATE [OR REPLACE] TABLE <table-identifier> SHALLOW CLONE <source-table-identifier>
+   *     [TBLPROPERTIES ('propA' = 'valueA', ...)]
+   *     [LOCATION '/path/to/cloned/table']
+   * }}}
+   */
+  override def visitClone(ctx: CloneContext): LogicalPlan = withOrigin(ctx) {
+    val (target, isCreate, isReplace, ifNotExists) = visitCloneTableHeader(ctx.cloneTableHeader())
+
+    if (!isCreate && ifNotExists) {
+      throw new ParseException(
+        "IF NOT EXISTS cannot be used together with REPLACE", ctx.cloneTableHeader())
+    }
+
+    // Get source for clone (and time travel source if necessary)
+    // The source relation can be an Iceberg table in form of `catalog.db.table` so we visit
+    // a multipart identifier instead of TableIdentifier (which does not support 3L namespace)
+    // in Spark 3.3. In Spark 3.4 we should have TableIdentifier supporting 3L namespace so we
+    // could revert back to that.
+    val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
+    val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
+    val targetRelation = UnresolvedRelation(target)
+
+    val tablePropertyOverrides = Option(ctx.tableProps)
+      .map(visitPropertyKeyValues)
+      .getOrElse(Map.empty[String, String])
+
+    CloneTableStatement(
+      maybeTimeTravelSource,
+      targetRelation,
+      ifNotExists,
+      isReplace,
+      isCreate,
+      tablePropertyOverrides,
+      Option(ctx.location).map(s => string(visitStringLit(s))))
+  }
+
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
@@ -230,7 +377,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ConvertToDeltaCommand(
       visitTableIdentifier(ctx.table),
       Option(ctx.colTypeList).map(colTypeList => StructType(visitColTypeList(colTypeList))),
-      None)
+      ctx.STATISTICS() == null, None)
   }
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
@@ -261,6 +408,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
+  }
+
+  protected def visitMultipartIdentifier(ctx: QualifiedNameContext): Seq[String] = withOrigin(ctx) {
+    ctx.identifier.asScala.map(_.getText).toSeq
   }
 
   override def visitPassThrough(ctx: PassThroughContext): LogicalPlan = null

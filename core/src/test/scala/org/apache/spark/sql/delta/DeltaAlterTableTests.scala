@@ -115,16 +115,16 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot1.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot1.metadata) == 20)
 
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.checkpointInterval', 'key')")
 
       val snapshot2 = deltaLog.update()
       assertEqual(snapshot2.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval ==
+      assert(deltaLog.deltaRetentionMillis(snapshot2.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot2.metadata) ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
     }
   }
@@ -165,8 +165,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         "delta.logRetentionDuration" -> "1 weeks",
         "delta.checkpointInterval" -> "5",
         "key" -> "value1"))
-      assert(deltaLog.deltaRetentionMillis == 1 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 5)
+      assert(deltaLog.deltaRetentionMillis(snapshot1.metadata) == 1 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot1.metadata) == 5)
 
       sql(s"""
         |ALTER TABLE $tableName
@@ -182,16 +182,16 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         "delta.checkpointInterval" -> "20",
         "key" -> "value1",
         "kEy" -> "value2"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot2.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot2.metadata) == 20)
 
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('DelTa.ChEckPoiNtinTervAl', 'kEy')")
 
       val snapshot3 = deltaLog.update()
       assertEqual(snapshot3.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "key" -> "value1"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval ==
+      assert(deltaLog.deltaRetentionMillis(snapshot3.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot3.metadata) ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
     }
   }
@@ -1562,16 +1562,16 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval == 20)
+      assert(deltaLog.deltaRetentionMillis(snapshot1.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot1.metadata) == 20)
 
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.checkpointInterval', 'key')")
 
       val snapshot2 = deltaLog.update()
       assertEqual(snapshot2.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks"))
-      assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
-      assert(deltaLog.checkpointInterval ==
+      assert(deltaLog.deltaRetentionMillis(snapshot2.metadata) == 2 * 7 * 24 * 60 * 60 * 1000)
+      assert(deltaLog.checkpointInterval(snapshot2.metadata) ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
     }
   }
@@ -1650,6 +1650,7 @@ class DeltaAlterTableByNameSuite
         Map("delta.randomPrefixLength" -> "5", "key" -> "value"))
     }
   }
+
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest

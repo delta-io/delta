@@ -751,6 +751,90 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
+    "eventTime TIMESTAMP",
+    "eventTimeTrunc TIMESTAMP",
+    Map("eventTimeTrunc" -> "date_trunc('YEAR', eventTime)"),
+    expectedPartitionExpr = TimestampTruncPartitionExpr("YEAR", "eventTimeTrunc"),
+    auxiliaryTestName = Option(" from date_trunc(timestamp)"),
+    filterTestCases = Seq(
+      "eventTime < '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime <= '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime = '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime > '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime >= '2021-01-01 18:00:00'" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "eventTime is null" -> Seq("(eventTimeTrunc IS NULL)"),
+      // Verify we can reverse the order
+      "'2021-01-01 18:00:00' > eventTime" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' >= eventTime" ->
+        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' = eventTime" ->
+        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' < eventTime" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+      "'2021-01-01 18:00:00' <= eventTime" ->
+        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
+          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventDate DATE",
+    "eventTimeTrunc TIMESTAMP",
+    Map("eventTimeTrunc" -> "date_trunc('DD', eventDate)"),
+    expectedPartitionExpr = TimestampTruncPartitionExpr("DD", "eventTimeTrunc"),
+    auxiliaryTestName = Option(" from date_trunc(cast(date))"),
+    filterTestCases = Seq(
+      "eventDate < '2021-01-01'" ->
+        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "eventDate <= '2021-01-01'" ->
+        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "eventDate = '2021-01-01'" ->
+        Seq("((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "eventDate > '2021-01-01'" ->
+        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "eventDate >= '2021-01-01'" ->
+        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "eventDate is null" -> Seq("(eventTimeTrunc IS NULL)"),
+      // Verify we can reverse the order
+      "'2021-01-01' > eventDate" ->
+        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "'2021-01-01' >= eventDate" ->
+        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "'2021-01-01' = eventDate" ->
+        Seq("((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "'2021-01-01' < eventDate" ->
+        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+      "'2021-01-01' <= eventDate" ->
+        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
+      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))")
+    )
+  )
+
+  testOptimizablePartitionExpression(
     "value STRING",
     "part STRING",
     Map("part" -> "value"),
@@ -1032,6 +1116,84 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
           "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
       "eventTime is null" -> Seq("(hour IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventTime TIMESTAMP",
+    "date DATE",
+    Map("date" -> "(trunc(eventTime, 'year'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "year"),
+    filterTestCases = Seq(
+      "eventTime < '2021-01-01 18:00:00'" ->
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+      "eventTime <= '2021-01-01 18:00:00'" ->
+        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+      "eventTime = '2021-01-01 18:00:00'" ->
+        Seq("((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+      "eventTime > '2021-01-01 18:00:00'" ->
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+      "eventTime >= '2021-01-01 18:00:00'" ->
+        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
+          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+      "eventTime is null" ->
+        Seq("(date IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventDate DATE",
+    "date DATE",
+    Map("date" -> "(trunc(eventDate, 'month'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "month"),
+    filterTestCases = Seq(
+      "eventDate < '2021-12-01'" ->
+        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+      "eventDate <= '2021-12-01'" ->
+        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+      "eventDate = '2021-12-01'" ->
+        Seq("((date = trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date = trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+      "eventDate > '2021-12-01'" ->
+        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+      "eventDate >= '2021-12-01'" ->
+        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
+          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+      "eventDate is null" ->
+        Seq("(date IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventDateStr STRING",
+    "date DATE",
+    Map("date" -> "(trunc(eventDateStr, 'quarter'))"),
+    expectedPartitionExpr = TruncDatePartitionExpr("date", "quarter"),
+    filterTestCases = Seq(
+      "eventDateStr < '2022-04-01'" ->
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+      "eventDateStr <= '2022-04-01'" ->
+        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+      "eventDateStr = '2022-04-01'" ->
+        Seq("((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+      "eventDateStr > '2022-04-01'" ->
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+      "eventDateStr >= '2022-04-01'" ->
+        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
+          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+      "eventDateStr is null" ->
+        Seq("(date IS NULL)")
     )
   )
 

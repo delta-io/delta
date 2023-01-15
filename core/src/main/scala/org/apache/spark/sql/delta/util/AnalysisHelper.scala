@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.util
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors
 
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -72,13 +72,14 @@ trait AnalysisHelper {
       case FakeLogicalPlan(resolvedExprs, _) =>
         resolvedExprs.foreach { expr =>
           if (!expr.resolved) {
-            expr.failAnalysis(s"cannot resolve ${expr.sql} given $planProvidingAttrs")
+            throw new AnalysisException(
+              s"cannot resolve ${expr.sql} given $planProvidingAttrs")
           }
         }
         resolvedExprs
       case _ =>
         // This is unexpected
-        throw DeltaErrors.analysisException(
+        throw new AnalysisException(
           s"Could not resolve expressions $exprs", plan = Option(planProvidingAttrs))
     }
   }

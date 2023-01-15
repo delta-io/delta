@@ -194,6 +194,10 @@ trait DeltaReadOptions extends DeltaOptionParser {
     }
   }
 
+  def containsStartingVersionOrTimestamp: Boolean = {
+    options.contains(STARTING_VERSION_OPTION) || options.contains(STARTING_TIMESTAMP_OPTION)
+  }
+
   provideOneStartingOption()
 }
 
@@ -246,6 +250,10 @@ object DeltaOptions extends DeltaLogging {
   val CDC_END_TIMESTAMP = "endingTimestamp"
   val CDC_READ_OPTION = "readChangeFeed"
   val CDC_READ_OPTION_LEGACY = "readChangeData"
+
+  val VERSION_AS_OF = "versionAsOf"
+  val TIMESTAMP_AS_OF = "timestampAsOf"
+
   val COMPRESSION = "compression"
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
@@ -280,8 +288,8 @@ object DeltaOptions extends DeltaLogging {
     "queryName",
     "checkpointLocation",
     "path",
-    "timestampAsOf",
-    "versionAsOf"
+    VERSION_AS_OF,
+    TIMESTAMP_AS_OF
   )
 
 
@@ -294,6 +302,51 @@ object DeltaOptions extends DeltaLogging {
         "delta.option.invalid",
         data = invalidUserOptions
       )
+    }
+  }
+}
+
+/**
+ * Definitions for the batch read schema mode for CDF
+ */
+sealed trait DeltaBatchCDFSchemaMode {
+  def name: String
+}
+
+/**
+ * `latest` batch CDF schema mode specifies that the latest schema should be used when serving
+ * the CDF batch.
+ */
+case object BatchCDFSchemaLatest extends DeltaBatchCDFSchemaMode {
+  val name = "latest"
+}
+
+/**
+ * `endVersion` batch CDF schema mode specifies that the query range's end version's schema should
+ * be used for serving the CDF batch.
+ * This is the current default for column mapping enabled tables so we could read using the exact
+ * schema at the versions being queried to reduce schema read compatibility mismatches.
+ */
+case object BatchCDFSchemaEndVersion extends DeltaBatchCDFSchemaMode {
+  val name = "endversion"
+}
+
+/**
+ * `legacy` batch CDF schema mode specifies that neither latest nor end version's schema is
+ * strictly used for serving the CDF batch, e.g. when user uses TimeTravel with batch CDF and wants
+ * to respect the time travelled schema.
+ * This is the current default for non-column mapping tables.
+ */
+case object BatchCDFSchemaLegacy extends DeltaBatchCDFSchemaMode {
+  val name = "legacy"
+}
+
+object DeltaBatchCDFSchemaMode {
+  def apply(name: String): DeltaBatchCDFSchemaMode = {
+    name.toLowerCase(Locale.ROOT) match {
+      case BatchCDFSchemaLatest.name => BatchCDFSchemaLatest
+      case BatchCDFSchemaEndVersion.name => BatchCDFSchemaEndVersion
+      case BatchCDFSchemaLegacy.name => BatchCDFSchemaLegacy
     }
   }
 }

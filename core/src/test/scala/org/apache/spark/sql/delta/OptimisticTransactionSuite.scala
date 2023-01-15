@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -214,9 +215,9 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Protocol()),
+      Action.supportedProtocolVersion()),
     actions = Seq(
-      Protocol()))
+      Action.supportedProtocolVersion()))
 
   check(
     "taint whole table",
@@ -429,6 +430,157 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 1)
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
+    }
+  }
+
+  /**
+   * Here we test whether ConflictChecker correctly resolves conflicts when using
+   * OptimisticTransaction.filterFiles(partitions) to perform dynamic partition overwrites.
+   *
+   */
+  private def testDynamicPartitionOverwrite(
+    caseName: String,
+    concurrentActions: String => Seq[Action],
+    expectedException: Option[String => String] = None) = {
+
+    // We test with a partition column named "partitionValues" to make sure we correctly skip
+    // rewriting the filters
+    for (partCol <- Seq("part", "partitionValues")) {
+      test("filterFiles(partitions) correctly updates readPredicates and ConflictChecker " +
+        s"correctly detects conflicts for $caseName with partition column [$partCol]") {
+        withTempDir { tempDir =>
+
+            val tablePath = tempDir.getCanonicalPath
+            val log = DeltaLog.forTable(spark, tablePath)
+            // set up
+            log.startTransaction.commit(Seq(
+              Metadata(
+                schemaString = new StructType()
+                  .add(partCol, IntegerType)
+                  .add("value", IntegerType).json,
+                partitionColumns = Seq(partCol))
+            ), ManualUpdate)
+            log.startTransaction.commit(
+              Seq(AddFile("a", Map(partCol -> "0"), 1, 1, dataChange = true),
+                AddFile("b", Map(partCol -> "1"), 1, 1, dataChange = true)),
+              ManualUpdate)
+
+
+            // new data we want to overwrite dynamically to the table
+            val newData = Seq(AddFile("x", Map(partCol -> "0"), 1, 1, dataChange = true))
+
+            // txn1: read files in partitions of our new data (part=0)
+            val txn = log.startTransaction()
+            val addFiles =
+                txn.filterFiles(newData.map(_.partitionValues).toSet)
+
+            // txn2
+            log.startTransaction().commit(concurrentActions(partCol), ManualUpdate)
+
+            // txn1: remove files read in the partition and commit newData
+            def commitTxn1 = {
+                txn.commit(addFiles.map(_.remove) ++ newData, ManualUpdate)
+            }
+
+            if (expectedException.nonEmpty) {
+              val e = intercept[DeltaConcurrentModificationException] {
+                commitTxn1
+              }
+              assert(e.getMessage.contains(expectedException.get(partCol)))
+            } else {
+              commitTxn1
+            }
+        }
+      }
+    }
+  }
+
+  testDynamicPartitionOverwrite(
+    caseName = "concurrent append in same partition",
+    concurrentActions = partCol => Seq(AddFile("y", Map(partCol -> "0"), 1, 1, dataChange = true)),
+    expectedException = Some(partCol =>
+      s"Files were added to partition [$partCol=0] by a concurrent update.")
+  )
+
+  testDynamicPartitionOverwrite(
+    caseName = "concurrent append in different partition",
+    concurrentActions = partCol => Seq(AddFile("y", Map(partCol -> "1"), 1, 1, dataChange = true))
+  )
+
+  testDynamicPartitionOverwrite(
+    caseName = "concurrent delete in same partition",
+    concurrentActions = partCol => Seq(
+      RemoveFile("a", None, partitionValues = Map(partCol -> "0"))),
+    expectedException = Some(partCol =>
+      "This transaction attempted to delete one or more files that were deleted (for example a) " +
+        "by a concurrent update")
+  )
+
+  testDynamicPartitionOverwrite(
+    caseName = "concurrent delete in different partition",
+    concurrentActions = partCol => Seq(
+      RemoveFile("b", None, partitionValues = Map(partCol -> "1")))
+  )
+
+  test("can set partition columns in first commit") {
+    withTempDir { tableDir =>
+      val partitionColumns = Array("part")
+      val exampleAddFile = AddFile(
+        path = "test-path",
+        partitionValues = Map("part" -> "one"),
+        size = 1234,
+        modificationTime = 5678,
+        dataChange = true,
+        stats = """{"numRecords": 1}""",
+        tags = Map.empty)
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType()
+        .add("id", "long")
+        .add("part", "string")
+      deltaLog.withNewTransaction { txn =>
+        val protocol = Action.supportedProtocolVersion()
+        val metadata = Metadata(
+          schemaString = schema.json,
+          partitionColumns = partitionColumns)
+        txn.commit(Seq(protocol, metadata, exampleAddFile), DeltaOperations.ManualUpdate)
+      }
+      val snapshot = deltaLog.update()
+      assert(snapshot.metadata.partitionColumns.sameElements(partitionColumns))
+    }
+  }
+
+  test("only single Protocol action per commit - implicit") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType()
+        .add("id", "long")
+        .add("col", "string")
+      val e = intercept[java.lang.AssertionError] {
+        deltaLog.withNewTransaction { txn =>
+          val protocol = Protocol(2, 3)
+          val metadata = Metadata(
+            schemaString = schema.json,
+            configuration = Map("delta.enableChangeDataFeed" -> "true"))
+          txn.commit(Seq(protocol, metadata), DeltaOperations.ManualUpdate)
+        }
+      }
+      assert(e.getMessage.contains(
+        "assertion failed: Cannot change the protocol more than once in a transaction."))
+    }
+  }
+
+  test("only single Protocol action per commit - explicit") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val e = intercept[java.lang.AssertionError] {
+        deltaLog.withNewTransaction { txn =>
+          val protocol1 = Protocol(2, 3)
+          val protocol2 = Protocol(1, 4)
+          txn.commit(Seq(protocol1, protocol2), DeltaOperations.ManualUpdate)
+        }
+      }
+      assert(e.getMessage.contains(
+        "assertion failed: Cannot change the protocol more than once in a transaction."))
     }
   }
 }
