@@ -266,6 +266,42 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     ),
     cdc = Seq((2, 20, "update_preimage"), (2, 21, "update_postimage")))
 
+  testExtendedMergeWithCDC("not matched by source update and delete with skipping")(
+    source = (0, 0) :: (1, 1) :: (2, 2) :: (5, 5) :: Nil,
+    target = (1, 10) :: (2, 20) :: (4, 40) :: (5, 50) :: Nil,
+    mergeOn = "s.key = t.key and t.key > 4",
+    updateNotMatched(condition = "t.key = 1", set = "t.value = t.value + 1"),
+    deleteNotMatched(condition = "t.key = 4"))(
+    result = Seq(
+      (1, 11), // Not matched by source based on merge condition, updated
+      (2, 20), // Not matched by source based on merge condition, no change
+      // (4, 40), Not matched by source, deleted
+      (5, 50) // Matched, no change
+    ),
+    cdc = Seq(
+      (1, 10, "update_preimage"),
+      (1, 11, "update_postimage"),
+      (4, 40, "delete")))
+
+  testExtendedMergeWithCDC(
+    "matched delete and not matched by source update with skipping")(
+    source = (0, 0) :: (1, 1) :: (2, 2) :: (5, 5) :: (6, 6) :: Nil,
+    target = (1, 10) :: (2, 20) :: (4, 40) :: (5, 50) :: (6, 60) :: Nil,
+    mergeOn = "s.key = t.key and t.key > 4",
+    delete(condition = "t.key = 5"),
+    updateNotMatched(condition = "t.key = 1", set = "t.value = t.value + 1"))(
+    result = Seq(
+      (1, 11), // Not matched by source based on merge condition, updated
+      (2, 20), // Not matched by source based on merge condition, no change
+      (4, 40), // Not matched by source, no change
+      // (5, 50), Matched, deleted
+      (6, 60) // Matched, no change
+    ),
+    cdc = Seq(
+      (1, 10, "update_preimage"),
+      (1, 11, "update_postimage"),
+      (5, 50, "delete")))
+
   testExtendedMergeWithCDC("not matched by source update + delete clauses")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
     target = (1, 10) :: (2, 20) :: (7, 70) :: Nil,
@@ -355,10 +391,10 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     updateNotMatched(set = "t.value = t.value + 1"))(
     result = Seq(
       (0, 2), // Not matched (by target), inserted
-      (2, 3),  // Not matched by source, updated
+      (2, 3), // Not matched by source, updated
       (1, 4), // Matched, no change
       // (5, 5) // Not matched (by target), not inserted
-      (7, 4)  // Not matched by source, updated
+      (7, 4) // Not matched by source, updated
     ),
     cdc = Seq(
       (0, 2, "insert"),
@@ -378,11 +414,65 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (2, 2), // Not matched by source, no change
       (1, 4) // Matched, no change
       // (5, 5) // Not matched (by target), not inserted
-      // (7, 3) Not matched by source, no deleted
+      // (7, 3) Not matched by source, deleted
+    ),
+    cdc = Seq((0, 2, "insert"), (7, 3, "delete")))
+
+  testExtendedMergeWithCDC("when not matched by source updates all rows")(
+    source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
+    target = (3, 3) :: (4, 4) :: (6, 6) :: (7, 7) :: (8, 8) :: (9, 9) :: Nil,
+    mergeOn = "s.key = t.key",
+    updateNotMatched(set = "t.value = t.value + 1"))(
+    result = Seq(
+      (3, 4), // Not matched by source, updated
+      (4, 5), // Not matched by source, updated
+      (6, 7), // Not matched by source, updated
+      (7, 8), // Not matched by source, updated
+      (8, 9), // Not matched by source, updated
+      (9, 10) // Not matched by source, updated
     ),
     cdc = Seq(
-      (0, 2, "insert"),
-      (7, 3, "delete")))
+      (3, 3, "update_preimage"),
+      (3, 4, "update_postimage"),
+      (4, 4, "update_preimage"),
+      (4, 5, "update_postimage"),
+      (6, 6, "update_preimage"),
+      (6, 7, "update_postimage"),
+      (7, 7, "update_preimage"),
+      (7, 8, "update_postimage"),
+      (8, 8, "update_preimage"),
+      (8, 9, "update_postimage"),
+      (9, 9, "update_preimage"),
+      (9, 10, "update_postimage")))
+
+  testExtendedMergeWithCDC("insert only with dummy not matched by source")(
+    source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value % 2 = 0", values = "*"),
+    deleteNotMatched(condition = "t.value > 10"))(
+    result = Seq(
+      (0, 2), // Not matched (by target), inserted
+      (2, 2), // Not matched by source, no change
+      (1, 4), // Matched, no change
+      // (5, 5) // Not matched (by target), not inserted
+      (7, 3) // Not matched by source, no change
+    ),
+    cdc = Seq((0, 2, "insert")))
+
+  testExtendedMergeWithCDC("all 3 clauses - no changes")(
+    source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "t.value > 10", set = "*"),
+    insert(condition = "s.value > 10", values = "*"),
+    deleteNotMatched(condition = "t.value > 10"))(
+    result = Seq(
+      (2, 2), // Not matched by source, no change
+      (1, 4), // Matched, no change
+      (7, 3) // Not matched by source, no change
+    ),
+    cdc = Seq.empty)
 
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and delete not matched by source")(
@@ -396,8 +486,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (2, 2, "extra2") // Not matched by target, inserted
       // (3, 30) Not matched by source, deleted
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((1, 10), (2, 2)).toDF("key", "value")
-  )
+    expectedWithoutEvolution = Seq((1, 10), (2, 2)).toDF("key", "value"))
 
   testEvolution("new column with insert * and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -410,8 +499,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (2, 2, "extra2"), // Not matched by target, inserted
       (3, 31, null) // Not matched by source, updated
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 10), (2, 2), (3, 31)).toDF("key", "value")
-  )
+    expectedWithoutEvolution = Seq((0, 0), (1, 10), (2, 2), (3, 31)).toDF("key", "value"))
 
   testEvolution("new column not inserted and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -422,8 +510,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (1, 10), // Matched, no change
       (3, 31) // Not matched by source, updated
     ).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 31)).toDF("key", "value")
-  )
+    expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 31)).toDF("key", "value"))
 
   testEvolution("new column referenced in matched condition but not inserted")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -435,8 +522,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       // (1, 10), Matched, deleted
       (3, 31) // Not matched by source, updated
     ).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (3, 31)).toDF("key", "value")
-  )
+    expectedWithoutEvolution = Seq((0, 0), (3, 31)).toDF("key", "value"))
 
   testEvolution("matched update * and conditional update not matched by source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -448,6 +534,5 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (1, 1, "extra1"), // Matched, updated
       (3, 31, null) // Not matched by source, updated
     ).toDF("key", "value", "extra"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 31)).toDF("key", "value")
-  )
+    expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 31)).toDF("key", "value"))
 }

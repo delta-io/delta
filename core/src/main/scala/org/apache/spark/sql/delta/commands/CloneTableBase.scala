@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.actions.Protocol.minProtocolComponentsForNewTable
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -241,8 +242,14 @@ abstract class CloneTableBase(
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.
     // We need to look at the metadata of the transaction to see the entire set of table properties
-    // for the post-transaction state and decide a version based on that.
-    val minRequiredProtocol = Protocol(spark, Some(txn.metadata))
+    // for the post-transaction state and decide a version based on that. We also need to re-add
+    // the table property overrides as table features set by it won't be in the transaction
+    // metadata anymore.
+    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
+    val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
+    var (minReaderVersion, minWriterVersion, enabledFeatures) =
+      minProtocolComponentsForNewTable(spark, Some(metadataWithOverrides))
+
     // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
     // time travel.
     val protocolDowngradeAllowed =
@@ -250,9 +257,20 @@ abstract class CloneTableBase(
       // It's not a real downgrade if the table doesn't exist before the CLONE.
       txn.snapshot.version == -1
     val newProtocol = if (protocolDowngradeAllowed) {
-      sourceProtocol.merge(minRequiredProtocol)
+      minReaderVersion = minReaderVersion.max(sourceProtocol.minReaderVersion)
+      minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
+      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
+      sourceProtocol.merge(minProtocol)
     } else {
-      targetProtocol.merge(sourceProtocol, minRequiredProtocol)
+      // Take the maximum of all protocol versions being merged to ensure that table features
+      // from table property overrides are correctly added to the table feature list or are only
+      // implicitly enabled
+      minReaderVersion =
+        Seq(targetProtocol.minReaderVersion, sourceProtocol.minReaderVersion, minReaderVersion).max
+      minWriterVersion = Seq(
+        targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
+      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
+      targetProtocol.merge(sourceProtocol, minProtocol)
     }
 
     try {

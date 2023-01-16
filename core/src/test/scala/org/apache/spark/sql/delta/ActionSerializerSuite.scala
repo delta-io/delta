@@ -29,6 +29,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class ActionSerializerSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
@@ -367,6 +368,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       expectedJson: String,
       extraSettings: Seq[(String, String)] = Seq.empty,
       testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+    import org.apache.spark.sql.delta.test.DeltaTestImplicits._
     test(name, testTags: _*) {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
@@ -383,7 +385,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val protocol = Protocol(
             minReaderVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
             minWriterVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
-          deltaLog.startTransaction().commit(Seq(protocol, Metadata()), ManualUpdate)
+          deltaLog.startTransaction().commitManually(protocol, Metadata())
 
           // Commit the actual action.
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)

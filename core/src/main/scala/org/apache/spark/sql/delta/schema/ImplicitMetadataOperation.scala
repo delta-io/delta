@@ -60,7 +60,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
-    val dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
+    val dataSchema =
+      DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
     val mergedSchema = mergeSchema(txn, dataSchema, isOverwriteMode, canOverwriteSchema)
     val normalizedPartitionCols =
       normalizePartitionColumns(spark, partitionColumns, dataSchema)

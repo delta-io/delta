@@ -394,7 +394,7 @@ case class MergeIntoCommand(
           }
         }
 
-        deltaTxn.commit(
+        deltaTxn.commitIfNeeded(
           deltaActions,
           DeltaOperations.Merge(
             Option(condition.sql),
@@ -448,10 +448,15 @@ case class MergeIntoCommand(
       1
     }.asNondeterministic()
 
-    // Skip data based on the merge condition
-    val targetOnlyPredicates =
-      splitConjunctivePredicates(condition).filter(_.references.subsetOf(target.outputSet))
-    val dataSkippedFiles = deltaTxn.filterFiles(targetOnlyPredicates)
+    // Prune non-matching files if we don't need to collect them for NOT MATCHED BY SOURCE clauses.
+    val dataSkippedFiles =
+      if (notMatchedBySourceClauses.isEmpty) {
+        val targetOnlyPredicates =
+          splitConjunctivePredicates(condition).filter(_.references.subsetOf(target.outputSet))
+        deltaTxn.filterFiles(targetOnlyPredicates)
+      } else {
+        deltaTxn.filterFiles()
+      }
 
     // UDF to increment metrics
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")

@@ -226,7 +226,7 @@ their content, e.g. `"hello%20world"`
    * Connect path segments by `+`, e.g. `"b"+"y"`
    * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
    * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
-    and then comparing them, e.g. `"a" < "b"."x" < "b"."y"`
+    and then comparing them, e.g. `"a" < "b"+"x" < "b"+"y"`
    * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
 
 5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based) 
@@ -1020,6 +1020,8 @@ boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp without a timezone.
+
+Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
 
 ### Struct Type
 

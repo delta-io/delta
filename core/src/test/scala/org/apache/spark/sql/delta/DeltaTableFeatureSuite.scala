@@ -22,11 +22,13 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -237,5 +239,144 @@ class DeltaTableFeatureSuite
   test("native automatically-enabled feature can't be implicitly enabled") {
     val p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
     assert(p.implicitlyEnabledFeatures.isEmpty)
+  }
+
+  test("Can enable legacy metadata table feature by setting default table property key") {
+    withSQLConf(
+      s"$DEFAULT_FEATURE_PROP_PREFIX${TestWriterFeature.name}" -> "enabled",
+      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
+      withTable("tbl") {
+        spark.range(10).write.format("delta").saveAsTable("tbl")
+        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        val protocol = log.update().protocol
+        assert(protocol.readerAndWriterFeatureNames === Set(
+          ColumnMappingTableFeature.name,
+          TestWriterFeature.name))
+      }
+    }
+  }
+
+  test("CLONE accounts for default table features") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1") {
+      withTable("tbl") {
+        spark.range(0).write.format("delta").saveAsTable("tbl")
+        withSQLConf(defaultPropertyKey(TestWriterFeature) -> "enabled") {
+          sql(buildTablePropertyModifyingCommand(
+            commandName = "CLONE", targetTableName = "tbl", sourceTableName = "tbl"))
+        }
+        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        val protocol = log.update().protocol
+        assert(protocol.readerAndWriterFeatureNames === Set(
+          TestWriterFeature.name))
+      }
+    }
+  }
+
+  test("CLONE only enables enabled metadata table features") {
+    withTable("src", "target") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key ->
+          TABLE_FEATURES_MIN_WRITER_VERSION.toString,
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key ->
+          TABLE_FEATURES_MIN_READER_VERSION.toString,
+        DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
+        spark.range(0).write.format("delta").saveAsTable("src")
+      }
+      sql(buildTablePropertyModifyingCommand(
+        commandName = "CLONE", targetTableName = "target", sourceTableName = "src"))
+      val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      val protocol = targetLog.update().protocol
+      assert(protocol.readerAndWriterFeatureNames === Set(
+        ColumnMappingTableFeature.name))
+    }
+  }
+
+  for(commandName <- Seq("ALTER", "REPLACE", "CREATE OR REPLACE", "CLONE")) {
+    test(s"Can enable legacy metadata table feature during $commandName TABLE") {
+      withSQLConf(
+        s"${defaultPropertyKey(TestWriterFeature)}" -> "enabled") {
+        withTable("tbl") {
+          spark.range(0).write.format("delta").saveAsTable("tbl")
+          val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+
+          val tblProperties = Seq("'delta.enableChangeDataFeed' = true")
+          sql(buildTablePropertyModifyingCommand(
+            commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
+          val protocol = log.update().protocol
+          assert(protocol.readerAndWriterFeatureNames === Set(
+            ChangeDataFeedTableFeature.name,
+            TestWriterFeature.name))
+        }
+      }
+    }
+  }
+
+  for(commandName <- Seq("ALTER", "CLONE")) {
+    test("Enabling table feature on already existing table enables all table features " +
+      s"up to the table's protocol version during $commandName TABLE") {
+      withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name") {
+        withTable("tbl") {
+          spark.range(0).write.format("delta").saveAsTable("tbl")
+          val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+          val protocol = log.update().protocol
+          assert(protocol.minReaderVersion === 2)
+          assert(protocol.minWriterVersion === 5)
+          val tblProperties = Seq(s"'$FEATURE_PROP_PREFIX${TestWriterFeature.name}' = 'enabled'",
+            s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
+          sql(buildTablePropertyModifyingCommand(
+            commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
+          val newProtocol = log.update().protocol
+          assert(newProtocol.readerAndWriterFeatureNames === Set(
+            AppendOnlyTableFeature.name,
+            ColumnMappingTableFeature.name,
+            InvariantsTableFeature.name,
+            CheckConstraintsTableFeature.name,
+            ChangeDataFeedTableFeature.name,
+            GeneratedColumnsTableFeature.name,
+            TestWriterFeature.name,
+            TestLegacyWriterFeature.name))
+        }
+      }
+    }
+  }
+
+  private def buildTablePropertyModifyingCommand(
+      commandName: String,
+      targetTableName: String,
+      sourceTableName: String,
+      tblProperties: Seq[String] = Seq.empty): String = {
+    val commandStr = if (commandName == "CLONE") {
+      "CREATE OR REPLACE"
+    } else {
+      commandName
+    }
+
+    val cloneClause = if (commandName == "CLONE") {
+      s"SHALLOW CLONE $sourceTableName"
+    } else {
+      ""
+    }
+
+    val (usingDeltaClause, dataSourceClause) = if ("ALTER" != commandName &&
+      "CLONE" != commandName) {
+      ("USING DELTA", s"AS SELECT * FROM $sourceTableName")
+    } else {
+      ("", "")
+    }
+    var tblPropertiesClause = ""
+    if (tblProperties.nonEmpty) {
+      if (commandName == "ALTER") {
+        tblPropertiesClause += "SET "
+      }
+      tblPropertiesClause += s"TBLPROPERTIES ${tblProperties.mkString("(", ",", ")")}"
+    }
+    s"""$commandStr TABLE $targetTableName
+       |$usingDeltaClause
+       |$cloneClause
+       |$tblPropertiesClause
+       |$dataSourceClause
+       |""".stripMargin
   }
 }

@@ -95,7 +95,7 @@ class Snapshot(
   /** Performs validations during initialization */
   protected def init(): Unit = {
     deltaLog.protocolRead(protocol)
-    deltaLog.assertLegacyTableFeaturesMatch(protocol, metadata)
+    deltaLog.assertTableFeaturesMatchMetadata(protocol, metadata)
     SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
   }
 
@@ -544,7 +544,7 @@ class InitialSnapshot(
   override protected lazy val computedState: Snapshot.State = initialState
   override def protocol: Protocol = computedState.protocol
   private def initialState: Snapshot.State = {
-    val protocol = Protocol.forNewTable(spark, metadata)
+    val protocol = Protocol.forNewTable(spark, Some(metadata))
     Snapshot.State(
       sizeInBytes = 0L,
       numOfSetTransactions = 0L,

@@ -46,6 +46,13 @@ def run_sbt_tests(root_dir, coverage, scala_version=None):
         cmd += ["++ %s test" % scala_version]
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
+    cmd += ["-v"]  # show java options used
+
+    # https://docs.oracle.com/javase/7/docs/technotes/guides/vm/G1.html
+    # a GC that is optimized for larger multiprocessor machines with large memory
+    cmd += ["-J-XX:+UseG1GC"]
+    # 4x the default heap size (set in delta/built.sbt)
+    cmd += ["-J-Xmx4G"]
     run_cmd(cmd, env={"DELTA_TESTING": "1"}, stream_output=True)
 
 

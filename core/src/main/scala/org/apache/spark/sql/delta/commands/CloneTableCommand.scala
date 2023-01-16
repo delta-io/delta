@@ -22,6 +22,7 @@ import java.io.FileNotFoundException
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Clone
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
@@ -188,7 +189,11 @@ class CloneParquetSource(
 
   def format: String = CloneSourceFormat.PARQUET
 
-  def protocol: Protocol = Protocol()
+  def protocol: Protocol = {
+    // This is quirky but necessary to add table features such as column mapping if the default
+    // protocol version supports table features.
+    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, metadata))
+  }
 
   override val clock: Clock = new SystemClock()
 

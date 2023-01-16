@@ -22,13 +22,14 @@ import java.net.URI
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, deltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -280,8 +281,10 @@ trait CloneTableSuiteBase extends QueryTest
       assert(cloneLogs.count(_.opType.get.typeName.equals("delta.clone.makeAbsolute")) == 1)
 
 
-    val commitStatsUsageRecords = allLogs.filter(
-      _.tags.get("opType") === Some("delta.commit.stats"))
+    val commitStatsUsageRecords = allLogs
+      .filter(_.metric === "tahoeEvent")
+      .filter(
+        _.tags.get("opType") === Some("delta.commit.stats"))
     assert(commitStatsUsageRecords.length === 1)
     val commitStatsMap = JsonUtils.fromJson[Map[String, Any]](commitStatsUsageRecords.head.blob)
     commitLargeMetricsMap.foreach { case (name, expectedValue) =>
@@ -521,7 +524,7 @@ trait CloneTableSuiteBase extends QueryTest
     val ex = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$clone` SHALLOW CLONE delta.`$source`")
     }
-    assert(ex.getMessage.contains("is not empty but it's not a Delta table"))
+    assert(ex.getMessage.contains("is not empty and also not a Delta table"))
   }
 
   testAllClones(
@@ -665,7 +668,7 @@ trait CloneTableSuiteBase extends QueryTest
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
     // Change protocol versions of (read, write) = (2, 3). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
-    val defaultNewTableProtocol = Protocol(spark, metadataOpt = None)
+    val defaultNewTableProtocol = Protocol.forNewTable(spark, metadataOpt = None)
     val sourceProtocol = Protocol(2, 3)
     // Make sure this is actually an upgrade. Downgrades are not supported, and if it's the same
     // version, we aren't testing anything there.
@@ -872,6 +875,29 @@ trait CloneTableSuiteBase extends QueryTest
       }
   }
 
+  for(targetExists <- BOOLEAN_DOMAIN)
+  testAllClones(s"CLONE respects table features set by table property override, " +
+    s"targetExists=$targetExists", TAG_MODIFY_PROTOCOL) {
+    (source, target, isShallow) =>
+      spark.range(10).write.format("delta").save(source)
+
+      if (targetExists) {
+        spark.range(0).write.format("delta").save(target)
+      }
+
+      val tblPropertyOverrides =
+        Seq(
+          s"delta.feature.${TestWriterFeature.name}" -> "enabled",
+          "delta.minWriterVersion" -> s"$TABLE_FEATURES_MIN_WRITER_VERSION").toMap
+      cloneTable(
+        source,
+        target,
+        isReplace = true,
+        tableProperties = tblPropertyOverrides)
+
+      val targetLog = DeltaLog.forTable(spark, target)
+      assert(targetLog.update().protocol.isFeatureEnabled(TestWriterFeature))
+  }
 }
 
 

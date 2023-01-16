@@ -119,7 +119,10 @@ case class DeltaTableV2(
       ))
       deltaLog.getSnapshotAt(version)
     }.getOrElse(
-      deltaLog.update(stalenessAcceptable = true, checkIfUpdatedSinceTs = Some(creationTimeMs))
+      deltaLog.update(
+        stalenessAcceptable = true,
+        checkIfUpdatedSinceTs = Some(creationTimeMs)
+      )
     )
   }
 
