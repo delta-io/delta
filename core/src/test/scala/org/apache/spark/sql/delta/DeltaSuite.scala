@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -2497,11 +2497,19 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
           .mode("append")
           .save(tempDir.getCanonicalPath)
 
+        val protocol = DeltaLog.forTable(spark, tempDir).snapshot.protocol
+        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+          (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+            TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+        } else {
+          (ColumnMappingTableFeature.minReaderVersion, ColumnMappingTableFeature.minWriterVersion)
+        }
+
         spark.sql(
           s"""
              |ALTER TABLE delta.`${tempDir.getCanonicalPath}` SET TBLPROPERTIES (
-             |  'delta.minReaderVersion' = '2',
-             |  'delta.minWriterVersion' = '5',
+             |  'delta.minReaderVersion' = '$r',
+             |  'delta.minWriterVersion' = '$w',
              |  'delta.columnMapping.mode' = 'name'
              |)
              |""".stripMargin)

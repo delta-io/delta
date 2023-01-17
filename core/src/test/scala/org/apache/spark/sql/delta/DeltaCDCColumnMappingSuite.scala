@@ -21,6 +21,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -615,13 +616,20 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
         ))
       }
       // upgrade to name mode
+      val protocol = deltaLog.snapshot.protocol
+      val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+        (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else {
+        (ColumnMappingTableFeature.minReaderVersion, ColumnMappingTableFeature.minWriterVersion)
+      }
       sql(
         s"""
            |ALTER TABLE delta.`${dir.getCanonicalPath}`
            |SET TBLPROPERTIES (
            |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
-           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
-           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "$r",
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "$w")""".stripMargin)
       // write more data
       writeDeltaData((5 until 10))
     } else {

@@ -36,6 +36,7 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.util.Utils
 
 class DeltaTableSuite extends QueryTest
   with SharedSparkSession
@@ -546,7 +547,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.upgradeTableProtocol(1, 2)
 
-      assert(log.snapshot.protocol == Protocol(1, 2))
+      val expectedProtocol = Protocol(1, 2)
+      assert(log.snapshot.protocol === expectedProtocol)
     }
   }
 

@@ -22,9 +22,8 @@ import java.sql.Date
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.DeltaOperations
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.{CheckConstraintsTableFeature, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.{Metadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
@@ -393,8 +392,10 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  testQuietly("CHECK constraint is enforced if somehow created") {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "2")) {
+  for (writerVersion <- Seq(2, TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION))
+  testQuietly("CHECK constraint is enforced if somehow created (writerVersion = " +
+    s"$writerVersion)") {
+    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, writerVersion.toString)) {
       withTable("constraint") {
         spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
           .write.format("delta").saveAsTable("constraint")
@@ -403,9 +404,14 @@ class InvariantEnforcementSuite extends QueryTest
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))
-        assert(txn.protocol.minWriterVersion === 2)
+        assert(txn.protocol.minWriterVersion === writerVersion)
         txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
-        assert(log.snapshot.protocol.minWriterVersion === 3)
+        val upVersion = if (TableFeatureProtocolUtils.supportsWriterFeatures(writerVersion)) {
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+        } else {
+          CheckConstraintsTableFeature.minWriterVersion
+        }
+        assert(log.snapshot.protocol.minWriterVersion === upVersion)
         spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")

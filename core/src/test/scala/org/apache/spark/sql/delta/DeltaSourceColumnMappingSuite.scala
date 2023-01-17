@@ -21,6 +21,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
@@ -281,15 +282,26 @@ trait ColumnMappingStreamingWorkflowSuiteBase extends StreamTest
       }
 
       // upgrade to name mode
-      val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
-      val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
+      val protocol = deltaLog.snapshot.protocol
+        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+        (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else {
+        (spark.conf
+          .get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION)
+          .max(ColumnMappingTableFeature.minReaderVersion),
+          spark.conf
+            .get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION)
+            .max(ColumnMappingTableFeature.minWriterVersion))
+      }
+
       sql(
         s"""
            |ALTER TABLE delta.`${tablePath}`
            |SET TBLPROPERTIES (
            |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
-           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "$readerVersion",
-           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "$writerVersion")""".stripMargin)
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = "$r",
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "$w")""".stripMargin)
 
       // write more data post upgrade
       writeDeltaData(5 until 10, deltaLog)

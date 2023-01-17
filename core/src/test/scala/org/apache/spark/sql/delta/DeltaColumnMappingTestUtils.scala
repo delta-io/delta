@@ -20,6 +20,7 @@ import java.io.File
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
@@ -246,6 +247,24 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
         DeltaConfigs.COLUMN_MAPPING_MODE.key
       ).contains(p._1)
     ))
+  }
+
+  /** Return KV pairs of Protocol-related stuff for checking the result of DESCRIBE TABLE. */
+  protected def buildProtocolProps(snapshot: Snapshot): Seq[(String, String)] = {
+    val metadata = snapshot.metadata
+    var props = Seq(
+      (Protocol.MIN_READER_VERSION_PROP,
+        Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString),
+      (Protocol.MIN_WRITER_VERSION_PROP,
+        Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString))
+    if (snapshot.protocol.supportsReaderFeatures || snapshot.protocol.supportsWriterFeatures) {
+      props ++=
+        Protocol.minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)._3
+          .map(f => (
+            s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}${f.name}",
+            TableFeatureProtocolUtils.FEATURE_PROP_ENABLED))
+    }
+    props
   }
 
   /**

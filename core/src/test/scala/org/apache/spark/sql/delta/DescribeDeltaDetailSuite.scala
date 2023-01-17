@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATU
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -240,6 +241,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
   test("delta table: describe detail shows table features") {
     withTable("t1") {
       Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+      val p = DeltaLog.forTable(spark, TableIdentifier("t1")).snapshot.protocol
+      val features = p.readerAndWriterFeatureNames ++ p.implicitlyEnabledFeatures.map(_.name)
       sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
              |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
              |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
@@ -251,7 +254,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         Seq(
           TABLE_FEATURES_MIN_READER_VERSION,
           TABLE_FEATURES_MIN_WRITER_VERSION,
-          Array(AppendOnlyTableFeature.name, InvariantsTableFeature.name)),
+          (features + AppendOnlyTableFeature.name).toArray.sorted),
         Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
     }
   }
