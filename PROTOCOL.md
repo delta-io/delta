@@ -24,6 +24,10 @@
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
+- [Table Features](#table-features)
+  - [Table Features for new and Existing Tables](#table-features-for-new-and-existing-tables)
+  - [Enabled Features](#enabled-features)
+  - [Disabled Features](#disabled-features)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -50,7 +54,9 @@
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
 - [Appendix](#appendix)
+  - [Valid Feature Names in Table Features](#valid-feature-names-in-table-features)
   - [Deletion Vector Format](#deletion-vector-format)
+    - [Deletion Vector File Storage Format](#deletion-vector-file-storage-format)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
@@ -59,6 +65,7 @@
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
     - [Map Type](#map-type)
+    - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
 
@@ -90,7 +97,9 @@ Data files that are no longer present in the latest version of the table can be 
 # Delta Table Specification
 A table has a single serial history of atomic versions, which are named using contiguous, monotonically-increasing integers.
 The state of a table at a given version is called a _snapshot_ and is defined by the following properties:
- - **Version of the Delta log protocol** that is required to correctly read or write the table
+ - **Delta log protocol** consists of two **protocol versions**, and if applicable, corresponding **table features**, that are required to correctly read or write the table
+   - **Reader features** only exists when Reader Version is 3
+   - **Writer features** only exists when Writer Version is 7
  - **Metadata** of the table (e.g., the schema, a unique identifier, partition columns, and other configuration properties)
  - **Set of files** present in the table, along with metadata about those files
  - **Set of tombstones** for files that were recently deleted
@@ -281,7 +290,7 @@ In the reference implementation, the provider field is used to instantiate a Spa
 As of Delta Lake 0.3.0, user-facing APIs only allow the creation of tables where `format = 'parquet'` and `options = {}`. Support for reading other formats is present both for legacy reasons and to enable possible support for other formats in the future (See [#87](https://github.com/delta-io/delta/issues/87)).
 
 The following is an example `metaData` action:
-```
+```json
 {
   "metaData":{
     "id":"af23c9d7-fff1-4a5a-a2c8-55c59bd782aa",
@@ -335,14 +344,14 @@ tags | Map[String, String] | Map containing metadata about this logical file
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.
 
 The following is an example `add` action:
-```
+```json
 {
   "add": {
     "path":"date=2017-12-10/part-000...c000.gz.parquet",
     "partitionValues":{"date":"2017-12-10"},
     "size":841454,
     "modificationTime":1512909768000,
-    "dataChange":true
+    "dataChange":true,
     "stats":"{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
@@ -362,7 +371,7 @@ tags | Map[String, String] | Map containing metadata about this file
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.
 
 The following is an example `remove` action.
-```
+```json
 {
   "remove":{
     "path":"part-00001-9…..snappy.parquet",
@@ -387,7 +396,7 @@ tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example of `cdc` action.
 
-```
+```json
 {
   "cdc": {
     "path": "_change_data/cdc-00001-c…..snappy.parquet",
@@ -400,7 +409,9 @@ The following is an example of `cdc` action.
 
 #### Writer Requirements for AddCDCFile
 
-As of [Writer Version 4](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files)
+For [Writer Versions 4 up to 6](#Writer-Version-Requirements), all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table. When `delta.enableChangeDataFeed` is `true`, writers must produce the relevant `AddCDCFile`'s for any operation that changes data, as specified in [Change Data Files](#change-data-files).
+
+For Writer Version 7, all writers must respect the `delta.enableChangeDataFeed` configuration flag in the metadata of the table only if the feature `changeDataFeed` exists in the table `protocol`'s `writerFeatures`.
 
 #### Reader Requirements for AddCDCFile
 
@@ -441,7 +452,7 @@ version | Long | An application-specific numeric identifier for this transaction
 lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
 
 The following is an example `txn` action:
-```
+```json
 {
   "txn": {
     "appId":"3ba13872-2d47-4e17-86a0-21afd2a22395",
@@ -456,7 +467,9 @@ Protocol versioning allows a newer client to exclude older readers and/or writer
 The _protocol version_ will be increased whenever non-forward-compatible changes are made to this specification.
 In the case where a client is running an invalid protocol version, an error should be thrown instructing the user to upgrade to a newer protocol version of their Delta client library.
 
-Since breaking changes must be accompanied by an increase in the protocol version recorded in a table, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log.
+Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
+
+Reader Version 3 and Writer Version 7 add two lists of table features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
 
 The schema of the `protocol` action is as follows:
 
@@ -464,13 +477,39 @@ Field Name | Data Type | Description
 -|-|-
 minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
 minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
+readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
+writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
 
-The current version of the Delta protocol is:
-```
+Some example Delta protocols:
+```json
 {
   "protocol":{
     "minReaderVersion":1,
     "minWriterVersion":2
+  }
+}
+```
+
+A table that is using table features only for writers:
+```json
+{
+  "protocol":{
+    "readerVersion":2,
+    "writerVersion":7,
+    "writerFeatures":["columnMapping","identityColumns"]
+  }
+}
+```
+Reader version 2 in the above example does not support listing reader features but supports Column Mapping. This example is equivalent to the next one, where Column Mapping is represented as a reader table feature.
+
+A table that is using table features for both readers and writers:
+```json
+{
+  "protocol": {
+    "readerVersion":3,
+    "writerVersion":7,
+    "readerFeatures":["columnMapping"],
+    "writerFeatures":["columnMapping","identityColumns"]
   }
 }
 ```
@@ -481,7 +520,7 @@ A delta file can optionally contain additional provenance information about what
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
 
 An example of storing provenance information related to an `INSERT` operation:
-```
+```json
 {
   "commitInfo":{
     "timestamp":1515491537026,
@@ -515,11 +554,43 @@ To achieve the requirements above, related actions from different delta files ne
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
 
+# Table Features
+Table features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
+
+Readers and writers must not ignore table features when they are present:
+ - to read a table, readers must implement and respect all features listed in `readerFeatures`;
+ - to write a table, writers must implement and respect all features listed in `writerFeatures`. Because writers have to read the table (or only the Delta log) before write, they must implement and respect all reader features as well.
+
+## Table Features for New and Existing Tables
+It is possible to create a new table or upgrade an existing table to the protocol versions that enables the use of table features. The enablement can be only for readers or both readers and writers.
+
+For new tables, when a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version less than 7 is not allowed.
+
+When upgrading an existing table to Reader Version 3 and/or Writer Version 7, the client should, on a best effort basis, determine which features supported by the original protocol version are used in any historical version of the table, and add only used features to reader and/or writer feature sets. The client must assume a feature has been used, unless it can prove that the feature is *definitely* not used in any historical version of the table that is reachable by time travel. 
+
+For example, given a table on Reader Version 1 and Writer Version 4, along with four versions:
+ 1. Table property change: set `delta.enableChangeDataFeed` to `true`.
+ 2. Data change: three rows updated.
+ 3. Table property change: unset `delta.enableChangeDataFeed`.
+ 4. Table protocol change: upgrade protocol to Reader Version 3 and Writer Version 7.
+
+To produce Version 4, a writer could look at only Version 3 and discover that Change Data Feed has not been used. But in fact, this feature has been used and the table does contain some Change Data Files for Version 2. This means that, to determine all features that have ever been used by the table, a writer must either scan the whole history (which is very time-consuming) or assume the worst case: all features supported by protocol `(1, 4)` has been used.
+
+## Enabled Features
+A feature is enabled when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
+
+A feature being enabled does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) enabled in `writerFeatures`, but does not satisfy a table property `delta.appendOnly` equals to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must implement the feature to know that the table property `delta.appendOnly` should be checked.
+
+## Disabled Features
+A feature is `disabled` if it is in neither `readerFeatures` nor `writerFeatures`. Writers are allowed to `enable` a feature for the table by adding its name to the `readerFeatures` or `writerFeatures`. Reader features should be added to both `readerFeatures` and `writerFeatures` simultaneously, while writer features should be added only to `writerFeatures`. It is not allowed to add features only to `readerFeatures` but not to `writerFeatures`.
+
 # Column Mapping
-Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32 bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`. The column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`.
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+
+The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature enabled. For writers this is Writer Version 5 or 6, or Writer Version 7 with  the `columnMapping` table feature enabled.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
-```
+```json
 {
     "name" : "e",
     "type" : {
@@ -548,21 +619,31 @@ The following is an example for the column definition of a table that leverages 
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
+ - Write `protocol` and `metaData` actions when Column Mapping is turned on for the first time:
+   - If the table is on Writer Version 5 or 6: write a `metaData` action to add the `delta.columnMapping.mode` table property;
+   - If the table is on Writer Version 7:
+     - write a `protocol` action to add the feature `columnMapping` to both `readerFeatures` and `writerFeatures`, and
+     - write a `metaData` action to add the `delta.columnMapping.mode` table property.
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
  - Track partition values and column level statistics with the physical name of the column in the transaction log.
  - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
-In `none` mode, readers must read the parquet files by using the display names (the `name` field of the column definition) of the columns in the schema.
+If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
 
-In `id ` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return nulls for each column. For ids that cannot be found in a file, readers must return `null` values for those columns.
+In `none` mode, or if the table property is not present, readers must read the parquet files by using the display names (the `name` field of the column definition) of the columns in the schema.
 
-In `name` mode, readers must resolve columns in the data files by their physical names. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.  
+In `id ` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file, as given by the column metadata property `delta.columnMapping.id` in the Delta schema. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return nulls for each column. For ids that cannot be found in a file, readers must return `null` values for those columns.
+
+In `name` mode, readers must resolve columns in the data files by their physical names as given by the column metadata property `delta.columnMapping.physicalName` in the Delta schema. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.
 
 # Deletion Vectors
+Enablement:
+ - To enable Deletion Vectors on a table, the table must have Reader Version 3 and Writer Version 7. A feature name `deletionVectors` must exist in the table's `readerFeatures` and `writerFeatures`.
 
-`add` and `remove` actions can optionally include a Deletion Vector (DV) that provides information about logically deleted rows, that are however still physically present in the underlying data file and must thus be skipped during processing. 
+When enabled:
+ - A table's `add` and `remove` actions can optionally include a Deletion Vector (DV) that provides information about logically deleted rows, that are however still physically present in the underlying data file and must thus be skipped during processing. Readers must read the table considering the existence of DVs.
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
@@ -624,7 +705,6 @@ Assuming that this DV is stored relative to an `s3://mytable/` directory, the ab
 The row indexes encoded in this DV are: 3, 4, 7, 11, 18, 29.
 
 ## Reader Requirements for Deletion Vectors
-
 If a snapshot contains logical files with records that are invalidated by a DV, then these records *must not* be returned in the output.
 
 # Requirements for Writers
@@ -661,7 +741,7 @@ Commit provenance information does not need to be included in the checkpoint. Al
 
 Within the checkpoint, the `add` struct may or may not contain the following columns based on the configuration of the table:
  - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
- 
+
  ```
 |-- add: struct
 |    |-- partitionValues_parsed: struct
@@ -679,11 +759,23 @@ Refer to the [appendix](#checkpoint-schema) for an example on the schema of the 
  - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
 
 ## Append-only Tables
-When the table property `delta.appendOnly` is set to `true`:
-  - New log entries MUST NOT change or remove data from the table.
-  - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
+Enablement:
+ - The table must be on a Writer Version starting from 2 up to 7.
+ - If the table is on Writer Version 7, the feature `appendOnly` must exist in the table `protocol`'s `writerFeatures`.
+ - The table property `delta.appendOnly` must be set to `true`.
+
+When enabled:
+ - New log entries MUST NOT change or remove data from the table.
+ - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
+
+To remove the append-only restriction, the table property `delta.appendOnly` must be set to `false`, or it must be removed.
 
 ## Column Invariants
+Enablement:
+ - If the table is on a Writer Version starting from 2 up to 6, Column Invariants are always enabled.
+ - If the table is on Writer Version 7, the feature `columnInvariants` must exist in the table `protocol`'s `writerFeatures`.
+
+When enabled:
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
  - The value of `delta.invariants` SHOULD be parsed as a JSON string containing a boolean SQL expression at the key `expression.expression` (that is, `{"expression": {"expression": "<SQL STRING>"}}`).
  - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
@@ -710,6 +802,10 @@ Writers should reject any transaction that contains data where the expression `x
 
 ## CHECK Constraints
 
+Enablement:
+- If the table is on a Writer Version starting from 3 up to 6, CHECK Constraints are always enabled.
+- If the table is on Writer Version 7, a feature name `checkConstraints` must exist in the table `protocol`'s `writerFeatures`.
+
 CHECK constraints are stored in the map of the `configuration` field in [Metadata](#change-metadata). Each CHECK constraint has a name and is stored as a key value pair. The key format is `delta.constraints.{name}`, and the value is a SQL expression string whose return type must be `Boolean`. Columns referred by the SQL expression must exist in the table schema.
 
 Rows in a table must satisfy CHECK constraints. In other words, evaluating the SQL expressions of CHECK constraints must return `true` for each row in a table.
@@ -717,18 +813,28 @@ Rows in a table must satisfy CHECK constraints. In other words, evaluating the S
 For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
 
 Hence, a writer must follow the rules below:
+- CHECK Constraints may not be added to a table unless the above enablement rules are satisfied. When adding a CHECK Constraint to a table for the first time, writers are allowed to submit a `protocol` change in the same commit to enable the feature in the protocol.
 - When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
 - When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
 
 ## Generated Columns
 
+Enablement:
+ - If the table is on a Writer Version starting from 4 up to 6, Generated Columns are always enabled.
+ - If the table is on Writer Version 7, a feature name `generatedColumns` must exist in the table `protocol`'s `writerFeatures`.
+
+When enabled:
  - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
  - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
  - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
 ## Identity Columns
 
-Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables . The `metadata` for a column in the table schema MAY contain the following keys for Identity column properties
+Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables. To enable Identity Columns:
+ - The table must be on Writer Version 6, or
+ - The table must be on Writer Version 7, and a feature name `identityColumns` must exist in the table `protocol`'s `writerFeatures`.
+
+When enabled, the `metadata` for a column in the table schema MAY contain the following keys for Identity Column properties:
 - `delta.identity.start`: Starting value for the Identity column. This is a long type value. It should not be changed after table creation.
 - `delta.identity.step`: Increment to the next Identity value. This is a long type value. It cannot be set to 0. It should not be changed after table creation.
 - `delta.identity.highWaterMark`: The highest value generated for the Identity column. This is a long type value. When `delta.identity.step` is positive (negative), this should be the largest (smallest) value in the column.
@@ -752,12 +858,12 @@ The requirements of the writers according to the protocol versions are summarize
 
 <br> | Requirements
 -|-
-Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
-Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- [`CHECK` constraints](#check-constraints)
-Writer Version 4 | - Support [Change Data Feed](#add-cdc-file)<br>- Support [Generated Columns](#generated-columns)
+Writer Version 2 | - Respect [Append-only Tables](#append-only-tables)<br>- Respect [Column Invariants](#column-invariants)
+Writer Version 3 | - Enforce `delta.checkpoint.writeStatsAsJson`<br>- Enforce `delta.checkpoint.writeStatsAsStruct`<br>- Respect [`CHECK` constraints](#check-constraints)
+Writer Version 4 | - Respect [Change Data Feed](#add-cdc-file)<br>- Respect [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
-Writer Version 6 | Support [Identity Columns](#identity-columns)
-Writer Version 7 | Respect [Deletion Vectors](#deletion-vectors)
+Writer Version 6 | Respect [Identity Columns](#identity-columns)
+Writer Version 7 | Respect [Table Features](#table-features) for writers
 
 # Requirements for Readers
 
@@ -770,9 +876,21 @@ The requirements of the readers according to the protocol versions are summarize
 <br> | Requirements
 -|-
 Reader Version 2 | Respect [Column Mapping](#column-mapping)
-Reader Version 3 | Respect [Deletion Vectors](#deletion-vectors)
+Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - Writer Version must be 7
 
 # Appendix
+
+## Valid Feature Names in Table Features
+
+Feature | Name | Readers or Writers?
+-|-|-|-
+[Append-only Tables](#append-only-tables) | `appendOnly` | Writers only
+[Column Invariants](#column-invariants) | `invariants` | Writers only
+[`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
+[Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+[Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
+[Identity Columns](#identity-columns) | `identityColumns` | Writers only
+[Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
 
 ## Deletion Vector Format
 
@@ -868,7 +986,7 @@ The following per-column statistics are currently supported:
 Name | Description (`stats.tightBounds=true`) | Description (`stats.tightBounds=false`)
 -|-|-
 nullCount | The number of `null` values for this column | <p>If the `nullCount` for a column equals the physical number of records (`stats.numRecords`) then **all** valid rows for this column must have `null` values (the reverse is not necessarily true).</p><p>If the `nullCount` for a column equals 0 then **all** valid rows are non-`null` in this column (the reverse is not necessarily true).</p><p>If the `nullCount` for a column is any value other than these two special cases, the value carries no information and should be treated as if absent.</p>
-minValues | A value that is equal to the smallest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is less than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information. 
+minValues | A value that is equal to the smallest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is less than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
@@ -1041,7 +1159,7 @@ JSON Encoded Table Schema:
 ```
 
 ## Checkpoint Schema
-For a table with partition columns: "date", "region" of types date and string respectively and data columns: "asset", "quantity" and "is_available" with data types string, double and boolean, the checkpoint schema will look as follows:
+The following examples uses a table with two partition columns: "date" and "region" of types date and string, respectively, and three data columns: "asset", "quantity", and "is_available" with data types string, double, and boolean. The checkpoint schema will look as follows:
 
 ```
 |-- metaData: struct
@@ -1058,6 +1176,8 @@ For a table with partition columns: "date", "region" of types date and string re
 |-- protocol: struct
 |    |-- minReaderVersion: int
 |    |-- minWriterVersion: int
+|    |-- readerFeatures: array[string]
+|    |-- writerFeatures: array[string]
 |-- txn: struct
 |    |-- appId: string
 |    |-- version: long
@@ -1088,6 +1208,8 @@ For a table with partition columns: "date", "region" of types date and string re
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
 ```
+
+Please note, as in the above example, the `readerFeatures` and `writerFeatures` fields do exist in the schema even when the table does not support table features. In such a case values of these two fields are `null`.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
