@@ -487,7 +487,7 @@ case class MergeIntoCommand(
     //     target row is modified by multiple user or not
     // - the target file name the row is from to later identify the files touched by matched rows
     val joinType = if (notMatchedBySourceClauses.isEmpty) "inner" else "right_outer"
-    val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
+    val targetDF = buildTargetPlanWithFiles(spark, deltaTxn, dataSkippedFiles)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
       .withColumn(FILE_NAME_COL, input_file_name())
     val joinToFindTouchedFiles = sourceDF.join(targetDF, new Column(condition), joinType)
@@ -603,8 +603,7 @@ case class MergeIntoCommand(
     val dataSkippedFiles = deltaTxn.filterFiles(targetOnlyPredicates)
 
     // target DataFrame
-    val targetDF = Dataset.ofRows(
-      spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
+    val targetDF = buildTargetPlanWithFiles(spark, deltaTxn, dataSkippedFiles)
 
     val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
       .select(outputCols: _*)
@@ -682,9 +681,9 @@ case class MergeIntoCommand(
     // need to drop the duplicate matches.
     val isDeleteWithDuplicateMatchesAndCdc = multipleMatchDeleteOnlyOvercount.nonEmpty && cdcEnabled
 
-    // Generate a new logical plan that has same output attributes exprIds as the target plan.
+    // Generate a new target dataframe that has same output attributes exprIds as the target plan.
     // This allows us to apply the existing resolved update/insert expressions.
-    val newTarget = buildTargetPlanWithFiles(deltaTxn, filesToRewrite)
+    val baseTargetDF = buildTargetPlanWithFiles(spark, deltaTxn, filesToRewrite)
     val joinType = if (hasNoInserts &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED)) {
       "rightOuter"
@@ -696,7 +695,7 @@ case class MergeIntoCommand(
                 |  source.output: ${source.outputSet}
                 |  target.output: ${target.outputSet}
                 |  condition: $condition
-                |  newTarget.output: ${newTarget.outputSet}
+                |  newTarget.output: ${baseTargetDF.queryExecution.logical.outputSet}
        """.stripMargin)
 
     // UDFs to update metrics
@@ -721,7 +720,7 @@ case class MergeIntoCommand(
     // insert clause. See above at isDeleteWithDuplicateMatchesAndCdc definition for more details.
     var sourceDF = getSourceDF()
       .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
-    var targetDF = Dataset.ofRows(spark, newTarget)
+    var targetDF = baseTargetDF
       .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
     if (isDeleteWithDuplicateMatchesAndCdc) {
       targetDF = targetDF.withColumn(TARGET_ROW_ID_COL, monotonically_increasing_id())
@@ -958,8 +957,9 @@ case class MergeIntoCommand(
    * on this new plan.
    */
   private def buildTargetPlanWithFiles(
+    spark: SparkSession,
     deltaTxn: OptimisticTransaction,
-    files: Seq[AddFile]): LogicalPlan = {
+    files: Seq[AddFile]): DataFrame = {
     val targetOutputCols = getTargetOutputCols(deltaTxn)
     val targetOutputColsMap = {
       val colsMap: Map[String, NamedExpression] = targetOutputCols.view
@@ -1016,7 +1016,7 @@ case class MergeIntoCommand(
         }
     }
 
-    Project(aliases, plan)
+    Dataset.ofRows(spark, Project(aliases, plan))
   }
 
   /** Expressions to increment SQL metrics */
