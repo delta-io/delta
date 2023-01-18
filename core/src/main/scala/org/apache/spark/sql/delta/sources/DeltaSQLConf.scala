@@ -1099,6 +1099,13 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .createWithDefault(0.05d)
+
+  val DELETE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("delete.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in the Delete command.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

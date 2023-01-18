@@ -406,8 +406,10 @@ case class AddFile(
     // scalastyle:off
     val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
+      deletionVector = deletionVector
     )
+    removedFile.numLogicalRecords = numLogicalRecords
     // scalastyle:on
     removedFile
   }
