@@ -315,14 +315,18 @@ object StatisticsCollection extends DeltaCommand {
 
     // Use the stats collector to recompute stats
     val dataPath = deltaLog.dataPath
-    val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
-      .groupBy(input_file_name()).agg(to_json(txn.statsCollector))
+    val newAddFiles =
+      {
+        val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
+          .groupBy(col("_metadata.file_path").as("path")).agg(to_json(txn.statsCollector))
 
-    // Use the new stats to update the AddFiles and commit back to the DeltaLog
-    val newAddFiles = newStats.collect().map { r =>
-      val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
-      add.copy(dataChange = false, stats = r.getString(1))
-    }
+        // Use the new stats to update the AddFiles and commit back to the DeltaLog
+        newStats.collect().map { r =>
+          val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
+          add.copy(dataChange = false, stats = r.getString(1))
+        }
+      }
+
     txn.commit(newAddFiles, ComputeStats(predicates.map(_.sql)))
   }
 
