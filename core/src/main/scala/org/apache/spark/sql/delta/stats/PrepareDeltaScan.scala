@@ -156,10 +156,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
     def transform(plan: LogicalPlan): LogicalPlan =
       transformSubqueries(plan) transform {
-        case scan @ DeltaTableScan(canonicalizedPlanWithRemovedProjections, filters, fileIndex,
+        case scan @ DeltaTableScan(planWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
           val scanGenerator = getDeltaScanGenerator(fileIndex)
-          val preparedScan = deltaScans.getOrElseUpdate(canonicalizedPlanWithRemovedProjections,
+          val preparedScan = deltaScans.getOrElseUpdate(planWithRemovedProjections.canonicalized,
               filesForScan(scanGenerator, limit, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
           optimizeGeneratedColumns(scan, preparedIndex, filters, limit, delta)
@@ -242,8 +242,8 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
     /**
      * The components of DeltaTableScanType are:
-     * - the canonicalized plan with removed projections. We remove projections as a plan
-     * differentiator because it does not affect file listing results.
+     * - the plan with removed projections. We remove projections as a plan differentiator
+     * because it does not affect file listing results.
      * - filter expressions collected by `PhysicalOperation`
      * - the `TahoeLogFileIndex` of the matched DeltaTable`
      * - integer value of limit expression, if any
@@ -266,7 +266,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         val planWithRemovedProjections = plan.transformWithPruning(_.containsPattern(PROJECT)) {
           case p: Project if p.projectList.forall(_.isInstanceOf[AttributeReference]) => p.child
         }
-        planWithRemovedProjections.canonicalized
+        planWithRemovedProjections
       }
 
       plan match {
