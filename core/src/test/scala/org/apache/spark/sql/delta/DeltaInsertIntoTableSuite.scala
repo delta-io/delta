@@ -75,6 +75,90 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
+
+  Seq(("ordinal", ""), ("name", "(id, col2, col)")).foreach { case (testName, values) =>
+    test(s"INSERT OVERWRITE schema evolution works for array struct types - $testName") {
+      val sourceSchema = "id INT, col2 STRING, col ARRAY<STRUCT<f1: STRING, f2: STRING, f3: DATE>>"
+      val sourceRecord = "1, '2022-11-01', array(struct('s1', 's2', DATE'2022-11-01'))"
+      val targetSchema = "id INT, col2 DATE, col ARRAY<STRUCT<f1: STRING, f2: STRING>>"
+      val targetRecord = "1, DATE'2022-11-02', array(struct('t1', 't2'))"
+
+      runInsertOverwrite(sourceSchema, sourceRecord, targetSchema, targetRecord) {
+        (sourceTable, targetTable) =>
+          sql(s"INSERT OVERWRITE $targetTable $values SELECT * FROM $sourceTable")
+
+          // make sure table is still writeable
+          sql(s"""INSERT INTO $targetTable VALUES (2, DATE'2022-11-02',
+               | array(struct('s3', 's4', DATE'2022-11-02')))""".stripMargin)
+          sql(s"""INSERT INTO $targetTable VALUES (3, DATE'2022-11-03',
+               |array(struct('s5', 's6', NULL)))""".stripMargin)
+          val df = spark.sql(
+            """SELECT 1 as id, DATE'2022-11-01' as col2,
+              | array(struct('s1', 's2', DATE'2022-11-01')) as col UNION
+              | SELECT 2 as id, DATE'2022-11-02' as col2,
+              | array(struct('s3', 's4', DATE'2022-11-02')) as col UNION
+              | SELECT 3 as id, DATE'2022-11-03' as col2,
+              | array(struct('s5', 's6', NULL)) as col""".stripMargin)
+          verifyTable(targetTable, df)
+      }
+    }
+  }
+
+  Seq(("ordinal", ""), ("name", "(id, col2, col)")).foreach { case (testName, values) =>
+    test(s"INSERT OVERWRITE schema evolution works for array nested types - $testName") {
+      val sourceSchema = "id INT, col2 STRING, " +
+        "col ARRAY<STRUCT<f1: INT, f2: STRUCT<f21: STRING, f22: DATE>, f3: STRUCT<f31: STRING>>>"
+      val sourceRecord = "1, '2022-11-01', " +
+        "array(struct(1, struct('s1', DATE'2022-11-01'), struct('s1')))"
+      val targetSchema = "id INT, col2 DATE, col ARRAY<STRUCT<f1: INT, f2: STRUCT<f21: STRING>>>"
+      val targetRecord = "2, DATE'2022-11-02', array(struct(2, struct('s2')))"
+
+      runInsertOverwrite(sourceSchema, sourceRecord, targetSchema, targetRecord) {
+        (sourceTable, targetTable) =>
+          sql(s"INSERT OVERWRITE $targetTable $values SELECT * FROM $sourceTable")
+
+          // make sure table is still writeable
+          sql(s"""INSERT INTO $targetTable VALUES (2, DATE'2022-11-02',
+               | array(struct(2, struct('s2', DATE'2022-11-02'), struct('s2'))))""".stripMargin)
+          sql(s"""INSERT INTO $targetTable VALUES (3, DATE'2022-11-03',
+               | array(struct(3, struct('s3', NULL), struct(NULL))))""".stripMargin)
+          val df = spark.sql(
+            """SELECT 1 as id, DATE'2022-11-01' as col2,
+              | array(struct(1, struct('s1', DATE'2022-11-01'), struct('s1'))) as col UNION
+              | SELECT 2 as id, DATE'2022-11-02' as col2,
+              | array(struct(2, struct('s2', DATE'2022-11-02'), struct('s2'))) as col UNION
+              | SELECT 3 as id, DATE'2022-11-03' as col2,
+              | array(struct(3, struct('s3', NULL), struct(NULL))) as col
+              |""".stripMargin)
+          verifyTable(targetTable, df)
+      }
+    }
+  }
+
+  def runInsertOverwrite(
+      sourceSchema: String,
+      sourceRecord: String,
+      targetSchema: String,
+      targetRecord: String)(
+      runAndVerify: (String, String) => Unit): Unit = {
+    val sourceTable = "source"
+    val targetTable = "target"
+    withTable(sourceTable) {
+      withTable(targetTable) {
+        withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+          // prepare source table
+          sql(s"""CREATE TABLE $sourceTable ($sourceSchema)
+                 | USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $sourceTable VALUES ($sourceRecord)")
+          // prepare target table
+          sql(s"""CREATE TABLE $targetTable ($targetSchema)
+                 | USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $targetTable VALUES ($targetRecord)")
+          runAndVerify(sourceTable, targetTable)
+        }
+      }
+    }
+  }
 }
 
 class DeltaInsertIntoSQLByPathSuite

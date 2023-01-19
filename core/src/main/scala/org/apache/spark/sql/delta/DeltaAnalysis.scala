@@ -55,7 +55,7 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -593,6 +593,9 @@ class DeltaAnalysis(session: SparkSession)
         attr
       case (s: StructType, t: StructType) if s != t =>
         addCastsToStructs(tblName, attr, s, t)
+      case (ArrayType(s: StructType, sNull: Boolean), ArrayType(t: StructType, tNull: Boolean))
+          if s != t && sNull == tNull =>
+        addCastsToArrayStructs(tblName, attr, s, t, sNull)
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
@@ -678,6 +681,22 @@ class DeltaAnalysis(session: SparkSession)
     }
     Alias(CreateStruct(fields), parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
+  }
+
+  private def addCastsToArrayStructs(
+      tableName: String,
+      parent: NamedExpression,
+      source: StructType,
+      target: StructType,
+      sourceNullable: Boolean): Expression = {
+    val structConverter: (Expression, Expression) => Expression = (_, i) =>
+      addCastsToStructs(tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target)
+    val transformLambdaFunc = {
+      val elementVar = NamedLambdaVariable("elementVar", source, sourceNullable)
+      val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
+      LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
+    }
+    ArrayTransform(parent, transformLambdaFunc)
   }
 
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
