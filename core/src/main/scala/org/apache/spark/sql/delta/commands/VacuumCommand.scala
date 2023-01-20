@@ -231,8 +231,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         val timeTakenToIdentifyEligibleFiles =
           System.currentTimeMillis() - startTimeToIdentifyEligibleFiles
 
+        val numFiles = diffFiles.count()
         if (dryRun) {
-          val numFiles = diffFiles.count()
           val stats = DeltaVacuumStats(
             isDryRun = true,
             specifiedRetentionMillis = retentionMillis,
@@ -281,6 +281,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           timeTakenForDelete = timeTakenForDelete)
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
         logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
+
 
         spark.createDataset(Seq(basePath)).toDF("path")
       } finally {
