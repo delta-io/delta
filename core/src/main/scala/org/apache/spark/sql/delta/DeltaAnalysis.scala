@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -30,6 +31,7 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
@@ -315,6 +317,7 @@ class DeltaAnalysis(session: SparkSession)
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
+
 
   }
 
@@ -706,6 +709,7 @@ class DeltaAnalysis(session: SparkSession)
   private def stripTempViewForMergeWrapper(plan: LogicalPlan): LogicalPlan = {
     DeltaViewHelper.stripTempViewForMerge(plan, conf)
   }
+
 }
 
 /** Matchers for dealing with a Delta table. */

@@ -899,7 +899,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-
   val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT =
     buildConf("streaming.unsafeReadOnIncompatibleSchemaChangesDuringStreamStart.enabled")
       .doc(
@@ -920,7 +919,6 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
-
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")

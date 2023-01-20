@@ -1010,7 +1010,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
 abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
-  with ColumnMappingStreamingWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {
+  with ColumnMappingStreamingBlockedWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {
 
   override protected def isCdcTest: Boolean = true
 

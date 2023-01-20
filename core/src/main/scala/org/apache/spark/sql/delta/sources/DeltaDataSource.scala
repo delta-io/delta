@@ -88,8 +88,12 @@ class DeltaDataSource
       throw DeltaErrors.timeTravelNotSupportedException
     }
 
-    val snapshot = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)._2
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema)
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
+    val readSchema = {
+          snapshot.schema
+    }
+
+    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -113,12 +117,20 @@ class DeltaDataSource
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
+    val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
-    if (snapshot.schema.isEmpty) {
+    val readSchema =
+          snapshot.schema
+
+    if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
-    val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    DeltaSource(sqlContext.sparkSession, deltaLog, options, snapshot)
+    DeltaSource(
+      sqlContext.sparkSession,
+      deltaLog,
+      options,
+      snapshot
+    )
   }
 
   override def createSink(

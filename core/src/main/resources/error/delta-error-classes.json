@@ -1513,7 +1513,7 @@
     ],
     "sqlState" : "22000"
   },
-  "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
+  "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
     "message" : [
       "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."
     ],

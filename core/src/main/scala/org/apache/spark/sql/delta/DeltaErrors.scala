@@ -2558,7 +2558,7 @@ trait DeltaErrorsBase
 
   def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
+      errorClass = "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
       Array(DeltaSQLConf
         .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key),
       Some(cause))
@@ -2623,6 +2623,7 @@ trait DeltaErrorsBase
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
   }
+
 
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(

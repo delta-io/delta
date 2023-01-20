@@ -199,6 +199,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
   }
 
   provideOneStartingOption()
+
 }
 
 
@@ -258,6 +259,8 @@ object DeltaOptions extends DeltaLogging {
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
+
+
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
