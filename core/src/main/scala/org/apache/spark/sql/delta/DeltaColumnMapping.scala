@@ -534,7 +534,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasColumnMappingSchemaChange(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")

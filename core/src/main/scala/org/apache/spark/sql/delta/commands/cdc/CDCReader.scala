@@ -405,10 +405,10 @@ trait CDCReaderImpl extends DeltaLogging {
           // For column mapping schema change, the order matters because we don't want to treat
           // an ADD COLUMN as an inverse DROP COLUMN.
           if (metadataVer <= readSchemaSnapshot.version) {
-            DeltaColumnMapping.hasColumnMappingSchemaChange(
+            DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
               newMetadata = readSchemaSnapshot.metadata, oldMetadata = metadata)
           } else {
-            DeltaColumnMapping.hasColumnMappingSchemaChange(
+            DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
               newMetadata = metadata, oldMetadata = readSchemaSnapshot.metadata)
           }
         } && {

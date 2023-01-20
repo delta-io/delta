@@ -405,7 +405,7 @@ trait DeltaSourceBase extends Source
       }
 
       // Compare stream metadata with that to detect column mapping schema changes
-      if (!DeltaColumnMapping.hasColumnMappingSchemaChange(
+      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
           snapshotAtSourceInit.metadata, snapshotAtStartVersionToScan.metadata)) {
         throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
           readSchema = snapshotAtSourceInit.schema,
@@ -455,7 +455,8 @@ trait DeltaSourceBase extends Source
       if (curVersion < snapshotAtSourceInit.version) {
         // Stream version is newer, ensure there's no column mapping schema changes
         // from cur -> stream.
-        if (!DeltaColumnMapping.hasColumnMappingSchemaChange(metadataAtSourceInit, curMetadata)) {
+        if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+            metadataAtSourceInit, curMetadata)) {
           throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
             curMetadata.schema,
             metadataAtSourceInit.schema,
@@ -465,7 +466,8 @@ trait DeltaSourceBase extends Source
       } else {
         // Current metadata action version is newer, ensure there's no column mapping schema changes
         // from stream -> cur.
-        if (!DeltaColumnMapping.hasColumnMappingSchemaChange(curMetadata, metadataAtSourceInit)) {
+        if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+            curMetadata, metadataAtSourceInit)) {
           throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
             metadataAtSourceInit.schema,
             curMetadata.schema,
