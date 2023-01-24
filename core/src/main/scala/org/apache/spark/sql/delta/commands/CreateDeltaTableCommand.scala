@@ -384,7 +384,7 @@ case class CreateDeltaTableCommand(
       table: CatalogTable,
       snapshot: Snapshot,
       txn: OptimisticTransaction): Unit = {
-    val cleaned = cleanupTableDefinition(table, snapshot)
+    val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
@@ -407,7 +407,8 @@ case class CreateDeltaTableCommand(
   }
 
   /** Clean up the information we pass on to store in the catalog. */
-  private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
+  private def cleanupTableDefinition(spark: SparkSession, table: CatalogTable, snapshot: Snapshot)
+      : CatalogTable = {
     // These actually have no effect on the usability of Delta, but feature flagging legacy
     // behavior for now
     val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
