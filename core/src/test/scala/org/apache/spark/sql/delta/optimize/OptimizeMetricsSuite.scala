@@ -17,11 +17,11 @@
 package org.apache.spark.sql.delta.optimize
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaLog
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.tables.DeltaTable
 
@@ -59,6 +59,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       assert(metrics.totalFilesSkipped == 0)
     }
   }
+
 
   /**
    * Ensure public API for metrics persists
