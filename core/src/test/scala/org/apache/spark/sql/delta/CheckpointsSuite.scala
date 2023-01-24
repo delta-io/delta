@@ -214,7 +214,7 @@ class CheckpointsSuite extends QueryTest
 
   test("checkpoint does not contain remove.tags and remove.numRecords") {
     withTempDir { tempDir =>
-      var expectedRemoveFileSchema = Seq(
+      val expectedRemoveFileSchema = Seq(
         "path",
         "deletionTimestamp",
         "dataChange",
