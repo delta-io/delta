@@ -20,21 +20,24 @@ import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Subquery, SupportsSubquery}
 
 /**
- * Trait to allow processing '''all''' instances of a certain node in a subquery.
- *
- * Pattern matching in transform cannot be used because of the short-circuiting
- * nature of the pattern matching. It stops matching after one instance of
- * the certain node is found and remaining nodes in the subquery plan will
- * not be transformed.
+ * Trait to allow processing a special transformation of [[SubqueryExpression]]
+ * instances in a query plan.
  */
 trait SubqueryTransformerHelper {
 
   /**
    * Transform all nodes matched by the rule in the query plan rooted at given `plan`.
+   * It traverses the tree starting from the leaves, whenever a [[SubqueryExpression]]
+   * expression is encountered, given [[rule]] is applied to the subquery plan `plan`
+   * in [[SubqueryExpression]] starting from the `plan` root until leaves.
+   *
+   * This is slightly different behavior compared to [[QueryPlan.transformUpWithSubqueries]]
+   * or [[QueryPlan.transformDownWithSubqueries]]
+   *
    * It requires that the given plan already gone through [[OptimizeSubqueries]] and the
    * root node denoting a subquery is removed and optimized appropriately.
    */
-  def transformWithSubqueries(plan: LogicalPlan)
+  def transformSubqueryExpressions(plan: LogicalPlan)
       (rule: PartialFunction[LogicalPlan, LogicalPlan]): LogicalPlan = {
     require(!isSubqueryRoot(plan))
     transformSubqueries(plan, rule) transform (rule)
@@ -52,7 +55,7 @@ trait SubqueryTransformerHelper {
 
     plan transformAllExpressionsUp {
       case subquery: SubqueryExpression =>
-        subquery.withNewPlan(transformWithSubqueries(subquery.plan)(rule))
+        subquery.withNewPlan(transformSubqueryExpressions(subquery.plan)(rule))
     }
   }
 }

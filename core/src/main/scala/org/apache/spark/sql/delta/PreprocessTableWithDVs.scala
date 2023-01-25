@@ -64,7 +64,7 @@ import org.apache.spark.util.SerializableConfiguration
  */
 trait PreprocessTableWithDVs extends SubqueryTransformerHelper {
   def preprocessTablesWithDVs(plan: LogicalPlan): LogicalPlan = {
-    transformWithSubqueries(plan) {
+    transformSubqueryExpressions(plan) {
       case ScanWithDeletionVectors(dvScan) => dvScan
     }
   }

@@ -140,7 +140,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     // delta scans.
     val deltaScans = new mutable.HashMap[LogicalPlan, DeltaScan]()
 
-    transformWithSubqueries(plan) {
+    transformSubqueryExpressions(plan) {
         case scan @ DeltaTableScan(planWithRemovedProjections, filters, fileIndex,
           limit, delta) =>
           val scanGenerator = getDeltaScanGenerator(fileIndex)
