@@ -24,7 +24,6 @@ testRoot = "/tmp/delta-iceberg-converter/"
 warehousePath = testRoot + "iceberg_tables"
 shutil.rmtree(testRoot, ignore_errors=True)
 
-# Enable SQL commands and Update/Delete/Merge for the current spark session.
 # we need to set the following configs
 spark = SparkSession.builder \
     .appName("delta-iceberg-converter") \
@@ -39,30 +38,30 @@ spark = SparkSession.builder \
 table = "local.db.table"
 tablePath = "file://" + warehousePath + "/db/table"
 
-# Create an iceberg table with some data
-print("Creating Iceberg table with partitions...")
-spark.sql(
-    "CREATE TABLE {} (id BIGINT, data STRING) USING ICEBERG PARTITIONED BY (data)".format(table))
-spark.sql("INSERT INTO {} VALUES (1, 'a'), (2, 'b')".format(table))
-spark.sql("INSERT INTO {} VALUES (3, 'c')".format(table))
+try:
+    print("Creating Iceberg table with partitions...")
+    spark.sql(
+        "CREATE TABLE {} (id BIGINT, data STRING) USING ICEBERG PARTITIONED BY (data)".format(table))
+    spark.sql("INSERT INTO {} VALUES (1, 'a'), (2, 'b')".format(table))
+    spark.sql("INSERT INTO {} VALUES (3, 'c')".format(table))
 
-print("Converting Iceberg table to Delta table...")
-spark.sql("CONVERT TO DELTA iceberg.`{}`".format(tablePath))
+    print("Converting Iceberg table to Delta table...")
+    spark.sql("CONVERT TO DELTA iceberg.`{}`".format(tablePath))
 
-print("Reading from converted Delta table...")
-spark.read.format("delta").load(tablePath).show()
+    print("Reading from converted Delta table...")
+    spark.read.format("delta").load(tablePath).show()
 
-print("Modifying the converted table...")
-spark.sql("INSERT INTO delta.`{}` VALUES (4, 'd')".format(tablePath))
+    print("Modifying the converted table...")
+    spark.sql("INSERT INTO delta.`{}` VALUES (4, 'd')".format(tablePath))
 
-print("Reading the final Delta table...")
-spark.read.format("delta").load(tablePath).show()
+    print("Reading the final Delta table...")
+    spark.read.format("delta").load(tablePath).show()
 
-print("Create an external catalog table using Delta...")
-spark.sql("CREATE TABLE converted_delta_table USING delta LOCATION '{}'".format(tablePath))
+    print("Create an external catalog table using Delta...")
+    spark.sql("CREATE TABLE converted_delta_table USING delta LOCATION '{}'".format(tablePath))
 
-print("Read from the catalog table...")
-spark.read.table("converted_delta_table").show()
-
-# cleanup
-shutil.rmtree(testRoot, ignore_errors=True)
+    print("Read from the catalog table...")
+    spark.read.table("converted_delta_table").show()
+finally:
+    # cleanup
+    shutil.rmtree(testRoot, ignore_errors=True)
