@@ -446,7 +446,7 @@ trait DataSkippingReaderBase
       // Match any file whose null count is larger than zero.
       case IsNull(SkippingEligibleColumn(a, _)) =>
         statsProvider.getPredicateWithStatType(a, NULL_COUNT) { nullCount =>
-          nullCount > Literal(0)
+          nullCount > Literal(0L)
         }
       case Not(IsNull(e)) =>
         constructDataFilters(IsNotNull(e))
