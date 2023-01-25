@@ -203,12 +203,10 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
         run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("delta-iceberg", "integration_tests"))
-    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py"}
 
-    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
-                  if path.isfile(path.join(test_dir, f)) and
-                  f.endswith(".py") and not f.startswith("_") and
-                  f not in files_to_skip]
+    # Add more Iceberg tests here if needed ...
+    test_files_names = ["iceberg_converter.py"]
+    test_files = [path.join(test_dir, f) for f in test_files_names]
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
