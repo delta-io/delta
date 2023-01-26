@@ -177,7 +177,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cdcColumnsInData(Seq("col1", "col2"))
       }
       assert(e.getErrorClass == "RESERVED_CDC_COLUMNS_ON_WRITE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42939")
       assert(e.getMessage ==
         s"""
            |The write contains reserved columns [col1,col2] that are used
@@ -1204,7 +1204,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.activeSparkSessionNotFound()
       }
       assert(e.getErrorClass == "DELTA_ACTIVE_SPARK_SESSION_NOT_FOUND")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "08003")
       assert(e.getMessage == "Could not find active SparkSession")
     }
     {

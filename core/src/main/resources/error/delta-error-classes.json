@@ -3,7 +3,7 @@
     "message" : [
       "Could not find active SparkSession"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "08003"
   },
   "DELTA_ACTIVE_TRANSACTION_ALREADY_SET" : {
     "message" : [
@@ -2039,6 +2039,6 @@
       "these columns or disable Change Data Feed on the table by setting",
       "<config> to false."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42939"
   }
 }
