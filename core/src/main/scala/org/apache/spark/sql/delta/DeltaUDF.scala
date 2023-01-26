@@ -47,6 +47,9 @@ object DeltaUDF {
   def booleanFromMap(f: Map[String, String] => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromMapTemplate, f, udf(f))
 
+  def booleanFromByte(x: Byte => Boolean): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(booleanFromByteTemplate, x, udf(x))
+
   private lazy val stringFromStringTemplate =
     udf[String, String](identity).asInstanceOf[SparkUserDefinedFunction]
 
@@ -63,6 +66,9 @@ object DeltaUDF {
 
   private lazy val booleanFromMapTemplate =
     udf((_: Map[String, String]) => true).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val booleanFromByteTemplate =
+    udf((_: Byte) => true).asInstanceOf[SparkUserDefinedFunction]
 
   /**
    * Return a `UserDefinedFunction` for the given `f` from `template` if

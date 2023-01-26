@@ -220,7 +220,9 @@ class CheckpointsSuite extends QueryTest
         "dataChange",
         "extendedFileMetadata",
         "partitionValues",
-        "size")
+        "size",
+        "deletionVector")
+
       val tablePath = tempDir.getAbsolutePath
       // Append rows [0, 9] to table and merge tablePath.
       spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)

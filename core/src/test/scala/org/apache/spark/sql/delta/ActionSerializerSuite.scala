@@ -226,6 +226,112 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
 
+  private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.onDiskWithRelativePath(
+      id = UUID.randomUUID(),
+      randomPrefix = "a1",
+      sizeInBytes = 10,
+      cardinality = 2,
+      offset = Some(10))
+
+  private def deletionVectorWithAbsolutePath: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.onDiskWithAbsolutePath(
+      path = "/test.dv",
+      sizeInBytes = 10,
+      cardinality = 2,
+      offset = Some(10))
+
+  private def deletionVectorInline: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.inlineInLog(Array(1, 2, 3, 4), 1)
+
+  roundTripCompare("Add with deletion vector - relative path",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorWithRelativePath))
+  roundTripCompare("Add with deletion vector - absolute path",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath))
+  roundTripCompare("Add with deletion vector - inline",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorInline))
+
+  roundTripCompare("Remove with deletion vector - relative path",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorWithRelativePath))
+  roundTripCompare("Remove with deletion vector - absolute path",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath))
+  roundTripCompare("Remove with deletion vector - inline",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorInline))
+
+  // These make sure we don't accidentally serialise something we didn't mean to.
+  testActionSerDe(
+    name = "AddFile (with deletion vector) - json serialization/deserialization",
+    action = AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath),
+    expectedJson =
+      """
+        |{"add":{
+        |"path":"test",
+        |"partitionValues":{},
+        |"size":1,
+        |"modificationTime":1,
+        |"dataChange":true,
+        |"tags":{},
+        |"deletionVector":{
+        |"storageType":"p",
+        |"pathOrInlineDv":"/test.dv",
+        |"offset":10,
+        |"sizeInBytes":10,
+        |"cardinality":2}}
+        |}""".stripMargin.replaceAll("\n", "")
+  )
+
 
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",

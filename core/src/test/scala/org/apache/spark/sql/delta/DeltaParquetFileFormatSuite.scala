@@ -64,7 +64,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
 
         val fs = addFilePath.getFileSystem(hadoopConf)
         val broadcastDvMap = spark.sparkContext.broadcast(
-          Map(fs.getFileStatus(addFilePath).getPath().toString() -> dv)
+          Map(fs.getFileStatus(addFilePath).getPath().toUri -> dv)
         )
 
         val broadcastHadoopConf = spark.sparkContext.broadcast(
@@ -73,7 +73,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
         val deltaParquetFormat = new DeltaParquetFileFormat(
           metadata,
           isSplittable = false,
-          disablePushDowns = false,
+          disablePushDowns = true,
           Some(tablePath),
           Some(broadcastDvMap),
           Some(broadcastHadoopConf))

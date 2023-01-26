@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.net.URI
+
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
@@ -49,12 +51,21 @@ class DeltaParquetFileFormat(
     val isSplittable: Boolean = true,
     val disablePushDowns: Boolean = false,
     val tablePath: Option[String] = None,
-    val broadcastDvMap: Option[Broadcast[Map[String, DeletionVectorDescriptor]]] = None,
+    val broadcastDvMap: Option[Broadcast[Map[URI, DeletionVectorDescriptor]]] = None,
     val broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
-  require(!(broadcastHadoopConf.isDefined ^ broadcastDvMap.isDefined ^ tablePath.isDefined ^
-    !isSplittable ^ disablePushDowns))
+  if (broadcastHadoopConf.isDefined) {
+    require(
+      broadcastHadoopConf.isDefined && broadcastDvMap.isDefined &&
+        tablePath.isDefined && !isSplittable && disablePushDowns,
+      "Wrong arguments for Delta table scan with deletion vectors")
+  } else {
+    require(
+      broadcastHadoopConf.isEmpty && broadcastDvMap.isEmpty &&
+        tablePath.isEmpty && isSplittable && !disablePushDowns,
+      "Wrong arguments for Delta table scan with no deletion vectors")
+  }
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
@@ -147,7 +158,7 @@ class DeltaParquetFileFormat(
 
   def copyWithDVInfo(
       tablePath: String,
-      broadcastDvMap: Broadcast[Map[String, DeletionVectorDescriptor]],
+      broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptor]],
       broadcastHadoopConf: Broadcast[SerializableConfiguration]): DeltaParquetFileFormat = {
     new DeltaParquetFileFormat(
       metadata,
@@ -169,10 +180,10 @@ class DeltaParquetFileFormat(
       isRowDeletedColumnIdx: Int,
       useOffHeapBuffers: Boolean): Iterator[Object] = {
     val filePath = partitionedFile.filePath
-    val absolutePath = new Path(filePath).toString
+    val pathUri = new Path(filePath).toUri
 
     // Fetch the DV descriptor from the broadcast map and create a row index filter
-    val dvDescriptor = broadcastDvMap.get.value.get(absolutePath)
+    val dvDescriptor = broadcastDvMap.get.value.get(pathUri)
     val rowIndexFilter = DeletedRowsMarkingFilter.createInstance(
       dvDescriptor.getOrElse(DeletionVectorDescriptor.EMPTY),
       broadcastHadoopConf.get.value.value,
