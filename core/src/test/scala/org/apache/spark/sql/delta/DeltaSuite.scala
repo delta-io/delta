@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.{asc, expr, lit, map_values, struct}
+import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -3045,6 +3045,19 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
         checkDatasetUnorderly(data.select("part2", "part1", "value").as[(String, String, Int)],
           ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
       }
+    }
+  }
+
+  test("replaceWhere dataframe V2 API with less than predicate") {
+    withTempDir { dir =>
+      val insertedDF = spark.range(10).toDF()
+
+      insertedDF.write.format("delta").save(dir.toString)
+
+      val otherDF = spark.range(start = 0, end = 4).toDF()
+      otherDF.writeTo(s"delta.`${dir.toString}`").overwrite(col("id") < 6)
+      checkAnswer(spark.read.load(dir.toString),
+        insertedDF.filter(col("id") >= 6).union(otherDF))
     }
   }
 }
