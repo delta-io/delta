@@ -279,7 +279,7 @@ class CheckpointsSuite extends QueryTest
 
       // Check the target file has checkpoint generated
       val deltaLog = DeltaLog.forTable(spark, target.getAbsolutePath)
-      verifyCheckpoint(deltaLog.readLastCheckpointFile(), 10, None)
+      verifyCheckpoint(deltaLog.readLastCheckpointFile(), version = 10, parts = None)
 
       // Delete the commit files 0-9, so that we are forced to read the checkpoint file
       val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
