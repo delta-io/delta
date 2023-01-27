@@ -279,7 +279,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotWriteIntoView(table)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_WRITE_INTO_VIEW")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "0A000")
       assert(
         e.getMessage == s"$table is a view. Writes to a view are not supported.")
     }
@@ -365,7 +365,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotUpdateOtherField(tableName, IntegerType)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_UPDATE_OTHER_FIELD")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "429BQ")
       assert(e.getMessage == s"Cannot update $tableName field of type ${IntegerType}")
     }
     {
@@ -784,7 +784,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotChangeDataType("example message")
       }
       assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_DATA_TYPE")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "429BQ")
       assert(e.message == "Cannot change data type: example message")
     }
     {
@@ -907,7 +907,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotGenerateUpdateExpressions()
       }
       assert(e.getErrorClass == "DELTA_CANNOT_GENERATE_UPDATE_EXPRESSIONS")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "Calling without generated columns should always return a update " +
         "expression for each column")
     }
@@ -925,7 +925,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.describeViewHistory
       }
       assert(e.getErrorClass == "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "42809")
       assert(e.getMessage == "Cannot describe the history of a view.")
     }
     {
@@ -943,7 +943,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_RESOLVE_COLUMN")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42703")
       assert(e.getMessage ==
         """Can't resolve column id in root
          | |-- c0: string (nullable = true)
@@ -1176,7 +1176,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.ambiguousPathsInCreateTableException("loc1", "loc2")
       }
       assert(e.getErrorClass == "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42613")
       assert(e.getMessage == s"""CREATE TABLE contains two different locations: loc1 and loc2.
         |You can remove the LOCATION clause from the CREATE TABLE statement, or set
         |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
@@ -1223,7 +1223,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotModifyTableProperty(property)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_MODIFY_TABLE_PROPERTY")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42939")
       assert(e.getMessage ==
         s"The Delta table configuration $property cannot be specified by the user")
     }
@@ -1249,7 +1249,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.activeTransactionAlreadySet()
       }
       assert(e.getErrorClass == "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "0B000")
       assert(e.getMessage == "Cannot set a new txn as active when one is already active")
     }
     {
@@ -1329,7 +1329,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.aggsNotSupportedException("op", SparkVersion())
       }
       assert(e.getErrorClass == "DELTA_AGGREGATION_NOT_SUPPORTED")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "42903")
       assert(e.getMessage == "Aggregate functions are not supported in the op " +
         "(condition = version())..")
     }
@@ -1338,7 +1338,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotChangeProvider()
       }
       assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_PROVIDER")
-      assert(e.getSqlState == "2F000")
+      assert(e.getSqlState == "42939")
       assert(e.getMessage == "'provider' is a reserved table property, and cannot be altered.")
     }
     {
@@ -1395,7 +1395,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.useSetLocation()
       }
       assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_LOCATION")
-      assert(e.getSqlState == "2F000")
+      assert(e.getSqlState == "42601")
       assert(e.getMessage == "Cannot change the 'location' of the Delta table using SET " +
         "TBLPROPERTIES. Please use ALTER TABLE SET LOCATION instead.")
     }
@@ -1625,7 +1625,7 @@ trait DeltaErrorsSuiteBase
           "2022-02-02 12:12:10")
       }
       assert(e.getErrorClass == "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "22003")
       assert(e.getMessage == "Cannot restore table to timestamp (2022-02-02 12:12:12) as it is " +
         "after the latest version available. Please use a timestamp before (2022-02-02 12:12:10)")
     }
@@ -1634,7 +1634,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.addColumnStructNotFoundException("pos1")
       }
       assert(e.getErrorClass == "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND")
-      assert(e.getSqlState == "2F000")
+      assert(e.getSqlState == "42KD3")
       assert(e.getMessage == "Struct not found at position pos1")
     }
     {
@@ -1644,7 +1644,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.addColumnParentNotStructException(column, other)
       }
       assert(e.getErrorClass == "DELTA_ADD_COLUMN_PARENT_NOT_STRUCT")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42KD3")
       assert(e.getMessage ==
         s"Cannot add ${column.name} because its parent is not a " +
         s"StructType. Found $other")
@@ -1782,7 +1782,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.modifyAppendOnlyTableException("dummyTable")
       }
       assert(e.getErrorClass == "DELTA_CANNOT_MODIFY_APPEND_ONLY")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42809")
       assert(e.getMessage ==
         "This table is configured to only allow appends. If you would like to permit " +
           "updates or deletes, use 'ALTER TABLE dummyTable SET TBLPROPERTIES " +
@@ -1836,7 +1836,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.bloomFilterCreateOnNonExistingColumnsException(Seq("col1", "col2"))
       }
       assert(e.getErrorClass == "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42703")
       assert(e.getMessage ==
         "Cannot create bloom filter indices for the following non-existent column(s): col1, col2")
     }
@@ -1910,7 +1910,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.generatedColumnsAggregateExpression("1".expr)
       }
       assert(e.getErrorClass == "DELTA_AGGREGATE_IN_GENERATED_COLUMN")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42621")
 
       assert(e.getMessage == s"Found ${"1".expr.sql}. " +
         "A generated column cannot use an aggregate expression")
@@ -2093,7 +2093,7 @@ trait DeltaErrorsSuiteBase
           Array.empty)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "428FT")
       assert(e.getMessage == "Cannot use all columns for partition columns")
     }
     {
@@ -2187,7 +2187,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cdcNotAllowedInThisVersion()
       }
       assert(e.getErrorClass == "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "0AKDC")
       assert(e.getMessage ==
         "Configuration delta.enableChangeDataFeed cannot be set." +
           " Change data feed from Delta is not yet available.")
@@ -2232,7 +2232,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.ambiguousPartitionColumnException(columnName, colMatches)
       }
       assert(e.getErrorClass == "DELTA_AMBIGUOUS_PARTITION_COLUMN")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42702")
 
       val msg =
         s"Ambiguous partition column ${DeltaErrors.formatColumn(columnName)} can be" +
@@ -2350,7 +2350,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.bloomFilterDropOnNonExistingColumnsException(unknownColumns)
       }
       assert(e.getErrorClass == "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42703")
       assert(e.getMessage ==
         "Cannot drop bloom filter indices for the following non-existent column(s): "
           + unknownColumns.mkString(", "))
@@ -2415,7 +2415,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cdcWriteNotAllowedInThisVersion
       }
       assert(e.getErrorClass == "DELTA_CHANGE_TABLE_FEED_DISABLED")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42807")
       assert(e.getMessage == "Cannot write to table with delta.enableChangeDataFeed set. " +
         "Change data feed from Delta is not available.")
     }
@@ -2487,7 +2487,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.checkpointNonExistTable(path)
       }
       assert(e.getErrorClass == "DELTA_CHECKPOINT_NON_EXIST_TABLE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42K03")
       assert(e.getMessage ==
         s"Cannot checkpoint a non-existing table $path. " +
           "Did you manually delete files in the _delta_log directory?")
@@ -2577,7 +2577,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.useAddConstraints
       }
       assert(e.getErrorClass == "DELTA_ADD_CONSTRAINTS")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints.")
     }
     {
@@ -2640,7 +2640,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.checkpointMismatchWithSnapshot
       }
       assert(e.getErrorClass == "DELTA_CHECKPOINT_SNAPSHOT_MISMATCH")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "State of the checkpoint doesn't match that of the snapshot.")
     }
     {
@@ -2679,7 +2679,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
       }
       assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == s"Can't set location multiple times. Found ${locations}")
     }
     {
@@ -2692,7 +2692,7 @@ trait DeltaErrorsSuiteBase
         )
       }
       assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "42KD4")
       assert(e.opName == "Streaming read of Change Data Feed (CDF)")
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
@@ -2710,7 +2710,7 @@ trait DeltaErrorsSuiteBase
         )
       }
       assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "42KD4")
       assert(e.opName == "Streaming read")
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
@@ -2723,7 +2723,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
       }
       assert(e.getErrorClass == "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "42KD4")
       assert(e.getMessage == "Operation \"Manual Update\" is not allowed when the table has " +
         "enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or " +
         "RENAME COLUMN.")
@@ -2755,7 +2755,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cloneFromUnsupportedSource( "table-0", "CSV")
       }
       assert(e.getErrorClass == "DELTA_CLONE_UNSUPPORTED_SOURCE")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "0AKDC")
       assert(e.getMessage == "Unsupported clone source 'table-0', whose format is CSV.\n" +
         "The supported formats are 'delta' and 'parquet'.")
     }
@@ -2777,7 +2777,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cloneAmbiguousTarget("external-location", TableIdentifier("table1"))
       }
       assert(e.getErrorClass == "DELTA_CLONE_AMBIGUOUS_TARGET")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42613")
       assert(e.getMessage ==
         s"""
            |Two paths were provided as the CLONE target so it is ambiguous which to use. An external

@@ -9,55 +9,55 @@
     "message" : [
       "Cannot set a new txn as active when one is already active"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0B000"
   },
   "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to add column <columnName> is lower than 0"
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42KD3"
   },
   "DELTA_ADD_COLUMN_PARENT_NOT_STRUCT" : {
     "message" : [
       "Cannot add <columnName> because its parent is not a StructType. Found <other>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD3"
   },
   "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND" : {
     "message" : [
       "Struct not found at position <position>"
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42KD3"
   },
   "DELTA_ADD_CONSTRAINTS" : {
     "message" : [
       "Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0A000"
   },
   "DELTA_AGGREGATE_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <sqlExpr>. A generated column cannot use an aggregate expression"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42621"
   },
   "DELTA_AGGREGATION_NOT_SUPPORTED" : {
     "message" : [
       "Aggregate functions are not supported in the <operation> <predicate>."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42903"
   },
   "DELTA_ALTER_TABLE_CHANGE_COL_NOT_SUPPORTED" : {
     "message" : [
       "ALTER TABLE CHANGE COLUMN is not supported for changing column <currentType> to <newType>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42837"
   },
   "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
     "message" : [
       "Ambiguous partition column <column> can be <colMatches>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42702"
   },
   "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE" : {
     "message" : [
@@ -66,13 +66,13 @@
       "<config> to true to skip this check.",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION" : {
     "message" : [
       "Operation \"<opName>\" is not allowed when the table has enabled change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME COLUMN."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42KD4"
   },
   "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION" : {
     "message" : [
@@ -80,193 +80,193 @@
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>.",
       "Although strongly not recommended, you may also force ignore the schema checks during <opName> at your own risk of potentially incorrect results by turning on the SQL conf <escapeConfig>."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42KD4"
   },
   "DELTA_BLOOM_FILTER_DROP_ON_NON_EXISTING_COLUMNS" : {
     "message" : [
       "Cannot drop bloom filter indices for the following non-existent column(s): <unknownColumns>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [
       "Cannot change data type: <dataType>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_CHANGE_LOCATION" : {
     "message" : [
       "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use ALTER TABLE SET LOCATION instead."
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42601"
   },
   "DELTA_CANNOT_CHANGE_PROVIDER" : {
     "message" : [
       "'provider' is a reserved table property, and cannot be altered."
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42939"
   },
   "DELTA_CANNOT_CONVERT_TO_FILEFORMAT" : {
     "message" : [
       "Can not convert<className> to FileFormat."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CANNOT_CREATE_BLOOM_FILTER_NON_EXISTING_COL" : {
     "message" : [
       "Cannot create bloom filter indices for the following non-existent column(s): <unknownCols>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_CANNOT_CREATE_LOG_PATH" : {
     "message" : [
       "Cannot create <path>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD5"
   },
   "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY" : {
     "message" : [
       "Cannot describe the history of a view."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42809"
   },
   "DELTA_CANNOT_DROP_BLOOM_FILTER_ON_NON_INDEXED_COLUMN" : {
     "message" : [
       "Cannot drop bloom filter index on a non indexed column: <columnName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
     "message" : [
       "Cannot evaluate expression: <expression>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CANNOT_FIND_VERSION" : {
     "message" : [
       "Cannot find 'sourceVersion' in <json>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CANNOT_GENERATE_CODE_FOR_EXPRESSION" : {
     "message" : [
       "Cannot generate code for expression: <expression>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CANNOT_GENERATE_UPDATE_EXPRESSIONS" : {
     "message" : [
       "Calling without generated columns should always return a update expression for each column"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CANNOT_MODIFY_APPEND_ONLY" : {
     "message" : [
       "This table is configured to only allow appends. If you would like to permit updates or deletes, use 'ALTER TABLE <table_name> SET TBLPROPERTIES (<config>=false)'."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42809"
   },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42939"
   },
   "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
     "message" : [
       "A uri (<uri>) which cannot be turned into a relative path was found in the transaction log."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "22KD1"
   },
   "DELTA_CANNOT_RENAME_PATH" : {
     "message" : [
       "Cannot rename <currentPath> to <newPath>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "22KD1"
   },
   "DELTA_CANNOT_REPLACE_MISSING_TABLE" : {
     "message" : [
       "Table <tableName> cannot be replaced as it does not exist. Use CREATE OR REPLACE TABLE to create the table."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42P01"
   },
   "DELTA_CANNOT_RESOLVE_COLUMN" : {
     "message" : [
       "Can't resolve column <columnName> in <schema>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN" : {
     "message" : [
       "Couldn't resolve qualified source column <columnName> within the source query."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CANNOT_RESTORE_TABLE_VERSION" : {
     "message" : [
       "Cannot restore table to version <version>. Available versions: [<startVersion>, <endVersion>]."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22003"
   },
   "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
     "message" : [
       "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "22003"
   },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
       "Can't set location multiple times. Found <location>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER" : {
     "message" : [
       "Cannot change the location of a path based table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
       "Cannot update %1$s field %2$s type: update the element by updating %2$s.element"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_UPDATE_MAP_FIELD" : {
     "message" : [
       "Cannot update %1$s field %2$s type: update a map by updating %2$s.key or %2$s.value"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_UPDATE_OTHER_FIELD" : {
     "message" : [
       "Cannot update <tableName> field of type <typeName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_UPDATE_STRUCT_FIELD" : {
     "message" : [
       "Cannot update <tableName> field <fieldName> type: update struct by adding, deleting, or updating its fields"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_USE_ALL_COLUMNS_FOR_PARTITION" : {
     "message" : [
       "Cannot use all columns for partition columns"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "428FT"
   },
   "DELTA_CANNOT_WRITE_INTO_VIEW" : {
     "message" : [
       "<table> is a view. Writes to a view are not supported."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0A000"
   },
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
       "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
@@ -274,7 +274,7 @@
       "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible data schema at version <incompatibleVersion>.",
       "If possible, please retrieve the table changes using the end version's schema by setting <config> to `endVersion`, or contact support."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE" : {
     "message" : [
@@ -282,25 +282,25 @@
       "Your read schema is <readSchema> at version <readVersion>, but we found an incompatible schema change at version <incompatibleVersion>.",
       "If possible, please query table changes separately from version <start> to <incompatibleVersion> - 1, and from version <incompatibleVersion> to <end>."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CHANGE_TABLE_FEED_DISABLED" : {
     "message" : [
       "Cannot write to table with delta.enableChangeDataFeed set. Change data feed from Delta is not available."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42807"
   },
   "DELTA_CHECKPOINT_NON_EXIST_TABLE" : {
     "message" : [
       "Cannot checkpoint a non-existing table <path>. Did you manually delete files in the _delta_log directory?"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K03"
   },
   "DELTA_CHECKPOINT_SNAPSHOT_MISMATCH" : {
     "message" : [
       "State of the checkpoint doesn't match that of the snapshot."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_CLONE_AMBIGUOUS_TARGET" : {
     "message" : [
@@ -309,14 +309,14 @@
       "location for CLONE was provided at <externalLocation> at the same time as the path",
       "<targetIdentifier>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
       "The supported formats are 'delta' and 'parquet'."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
