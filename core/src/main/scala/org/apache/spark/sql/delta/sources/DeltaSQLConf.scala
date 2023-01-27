@@ -1081,6 +1081,16 @@ trait DeltaSQLConfBase {
              |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+    val DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO =
+    buildConf("optimize.maxDeletedRowsRatio")
+      .internal()
+      .doc("Files with a ratio of deleted rows to the total rows larger than this threshold " +
+        "will be rewritten by the OPTIMIZE command.")
+      .doubleConf
+      .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
+      .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
+      .createWithDefault(0.05d)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
