@@ -852,6 +852,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CREATE_TABLE_CLEANUP_SCHEMA =
+    buildConf("createTable.cleanupSchema")
+      .internal()
+      .doc(
+        """
+          |Given a CREATE TABLE command, cleanup schema of the table definition.
+          |
+          |This is a safety switch - we should only turn this off when there is an issue with
+          |table creation logic that prevents a valid column schema.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()

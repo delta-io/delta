@@ -409,6 +409,12 @@ case class CreateDeltaTableCommand(
   /** Clean up the information we pass on to store in the catalog. */
   private def cleanupTableDefinition(spark: SparkSession, table: CatalogTable, snapshot: Snapshot)
       : CatalogTable = {
+    val newSchema = if (conf.getConf(DeltaSQLConf.DELTA_CREATE_TABLE_CLEANUP_SCHEMA)) {
+      new StructType()
+    } else {
+      table.schema.copy()
+    }
+
     // These actually have no effect on the usability of Delta, but feature flagging legacy
     // behavior for now
     val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
@@ -419,7 +425,7 @@ case class CreateDeltaTableCommand(
     }
 
     table.copy(
-      schema = new StructType(),
+      schema = newSchema,
       properties = Map.empty,
       partitionColumnNames = Nil,
       // Remove write specific options when updating the catalog
