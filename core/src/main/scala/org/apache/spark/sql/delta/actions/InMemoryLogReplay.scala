@@ -19,16 +19,18 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 
 /**
- * Replays a history of action, resolving them to produce the current state
+ * Replays a history of actions, resolving them to produce the current state
  * of the table. The protocol for resolution is as follows:
- *  - The most recent [[AddFile]] and accompanying metadata for any `path` wins.
+ *  - The most recent [[AddFile]] and accompanying metadata for any `(path, dv id)` tuple wins.
  *  - [[RemoveFile]] deletes a corresponding [[AddFile]] and is retained as a
  *    tombstone until `minFileRetentionTimestamp` has passed.
+ *    A [[RemoveFile]] "corresponds" to the [[AddFile]] that matches both the parquet file URI
+ *    *and* the deletion vector's URI (if any).
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
  *  - The most recent [[Metadata]] wins.
  *  - The most recent [[Protocol]] version wins.
- *  - For each path, this class should always output only one [[FileAction]] (either [[AddFile]] or
- *    [[RemoveFile]])
+ *  - For each `(path, dv id)` tuple, this class should always output only one [[FileAction]]
+ *    (either [[AddFile]] or [[RemoveFile]])
  *
  * This class is not thread safe.
  */
@@ -36,12 +38,14 @@ class InMemoryLogReplay(
     minFileRetentionTimestamp: Long,
     minSetTransactionRetentionTimestamp: Option[Long]) extends LogReplay {
 
-  var currentProtocolVersion: Protocol = null
-  var currentVersion: Long = -1
-  var currentMetaData: Metadata = null
-  val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
-  val activeFiles = new scala.collection.mutable.HashMap[URI, AddFile]()
-  private val tombstones = new scala.collection.mutable.HashMap[URI, RemoveFile]()
+  import InMemoryLogReplay._
+
+  private var currentProtocolVersion: Protocol = null
+  private var currentVersion: Long = -1
+  private var currentMetaData: Metadata = null
+  private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
+  private val activeFiles = new scala.collection.mutable.HashMap[UniqueFileActionTuple, AddFile]()
+  private val tombstones = new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
 
   override def append(version: Long, actions: Iterator[Action]): Unit = {
     assert(currentVersion == -1 || version == currentVersion + 1,
@@ -55,14 +59,16 @@ class InMemoryLogReplay(
       case a: Protocol =>
         currentProtocolVersion = a
       case add: AddFile =>
-        activeFiles(add.pathAsUri) = add.copy(dataChange = false)
+        val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getDeletionVectorUniqueId)
+        activeFiles(uniquePath) = add.copy(dataChange = false)
         // Remove the tombstone to make sure we only output one `FileAction`.
-        tombstones.remove(add.pathAsUri)
+        tombstones.remove(uniquePath)
       case remove: RemoveFile =>
-        activeFiles.remove(remove.pathAsUri)
-        tombstones(remove.pathAsUri) = remove.copy(dataChange = false)
-      case ci: CommitInfo => // do nothing
-      case cdc: AddCDCFile => // do nothing
+        val uniquePath = UniqueFileActionTuple(remove.pathAsUri, remove.getDeletionVectorUniqueId)
+        activeFiles.remove(uniquePath)
+        tombstones(uniquePath) = remove.copy(dataChange = false)
+      case _: CommitInfo => // do nothing
+      case _: AddCDCFile => // do nothing
       case null => // Some crazy future feature. Ignore
     }
   }
@@ -71,7 +77,7 @@ class InMemoryLogReplay(
     tombstones.values.filter(_.delTimestamp > minFileRetentionTimestamp)
   }
 
-  private def getTransactions: Iterable[SetTransaction] = {
+  private[delta] def getTransactions: Iterable[SetTransaction] = {
     if (minSetTransactionRetentionTimestamp.isEmpty) {
       transactions.values
     } else {
@@ -88,4 +94,12 @@ class InMemoryLogReplay(
     getTransactions ++
     (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path).iterator
   }
+
+  /** Returns all [[AddFile]] actions after the Log Replay */
+  private[delta] def allFiles: Seq[AddFile] = activeFiles.values.toSeq
+}
+
+object InMemoryLogReplay{
+  /** The unit of path uniqueness in delta log actions is the tuple `(parquet file, dv)`. */
+  final case class UniqueFileActionTuple(fileURI: URI, deletionVectorURI: Option[String])
 }

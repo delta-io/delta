@@ -412,6 +412,30 @@ case class AddFile(
     removedFile
   }
 
+  /**
+   * Logically remove rows by associating a `deletionVector` with the file.
+   * @param deletionVector: The descriptor of the DV that marks rows as deleted.
+   * @param dataChange: When false, the actions are marked as no-data-change actions.
+   */
+  def removeRows(
+        deletionVector: DeletionVectorDescriptor,
+        dataChange: Boolean = true): (AddFile, RemoveFile) = {
+    val withUpdatedDV = this.copy(deletionVector = deletionVector, dataChange = dataChange)
+    val addFile = withUpdatedDV
+    val removeFile = this.removeWithTimestamp(dataChange = dataChange)
+    (addFile, removeFile)
+  }
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * The unique id differentiates DVs, even if there are multiple in the same file
+   * or the DV is stored inline.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+
+
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
     // From modification time in milliseconds to microseconds.
@@ -448,6 +472,7 @@ case class AddFile(
 
       val numLogicalRecords = if (node.has("numRecords")) {
         Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+          .map(_ - numDeletedRecords)
       } else None
 
       Some(ParsedStatsFields(
@@ -461,6 +486,13 @@ case class AddFile(
   override lazy val numLogicalRecords: Option[Long] =
     parsedStatsFields.flatMap(_.numLogicalRecords)
 
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 }
 
 object AddFile {
@@ -539,6 +571,22 @@ case class RemoveFile(
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
 
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * The unique id differentiates DVs, even if there are multiple in the same file
+   * or the DV is stored inline.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
