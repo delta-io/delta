@@ -250,5 +250,5 @@ object DeletionVectorDescriptor {
     s"$randomPrefix$uuidData"
   }
 
-  private def encodeData(bytes: Array[Byte]): String = Codec.Base85Codec.encodeBytes(bytes)
+  def encodeData(bytes: Array[Byte]): String = Codec.Base85Codec.encodeBytes(bytes)
 }

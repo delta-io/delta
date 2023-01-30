@@ -40,7 +40,9 @@ import org.apache.spark.sql.types.StructType
 abstract class TahoeFileIndex(
     val spark: SparkSession,
     override val deltaLog: DeltaLog,
-    val path: Path) extends FileIndex with SnapshotDescriptor {
+    val path: Path)
+  extends FileIndex
+    with SnapshotDescriptor {
 
   override def rootPaths: Seq[Path] = path :: Nil
 
