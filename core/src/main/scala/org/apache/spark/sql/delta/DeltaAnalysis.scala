@@ -70,7 +70,7 @@ class DeltaAnalysis(session: SparkSession)
   type CastFunction = (Expression, DataType, String) => Expression
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
-    // INSERT INTO by ordinal
+    // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustment(d.name(), a.query, r.schema) =>
       val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d.name())
@@ -81,7 +81,7 @@ class DeltaAnalysis(session: SparkSession)
       }
 
 
-    // INSERT OVERWRITE by ordinal
+    // INSERT OVERWRITE by ordinal and df.insertInto()
     case o @ OverwriteDelta(r, d) if !o.isByName &&
         needsSchemaAdjustment(d.name(), o.query, r.schema) =>
       val projection = resolveQueryColumnsByOrdinal(o.query, r.output, d.name())
@@ -97,7 +97,7 @@ class DeltaAnalysis(session: SparkSession)
         o
       }
 
-    // INSERT OVERWRITE by name with dynamic partition overwrite
+    // INSERT OVERWRITE with dynamic partition overwrite
     case o @ DynamicPartitionOverwriteDelta(r, d) if o.resolved
       =>
       val adjustedQuery = if (!o.isByName && needsSchemaAdjustment(d.name(), o.query, r.schema)) {

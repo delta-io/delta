@@ -456,13 +456,31 @@ abstract class DeltaInsertIntoTests(
   test("insertInto: fails when missing a column") {
     val t1 = "tbl"
     sql(s"CREATE TABLE $t1 (id bigint, data string, missing string) USING $v2Format")
-    val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
-    val exc = intercept[AnalysisException] {
-      doInsert(t1, df)
+    val df1 = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    // mismatched datatype
+    val df2 = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    for (df <- Seq(df1, df2)) {
+      val exc = intercept[AnalysisException] {
+        doInsert(t1, df)
+      }
+      verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
+      assert(exc.getMessage.contains("not enough data columns"))
     }
+  }
 
-    verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
-    assert(exc.getMessage.contains("not enough data columns"))
+  test("insertInto: overwrite fails when missing a column") {
+    val t1 = "tbl"
+    sql(s"CREATE TABLE $t1 (id bigint, data string, missing string) USING $v2Format")
+    val df1 = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    // mismatched datatype
+    val df2 = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    for (df <- Seq(df1, df2)) {
+      val exc = intercept[AnalysisException] {
+        doInsert(t1, df, SaveMode.Overwrite)
+      }
+      verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
+      assert(exc.getMessage.contains("not enough data columns"))
+    }
   }
 
   // This behavior is specific to Delta
