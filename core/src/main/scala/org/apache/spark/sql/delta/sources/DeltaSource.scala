@@ -178,7 +178,7 @@ trait DeltaSourceBase extends Source
     }
   }
 
-  private def initLastOffsetForTriggerAvailableNow(): Unit = {
+  protected def initLastOffsetForTriggerAvailableNow(): Unit = {
     val offset = latestOffsetInternal(ReadLimit.allAvailable())
     if (offset != null) {
       lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
