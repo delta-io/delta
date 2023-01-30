@@ -146,9 +146,9 @@ class Snapshot(
         .as[SingleAction]
         .mapPartitions { iter =>
           val state: LogReplay =
-              new InMemoryLogReplay(
-                localMinFileRetentionTimestamp,
-                localMinSetTransactionRetentionTimestamp)
+            new InMemoryLogReplay(
+              localMinFileRetentionTimestamp,
+              localMinSetTransactionRetentionTimestamp)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }
