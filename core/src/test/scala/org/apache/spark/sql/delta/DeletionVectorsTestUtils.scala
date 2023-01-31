@@ -88,6 +88,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   def getFilesWithDeletionVectors(log: DeltaLog): Seq[AddFile] =
     log.update().allFiles.collect().filter(_.deletionVector != null).toSeq
 
+  /** Lists the Deletion Vectors files of a table. */
+  def listDeletionVectors(log: DeltaLog): Seq[File] = {
+    val dir = new File(log.dataPath.toUri.getPath)
+    dir.listFiles().filter(_.getName.startsWith(
+      DeletionVectorDescriptor.DELETION_VECTOR_FILE_NAME_CORE))
+  }
+
   /** Helper to check that the Deletion Vectors of the provided file actions exist on disk. */
   def assertDeletionVectorsExist(log: DeltaLog, filesWithDVs: Seq[AddFile]): Unit = {
     val tablePath = new Path(log.dataPath.toUri.getPath)
