@@ -865,6 +865,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CREATE_TABLE_USE_PARQUET_PROVIDER =
+    buildConf("createTable.useParquetProvider")
+      .internal()
+      .doc(
+        """
+          |Given a CREATE TABLE command, use parquet instead of delta as a provider.
+          |
+          |This is a safety switch - we should only turn this on when there is an issue with
+          |table creation.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()

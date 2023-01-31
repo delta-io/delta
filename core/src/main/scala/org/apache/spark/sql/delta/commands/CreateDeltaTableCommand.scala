@@ -415,6 +415,12 @@ case class CreateDeltaTableCommand(
       table.schema.copy()
     }
 
+    val newProvider = if (conf.getConf(DeltaSQLConf.DELTA_CREATE_TABLE_USE_PARQUET_PROVIDER)) {
+      Some("parquet")
+    } else {
+      table.provider
+    }
+
     // These actually have no effect on the usability of Delta, but feature flagging legacy
     // behavior for now
     val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
@@ -426,6 +432,7 @@ case class CreateDeltaTableCommand(
 
     table.copy(
       schema = newSchema,
+      provider = newProvider,
       properties = Map.empty,
       partitionColumnNames = Nil,
       // Remove write specific options when updating the catalog
