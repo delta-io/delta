@@ -30,7 +30,7 @@ from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
 from delta.testing.utils import DeltaTestCase
 
 
-class DeltaTableTests(DeltaTestCase):
+class DeltaTableTestsMixin:
 
     def test_forPath(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -1205,6 +1205,10 @@ class DeltaTableTests(DeltaTestCase):
             if exceptionMsg in str(e):
                 seenTheRightException = True
         assert seenTheRightException, ("Did not catch expected Exception:" + exceptionMsg)
+
+
+class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
+    pass
 
 
 if __name__ == "__main__":
