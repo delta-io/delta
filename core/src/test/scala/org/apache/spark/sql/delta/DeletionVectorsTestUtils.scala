@@ -46,14 +46,18 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   def withTempDeltaTable(
       dataDF: DataFrame,
       partitionBy: Seq[String] = Seq.empty,
-      enableDVs: Boolean = true)(fn: (io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
+      enableDVs: Boolean = true,
+      conf: Seq[(String, String)] = Nil)
+      (fn: (io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
     withTempPath { path =>
       val tablePath = new Path(path.getAbsolutePath)
-      dataDF.write
-        .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
-        .partitionBy(partitionBy: _*)
-        .format("delta")
-        .save(tablePath.toString)
+      withSQLConf(conf: _*) {
+        dataDF.write
+          .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
+          .partitionBy(partitionBy: _*)
+          .format("delta")
+          .save(tablePath.toString)
+      }
       val targetTable = io.delta.tables.DeltaTable.forPath(tablePath.toString)
       val targetLog = DeltaLog.forTable(spark, tablePath)
       fn(targetTable, targetLog)
