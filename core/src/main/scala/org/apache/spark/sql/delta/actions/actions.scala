@@ -493,6 +493,21 @@ case class AddFile(
   /** Returns the total number of records, including those marked as deleted. */
   @JsonIgnore
   def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
+
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  def estLogicalFileSize: Option[Long] = logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
+
+  /** Returns the ratio of the logical number of records to the total number of records. */
+  @JsonIgnore
+  def logicalToPhysicalRecordsRatio: Option[Double] = {
+    numLogicalRecords.map(numLogicalRecords =>
+      numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords).toDouble)
+  }
+
+  /** Returns the ratio of number of deleted records to the total number of records. */
+  @JsonIgnore
+  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
 }
 
 object AddFile {

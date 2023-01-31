@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.UUID
 
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -31,6 +32,14 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
 trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
+
+  def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
+    test(testName, testTags : _*) {
+      withDeletionVectorsEnabled() {
+        thunk
+      }
+    }
+  }
 
   /** Run a thunk with Deletion Vectors enabled/disabled. */
   def withDeletionVectorsEnabled(enabled: Boolean = true)(thunk: => Unit): Unit = {
@@ -96,6 +105,31 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   }
 
   // ======== HELPER METHODS TO WRITE DVs ==========
+  /** Helper method to remove the specified rows in the given file using DVs */
+  protected def removeRowsFromFileUsingDV(
+      log: DeltaLog,
+      addFile: AddFile,
+      rowIds: Seq[Long]): Seq[Action] = {
+    val dv = RoaringBitmapArray(rowIds: _*)
+    writeFileWithDV(log, addFile, dv)
+  }
+
+  /** Utility method to remove a ratio of rows from the given file */
+  protected def deleteRows(
+      log: DeltaLog, file: AddFile, approxPhyRows: Long, ratioOfRowsToDelete: Double): Unit = {
+    val numRowsToDelete =
+      Math.ceil(ratioOfRowsToDelete * file.numPhysicalRecords.getOrElse(approxPhyRows)).toInt
+    removeRowsFromFile(log, file, Seq.range(0, numRowsToDelete))
+  }
+
+  /** Utility method to remove the given rows from the given file using DVs */
+  protected def removeRowsFromFile(
+      log: DeltaLog, addFile: AddFile, rowIndexesToRemove: Seq[Long]): Unit = {
+    val txn = log.startTransaction()
+    val actions = removeRowsFromFileUsingDV(log, addFile, rowIndexesToRemove)
+    txn.commit(actions, Truncate())
+  }
+
   protected def serializeRoaringBitmapArrayWithDefaultFormat(
       dv: RoaringBitmapArray): Array[Byte] = {
     val serializationFormat = RoaringBitmapArrayFormat.Portable
