@@ -322,19 +322,19 @@
     "message" : [
       "Unable to find the column `<columnName>` given [<columnList>]"
     ],
-    "sqlState" : "26000"
+    "sqlState" : "42703"
   },
   "DELTA_COLUMN_NOT_FOUND_IN_MERGE" : {
     "message" : [
       "Unable to find the column '<targetCol>' of the target table from the INSERT columns: <colNames>. INSERT clause must specify value for all the columns of the target table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_COLUMN_NOT_FOUND_IN_SCHEMA" : {
     "message" : [
       "Couldn't find column <columnName> in:\n<tableSchema>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_COLUMN_PATH_NOT_NESTED" : {
     "message" : [
@@ -342,7 +342,7 @@
       "index of <column> in a nested field",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42704"
   },
   "DELTA_COLUMN_STRUCT_TYPE_MISMATCH" : {
     "message" : [
@@ -372,13 +372,13 @@
       "--conf spark.sql.extensions=<sparkSessionExtensionName> --conf <catalogKey>=<catalogClassName>",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "56038"
   },
   "DELTA_CONFLICT_SET_COLUMN" : {
     "message" : [
       "There is a conflict from these SET columns: <columnList>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42701"
   },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
     "message" : [
@@ -386,31 +386,31 @@
       "Old constraint:",
       "<oldConstraint>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42710"
   },
   "DELTA_CONSTRAINT_DOES_NOT_EXIST" : {
     "message" : [
       "Cannot drop nonexistent constraint <constraintName> from table <tableName>. To avoid throwing an error, provide the parameter IF EXISTS or set the SQL session configuration <config> to <confValue>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42704"
   },
   "DELTA_CONVERSION_NO_PARTITION_FOUND" : {
     "message" : [
       "Found no partition information in the catalog for table <tableName>. Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD6"
   },
   "DELTA_CONVERSION_UNSUPPORTED_COLUMN_MAPPING" : {
     "message" : [
       "The configuration '<config>' cannot be set to `<mode>` when using CONVERT TO DELTA."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CONVERT_NON_PARQUET_TABLE" : {
     "message" : [
       "CONVERT TO DELTA only supports parquet tables, but you are trying to convert a <sourceName> source: <tableId>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA" : {
     "message" : [
@@ -421,7 +421,7 @@
       "",
       "To learn more about Delta, see <docLink>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG" : {
     "message" : [
@@ -433,7 +433,7 @@
       "",
       "To learn more about Delta, see <docLink>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K03"
   },
   "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
     "message" : [
@@ -452,7 +452,7 @@
       "schema from the create table command. Otherwise please ensure that",
       "the schema matches."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD7"
   },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING" : {
     "message" : [
@@ -465,7 +465,7 @@
       "<existingColumns>",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD7"
   },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY" : {
     "message" : [
@@ -478,128 +478,129 @@
       "<existingProperties>",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD7"
   },
   "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION" : {
     "message" : [
       "Cannot create table ('<tableId>'). The associated location ('<tableLocation>') is not empty and also not a Delta table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_DATA_CHANGE_FALSE" : {
     "message" : [
       "Cannot change table metadata because the 'dataChange' option is set to false. Attempted operation: '<op>'."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDE"
   },
   "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH" : {
     "message" : [
       "Could not verify deletion vector integrity, CRC checksum verification failed."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
     "message" : [
       "Deletion vector integrity check failed. Encountered a size mismatch."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to drop column is lower than 0"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD8"
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
       "Found duplicate column(s) <coltype>: <duplicateCols>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42711"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {
     "message" : [
       "Duplicate column names in INSERT clause"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42701"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
     "message" : [
-      "<message>\nPlease remove duplicate columns before you update your table."
+      "<message>",
+      "Please remove duplicate columns before you update your table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42701"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
       "Data used in creating the Delta table doesn't have any columns."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "428GU"
   },
   "DELTA_EMPTY_DIRECTORY" : {
     "message" : [
       "No file found in the directory: <directory>."
     ],
-    "sqlState" : "25000"
+    "sqlState" : "42K03"
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
       "Exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
-    "sqlState" : "22026"
+    "sqlState" : "22001"
   },
   "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN" : {
     "message" : [
       "Cannot find the expressions in the generated column <columnName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_EXTRACT_REFERENCES_FIELD_NOT_FOUND" : {
     "message" : [
       "Field <fieldName> could not be found when extracting references."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_FAILED_CAST_PARTITION_VALUE" : {
     "message" : [
       "Failed to cast partition value `<value>` to <dataType>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22018"
   },
   "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLUMNS" : {
     "message" : [
       "Could not find <newAttributeName> among the existing target output <targetOutputColumns>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42703"
   },
   "DELTA_FAILED_FIND_PARTITION_COLUMN_IN_OUTPUT_PLAN" : {
     "message" : [
       "Could not find <partitionColumn> in output plan."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_FAILED_INFER_SCHEMA" : {
     "message" : [
       "Failed to infer schema from the given list of files."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42KD9"
   },
   "DELTA_FAILED_MERGE_SCHEMA_FILE" : {
     "message" : [
       "Failed to merge schema of file <file>:",
       "<schema>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KDA"
   },
   "DELTA_FAILED_READ_FILE_FOOTER" : {
     "message" : [
       "Could not read footer for file: <currentFile>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD001"
   },
   "DELTA_FAILED_RECOGNIZE_PREDICATE" : {
     "message" : [
       "Cannot recognize the predicate '<predicate>'"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_FAILED_SCAN_WITH_HISTORICAL_VERSION" : {
     "message" : [

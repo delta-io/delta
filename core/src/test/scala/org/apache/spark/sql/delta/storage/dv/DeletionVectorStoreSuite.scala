@@ -96,7 +96,7 @@ trait DeletionVectorStoreSuiteBase
       }
       // make sure this is our exception not ChecksumFileSystem's
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage ==
         "Could not verify deletion vector integrity, CRC checksum verification failed.")
     }
@@ -120,7 +120,7 @@ trait DeletionVectorStoreSuiteBase
         dvStore.read(dvPath.path, dvRange.offset, dvRange.length)
       }
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "Deletion vector integrity check failed. Encountered a size mismatch.")
     }
   }

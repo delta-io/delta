@@ -242,7 +242,7 @@ trait DeltaErrorsSuiteBase
           Map.empty[String, Any])
       }
       assert(e.getErrorClass == "DELTA_EXCEED_CHAR_VARCHAR_LIMIT")
-      assert(e.getSqlState == "22026")
+      assert(e.getSqlState == "22001")
       assert(e.getMessage == "Exceeds char/varchar type length limitation. " +
         "Failed check: (length('concat(hello , world)) <= 5).")
     }
@@ -490,7 +490,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.convertToDeltaNoPartitionFound("testTable")
       }
       assert(e.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42KD6")
       assert(e.getMessage == "Found no partition information in the catalog for table testTable." +
         " Have you run \"MSCK REPAIR TABLE\" on your table to discover partitions?")
     }
@@ -756,7 +756,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.dropColumnAtIndexLessThanZeroException(-1)
       }
       assert(e.getErrorClass == "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42KD8")
       assert(e.getMessage == s"Index $pos to drop column is lower than 0")
     }
     {
@@ -1196,7 +1196,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.expressionsNotFoundInGeneratedColumn("col1")
       }
       assert(e.getErrorClass == "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "Cannot find the expressions in the generated column col1")
     }
     {
@@ -1422,7 +1422,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.constraintAlreadyExists("name", "oldExpr")
       }
       assert(e.getErrorClass == "DELTA_CONSTRAINT_ALREADY_EXISTS")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42710")
       assert(e.getMessage == "Constraint 'name' already exists. Please " +
         "delete the old constraint first.\nOld constraint:\noldExpr")
     }
@@ -1551,7 +1551,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.failedInferSchema
       }
       assert(e.getErrorClass == "DELTA_FAILED_INFER_SCHEMA")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "42KD9")
       assert(e.getMessage == "Failed to infer schema from the given list of files.")
     }
     {
@@ -1667,7 +1667,7 @@ trait DeltaErrorsSuiteBase
           ))
       }
       assert(e.getErrorClass == "DELTA_EXTRACT_REFERENCES_FIELD_NOT_FOUND")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "Field struct1 could not be found when extracting references.")
     }
     {
@@ -1723,7 +1723,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.foundDuplicateColumnsException("integer", "col1")
       }
       assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42711")
       assert(e.getMessage == "Found duplicate column(s) integer: col1")
     }
     {
@@ -1754,7 +1754,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.columnOfTargetTableNotFoundInMergeException("target", "dummyCol")
       }
       assert(e.getErrorClass == "DELTA_COLUMN_NOT_FOUND_IN_MERGE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42703")
       assert(e.getMessage == "Unable to find the column 'target' of the target table from " +
         "the INSERT columns: dummyCol. " +
         "INSERT clause must specify value for all the columns of the target table."
@@ -1924,7 +1924,7 @@ trait DeltaErrorsSuiteBase
           path, specifiedColumns, existingColumns)
       }
       assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42KD7")
 
       val msg =
         s"""The specified partitioning does not match the existing partitioning at $path.
@@ -1945,7 +1945,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.createTableWithDifferentPropertiesException(path, smaps, emaps)
       }
       assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42KD7")
 
       val msg =
         s"""The specified properties do not match the existing properties at $path.
@@ -2012,7 +2012,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.columnPathNotNested(columnPath, other, column)
       }
       assert(e.getErrorClass == "DELTA_COLUMN_PATH_NOT_NESTED")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42704")
       val msg =
         s"""Expected $columnPath to be a nested data type, but found $other. Was looking for the
            |index of ${SchemaUtils.prettyFieldName(column)} in a nested field
@@ -2063,7 +2063,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.duplicateColumnOnInsert()
       }
       assert(e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_ON_INSERT")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42701")
       assert(e.getMessage == "Duplicate column names in INSERT clause")
     }
     {
@@ -2101,7 +2101,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.failedReadFileFooter("test.txt", null)
       }
       assert(e.getErrorClass == "DELTA_FAILED_READ_FILE_FOOTER")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "KD001")
       assert(e.getMessage == "Could not read footer for file: test.txt")
     }
     {
@@ -2118,7 +2118,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.failedRecognizePredicate("select ALL", new Throwable())
       }
       assert(e.getErrorClass == "DELTA_FAILED_RECOGNIZE_PREDICATE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42601")
       assert(e.getMessage == "Cannot recognize the predicate 'select ALL'")
     }
     {
@@ -2127,7 +2127,7 @@ trait DeltaErrorsSuiteBase
           "col2,col3,col4")
       }
       assert(e.getErrorClass == "DELTA_FAILED_FIND_ATTRIBUTE_IN_OUTPUT_COLUMNS")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "42703")
 
       val msg = "Could not find col1 among the existing target output col2,col3,col4"
       assert(e.getMessage == msg)
@@ -2138,7 +2138,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.failedFindPartitionColumnInOutputPlan(col)
       }
       assert(e.getErrorClass == "DELTA_FAILED_FIND_PARTITION_COLUMN_IN_OUTPUT_PLAN")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == s"Could not find $col in output plan.")
     }
     {
@@ -2162,7 +2162,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(Some(new Throwable()))
       }
       assert(e.getErrorClass == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "56038")
 
       val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
       val msg =
@@ -2198,7 +2198,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.convertNonParquetTablesException(ident, "source1")
       }
       assert(e.getErrorClass == "DELTA_CONVERT_NON_PARQUET_TABLE")
-      assert(e.getSqlState == "0A000")
+      assert(e.getSqlState == "0AKDC")
       assert(e.getMessage ==
         "CONVERT TO DELTA only supports parquet tables, but you are trying to " +
           s"convert a source1 source: $ident")
@@ -2264,7 +2264,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.emptyDataException
       }
       assert(e.getErrorClass == "DELTA_EMPTY_DATA")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "428GU")
       assert(e.getMessage == "Data used in creating the Delta table doesn't have any columns.")
     }
     {
@@ -2328,7 +2328,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.createTableWithNonEmptyLocation(tableId, tableLocation)
       }
       assert(e.getErrorClass == "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "42601")
 
       val msg =
         s"Cannot create table ('${tableId}')." +
@@ -2432,7 +2432,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.unexpectedDataChangeException("operation1")
       }
       assert(e.getErrorClass == "DELTA_DATA_CHANGE_FALSE")
-      assert(e.getSqlState == "42000")
+      assert(e.getSqlState == "0AKDE")
       assert(e.getMessage == "Cannot change table metadata because the 'dataChange' option is " +
         "set to false. Attempted operation: 'operation1'.")
     }
