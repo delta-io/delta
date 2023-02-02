@@ -888,6 +888,7 @@ Feature | Name | Readers or Writers?
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
 [Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+[Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
