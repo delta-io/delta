@@ -32,6 +32,7 @@ import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
 import org.apache.spark.sql.functions.{col, lit}
@@ -640,7 +641,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
       checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
-      sql(s"OPTIMIZE '$tempDir'")
+      val optimizeDf = sql(s"OPTIMIZE '$tempDir'")
       checkAnswer(rStats, Seq(Row(10, 0, 9)))
   }
 
