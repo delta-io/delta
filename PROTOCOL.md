@@ -883,7 +883,7 @@ Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - W
 ## Valid Feature Names in Table Features
 
 Feature | Name | Readers or Writers?
--|-|-|-
+-|-|-
 [Append-only Tables](#append-only-tables) | `appendOnly` | Writers only
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
