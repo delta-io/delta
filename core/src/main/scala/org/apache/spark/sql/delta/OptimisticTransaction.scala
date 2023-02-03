@@ -463,6 +463,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
+    // Enabling table features Part 1: add manually-enabled features in table properties start
+    // with [[FEATURE_PROP_PREFIX]].
+    //
     // This transaction's new metadata might contain some table properties to enable some
     // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
     // action.
@@ -471,8 +474,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // table features that are required to be added, and assume it's supported by the protocol.
     // When this turns out to be not true, the `withFeatures` method will fail and ask users to
     // upgrade their table.
-    //
-    // Note: automatically-enabled features are left to the `verifyNewMetadata` call.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
       TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
@@ -492,8 +493,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ => true
     }
     latestMetadata = latestMetadata.copy(configuration = configsWithoutProtocolProps)
-    verifyNewMetadata(latestMetadata)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
+    assertMetadata(latestMetadata)
+
+    // Enabling table features Part 2: add automatically-enabled features.
+    //
+    // This code path is for existing tables. The new table case has been handled by
+    // [[Protocol.forNewTable]] earlier in this method.
+    if (!isCreatingNewTable) {
+      setNewProtocolWithFeaturesEnabledByMetadata(latestMetadata)
+    }
 
 
     newMetadata = Some(latestMetadata)
@@ -513,7 +522,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     updateMetadata(metadata)
   }
 
-  protected def verifyNewMetadata(metadata: Metadata): Unit = {
+  protected def assertMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
     SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
@@ -554,10 +563,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
+  }
 
-    val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)
-    if (needsProtocolUpdate.isDefined) {
-      newProtocol = needsProtocolUpdate
+  private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
+    val requiredProtocolOpt = Protocol.checkProtocolRequirements(spark, metadata, protocol)
+    if (requiredProtocolOpt.isDefined) {
+      newProtocol = requiredProtocolOpt
     }
   }
 
@@ -1090,7 +1101,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     // There be at most one metadata entry at this point.
     metadataChanges.foreach { m =>
-      verifyNewMetadata(m)
+      assertMetadata(m)
+      setNewProtocolWithFeaturesEnabledByMetadata(m)
+
       // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
       // metadata was set via `updateMetadata` or `actions`.
       newMetadata = Some(m)
@@ -1123,7 +1136,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Block future cases of CDF + Column Mapping changes + file changes
     // This check requires having called
     // DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments which is done in the
-    // `verifyNewMetadata` call above.
+    // `assertMetadata` call above.
     performCdcColumnMappingCheck(finalActions, op)
 
     if (snapshot.version == -1) {
