@@ -535,4 +535,13 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (3, 31, null) // Not matched by source, updated
     ).toDF("key", "value", "extra"),
     expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 31)).toDF("key", "value"))
+
+  // Migrating new column via WHEN NOT MATCHED BY SOURCE is not allowed.
+  testEvolution("update new column with not matched by source fails")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra3"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = updateNotMatched("extra = s.extra") :: Nil,
+    expectErrorContains = "cannot resolve extra in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
 }

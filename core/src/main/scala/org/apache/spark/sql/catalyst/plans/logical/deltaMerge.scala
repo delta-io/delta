@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentE
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, UnaryExpression}
@@ -429,7 +430,6 @@ object DeltaMergeInto {
     }
 
     val canAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
-
     /**
      * Resolves a clause using the given plan (used for resolving the action exprs) and
      * returns the resolved clause.
@@ -516,6 +516,14 @@ object DeltaMergeInto {
                   resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
                   resolutionErrorMsg)
               } catch {
+                // Allow schema evolution for update and insert non-star when the column is not in
+                // the target.
+                case _: AnalysisException
+                  if canAutoMigrate && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
+                    clause.isInstanceOf[DeltaMergeIntoNotMatchedClause]) =>
+                  DeltaUpdateTable.getTargetColNameParts(
+                    resolveOrFail(unresolvedAttrib, fakeSourcePlan, s"$typ clause"),
+                    resolutionErrorMsg)
                 case e: Throwable => throw e
               }
             }
@@ -548,20 +556,55 @@ object DeltaMergeInto {
     val resolvedNotMatchedBySourceClauses = notMatchedBySourceClauses.map {
       resolveClause(_, fakeTargetPlan)
     }
-    val actions = (matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses)
-      .flatMap(_.actions)
-    val containsStarAction = actions.exists(_.isInstanceOf[UnresolvedStar])
 
-    val migrateSchema = canAutoMigrate && containsStarAction
+    val finalSchema = if (canAutoMigrate) {
+      // When schema evolution is enabled, add to the target table new columns or nested fields that
+      // are assigned to in merge actions and not already part of the target schema. This is done by
+      // collecting all assignments from merge actions and using them to filter out the source
+      // schema before merging it with the target schema. We don't consider NOT MATCHED BY SOURCE
+      // clauses since these can't by definition reference source columns and thus can't introduce
+      // new columns in the target schema.
+      val actions = (matchedClauses ++ notMatchedClauses).flatMap(_.actions)
+      val assignments = actions.collect { case a: DeltaMergeAction => a.targetColNameParts }
+      val containsStarAction = actions.exists {
+        case _: UnresolvedStar => true
+        case _ => false
+      }
 
-    val finalSchema = if (migrateSchema) {
-      var sourceSchema = source.schema
 
+      // Filter the source schema to retain only fields that are referenced by at least one merge
+      // clause, then merge this schema with the target to give the final schema.
+      def filterSchema(sourceSchema: StructType, basePath: Seq[String]): StructType =
+        StructType(sourceSchema.flatMap { field =>
+          val fieldPath = basePath :+ field.name.toLowerCase(Locale.ROOT)
+          val childAssignedInMergeClause = assignments.exists(_.startsWith(fieldPath))
+
+          field.dataType match {
+            // Specifically assigned to in one clause: always keep, including all nested attributes
+            case _ if assignments.contains(fieldPath) => Some(field)
+            // If this is a struct and one of the child is being assigned to in a merge clause, keep
+            // it and continue filtering children.
+            case struct: StructType if childAssignedInMergeClause =>
+              Some(field.copy(dataType = filterSchema(struct, fieldPath)))
+            // The field isn't assigned to directly or indirectly (i.e. its children) in any non-*
+            // clause. Check if it should be kept with any * action.
+            case struct: StructType if containsStarAction =>
+              Some(field.copy(dataType = filterSchema(struct, fieldPath)))
+            case _ if containsStarAction => Some(field)
+            // The field and its children are not assigned to in any * or non-* action, drop it.
+            case _ => None
+          }
+        })
+
+      val migrationSchema = filterSchema(source.schema, Seq.empty)
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
       // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
       // into a LONG target.
-      SchemaMergingUtils.mergeSchemas(target.schema, sourceSchema, allowImplicitConversions = true)
+      SchemaMergingUtils.mergeSchemas(
+        target.schema,
+        migrationSchema,
+        allowImplicitConversions = true)
     } else {
       target.schema
     }
@@ -573,7 +616,7 @@ object DeltaMergeInto {
       resolvedMatchedClauses,
       resolvedNotMatchedClauses,
       resolvedNotMatchedBySourceClauses,
-      migrateSchema = migrateSchema,
+      migrateSchema = canAutoMigrate,
       finalSchema = Some(finalSchema))
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
