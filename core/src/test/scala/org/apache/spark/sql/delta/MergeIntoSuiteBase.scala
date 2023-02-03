@@ -2632,6 +2632,21 @@ abstract class MergeIntoSuiteBase
     expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
+  testNestedStructsEvolution("add non-nullable column to target schema")(
+    target = """{ "key": "A" }""",
+    source = """{ "key": "B", "value": 4}""",
+    targetSchema = new StructType()
+      .add("key", StringType),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = false),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": null }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = false),
+    resultWithoutEvolution = """{ "key": "A" }""")
+
   // scalastyle:off line.size.limit
   testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer source")(
     target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 } ] }""",
