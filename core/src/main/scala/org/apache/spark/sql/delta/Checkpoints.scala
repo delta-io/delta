@@ -442,7 +442,7 @@ trait Checkpoints extends DeltaLogging {
     logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
     while (cur >= 0) {
       val checkpoints = store.listFrom(
-            checkpointPrefix(logPath, math.max(0, cur - 1000)),
+            listingPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
           // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
           // such files, hence we drop them so that we never pick up such checkpoints.

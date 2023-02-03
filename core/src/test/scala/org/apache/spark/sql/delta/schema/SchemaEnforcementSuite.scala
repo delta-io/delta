@@ -805,7 +805,7 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
         val deltaLog = DeltaLog.forTable(spark, dir)
         val hadoopConf = deltaLog.newDeltaHadoopConf()
         val lastCommitFile = deltaLog.store
-          .listFrom(FileNames.deltaFile(deltaLog.logPath, 0L), hadoopConf)
+          .listFrom(FileNames.listingPrefix(deltaLog.logPath, 0L), hadoopConf)
           .map(_.getPath).filter(FileNames.isDeltaFile).toArray.last
         val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile, hadoopConf)
           .exists(JsonUtils.mapper.readValue[SingleAction](_).metaData != null)
@@ -864,7 +864,7 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
         val deltaLog = DeltaLog.forTable(spark, dir)
         val hadoopConf = deltaLog.newDeltaHadoopConf()
         val lastCommitFile = deltaLog.store
-          .listFrom(FileNames.deltaFile(deltaLog.logPath, 0L), hadoopConf)
+          .listFrom(FileNames.listingPrefix(deltaLog.logPath, 0L), hadoopConf)
           .map(_.getPath).filter(FileNames.isDeltaFile).toArray.last
         val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile, hadoopConf)
           .exists(JsonUtils.mapper.readValue[SingleAction](_).metaData != null)
