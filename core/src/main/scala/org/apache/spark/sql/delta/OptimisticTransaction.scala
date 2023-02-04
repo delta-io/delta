@@ -357,6 +357,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * This updates the protocol for the table to a set newProtocol
+   */
+  def updateProtocol(newProtocolOption: Option[Protocol]): Unit = {
+    if (newProtocolOption != None) {
+      newProtocol = newProtocolOption
+    }
+  }
+
+  /**
    * Do the actual checks and works to update the metadata and save it into the `newMetadata`
    * field, which will be added to the actions to commit in [[prepareCommit]].
    */

@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -53,14 +52,14 @@ case class CreateDeltaTableCommand(
     query: Option[LogicalPlan],
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
-    override val output: Seq[Attribute] = Nil)
+    override val output: Seq[Attribute] = Nil,
+    newProtocol: Option[Protocol] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     var table = this.table
-
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
@@ -185,7 +184,9 @@ case class CreateDeltaTableCommand(
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
-
+            if (newProtocol.isDefined) {
+              txn.updateProtocol(newProtocol)
+            }
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)
           } else {

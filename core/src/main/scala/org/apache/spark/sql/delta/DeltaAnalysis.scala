@@ -23,6 +23,7 @@ import scala.util.{Failure, Success, Try}
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
@@ -51,6 +52,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -80,6 +82,105 @@ class DeltaAnalysis(session: SparkSession)
         a
       }
 
+
+    /**
+     * Handling create table like when a delta target (provider)
+     * is provided explicitly or when the source table is a delta table
+     */
+    case EligibleCreateTableLikeCommand(ctl) =>
+      val sessionCatalog = session.sessionState.catalog
+      val sourceTableDesc =
+        sessionCatalog.getTempViewOrPermanentTableMetadata(ctl.sourceTable)
+      val deltaTableIdentifier = DeltaTableIdentifier(session, ctl.targetTable)
+
+      // Check if table is given by path
+      val isTableByPath = DeltaTableIdentifier.isDeltaPath(session, ctl.targetTable)
+
+      // Check if targetTable is given by path
+      val targetTableIdentifier =
+        if (isTableByPath) {
+          TableIdentifier(deltaTableIdentifier.toString)
+        } else {
+          ctl.targetTable
+        }
+
+      val newStorage =
+        if (ctl.fileFormat.inputFormat.isDefined) {
+          ctl.fileFormat
+        } else if (isTableByPath) {
+          sourceTableDesc.storage.copy(locationUri =
+            Some(deltaTableIdentifier.get.getPath(session).toUri))
+        } else {
+          sourceTableDesc.storage.copy(locationUri = ctl.fileFormat.locationUri)
+        }
+
+      // If the location is specified or target table is given
+      // by path, we create an external table.
+      // Otherwise create a managed table.
+      val tblType =
+        if (newStorage.locationUri.isEmpty && !isTableByPath) {
+          CatalogTableType.MANAGED
+        } else {
+          CatalogTableType.EXTERNAL
+        }
+
+      val catalogTableTarget =
+        // If source table is Delta format
+        if (sourceTableDesc.provider.exists(_.toLowerCase() == "delta")) {
+          val deltaLogSrc = DeltaTableV2(session, new Path(sourceTableDesc.location))
+
+          // maxColumnId field cannot be set externally. If column-mapping is
+          // used on the source delta table, then maxColumnId would be set for the sourceTable
+          // and needs to be removed from the targetTable's configuration
+          // maxColumnId will be set in the targetTable's configuration internally after
+          val config =
+            deltaLogSrc.snapshot.metadata.configuration.-("delta.columnMapping.maxColumnId")
+
+          new CatalogTable(
+            identifier = targetTableIdentifier,
+            tableType = tblType,
+            storage = newStorage,
+            schema = deltaLogSrc.snapshot.metadata.schema,
+            properties = config,
+            partitionColumnNames = deltaLogSrc.snapshot.metadata.partitionColumns,
+            provider = Some("delta"),
+            comment = Option(deltaLogSrc.snapshot.metadata.description)
+          )
+        } else { // Source table is not delta format
+            new CatalogTable(
+              identifier = targetTableIdentifier,
+              tableType = tblType,
+              storage = newStorage,
+              schema = sourceTableDesc.schema,
+              properties = sourceTableDesc.properties,
+              partitionColumnNames = sourceTableDesc.partitionColumnNames,
+              provider = Some("delta"),
+              comment = sourceTableDesc.comment
+            )
+        }
+
+      val saveMode =
+        if (ctl.ifNotExists) {
+          SaveMode.Ignore
+        } else {
+          SaveMode.ErrorIfExists
+        }
+
+      val protocol =
+        if (sourceTableDesc.provider == Some("delta")) {
+          Some(DeltaTableV2(session, new Path(sourceTableDesc.location)).snapshot.protocol)
+        } else {
+          None
+        }
+      val newDeltaCatalog = new DeltaCatalog()
+      CreateDeltaTableCommand(
+        table = newDeltaCatalog.verifyTableAndSolidify(catalogTableTarget, None),
+        existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier),
+        mode = saveMode,
+        query = None,
+        output = ctl.output,
+        newProtocol = protocol,
+        tableByPath = isTableByPath)
 
     // INSERT OVERWRITE by ordinal and df.insertInto()
     case o @ OverwriteDelta(r, d) if !o.isByName &&
@@ -710,6 +811,21 @@ class DeltaAnalysis(session: SparkSession)
     DeltaViewHelper.stripTempViewForMerge(plan, conf)
   }
 
+
+  object EligibleCreateTableLikeCommand {
+    def unapply(arg: LogicalPlan): Option[CreateTableLikeCommand] = arg match {
+      case c: CreateTableLikeCommand =>
+        val src = session.sessionState.catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
+        if (src.provider.contains("delta") || (c.provider.isDefined &&
+          c.provider.get.toLowerCase() == "delta")) {
+          Some(c)
+        } else {
+          None
+        }
+      case _ =>
+        None
+    }
+  }
 }
 
 /** Matchers for dealing with a Delta table. */

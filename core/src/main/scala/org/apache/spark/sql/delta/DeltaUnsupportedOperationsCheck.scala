@@ -57,25 +57,6 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
 
   def apply(plan: LogicalPlan): Unit = plan.foreach {
     // Unsupported Hive commands
-    case c: CreateTableLikeCommand =>
-      recordDeltaEvent(null, "delta.unsupported.createLike")
-      fail(operation = "CREATE TABLE LIKE", c.sourceTable)
-
-      def targetTableProvider: String = {
-        val catalog = spark.sessionState.catalog
-        val sourceTableDesc = catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
-        if (c.provider.isDefined) {
-          c.provider.get
-        } else if (sourceTableDesc.tableType == CatalogTableType.VIEW) {
-          spark.sessionState.conf.defaultDataSourceName
-        } else if (c.fileFormat.inputFormat.isDefined) {
-          DDLUtils.HIVE_PROVIDER
-        } else {
-          sourceTableDesc.provider.getOrElse(spark.sessionState.conf.defaultDataSourceName)
-        }
-      }
-
-      fail(operation = "CREATE TABLE LIKE", targetTableProvider)
 
     case a: AnalyzePartitionCommand =>
       recordDeltaEvent(null, "delta.unsupported.analyzePartition")
