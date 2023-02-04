@@ -220,6 +220,11 @@ class OptimizeExecutor(
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
       optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
+      val numTableColumns = txn.snapshot.metadata.schema.size
+      optimizeStats.numTableColumns = numTableColumns
+      optimizeStats.numTableColumnsWithStats =
+        DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(txn.snapshot.metadata)
+          .min(numTableColumns)
       if (removedDVs.size > 0) {
         optimizeStats.deletionVectorStats = Some(DeletionVectorStats(
           numDeletionVectorsRemoved = removedDVs.size,
