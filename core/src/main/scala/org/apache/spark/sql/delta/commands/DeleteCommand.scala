@@ -51,8 +51,8 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "numPartitionsAddedTo" -> createMetric(sc, "number of partitions added"),
     "numPartitionsRemovedFrom" -> createMetric(sc, "number of partitions removed"),
     "numCopiedRows" -> createMetric(sc, "number of rows copied"),
-    "numBytesAdded" -> createMetric(sc, "number of bytes added"),
-    "numBytesRemoved" -> createMetric(sc, "number of bytes removed"),
+    "numAddedBytes" -> createMetric(sc, "number of bytes added"),
+    "numRemovedBytes" -> createMetric(sc, "number of bytes removed"),
     "executionTimeMs" ->
       createTimingMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" ->
@@ -146,9 +146,9 @@ case class DeleteCommand(
     var numAddedChangeFiles: Long = 0
     var scanTimeMs: Long = 0
     var rewriteTimeMs: Long = 0
-    var numBytesAdded: Long = 0
+    var numAddedBytes: Long = 0
     var changeFileBytes: Long = 0
-    var numBytesRemoved: Long = 0
+    var numRemovedBytes: Long = 0
     var numFilesBeforeSkipping: Long = 0
     var numBytesBeforeSkipping: Long = 0
     var numFilesAfterSkipping: Long = 0
@@ -171,7 +171,7 @@ case class DeleteCommand(
         numRemovedFiles = allFiles.size
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
         val (numBytes, numPartitions) = totalBytesAndDistinctPartitionValues(allFiles)
-        numBytesRemoved = numBytes
+        numRemovedBytes = numBytes
         numFilesBeforeSkipping = numRemovedFiles
         numBytesBeforeSkipping = numBytes
         numFilesAfterSkipping = numRemovedFiles
@@ -203,7 +203,7 @@ case class DeleteCommand(
 
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numRemovedFiles = candidateFiles.size
-          numBytesRemoved = candidateFiles.map(_.size).sum
+          numRemovedBytes = candidateFiles.map(_.size).sum
           numFilesAfterSkipping = candidateFiles.size
           val (numCandidateBytes, numCandidatePartitions) =
             totalBytesAndDistinctPartitionValues(candidateFiles)
@@ -282,10 +282,10 @@ case class DeleteCommand(
               getTouchedFile(deltaLog.dataPath, f, nameToAddFileMap))
             val (removedBytes, removedPartitions) =
               totalBytesAndDistinctPartitionValues(removedFiles)
-            numBytesRemoved = removedBytes
+            numRemovedBytes = removedBytes
             val (rewrittenBytes, rewrittenPartitions) =
               totalBytesAndDistinctPartitionValues(rewrittenFiles)
-            numBytesAdded = rewrittenBytes
+            numAddedBytes = rewrittenBytes
             if (txn.metadata.partitionColumns.nonEmpty) {
               numPartitionsRemovedFrom = Some(removedPartitions)
               numPartitionsAddedTo = Some(rewrittenPartitions)
@@ -310,8 +310,8 @@ case class DeleteCommand(
     metrics("rewriteTimeMs").set(rewriteTimeMs)
     metrics("numAddedChangeFiles").set(numAddedChangeFiles)
     metrics("changeFileBytes").set(changeFileBytes)
-    metrics("numBytesAdded").set(numBytesAdded)
-    metrics("numBytesRemoved").set(numBytesRemoved)
+    metrics("numAddedBytes").set(numAddedBytes)
+    metrics("numRemovedBytes").set(numRemovedBytes)
     metrics("numFilesBeforeSkipping").set(numFilesBeforeSkipping)
     metrics("numBytesBeforeSkipping").set(numBytesBeforeSkipping)
     metrics("numFilesAfterSkipping").set(numFilesAfterSkipping)
@@ -343,8 +343,8 @@ case class DeleteCommand(
         numPartitionsRemovedFrom,
         numCopiedRows,
         numDeletedRows,
-        numBytesAdded,
-        numBytesRemoved,
+        numAddedBytes,
+        numRemovedBytes,
         changeFileBytes = changeFileBytes,
         scanTimeMs,
         rewriteTimeMs)

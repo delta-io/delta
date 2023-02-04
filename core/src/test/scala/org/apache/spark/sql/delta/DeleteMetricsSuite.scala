@@ -19,12 +19,13 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.DeleteMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.{Dataset, QueryTest}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -45,6 +46,8 @@ class DeleteMetricsSuite extends QueryTest
   )
 
   case class TestMetricResults(
+      expectedNumAddBytes: Long,
+      expectedNumRemoveBytes: Long,
       operationMetrics: Map[String, Long],
       numAffectedRows: Long
   )
@@ -105,6 +108,7 @@ class DeleteMetricsSuite extends QueryTest
     val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
     var numAffectedRows = -1L
     var operationMetrics: Map[String, Long] = null
+    var (expectedNumAddedBytes, expectedNumRemovedBytes) = (0L, 0L)
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
       DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
@@ -117,10 +121,28 @@ class DeleteMetricsSuite extends QueryTest
           assert(!resultDf.isEmpty)
           numAffectedRows = resultDf.take(1).head(0).toString.toLong
 
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val changes = deltaLog.getChanges(deltaLog.update().version).flatMap(_._2).toSeq
+
+        // To get the expected Added and Removed Bytes we need to filter out files
+        // that have a dv associated with their path. Since we won't be physically deleting/adding
+        // if there is a dv associated.
+        val pathsWithDvs = changes.collect {
+          case a: AddFile if a.deletionVector != null => a.path
+        }.toSet
+
+        expectedNumAddedBytes = changes.collect {
+          case a: AddFile if !pathsWithDvs.contains(a.path) => a.size
+        }.sum
+        expectedNumRemovedBytes = changes.collect {
+          case r: RemoveFile if !pathsWithDvs.contains(r.path) => r.getFileSize
+        }.sum
         operationMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
       }
     }
     TestMetricResults(
+      expectedNumAddedBytes,
+      expectedNumRemovedBytes,
       operationMetrics,
       numAffectedRows
     )
@@ -163,6 +185,19 @@ class DeleteMetricsSuite extends QueryTest
     DeltaMetricsUtils.checkOperationMetrics(
       expectedMetrics = expectedMetricsFiltered,
       operationMetrics = operationMetrics)
+
+    // check values byte-level metrics returned
+    if (testMetricResults.numAffectedRows > 0) {
+      assert(
+        operationMetrics("numAddedBytes") == testMetricResults.expectedNumAddBytes,
+        s"Expected ${testMetricResults.expectedNumAddBytes} bytes added, but got" +
+          s" ${operationMetrics("numAddedBytes")}"
+      )
+      assert(operationMetrics("numRemovedBytes") == testMetricResults.expectedNumRemoveBytes,
+        s"Expected ${testMetricResults.expectedNumRemoveBytes} bytes removed, but got" +
+          s" ${operationMetrics("numRemovedBytes")}"
+      )
+    }
 
 
     // Check time operation metrics.

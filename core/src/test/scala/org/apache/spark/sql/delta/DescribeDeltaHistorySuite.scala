@@ -871,9 +871,15 @@ trait DescribeDeltaHistorySuiteBase
 
         // get operation metrics
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
+
+        // get expected byte level metrics
+        val (numAddedBytesExpected, numRemovedBytesExpected) =
+          getLastCommitNumAddedAndRemovedBytes(deltaLog)
         val expectedMetrics = Map(
           "numAddedFiles" -> "1",
+          "numAddedBytes" -> numAddedBytesExpected.toString,
           "numRemovedFiles" -> "1",
+          "numRemovedBytes" -> numRemovedBytesExpected.toString,
           "numDeletedRows" -> "1",
           "numCopiedRows" -> "2" // There should be only three rows in total(deleted + copied)
         )
@@ -904,8 +910,13 @@ trait DescribeDeltaHistorySuiteBase
 
         deltaTable.delete("c1 = 1")
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        // get expected byte level metrics
+        val (numAddedBytesExpected, numRemovedBytesExpected) =
+          getLastCommitNumAddedAndRemovedBytes(deltaLog)
         val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString
+          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString,
+          "numAddedBytes" -> numAddedBytesExpected.toString,
+          "numRemovedBytes" -> numRemovedBytesExpected.toString
         )
         // row level metrics are not collected for deletes with parition columns
         checkOperationMetrics(
@@ -935,9 +946,14 @@ trait DescribeDeltaHistorySuiteBase
 
         deltaTable.delete()
 
+        // get expected byte level metrics
+        val (numAddedBytesExpected, numRemovedBytesExpected) =
+          getLastCommitNumAddedAndRemovedBytes(deltaLog)
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
         val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> numFilesBeforeDelete.toString
+          "numRemovedFiles" -> numFilesBeforeDelete.toString,
+          "numAddedBytes" -> numAddedBytesExpected.toString,
+          "numRemovedBytes" -> numRemovedBytesExpected.toString
         )
         checkOperationMetrics(
           expectedMetrics,
@@ -1080,12 +1096,18 @@ trait DescribeDeltaHistorySuiteBase
         0
       }
 
+      // get expected byte level metrics
+      val (numAddedBytesExpected, numRemovedBytesExpected) =
+        getLastCommitNumAddedAndRemovedBytes(deltaLog)
+
       if (enableStats) {
         checkOperationMetrics(
           Map(
             "numFiles" -> (numWrittenFiles).toString,
             "numOutputRows" -> "20",
             "numCopiedRows" -> "0",
+            "numOutputBytes" -> numAddedBytesExpected.toString,
+            "numRemovedBytes" -> numRemovedBytesExpected.toString,
             "numAddedChangeFiles" -> numAddedChangeFiles.toString,
             "numDeletedRows" -> "10",
             "numRemovedFiles" -> "1"
@@ -1097,6 +1119,8 @@ trait DescribeDeltaHistorySuiteBase
         checkOperationMetrics(
           Map(
             "numFiles" -> (numWrittenFiles).toString,
+            "numOutputBytes" -> numAddedBytesExpected.toString,
+            "numRemovedBytes" -> numRemovedBytesExpected.toString,
             "numAddedChangeFiles" -> numAddedChangeFiles.toString,
             "numRemovedFiles" -> "1"
           ),
@@ -1142,6 +1166,10 @@ trait DescribeDeltaHistorySuiteBase
         0
       }
 
+      // get expected byte level metrics
+      val (numAddedBytesExpected, numRemovedBytesExpected) =
+        getLastCommitNumAddedAndRemovedBytes(deltaLog)
+
       if (enableStats) {
         checkOperationMetrics(
           Map(
@@ -1150,6 +1178,8 @@ trait DescribeDeltaHistorySuiteBase
             "numCopiedRows" -> "5",
             "numAddedChangeFiles" -> numAddedChangeFiles.toString,
             "numDeletedRows" -> "5",
+            "numOutputBytes" -> numAddedBytesExpected.toString,
+            "numRemovedBytes" -> numRemovedBytesExpected.toString,
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
@@ -1160,6 +1190,8 @@ trait DescribeDeltaHistorySuiteBase
           Map(
             "numFiles" -> "4", // 3(append) + 1(delete)
             "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+            "numOutputBytes" -> numAddedBytesExpected.toString,
+            "numRemovedBytes" -> numRemovedBytesExpected.toString,
             "numRemovedFiles" -> "1"
           ),
           getOperationMetrics(deltaTable.history(1)),
@@ -1195,6 +1227,11 @@ trait DescribeDeltaHistorySuiteBase
             .mode("overwrite")
             .saveAsTable("tbl")
 
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+          // get expected byte level metrics
+          val (numAddedBytesExpected, numRemovedBytesExpected) =
+            getLastCommitNumAddedAndRemovedBytes(deltaLog)
+
           // metrics are a subset here as it would involve a partition delete
           if (enableArbitraryRW.toBoolean) {
             if (enableStats) {
@@ -1205,6 +1242,8 @@ trait DescribeDeltaHistorySuiteBase
                   "numAddedChangeFiles" -> "0",
                   "numRemovedFiles" -> "1",
                   "numCopiedRows" -> "0",
+                  "numOutputBytes" -> numAddedBytesExpected.toString,
+                  "numRemovedBytes" -> numRemovedBytesExpected.toString,
                   "numDeletedRows" -> "10"
               ),
                 getOperationMetrics(deltaTable.history(1)),
@@ -1215,6 +1254,8 @@ trait DescribeDeltaHistorySuiteBase
                 Map(
                   "numFiles" -> "2",
                   "numAddedChangeFiles" -> "0",
+                  "numOutputBytes" -> numAddedBytesExpected.toString,
+                  "numRemovedBytes" -> numRemovedBytesExpected.toString,
                   "numRemovedFiles" -> "1"
                 ),
                 getOperationMetrics(deltaTable.history(1)),
@@ -1227,7 +1268,8 @@ trait DescribeDeltaHistorySuiteBase
             checkOperationMetrics(
               Map(
                 "numFiles" -> "2",
-                "numOutputRows" -> "20"
+                "numOutputRows" -> "20",
+                "numOutputBytes" -> numAddedBytesExpected.toString
               ),
               getOperationMetrics(deltaTable.history(1)),
               DeltaOperationMetrics.WRITE
