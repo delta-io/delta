@@ -606,7 +606,7 @@
     "message" : [
       "Expect a full scan of the latest version of the Delta source, but found a historical scan of version <historicalVersion>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD002"
   },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [
@@ -625,54 +625,55 @@
       "Using this SQL configuration could lead to accidental data loss, therefore we do",
       "not recommend the use of this flag unless this is for testing purposes."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
     "message" : [
       "Unable to operate on this table because the following table features are enabled in metadata but not listed in protocol: <features>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDE"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDE"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDE"
   },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [
       "Existing file path <path>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K04"
   },
   "DELTA_FILE_LIST_AND_PATTERN_STRING_CONFLICT" : {
     "message" : [
       "Cannot specify both file list and pattern string."
-    ]
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_FILE_NOT_FOUND" : {
     "message" : [
       "File path <path>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K03"
   },
   "DELTA_FILE_OR_DIR_NOT_FOUND" : {
     "message" : [
       "No such file or directory: <path>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K03"
   },
   "DELTA_FILE_TO_OVERWRITE_NOT_FOUND" : {
     "message" : [
       "File (<path>) to be rewritten not found among candidate files:\n<pathList>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K03"
   },
   "DELTA_FOUND_MAP_TYPE_COLUMN" : {
     "message" : [
@@ -684,55 +685,56 @@
       "e.g. mymap.key.mykey",
       "If the column is a basic type, mymap.key or mymap.value is sufficient."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD003"
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
       "Column <columnName> is a generated column or a column used by a generated column. The data type is <columnType>. It doesn't accept data type <dataType>"
     ],
-    "sqlState" : "2200G"
+    "sqlState" : "42K09"
   },
   "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH" : {
     "message" : [
       "The expression type of the generated column <columnName> is <expressionType>, but the column type is <columnType>"
     ],
-    "sqlState" : "2200G"
+    "sqlState" : "42K09"
   },
   "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH" : {
     "message" : [
       "Column <currentName> is a generated column or a column used by a generated column. The data type is <currentDataType> and cannot be converted to data type <updateDataType>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K09"
   },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"
-    ]
+    ],
+    "sqlState" : "XXKDS"
   },
   "DELTA_ILLEGAL_OPTION" : {
     "message" : [
       "Invalid value '<input>' for option '<name>', <explain>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42616"
   },
   "DELTA_ILLEGAL_USAGE" : {
     "message" : [
       "The usage of <option> is not allowed when <operation> a Delta table."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42601"
   },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
       "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "F0000"
   },
   "DELTA_INCORRECT_ARRAY_ACCESS" : {
     "message" : [
       "Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to",
       "add to an array."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD003"
   },
   "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME" : {
     "message" : [
@@ -741,7 +743,7 @@
       "Instead of <wrongName>",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD003"
   },
   "DELTA_INCORRECT_LOG_STORE_IMPLEMENTATION" : {
     "message" : [
@@ -752,98 +754,98 @@
       "See <docLink> for details.",
       ""
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT" : {
     "message" : [
       "Index <index> to drop column equals to or is larger than struct length: <length>"
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42KD8"
   },
   "DELTA_INDEX_LARGER_THAN_STRUCT" : {
     "message" : [
       "Index <index> to add column <columnName> is larger than struct length: <length>"
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42KD8"
   },
   "DELTA_INSERT_COLUMN_ARITY_MISMATCH" : {
     "message" : [
       "Cannot write to '<tableName>', <columnName>; target table has <numColumns> column(s) but the inserted data has <insertColumns> column(s)"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42802"
   },
   "DELTA_INSERT_COLUMN_MISMATCH" : {
     "message" : [
       "Column <columnName> is not specified in INSERT"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42802"
   },
   "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY" : {
     "message" : [
       "Interval cannot be null or blank."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "2200P"
   },
   "DELTA_INVALID_CDC_RANGE" : {
     "message" : [
       "CDC range from start <start> to end <end> was invalid. End cannot be before start."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "22003"
   },
   "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME" : {
     "message" : [
       "Attribute name \"<columnName>\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K05"
   },
   "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES" : {
     "message" : [
       "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. <advice>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42K05"
   },
   "DELTA_INVALID_CLONE_PATH" : {
     "message" : [
       "The target location for CLONE needs to be an absolute path or table name. Use an",
       "absolute path instead of <path>."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22KD1"
   },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."
     ],
-    "sqlState" : "25000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
     "message" : [
       "Unsupported format. Expected version should be smaller than or equal to <expectedVersion> but was <realVersion>. Please upgrade to newer version of Delta."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_GENERATED_COLUMN_FORMAT" : {
     "message" : [
       "Generated columns are only supported by Delta"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [
       "A generated column cannot use a non-existent column or another generated column"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42621"
   },
   "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS" : {
     "message" : [
       "Invalid options for idempotent Dataframe writes: <reason>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42616"
   },
   "DELTA_INVALID_INTERVAL" : {
     "message" : [
       "<interval> is not a valid INTERVAL."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "22006"
   },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
@@ -855,7 +857,7 @@
     "message" : [
       "(`<classConfig>`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "F0000"
   },
   "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA" : {
     "message" : [
@@ -875,79 +877,79 @@
       "actual: <specifiedPartitioning>",
       "To disable this check set <config> to \"false\""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_PARTITION_COLUMN" : {
     "message" : [
       "<columnName> is not a valid partition column in table <tableName>."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42996"
   },
   "DELTA_INVALID_PARTITION_COLUMN_NAME" : {
     "message" : [
       "Found partition columns having invalid character(s) among \" ,;{}()\n\t=\". Please change the name to your partition columns."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42996"
   },
   "DELTA_INVALID_PARTITION_COLUMN_TYPE" : {
     "message" : [
       "Using column <name> of type <dataType> as a partition column is not supported."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42996"
   },
   "DELTA_INVALID_PARTITION_PATH" : {
     "message" : [
       "A partition path fragment should be the form like `part1=foo/part2=bar`. The partition path: <path>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22KD1"
   },
   "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
     "message" : [
       "Protocol version cannot be downgraded from <oldProtocol> to <newProtocol>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD004"
   },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
       "Delta protocol version is too new for this version of Delta Lake: table requires <required>, client supports up to <supported>. Please upgrade to a newer release."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD004"
   },
   "DELTA_INVALID_SOURCE_VERSION" : {
     "message" : [
       "sourceVersion(<version>) is invalid"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_TIMESTAMP_FORMAT" : {
     "message" : [
       "The provided timestamp <timestamp> does not match the expected syntax <format>."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22007"
   },
   "DELTA_INVALID_V1_TABLE_CALL" : {
     "message" : [
       "<callVersion> call is not expected with path based <tableVersion>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_ITERATOR_ALREADY_CLOSED" : {
     "message" : [
       "Iterator is closed"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_LOG_ALREADY_EXISTS" : {
     "message" : [
       "A Delta log already exists at <path>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K04"
   },
   "DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE" : {
     "message" : [
       "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K03"
   },
   "DELTA_MAX_ARRAY_SIZE_EXCEEDED" : {
     "message" : [
@@ -972,17 +974,17 @@
     "message" : [
       "Failed to merge decimal types with incompatible <decimalRanges>"
     ],
-    "sqlState" : "22005"
+    "sqlState" : "42806"
   },
   "DELTA_MERGE_MISSING_WHEN" : {
     "message" : [
       "There must be at least one WHEN clause in a MERGE statement."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [
-      "Unexpected assignment key: %s - %s"
+      "Unexpected assignment key: <unexpectedKeyClass> - <unexpectedKeyObject>"
     ],
     "sqlState" : "22005"
   },
@@ -992,7 +994,7 @@
       "this check set <deltaCommitValidationEnabled> to \"false\"",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
@@ -1002,19 +1004,19 @@
       "Otherwise, to start recording change data, use `ALTER TABLE table_name SET TBLPROPERTIES",
       "(<key>=true)`."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD002"
   },
   "DELTA_MISSING_COLUMN" : {
     "message" : [
       "Cannot find <columName> in table columns: <columnList>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_MISSING_DELTA_TABLE" : {
     "message" : [
       "<tableName> is not a Delta table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P01"
   },
   "DELTA_MISSING_FILES_UNEXPECTED_VERSION" : {
     "message" : [
@@ -1028,61 +1030,62 @@
       "off, you can set the .option(\"<option>\", \"false\") as part",
       "of your readStream statement."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_MISSING_ICEBERG_CLASS" : {
     "message" : [
       "Iceberg class was not found. Please ensure Delta Iceberg support is installed.",
       "Please refer to <docLink> for more details."
-    ]
+    ],
+    "sqlState" : "56038"
   },
   "DELTA_MISSING_NOT_NULL_COLUMN_VALUE" : {
     "message" : [
       "Column <columnName>, which has a NOT NULL constraint, is missing from the data being written into the table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "23502"
   },
   "DELTA_MISSING_PARTITION_COLUMN" : {
     "message" : [
       "Partition column `<columnName>` not found in schema <columnList>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD6"
   },
   "DELTA_MISSING_PART_FILES" : {
     "message" : [
       "Couldn't find all part files of the checkpoint version: <version>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42KD6"
   },
   "DELTA_MISSING_PROVIDER_FOR_CONVERT" : {
     "message" : [
       "CONVERT TO DELTA only supports parquet tables. Please rewrite your target as parquet.`<path>` if it's a parquet directory."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_MISSING_SET_COLUMN" : {
     "message" : [
       "SET column <columnName> not found given columns: <columnList>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_MODE_NOT_SUPPORTED" : {
     "message" : [
       "Specified mode '<mode>' is not supported. Supported modes are: <supportedModes>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_MULTIPLE_CDC_BOUNDARY" : {
     "message" : [
       "Multiple <startingOrEnding> arguments provided for CDC read. Please provide one of either <startingOrEnding>Timestamp or <startingOrEnding>Version."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42614"
   },
   "DELTA_MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [
       "Multiple bloom filter index configurations passed to command for column: <columnName>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42614"
   },
   "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE" : {
     "message" : [
@@ -1094,13 +1097,13 @@
       "multiple matches. Please refer to",
       "<usageReference>"
     ],
-    "sqlState" : "21000"
+    "sqlState" : "21506"
   },
   "DELTA_NESTED_FIELDS_NEED_RENAME" : {
     "message" : [
       "Nested fields need renaming to avoid data loss. Fields:\n<fields>.\nOriginal schema:\n<schema>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K05"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
@@ -1108,231 +1111,231 @@
       "Parsed <nestType> type:",
       "<nestedPrettyJson>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
     "message" : [
       "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "23512"
   },
   "DELTA_NEW_NOT_NULL_VIOLATION" : {
     "message" : [
       "<numRows> rows in <tableName> violate the new NOT NULL constraint on <colName>"
     ],
-    "sqlState" : "23001"
+    "sqlState" : "23512"
   },
   "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
     "message" : [
       "CHECK constraint '<name>' (<expr>) should be a boolean expression."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42621"
   },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
     "message" : [
       "Non-deterministic functions are not supported in the <operation> <expression>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR" : {
     "message" : [
       "<columnName> is not a generated column but is missing its update expression"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one MATCHED clauses in a MERGE statement, only the last MATCHED clause can omit the condition."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one NOT MATCHED BY SOURCE clauses in a MERGE statement, only the last NOT MATCHED BY SOURCE clause can omit the condition."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [
       "When there are more than one NOT MATCHED clauses in a MERGE statement, only the last NOT MATCHED clause can omit the condition"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_NON_PARSABLE_TAG" : {
     "message" : [
       "Could not parse tag <tag>.",
       "File tags are: <tagList>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_NON_PARTITION_COLUMN_ABSENT" : {
     "message" : [
       "Data written into Delta needs to contain at least one non-partitioned column.<details>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD005"
   },
   "DELTA_NON_PARTITION_COLUMN_REFERENCE" : {
     "message" : [
       "Predicate references non-partition column '<columnName>'. Only the partition columns may be referenced: [<columnList>]"
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42P10"
   },
   "DELTA_NON_PARTITION_COLUMN_SPECIFIED" : {
     "message" : [
       "Non-partitioning column(s) <columnList> are specified where only partitioning columns are expected: <fragment>."
     ],
-    "sqlState" : "2F000"
+    "sqlState" : "42P10"
   },
   "DELTA_NON_SINGLE_PART_NAMESPACE_FOR_CATALOG" : {
     "message" : [
       "Delta catalog requires a single-part namespace, but <identifier> is multi-part."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K05"
   },
   "DELTA_NOT_A_DELTA_TABLE" : {
     "message" : [
       "<tableName> is not a Delta table. Please drop this table first if you would like to recreate it with Delta Lake."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT" : {
     "message" : [
       "Not nullable column not found in struct: <struct>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42K09"
   },
   "DELTA_NOT_NULL_CONSTRAINT_VIOLATED" : {
     "message" : [
       "NOT NULL constraint violated for column: <columnName>.",
       ""
     ],
-    "sqlState" : "22004"
+    "sqlState" : "23502"
   },
   "DELTA_NOT_NULL_NESTED_FIELD" : {
     "message" : [
       "A non-nullable nested field can't be added to a nullable parent. Please set the nullability of the parent column accordingly."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0A000"
   },
   "DELTA_NO_COMMITS_FOUND" : {
     "message" : [
       "No commits found at <logPath>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD006"
   },
   "DELTA_NO_NEW_ATTRIBUTE_ID" : {
     "message" : [
       "Could not find a new attribute ID for column <columnName>. This should have been checked earlier."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_NO_RECREATABLE_HISTORY_FOUND" : {
     "message" : [
       "No recreatable commits found at <logPath>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD006"
   },
   "DELTA_NO_RELATION_TABLE" : {
     "message" : [
       "Table <tableIdent> not found"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42P01"
   },
   "DELTA_NO_START_FOR_CDC_READ" : {
     "message" : [
       "No startingVersion or startingTimestamp provided for CDC read."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE" : {
     "message" : [
       "Delta doesn't accept NullTypes in the schema for streaming writes."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42P18"
   },
   "DELTA_ONEOF_IN_TIMETRAVEL" : {
     "message" : [
       "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_ONLY_OPERATION" : {
     "message" : [
       "<operation> is only supported for Delta tables."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_OPERATION_MISSING_PATH" : {
     "message" : [
       "Please provide the path or table identifier for <operation>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_OPERATION_NOT_ALLOWED" : {
     "message" : [
       "Operation not allowed: `<operation>` is not supported for Delta tables"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_OPERATION_NOT_ALLOWED_DETAIL" : {
     "message" : [
       "Operation not allowed: `<operation>` is not supported for Delta tables: <tableName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED" : {
     "message" : [
       "<operation> command on a temp view referring to a Delta table that contains generated columns is not supported. Please run the <operation> command on the Delta table directly"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0A000"
   },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "22525"
   },
   "DELTA_PARTITION_COLUMN_NOT_FOUND" : {
     "message" : [
       "Partition column <columnName> not found in schema [<schemaMap>]"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42703"
   },
   "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES" : {
     "message" : [
       "Partition schema cannot be specified when converting Iceberg tables. It is automatically inferred."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
       "<path> doesn't exist"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K03"
   },
   "DELTA_PATH_EXISTS" : {
     "message" : [
       "Cannot write to already existent path <path> without setting OVERWRITE = 'true'."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K04"
   },
   "DELTA_POST_COMMIT_HOOK_FAILED" : {
     "message" : [
       "Committing to the Delta table version <version> succeeded but error while executing post-commit hook <name><message>"
     ],
-    "sqlState" : "2D000"
+    "sqlState" : "2DKD0"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {
     "message" : [
       "Protocol property <key> needs to be an integer. Found <value>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K06"
   },
   "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE" : {
     "message" : [
       "Unable to upgrade only the reader protocol version to use table features. Writer protocol version must be at least <writerVersion> to proceed. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD004"
   },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
@@ -1340,45 +1343,45 @@
       "",
       "Write some new data with the option `mergeSchema = true` to be able to read the table."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "428GU"
   },
   "DELTA_REGEX_OPT_SYNTAX_ERROR" : {
     "message" : [
       "Please recheck your syntax for '<regExpOption>'"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "2201B"
   },
   "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA" : {
     "message" : [
       "RemoveFile created without extended metadata is ineligible for CDC:",
       "<file>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
       "You can't use replaceWhere in conjunction with an overwrite by filter"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42613"
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
       "Data written out does not match replaceWhere '<replaceWhere>'.",
       "<message>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "A 'replaceWhere' expression and 'partitionOverwriteMode'='dynamic' cannot both be set in the DataFrameWriter options."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_REPLACE_WHERE_WITH_FILTER_DATA_CHANGE_UNSET" : {
     "message" : [
       "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false. Filters: <dataFilters>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42613"
   },
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [
@@ -1392,7 +1395,7 @@
       "query from scratch using a new checkpoint directory.",
       ""
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD007"
   },
   "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS" : {
     "message" : [
@@ -1409,7 +1412,7 @@
       "<version> with a new checkpoint directory.",
       ""
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD007"
   },
   "DELTA_SCHEMA_CHANGED_WITH_VERSION" : {
     "message" : [
@@ -1423,7 +1426,7 @@
       "query from scratch using a new checkpoint directory.",
       ""
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD007"
   },
   "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" : {
     "message" : [
@@ -1432,25 +1435,25 @@
       "Changes:",
       "<schemaDiff><legacyFlagMessage>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD007"
   },
   "DELTA_SCHEMA_NOT_CONSISTENT_WITH_TARGET" : {
     "message" : [
       "The table schema <tableSchema> is not consistent with the target attributes: <targetAttrs>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_SCHEMA_NOT_PROVIDED" : {
     "message" : [
       "Table schema is not provided. Please provide the schema (column definition) of the table when using REPLACE table and an AS SELECT query is not provided."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42908"
   },
   "DELTA_SCHEMA_NOT_SET" : {
     "message" : [
       "Table schema is not set.  Write data into it or use CREATE TABLE to set the schema."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD008"
   },
   "DELTA_SET_LOCATION_SCHEMA_MISMATCH" : {
     "message" : [
@@ -1464,19 +1467,19 @@
       "If this is an intended change, you may turn this check off by running:",
       "%%sql set <config> = true"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42KD7"
   },
   "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_COLUMN" : {
     "message" : [
       "Non-partitioning column(s) <badCols> are specified for SHOW PARTITIONS"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P10"
   },
   "DELTA_SHOW_PARTITION_IN_NON_PARTITIONED_TABLE" : {
     "message" : [
       "SHOW PARTITIONS is not allowed on a table that is not partitioned: <tableName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42809"
   },
   "DELTA_SOURCE_IGNORE_DELETE" : {
     "message" : [
@@ -1488,37 +1491,38 @@
     "message" : [
       "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0A000"
   },
   "DELTA_SPARK_SESSION_NOT_SET" : {
     "message" : [
       "Active SparkSession not set."
-    ]
+    ],
+    "sqlState" : "XXKDS"
   },
   "DELTA_SPARK_THREAD_NOT_FOUND" : {
     "message" : [
       "Not running on a Spark task thread"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_STARTING_VERSION_AND_TIMESTAMP_BOTH_SET" : {
     "message" : [
       "Please either provide '<version>' or '<timestamp>'"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_STATE_RECOVER_ERROR" : {
     "message" : [
       "The <operation> of your Delta table could not be recovered while Reconstructing",
       "version: <version>. Did you manually delete files in the _delta_log directory?"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
     "message" : [
       "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD002"
   },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
@@ -1528,148 +1532,148 @@
       "Change Data Feed on the table rename/drop these columns.",
       ""
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42711"
   },
   "DELTA_TABLE_ALREADY_EXISTS" : {
     "message" : [
       "Table <tableName> already exists."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P07"
   },
   "DELTA_TABLE_FOR_PATH_UNSUPPORTED_HADOOP_CONF" : {
     "message" : [
       "Currently DeltaTable.forPath only supports hadoop configuration keys starting with <allowedPrefixes> but got <unsupportedOptions>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_TABLE_FOUND_IN_EXECUTOR" : {
     "message" : [
       "DeltaTable cannot be used in executors"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [
       "The location of the existing table <tableName> is <existingTableLocation>. It doesn't match the specified location <tableLocation>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42613"
   },
   "DELTA_TABLE_NOT_FOUND" : {
     "message" : [
       "Delta table <tableName> doesn't exist."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P01"
   },
   "DELTA_TABLE_NOT_FOUND_STREAMING" : {
     "message" : [
       "Delta table <tableName> doesn't exist. Please delete your streaming query checkpoint and restart."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P01"
   },
   "DELTA_TABLE_NOT_SUPPORTED_IN_OP" : {
     "message" : [
       "Table is not supported in <operation>. Please use a path instead."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42809"
   },
   "DELTA_TABLE_ONLY_OPERATION" : {
     "message" : [
       "<tableName> is not a Delta table. <operation> is only supported for Delta tables."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_TARGET_TABLE_FINAL_SCHEMA_EMPTY" : {
     "message" : [
       "Target table final schema is empty."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "428GU"
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
       "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
       "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42816"
   },
   "DELTA_TIMESTAMP_INVALID" : {
     "message" : [
       "The provided timestamp (<expr>) cannot be converted to a valid timestamp."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42816"
   },
   "DELTA_TIME_TRAVEL_INVALID_BEGIN_VALUE" : {
     "message" : [
       "<timeTravelKey> needs to be a valid begin value."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42604"
   },
   "DELTA_TRUNCATED_TRANSACTION_LOG" : {
     "message" : [
       "<path>: Unable to reconstruct state at version <version> as the transaction log has been truncated due to manual deletion or the log retention policy (<logRetentionKey>=<logRetention>) and checkpoint retention policy (<checkpointRetentionKey>=<checkpointRetention>)"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42K03"
   },
   "DELTA_TRUNCATE_TABLE_PARTITION_NOT_SUPPORTED" : {
     "message" : [
       "Operation not allowed: TRUNCATE TABLE on Delta tables does not support partition predicates; use DELETE to delete specific partitions or rows."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_TXN_LOG_FAILED_INTEGRITY" : {
     "message" : [
       "The transaction log has failed integrity checks. Failed verification at version <version> of:",
       "<mismatchStringOpt>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UDF_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <udfExpr>. A generated column cannot use a user-defined function"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42621"
   },
   "DELTA_UNEXPECTED_ACTION_EXPRESSION" : {
     "message" : [
       "Unexpected action expression <expression>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_UNEXPECTED_ALIAS" : {
     "message" : [
       "Expected Alias but got <alias>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE" : {
     "message" : [
       "Expected AttributeReference but got <ref>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UNEXPECTED_CHANGE_FILES_FOUND" : {
     "message" : [
       "Change files found in a dataChange = false transaction. Files:",
       "<fileList>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UNEXPECTED_NUM_PARTITION_COLUMNS_FROM_FILE_NAME" : {
     "message" : [
       "Expecting <expectedColsSize> partition column(s): <expectedCols>, but found <parsedColsSize> partition column(s): <parsedCols> from parsing the file name: <path>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD009"
   },
   "DELTA_UNEXPECTED_PARTIAL_SCAN" : {
     "message" : [
       "Expect a full scan of Delta sources, but found a partial scan. path:<path>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "KD00A"
   },
   "DELTA_UNEXPECTED_PARTITION_COLUMN_FROM_FILE_NAME" : {
     "message" : [
       "Expecting partition column <expectedCol>, but found partition column <parsedCol> from parsing the file name: <path>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD009"
   },
   "DELTA_UNEXPECTED_PARTITION_SCHEMA_FROM_USER" : {
     "message" : [
@@ -1680,68 +1684,68 @@
       "provided partition schema:",
       "<userPartitionSchema>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD009"
   },
   "DELTA_UNEXPECTED_PROJECT" : {
     "message" : [
       "Expected Project but got <project>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",
       "To disable this check, set <config>=true in the Spark session configuration."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "F0000"
   },
   "DELTA_UNKNOWN_PRIVILEGE" : {
     "message" : [
       "Unknown privilege: <privilege>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_UNKNOWN_READ_LIMIT" : {
     "message" : [
       "Unknown ReadLimit: <limit>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_UNRECOGNIZED_COLUMN_CHANGE" : {
     "message" : [
       "Unrecognized column change <otherClass>. You may be running an out-of-date Delta Lake version."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42601"
   },
   "DELTA_UNRECOGNIZED_FILE_ACTION" : {
     "message" : [
       "Unrecognized file action <action> with type <actionClass>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "XXKDS"
   },
   "DELTA_UNRECOGNIZED_INVARIANT" : {
     "message" : [
       "Unrecognized invariant. Please upgrade your Spark version."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "56038"
   },
   "DELTA_UNRECOGNIZED_LOGFILE" : {
     "message" : [
       "Unrecognized log file <filename>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD00B"
   },
   "DELTA_UNSET_NON_EXISTENT_PROPERTY" : {
     "message" : [
       "Attempted to unset non-existent property '<property>' in table <tableName>"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42616"
   },
   "DELTA_UNSUPPORTED_ABS_PATH_ADD_FILE" : {
     "message" : [
       "<path> does not support adding files with an absolute path"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
@@ -1752,7 +1756,7 @@
       "to:",
       "<newSchema>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
@@ -1761,13 +1765,13 @@
       "unsupported. Try a different target for CLONE or delete the table at the current target.",
       ""
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE" : {
     "message" : [
       "Changing column mapping mode from '<oldMode>' to '<newMode>' is not supported."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
     "message" : [
@@ -1781,7 +1785,7 @@
       "<currentVersion>",
       "<advice>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "KD004"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [
@@ -1798,210 +1802,211 @@
       "",
       ""
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
     "message" : [
       "Writing data with column mapping mode is not supported."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a column with type <dataType> is unsupported: <columnName>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DATA_TYPES" : {
     "message" : [
       "Found columns using unsupported data types: <dataTypeList>. You can set '<config>' to 'false' to disable the type check. Disabling this type check may allow users to create unsupported Delta tables and should only be used when trying to read/write legacy tables."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW" : {
     "message" : [
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42809"
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [
       "DROP COLUMN is not supported for your Delta table. <advice>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE" : {
     "message" : [
       "Can only drop nested columns from StructType. Found <struct>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_PARTITION_COLUMN" : {
     "message" : [
       "Dropping partition columns (<columnList>) is not allowed."
-    ]
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
       "<expression> cannot be used in a generated column"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42621"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
       "Unable to read this table because it requires reader table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
     "message" : [
       "Unable to write this table because it requires writer table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG" : {
     "message" : [
       "Table features configured in the following Spark configs or Delta table properties are not recognized by this version of Delta Lake: <configs>."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURE_STATUS" : {
     "message" : [
       "Expecting the status for table feature <feature> to be \"enabled\", but got \"<status>\"."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "0AKDE"
   },
   "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT" : {
     "message" : [
       "Updating nested fields is only supported for StructType, but you are trying to update a field of <columnName>, which is of type: <dataType>."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT" : {
     "message" : [
       "Invariants on nested fields other than StructTypes are not supported."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_IN_SUBQUERY" : {
     "message" : [
       "In subquery is not supported in the <operation> condition."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING" : {
     "message" : [
       "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Delta documentation for more details."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE" : {
     "message" : [
       "Multi-column In predicates are not supported in the <operation> condition."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filer index on a nested column is currently unsupported: <columnName>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
     "message" : [
       "Nested field is not supported in the <operation> (field = <fieldName>)."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_NON_EMPTY_CLONE" : {
     "message" : [
       "The clone destination table is non-empty. Please TRUNCATE or DELETE FROM the table before running CLONE."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_OUTPUT_MODE" : {
     "message" : [
       "Data source <dataSource> does not support <mode> output mode"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a partitioning column is unsupported: <columnName>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_RENAME_COLUMN" : {
     "message" : [
       "Column rename is not supported for your Delta table. <advice>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_SCHEMA_DURING_READ" : {
     "message" : [
       "Delta does not support specifying the schema at read time."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_SOURCE" : {
     "message" : [
       "<operation> destination only supports Delta sources.\n<plan>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_UNSUPPORTED_STATIC_PARTITIONS" : {
     "message" : [
       "Specifying static partitions in the partition spec is currently not supported during inserts"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDD"
   },
   "DELTA_UNSUPPORTED_SUBQUERY" : {
     "message" : [
       "Subqueries are not supported in the <operation> (condition = <cond>)."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES" : {
     "message" : [
       "Subquery is not supported in partition predicates."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
     "message" : [
       "Cannot specify time travel in multiple formats."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42613"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [
       "Cannot time travel views, subqueries, streams or change data feed queries."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_WRITES_STAGED_TABLE" : {
     "message" : [
       "Table implementation does not support writes: <tableName>"
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "42807"
   },
   "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
     "message" : [
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42846"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [
       "Versions (<versionList>) are not contiguous."
     ],
-    "sqlState" : "0A000"
+    "sqlState" : "KD00C"
   },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [
@@ -2014,7 +2019,7 @@
     "message" : [
       "Z-Ordering column <columnName> does not exist in data schema."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42703"
   },
   "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS" : {
     "message" : [
@@ -2024,13 +2029,13 @@
       " this check by setting",
       " '%%sql set <zorderColStatKey> = false'"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "KD00D"
   },
   "DELTA_ZORDERING_ON_PARTITION_COLUMN" : {
     "message" : [
       "<colName> is a partition column. Z-Ordering can only be performed on data columns"
     ],
-    "sqlState" : "42000"
+    "sqlState" : "42P10"
   },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
