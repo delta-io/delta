@@ -531,7 +531,7 @@ class DeltaTableTestsMixin:
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile2),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile2)))
 
         # convert to delta with partition column provided as a string
         tempFile3 = self.tempFile + "_3"
@@ -543,7 +543,7 @@ class DeltaTableTestsMixin:
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile3)))
 
     def test_isDeltaTable(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
