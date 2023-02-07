@@ -743,7 +743,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long AFTER unknown)")
       }
-      assert(ex.getMessage.contains("Couldn't find"))
+      assert(
+        ex.getMessage.contains("Couldn't find") || ex.getMessage.contains("No such struct field"))
     }
   }
 
@@ -769,7 +770,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long AFTER V1)")
         }
-        assert(ex.getMessage.contains("Couldn't find"))
+        assert(
+          ex.getMessage.contains("Couldn't find") || ex.getMessage.contains("No such struct field"))
       }
     }
   }
