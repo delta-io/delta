@@ -93,7 +93,6 @@ trait DocsPath {
     "createExternalTableWithoutSchemaException",
     "createManagedTableWithoutSchemaException",
     "multipleSourceRowMatchingTargetRowInMergeException",
-    "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
@@ -161,19 +160,6 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNKNOWN_PRIVILEGE",
       messageParameters = Array(privilege)
     )
-  }
-
-  /**
-   * File not found hint for Delta, replacing the normal one which is inapplicable.
-   *
-   * Note that we must pass in the docAddress as a string, because the config is not available on
-   * executors where this method is called.
-   */
-  def deltaFileNotFoundHint(faqPath: String, path: String): String = {
-    recordDeltaEvent(null, "delta.error.fileNotFound", data = path)
-    "A file referenced in the transaction log cannot be found. This occurs when data has been " +
-      "manually deleted from the file system rather than using the table `DELETE` statement. " +
-      s"For more information, see $faqPath"
   }
 
   def columnNotFound(path: Seq[String], schema: StructType): Throwable = {

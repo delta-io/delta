@@ -101,12 +101,6 @@ trait DeltaErrorsSuiteBase
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
-    "faqRelativePath" ->
-      DeltaErrors.deltaFileNotFoundHint(
-        DeltaErrors.generateDocsLink(
-          sparkConf,
-          DeltaErrors.faqRelativePath,
-          skipValidation = true), path),
     "ignoreStreamingUpdatesAndDeletesWarning" ->
       DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark)
   )
