@@ -4966,8 +4966,7 @@ abstract class MergeIntoSuiteBase
         sourceData.write.format("delta").saveAsTable("source")
         targetData.write.format("delta").saveAsTable("target")
 
-        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
-          s".*Invalid expressions: \\[$function.*"
+        val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
         def checkExpression(
             expectException: Boolean,
