@@ -335,8 +335,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       withTable(srcTbl) {
         createTable(srcTbl)
         spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
-        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true
-        )
+        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true)
       }
     }
   }
