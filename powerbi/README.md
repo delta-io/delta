@@ -35,7 +35,7 @@ let
     #"Filtered Rows" = Table.SelectRows(Source, each Text.StartsWith([Name], "powerbi_delta/FactInternetSales_part.delta/"))
 in
     #"Filtered Rows"
-    ```
+```
 
 6. Open your query that contains the function and select `Blob_Content` in the parameter `DeltaTableFolderContent`
 7. Click `Invoke`
