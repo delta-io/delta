@@ -44,6 +44,7 @@ import org.apache.spark.sql.types.StructType
  * @param query The query to commit into the Delta table if it exist. This can come from
  *                - CTAS
  *                - saveAsTable
+ * @param newProtocol This is used to create a table with specific protocol version
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -185,7 +186,7 @@ case class CreateDeltaTableCommand(
             val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
             if (newProtocol.isDefined) {
-              txn.updateProtocol(newProtocol)
+              txn.updateProtocol(newProtocol.get)
             }
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)

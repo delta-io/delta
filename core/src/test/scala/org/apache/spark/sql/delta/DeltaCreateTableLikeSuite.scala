@@ -37,7 +37,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
   /**
    * This method checks if certain properties and fields of delta tables are the
    * same between the two delta tables. Boolean values can be passed in to check
-   * or not to check (assert) the specific property.
+   * or not to check (assert) the specific property. Note that for checkLocation
+   * a boolean value is not passed in. If checkLocation argument is None, location
+   * of target table will not be checked.
    */
   def checkTableCopyDelta(
       srcTbl: String,
@@ -47,16 +49,15 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkPartitionColumns: Boolean = true,
       checkConfiguration: Boolean = true,
       checkTargetTableByPath: Boolean = false,
-      checkLocation: Option[String] = None): Unit = {
+      checkLocation: Option[String] = None,
+      isNamelessExternalTable: Boolean = false): Unit = {
     val src = DeltaLog.forTable(spark, TableIdentifier(srcTbl))
-
     val target =
       if (checkTargetTableByPath) {
         DeltaTableIdentifier(path = Some(targetTbl)).getDeltaLog(spark)
       } else {
         DeltaLog.forTable(spark, TableIdentifier(targetTbl))
       }
-
     assert(src.unsafeVolatileSnapshot.protocol ==
            target.unsafeVolatileSnapshot.protocol,
           "protocol does not match")
@@ -81,20 +82,40 @@ class DeltaCreateTableLikeSuite extends QueryTest
         target.unsafeVolatileSnapshot.metadata.configuration,
       "configuration does not match")
     }
-    if(checkLocation.isDefined) {
+
+    val df =
+      if (isNamelessExternalTable) {
+        spark.sql(s"desc formatted delta.`$targetTbl`")
+      } else {
+        spark.sql(s"desc formatted $targetTbl")
+      }
+    val tableType = df.filter(df("col_name") === "Type").collect()(0).get(1)
+
+    if (checkLocation.isDefined) {
       val catalog = spark.sessionState.catalog
       assert(
         catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString + "/"
         == checkLocation.get ||
         catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
-        checkLocation.get)
+        checkLocation.get, "location does not match")
+      assert(tableType == "EXTERNAL")
+    } else if (isNamelessExternalTable) {
+        // The tableType returned for nameless external tables is MANAGED, not EXTERNAL
+        assert(tableType == "MANAGED")
+    } else {
+      // If location is not defined and table is not
+      // a nameless external table, then target table should be managed
+        assert(tableType == "MANAGED",
+          "table type does not match")
     }
   }
 
   /**
    * This method checks if certain properties and fields of a table are the
    * same between two tables. Boolean values can be passed in to check
-   * or not to check (assert) the specific property.
+   * or not to check (assert) the specific property. Note that for checkLocation
+   * a boolean value is not passed in. If checkLocation argument is None, location
+   * of target table will not be checked.
    */
   def checkTableCopy(
       srcTbl: String, targetTbl: String,
@@ -102,7 +123,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkSchemaString: Boolean = true,
       checkPartitionColumns: Boolean = true,
       checkConfiguration: Boolean = true,
-      checkProvider: Boolean = true): Unit = {
+      checkProvider: Boolean = true,
+      checkLocation: Option[String] = None): Unit = {
     val srcTblDesc = spark.sessionState.catalog.
       getTempViewOrPermanentTableMetadata(TableIdentifier(srcTbl))
     val targetTblDesc = DeltaLog.forTable(spark, TableIdentifier(targetTbl))
@@ -131,6 +153,22 @@ class DeltaCreateTableLikeSuite extends QueryTest
         getTempViewOrPermanentTableMetadata(TableIdentifier(targetTbl)).provider
       assert(srcTblDesc.provider == targetTblProvider,
              "provider does not match")
+    }
+    val df = spark.sql(s"desc formatted $srcTbl")
+    val tableType = df.filter(df("col_name") === "Type").collect()(0).get(1)
+    if (checkLocation.isDefined) {
+      val catalog = spark.sessionState.catalog
+      assert(
+        catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString + "/"
+          == checkLocation.get ||
+          catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
+            checkLocation.get)
+      assert(tableType == "EXTERNAL",
+      "location does not match")
+    } else {
+      // If location is not defined, then target table should be managed
+      assert(tableType  == "MANAGED",
+      "table type does not match")
     }
   }
 
@@ -168,7 +206,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl)
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
-      checkTableCopyDelta(srcTbl: String, targetTbl: String)
+      checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
 
@@ -178,7 +216,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addComment = false)
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
-      checkTableCopyDelta(srcTbl: String, targetTbl: String)
+      checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
 
@@ -188,7 +226,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addTblProperties = false)
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
-      checkTableCopyDelta(srcTbl: String, targetTbl: String)
+      checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
 
@@ -198,7 +236,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       spark.sql(s"CREATE TABLE $srcTbl USING DELTA")
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
-      checkTableCopyDelta(srcTbl: String, targetTbl: String)
+      checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
 
@@ -208,7 +246,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addConstraint = false)
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
-      checkTableCopyDelta(srcTbl: String, targetTbl: String)
+      checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
 
@@ -323,7 +361,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
       withTable(srcTbl) {
         createTable(srcTbl)
         spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
-        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true)
+        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true,
+            isNamelessExternalTable = true)
       }
     }
   }

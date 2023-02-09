@@ -87,10 +87,7 @@ class DeltaAnalysis(session: SparkSession)
      * Handling create table like when a delta target (provider)
      * is provided explicitly or when the source table is a delta table
      */
-    case EligibleCreateTableLikeCommand(ctl) =>
-      val sessionCatalog = session.sessionState.catalog
-      val sourceTableDesc =
-        sessionCatalog.getTempViewOrPermanentTableMetadata(ctl.sourceTable)
+    case EligibleCreateTableLikeCommand(ctl, src) =>
       val deltaTableIdentifier = DeltaTableIdentifier(session, ctl.targetTable)
 
       // Check if table is given by path
@@ -108,10 +105,10 @@ class DeltaAnalysis(session: SparkSession)
         if (ctl.fileFormat.inputFormat.isDefined) {
           ctl.fileFormat
         } else if (isTableByPath) {
-          sourceTableDesc.storage.copy(locationUri =
+          src.storage.copy(locationUri =
             Some(deltaTableIdentifier.get.getPath(session).toUri))
         } else {
-          sourceTableDesc.storage.copy(locationUri = ctl.fileFormat.locationUri)
+          src.storage.copy(locationUri = ctl.fileFormat.locationUri)
         }
 
       // If the location is specified or target table is given
@@ -126,8 +123,8 @@ class DeltaAnalysis(session: SparkSession)
 
       val catalogTableTarget =
         // If source table is Delta format
-        if (sourceTableDesc.provider.exists(_.toLowerCase() == "delta")) {
-          val deltaLogSrc = DeltaTableV2(session, new Path(sourceTableDesc.location))
+        if (src.provider.exists(_.toLowerCase() == "delta")) {
+          val deltaLogSrc = DeltaTableV2(session, new Path(src.location))
 
           // maxColumnId field cannot be set externally. If column-mapping is
           // used on the source delta table, then maxColumnId would be set for the sourceTable
@@ -151,14 +148,13 @@ class DeltaAnalysis(session: SparkSession)
               identifier = targetTableIdentifier,
               tableType = tblType,
               storage = newStorage,
-              schema = sourceTableDesc.schema,
-              properties = sourceTableDesc.properties,
-              partitionColumnNames = sourceTableDesc.partitionColumnNames,
+              schema = src.schema,
+              properties = src.properties,
+              partitionColumnNames = src.partitionColumnNames,
               provider = Some("delta"),
-              comment = sourceTableDesc.comment
+              comment = src.comment
             )
         }
-
       val saveMode =
         if (ctl.ifNotExists) {
           SaveMode.Ignore
@@ -167,8 +163,8 @@ class DeltaAnalysis(session: SparkSession)
         }
 
       val protocol =
-        if (sourceTableDesc.provider == Some("delta")) {
-          Some(DeltaTableV2(session, new Path(sourceTableDesc.location)).snapshot.protocol)
+        if (src.provider == Some("delta")) {
+          Some(DeltaTableV2(session, new Path(src.location)).snapshot.protocol)
         } else {
           None
         }
@@ -813,12 +809,12 @@ class DeltaAnalysis(session: SparkSession)
 
 
   object EligibleCreateTableLikeCommand {
-    def unapply(arg: LogicalPlan): Option[CreateTableLikeCommand] = arg match {
+    def unapply(arg: LogicalPlan): Option[(CreateTableLikeCommand, CatalogTable)] = arg match {
       case c: CreateTableLikeCommand =>
         val src = session.sessionState.catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
         if (src.provider.contains("delta") || (c.provider.isDefined &&
           c.provider.get.toLowerCase() == "delta")) {
-          Some(c)
+          Some(c, src)
         } else {
           None
         }
