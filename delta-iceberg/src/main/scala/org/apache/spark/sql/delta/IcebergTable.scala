@@ -27,13 +27,13 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.Table
-import org.apache.iceberg.TableProperties
+import org.apache.iceberg.{RowLevelOperationMode, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -222,6 +222,20 @@ class IcebergFileManifest(
     val timestampFormatter = TimestampFormatter(ConvertToDeltaCommand.timestampPartitionPattern,
       java.util.TimeZone.getDefault)
 
+    // This flag is strongly not recommended to turn on, but we still provide a flag for regression
+    // purpose.
+    val unsafeConvertMorTable =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
+    val properties = CaseInsensitiveMap(table.properties().asScala.toMap)
+    val isMergeOnReadTable = Seq(
+      TableProperties.DELETE_MODE,
+      TableProperties.UPDATE_MODE,
+      TableProperties.MERGE_MODE
+    ).exists { propKey =>
+      properties.get(propKey)
+        .exists(RowLevelOperationMode.fromName(_) == RowLevelOperationMode.MERGE_ON_READ)
+    }
+
     var numFiles = 0L
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
       logInfo(s"Getting file statuses for a batch of ${batch.size} of files; " +
@@ -229,6 +243,14 @@ class IcebergFileManifest(
       numFiles += batch.length
       val filePathWithPartValues = batch.map { fileScanTask =>
         val filePath = fileScanTask.file().path().toString
+        // If an Iceberg table has merge on read enabled AND it has deletion file associated with
+        // the data file, we could not convert directly.
+        val hasMergeOnReadDeletionFiles = isMergeOnReadTable && fileScanTask.deletes().size() > 0
+        if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
+          throw new UnsupportedOperationException(
+            s"Cannot convert Iceberg merge-on-read table with delete files. " +
+              s"Please trigger an Iceberg compaction and retry the command.")
+        }
         val partitionValues = if (spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
           val icebergPartitionValues = fileScanTask.file().partition()
