@@ -30,6 +30,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}

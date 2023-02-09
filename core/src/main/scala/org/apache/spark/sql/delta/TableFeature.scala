@@ -306,6 +306,7 @@ object DeletionVectorsTableFeature
   }
 }
 
+
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
  * environment. See [[TableFeature.allSupportedFeaturesMap]] for the registration.
