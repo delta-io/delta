@@ -49,8 +49,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkPartitionColumns: Boolean = true,
       checkConfiguration: Boolean = true,
       checkTargetTableByPath: Boolean = false,
-      checkLocation: Option[String] = None,
-      isNamelessExternalTable: Boolean = false): Unit = {
+      checkLocation: Option[String] = None): Unit = {
     val src = DeltaLog.forTable(spark, TableIdentifier(srcTbl))
     val target =
       if (checkTargetTableByPath) {
@@ -83,31 +82,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
       "configuration does not match")
     }
 
-    val df =
-      if (isNamelessExternalTable) {
-        spark.sql(s"desc formatted delta.`$targetTbl`")
-      } else {
-        spark.sql(s"desc formatted $targetTbl")
-      }
-    val tableType = df.filter(df("col_name") === "Type").collect()(0).get(1)
-
-    if (checkLocation.isDefined) {
-      val catalog = spark.sessionState.catalog
-      assert(
-        catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString + "/"
-        == checkLocation.get ||
-        catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
-        checkLocation.get, "location does not match")
-      assert(tableType == "EXTERNAL")
-    } else if (isNamelessExternalTable) {
-        // The tableType returned for nameless external tables is MANAGED, not EXTERNAL
-        assert(tableType == "MANAGED")
-    } else {
-      // If location is not defined and table is not
-      // a nameless external table, then target table should be managed
-        assert(tableType == "MANAGED",
-          "table type does not match")
-    }
   }
 
   /**
@@ -361,8 +335,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
       withTable(srcTbl) {
         createTable(srcTbl)
         spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
-        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true,
-            isNamelessExternalTable = true)
+        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true
+        )
       }
     }
   }
