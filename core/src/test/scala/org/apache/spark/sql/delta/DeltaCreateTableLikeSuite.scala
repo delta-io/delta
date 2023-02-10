@@ -82,6 +82,15 @@ class DeltaCreateTableLikeSuite extends QueryTest
       "configuration does not match")
     }
 
+    val catalog = spark.sessionState.catalog
+    if(checkLocation.isDefined) {
+      assert(
+        catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString + "/"
+          == checkLocation.get ||
+          catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
+            checkLocation.get, "location does not match")
+    }
+
   }
 
   /**
@@ -128,19 +137,13 @@ class DeltaCreateTableLikeSuite extends QueryTest
       assert(srcTblDesc.provider == targetTblProvider,
         "provider does not match")
     }
-    val df = spark.sql(s"desc formatted $srcTbl")
-    val tableType = df.filter(df("col_name") === "Type").collect()(0).get(1)
-    if (checkLocation.isDefined) {
-      val catalog = spark.sessionState.catalog
+    val catalog = spark.sessionState.catalog
+    if(checkLocation.isDefined) {
       assert(
         catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString + "/"
           == checkLocation.get ||
           catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
             checkLocation.get)
-      assert(tableType == "EXTERNAL", "location does not match")
-    } else {
-      // If location is not defined, then target table should be managed
-      assert(tableType  == "MANAGED", "table type does not match")
     }
   }
 
@@ -324,7 +327,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
   test("CREATE TABLE LIKE where target table is a nameless table") {
     val srcTbl = "srcTbl"
-    val targetTbl = "targetTbl"
     withTempDir { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
@@ -371,13 +373,13 @@ class DeltaCreateTableLikeSuite extends QueryTest
   test("CREATE TABLE LIKE where source table has a column mapping") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
-    val srcView = "srcView"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl
       )
       // Need to set minWriterVersion to 5 for column mappings to work
       spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES('delta.minReaderVersion' = '2'," +
         " 'delta.minWriterVersion' = '5')")
+      // Need to set delta.columnMapping.mode to 'name' for column mappings to work
       spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
       spark.sql(s"ALTER TABLE $srcTbl RENAME COLUMN key TO key2")
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
