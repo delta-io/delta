@@ -812,8 +812,7 @@ class DeltaAnalysis(session: SparkSession)
     def unapply(arg: LogicalPlan): Option[(CreateTableLikeCommand, CatalogTable)] = arg match {
       case c: CreateTableLikeCommand =>
         val src = session.sessionState.catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
-        if (src.provider.contains("delta") || (c.provider.isDefined &&
-          c.provider.get.toLowerCase() == "delta")) {
+        if (src.provider.contains("delta") || c.provider.exists(_.toLowerCase() == "delta")) {
           Some(c, src)
         } else {
           None

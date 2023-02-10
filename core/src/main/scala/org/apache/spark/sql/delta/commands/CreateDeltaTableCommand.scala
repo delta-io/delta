@@ -61,6 +61,7 @@ case class CreateDeltaTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     var table = this.table
+
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
@@ -185,8 +186,8 @@ case class CreateDeltaTableCommand(
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
-            if (newProtocol.isDefined) {
-              txn.updateProtocol(newProtocol.get)
+            newProtocol.foreach { protocol =>
+              txn.updateProtocol(protocol)
             }
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)

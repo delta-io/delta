@@ -126,7 +126,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       val targetTblProvider = spark.sessionState.catalog.
         getTempViewOrPermanentTableMetadata(TableIdentifier(targetTbl)).provider
       assert(srcTblDesc.provider == targetTblProvider,
-             "provider does not match")
+        "provider does not match")
     }
     val df = spark.sql(s"desc formatted $srcTbl")
     val tableType = df.filter(df("col_name") === "Type").collect()(0).get(1)
@@ -137,12 +137,10 @@ class DeltaCreateTableLikeSuite extends QueryTest
           == checkLocation.get ||
           catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
             checkLocation.get)
-      assert(tableType == "EXTERNAL",
-      "location does not match")
+      assert(tableType == "EXTERNAL", "location does not match")
     } else {
       // If location is not defined, then target table should be managed
-      assert(tableType  == "MANAGED",
-      "table type does not match")
+      assert(tableType  == "MANAGED", "table type does not match")
     }
   }
 
@@ -158,7 +156,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       .partitionBy("key")
       .saveAsTable(srcTbl)
 
-    if(addTblProperties) {
+    if (addTblProperties) {
       spark.sql(s"ALTER TABLE $srcTbl" +
         " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false)")
     }
@@ -166,7 +164,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES('delta.minReaderVersion' = '2'," +
         " 'delta.minWriterVersion' = '5')")
     }
-    if(addComment) {
+    if (addComment) {
       spark.sql(s"COMMENT ON TABLE $srcTbl IS 'srcTbl'")
     }
   }
