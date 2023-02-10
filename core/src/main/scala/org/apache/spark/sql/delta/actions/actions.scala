@@ -26,7 +26,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
@@ -36,11 +36,10 @@ import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -339,6 +338,46 @@ object Protocol {
     }
   }
 
+  /**
+   * Verify that the table properties satisfy legality constraints. Throw an exception if not.
+   */
+  def assertTablePropertyConstraintsSatisfied(
+      spark: SparkSession,
+      metadata: Metadata,
+      snapshot: Snapshot): Unit = {
+    import DeltaTablePropertyValidationFailedSubClass._
+
+    val tableName = if (metadata.name != null) metadata.name else metadata.id
+
+    val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    val dvsEnabled = {
+      val lowerCaseKey = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key.toLowerCase(Locale.ROOT)
+      configs.get(lowerCaseKey).exists(_.toBoolean)
+    }
+    if (dvsEnabled && metadata.format.provider != "parquet") {
+      // DVs only work with parquet-based delta tables.
+      throw new DeltaTablePropertyValidationFailedException(
+        table = tableName,
+        subClass = PersistentDeletionVectorsInNonParquetTable)
+    }
+    val manifestGenerationEnabled = {
+      val lowerCaseKey = DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key.toLowerCase(Locale.ROOT)
+      configs.get(lowerCaseKey).exists(_.toBoolean)
+    }
+    if (dvsEnabled && manifestGenerationEnabled) {
+      throw new DeltaTablePropertyValidationFailedException(
+        table = tableName,
+        subClass = PersistentDeletionVectorsWithIncrementalManifestGeneration)
+    }
+    if (manifestGenerationEnabled) {
+      // Only allow enabling this, if there are no DVs present.
+      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+        throw new DeltaTablePropertyValidationFailedException(
+          table = tableName,
+          subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
+      }
+    }
+  }
 }
 
 /**
@@ -406,7 +445,8 @@ case class AddFile(
     // scalastyle:off
     val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
+      deletionVector = deletionVector
     )
     // scalastyle:on
     removedFile

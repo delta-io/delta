@@ -563,6 +563,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
+    if (spark.conf.get(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED)) {
+      Protocol.assertTablePropertyConstraintsSatisfied(spark, metadata, snapshot)
+    }
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {

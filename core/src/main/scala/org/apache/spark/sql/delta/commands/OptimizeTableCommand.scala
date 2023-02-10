@@ -311,10 +311,13 @@ class OptimizeExecutor(
           bins += currentBin.toVector
         }
 
+        bins.filter { bin =>
+          bin.size > 1 || // bin has more than one file or
+          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          isMultiDimClustering // multi-clustering
+        }
+
         bins.map(b => (partition, b))
-          // select bins that have at least two files or in case of multi-dim clustering
-          // select all bins
-          .filter(_._2.size > 1 || isMultiDimClustering)
     }
   }
 

@@ -1882,6 +1882,13 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS" : {
+    "message" : [
+      "The 'GENERATE symlink_format_manifest' command is not supported on table versions with deletion vectors.",
+      "If you need to generate manifests, consider disabling deletion vectors on this table using 'ALTER TABLE table SET TBLPROPERTIES (delta.enableDeletionVectors = false)'."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT" : {
     "message" : [
       "Invariants on nested fields other than StructTypes are not supported."
@@ -2014,6 +2021,30 @@
       "<values>"
     ],
     "sqlState" : "23001"
+  },
+  "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED" : {
+    "message" : [
+      "The validation of the properties of table <table> has been violated:"
+    ],
+    "subClass" : {
+      "EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION" : {
+        "message" : [
+          "Symlink manifest generation is unsupported while deletion vectors are present in the table.",
+          "In order to produce a version of the table without deletion vectors, run 'REORG TABLE <table> APPLY (PURGE)'."
+        ]
+      },
+      "PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE" : {
+        "message" : [
+          "Persistent deletion vectors are only supported on Parquet-based Delta tables."
+        ]
+      },
+      "PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION" : {
+        "message" : [
+          "Persistent deletion vectors and incremental symlink manifest generation are mutually exclusive."
+        ]
+      }
+    },
+    "sqlState" : "0A000"
   },
   "DELTA_ZORDERING_COLUMN_DOES_NOT_EXIST" : {
     "message" : [
