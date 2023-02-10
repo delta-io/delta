@@ -149,8 +149,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
   def createTable(
       srcTbl: String, format: String = "delta",
       addTblProperties: Boolean = true,
-      addComment: Boolean = true,
-      addConstraint: Boolean = true): Unit = {
+      addComment: Boolean = true): Unit = {
     spark.range(100)
       .withColumnRenamed("id", "key")
       .withColumn("newCol", lit(1))
@@ -169,8 +168,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
     if(addComment) {
       spark.sql(s"COMMENT ON TABLE $srcTbl IS 'srcTbl'")
-    }
-    if(addConstraint) {
     }
   }
 
@@ -239,9 +236,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl)
-
       spark.sql(s"CREATE TABLE $targetTbl(key4 INT) USING DELTA")
-
       spark.sql(s"CREATE TABLE IF NOT EXISTS $targetTbl LIKE  $srcTbl")
 
       val msg = intercept[TestFailedException] {
@@ -328,14 +323,15 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
-  test("CREATE TABLE LIKE where target table is a nameless external table") {
+  test("CREATE TABLE LIKE where target table is a nameless table") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
     withTempDir { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
         spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
-        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true)
+        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true
+        )
       }
     }
   }

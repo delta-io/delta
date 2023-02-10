@@ -520,6 +520,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * this transaction is logically creating a new table, e.g. replacing a previous table with new
    * metadata. Note that this must be done before writing out any files so that file writing
    * and checks happen with the final metadata for the table.
+   * @newProtocol: This will be supplied if a new Protocol needs to be set in metadata
+   * IMPORTANT: It is the responsibility of the caller to ensure that files currently
+   * present in the table are still valid under the new metadata.
    */
   def updateMetadataForNewTable(metadata: Metadata): Unit = {
     isCreatingNewTable = true
