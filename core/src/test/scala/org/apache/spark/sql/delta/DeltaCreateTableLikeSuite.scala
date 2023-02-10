@@ -90,7 +90,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
           catalog.getTableMetadata(TableIdentifier(targetTbl)).location.toString ==
             checkLocation.get, "location does not match")
     }
-
   }
 
   /**
