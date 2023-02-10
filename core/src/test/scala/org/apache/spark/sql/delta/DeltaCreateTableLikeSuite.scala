@@ -215,7 +215,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
-      createTable(srcTbl, addConstraint = false)
+      createTable(srcTbl
+      )
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
@@ -374,7 +375,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     val srcView = "srcView"
     withTable(srcTbl, targetTbl) {
-      createTable(srcTbl, addConstraint = false)
+      createTable(srcTbl
+      )
       // Need to set minWriterVersion to 5 for column mappings to work
       spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES('delta.minReaderVersion' = '2'," +
         " 'delta.minWriterVersion' = '5')")
