@@ -315,9 +315,7 @@ class OptimizeExecutor(
           bin.size > 1 || // bin has more than one file or
           (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
           isMultiDimClustering // multi-clustering
-        }
-
-        bins.map(b => (partition, b))
+        }.map(b => (partition, b))
     }
   }
 

@@ -19,8 +19,6 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
-import org.apache.spark.SparkThrowable
-
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
@@ -33,10 +31,12 @@ import org.apache.hadoop.fs._
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
+// scalastyle:on import.ordering.noEmptyLine
 
 class DeltaGenerateSymlinkManifestSuite
   extends DeltaGenerateSymlinkManifestSuiteBase
@@ -601,7 +601,6 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
             subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)  {
           setEnabledIncrementalManifest(tablePath, enabled = true)
         }
-
         // Run optimize to delete the DVs and rewrite the data files
         withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.00001") {
           spark.sql(s"OPTIMIZE delta.`$tablePath`")
