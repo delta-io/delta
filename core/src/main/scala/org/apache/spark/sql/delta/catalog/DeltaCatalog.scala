@@ -250,11 +250,26 @@ class DeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]): Table = recordFrameProfile(
         "DeltaCatalog", "createTable") {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+
+      // If table is created with options, this properties are
+      // duplicated with and without prefix ´option´
+      val keepPrefixCatalogue = spark
+        .sessionState
+        .conf
+        .getConf(DeltaSQLConf.DELTA_LEGACY_KEEP_OPTION_PREFIX_IN_CATALOGUE)
+      val prefixDelete =
+        if (keepPrefixCatalogue) {
+          // Legacy behaviour, keep ´option´ prefix
+          identity[(String, String)] _
+        } else {
+          // Strip prefix to avoid duplicates
+          ((key: String, value: String) => (key.stripPrefix("option."), value)).tupled
+        }
       createDeltaTable(
         ident,
         schema,
         partitions,
-        properties,
+        properties.asScala.map(prefixDelete).asJava,
         Map.empty,
         sourceQuery = None,
         TableCreationModes.Create)
