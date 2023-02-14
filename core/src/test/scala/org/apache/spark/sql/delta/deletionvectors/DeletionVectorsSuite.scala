@@ -18,8 +18,9 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,6 +37,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
+  with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
 
@@ -193,6 +195,74 @@ class DeletionVectorsSuite extends QueryTest
           s"SELECT * FROM delta.`${source1.getAbsolutePath}` UNION ALL " +
           s"SELECT * FROM delta.`${source2.getAbsolutePath}`")
       )
+    }
+  }
+
+  test("DELETE with DVs - on a table with no prior DVs") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dirName =>
+        // Create table with 500 files of 2 rows each.
+        val numFiles = 500
+        val path = dirName.getAbsolutePath
+        spark.range(0, 1000, step = 1, numPartitions = numFiles)
+          .write.format("delta").save(path)
+        val tableName = s"delta.`$path`"
+
+        val beforeDeleteFiles = DeltaLog.forTable(spark, path)
+            .unsafeVolatileSnapshot.allFiles.collect().map(_.path)
+
+        val numFilesWithDVs = 100
+        val numDeletedRows = numFilesWithDVs * 1
+        spark.sql(s"DELETE FROM $tableName WHERE id % 2 = 0 AND id < 200")
+
+        // Verify the expected no. of deletion vectors and deleted rows according to DV cardinality
+        val allFiles = DeltaLog.forTable(spark, path).unsafeVolatileSnapshot.allFiles.collect()
+        assert(allFiles.size === numFiles)
+        assert(allFiles.filter(_.deletionVector != null).size === numFilesWithDVs)
+        assert(
+          allFiles.filter(_.deletionVector != null).map(_.deletionVector.cardinality).sum ==
+          numDeletedRows)
+
+        val afterDeleteFiles = allFiles.map(_.path)
+        // make sure the data file list is the same
+        assert(beforeDeleteFiles === afterDeleteFiles)
+
+        // Contents after the DELETE are as expected
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableName"),
+          Seq.range(0, 1000).filterNot(Seq.range(start = 0, end = 200, step = 2).contains(_)).toDF()
+        )
+      }
+    }
+  }
+
+  test("DELETE with DVs - existing table already has DVs") {
+    withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+      withTempDir { tempDir =>
+        val source = new File(table1Path)
+        val target = new File(tempDir, "deleteTest")
+
+        // Copy the source DV table to a temporary directory
+        FileUtils.copyDirectory(source, target)
+
+        val targetPath = s"delta.`${target.getAbsolutePath}`"
+        val dataToRemove = Seq(1999, 299, 7, 87, 867, 456)
+        val existingDVs = getFilesWithDeletionVectors(DeltaLog.forTable(spark, target))
+
+        spark.sql(s"DELETE FROM $targetPath WHERE value in (${dataToRemove.mkString(",")})")
+
+        // Check new DVs are created
+        val newDVs = getFilesWithDeletionVectors(DeltaLog.forTable(spark, target))
+        // expect the new DVs contain extra entries for the deleted rows.
+        assert(
+          existingDVs.map(_.deletionVector.cardinality).sum + dataToRemove.size ===
+          newDVs.map(_.deletionVector.cardinality).sum
+        )
+
+        // Check the data is valid
+        val expectedTable1DataV5 = expectedTable1DataV4.filterNot(e => dataToRemove.contains(e))
+        checkAnswer(spark.sql(s"SELECT * FROM $targetPath"), expectedTable1DataV5.toDF())
+      }
     }
   }
 

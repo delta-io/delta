@@ -45,8 +45,8 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   def withDeletionVectorsEnabled(enabled: Boolean = true)(thunk: => Unit): Unit = {
     val enabledStr = enabled.toString
     withSQLConf(
-      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr
-    ) {
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr,
+      DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr) {
       thunk
     }
   }

@@ -1108,6 +1108,13 @@ trait DeltaSQLConfBase {
           |Only change this for testing!""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELETE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("delete.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in the Delete command.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

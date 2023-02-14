@@ -448,6 +448,7 @@ case class AddFile(
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
       deletionVector = deletionVector
     )
+    removedFile.numLogicalRecords = numLogicalRecords
     // scalastyle:on
     removedFile
   }
