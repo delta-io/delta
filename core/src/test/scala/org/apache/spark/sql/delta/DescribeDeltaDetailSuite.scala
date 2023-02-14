@@ -259,6 +259,19 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
+  test("describe detail contains table name") {
+    val tblName = "test_table"
+    withTable(tblName) {
+      spark.sql(s"CREATE TABLE $tblName(id INT) USING delta")
+      val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
+      checkResult(
+        deltaTable.detail(),
+        Seq(s"$catalogAndSchema$tblName"),
+        Seq("name")
+      )
+    }
+  }
+
   // TODO: run it with OSS Delta after it's supported
 }
 
