@@ -112,8 +112,11 @@ trait AnalysisHelper {
 
 object AnalysisHelper {
   /** LogicalPlan to help resolve the given expression */
-  case class FakeLogicalPlan(exprs: Seq[Expression], children: Seq[LogicalPlan])
-    extends LogicalPlan {
+  case class FakeLogicalPlan(
+      exprs: Seq[Expression],
+      children: Seq[LogicalPlan])
+    extends LogicalPlan
+  {
     override def output: Seq[Attribute] = Nil
 
     override protected def withNewChildrenInternal(
