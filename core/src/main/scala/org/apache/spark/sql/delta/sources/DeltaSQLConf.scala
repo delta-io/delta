@@ -1099,6 +1099,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .createWithDefault(0.05d)
+
+  val DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED =
+    buildConf("tablePropertyConstraintsCheck.enabled")
+      .internal()
+      .doc(
+        """Check that all table-properties satisfy validity constraints.
+          |Only change this for testing!""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -104,6 +104,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     }
   }
 
+  /** Enable persistent Deletion Vectors in a Delta table. */
+  def enableDeletionVectorsInTable(tablePath: Path, enable: Boolean): Unit =
+    spark.sql(
+      s"""ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$enable')
+         |""".stripMargin)
+
   // ======== HELPER METHODS TO WRITE DVs ==========
   /** Helper method to remove the specified rows in the given file using DVs */
   protected def removeRowsFromFileUsingDV(

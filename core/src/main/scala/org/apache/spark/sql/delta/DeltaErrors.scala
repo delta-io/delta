@@ -2630,6 +2630,10 @@ trait DeltaErrorsBase
       messageParameters = Array.empty,
       pos = 0)
   }
+
+  def generateNotSupportedWithDeletionVectors(): Throwable =
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -2907,6 +2911,49 @@ class DeltaNoSuchTableException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+}
+
+class DeltaCommandUnsupportedWithDeletionVectorsException(
+  errorClass: String,
+  messageParameters: Array[String] = Array.empty)
+  extends UnsupportedOperationException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+sealed trait DeltaTablePropertyValidationFailedSubClass {
+  def tag: String
+  /** Can be overridden in case subclasses need the table name as well. */
+  def messageParameters(table: String): Array[String] = Array(table)
+}
+
+final object DeltaTablePropertyValidationFailedSubClass {
+  final case object PersistentDeletionVectorsWithIncrementalManifestGeneration
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+  }
+  final case object ExistingDeletionVectorsWithIncrementalManifestGeneration
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+    /** This subclass needs the table parameters in two places. */
+    override def messageParameters(table: String): Array[String] = Array(table, table)
+  }
+  final case object PersistentDeletionVectorsInNonParquetTable
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE"
+  }
+}
+
+class DeltaTablePropertyValidationFailedException(
+    table: String,
+    subClass: DeltaTablePropertyValidationFailedSubClass)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
+    messageParameters = subClass.messageParameters(table)))
+    with DeltaThrowable {
+  override def getErrorClass: String =
+    "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
 }
 
 /** Errors thrown around column mapping. */
