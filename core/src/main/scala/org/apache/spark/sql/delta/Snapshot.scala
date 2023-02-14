@@ -254,6 +254,7 @@ class Snapshot(
             if (stateReconstructionCheck) {
               throw DeltaErrors.actionNotFoundException("protocol", version)
             }
+            logMissingActionWarning("protocol")
           } else if (_computedState.protocol != protocol) {
             recordDeltaEvent(
               deltaLog,
@@ -262,7 +263,10 @@ class Snapshot(
                 "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
                 "computedState.protocol" -> _computedState.protocol,
                 "extracted.protocol" -> protocol))
-            throw DeltaErrors.actionNotFoundException("protocol", version)
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("protocol", version)
+            }
+            logMissingActionWarning("protocol")
           }
 
           if (_computedState.metadata == null) {
@@ -284,7 +288,11 @@ class Snapshot(
                 "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
                 "computedState.metadata" -> _computedState.metadata,
                 "extracted.metadata" -> metadata))
-            throw DeltaErrors.actionNotFoundException("metadata", version)
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("metadata", version)
+            }
+            logMissingActionWarning("metadata")
+            _computedState.copy(metadata = Metadata())
           }
           _computedState
         }
@@ -302,6 +310,8 @@ class Snapshot(
       case (p: Protocol, _) => protocol = p
       case (_, m: Metadata) => metadata = m
     }
+    val stateReconstructionCheck = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
 
     if (protocol == null) {
       recordDeltaEvent(
@@ -309,8 +319,10 @@ class Snapshot(
         opType = "delta.assertions.missingAction",
         data = Map(
           "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-      throw DeltaErrors.actionNotFoundException("protocol", version)
-    }
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("protocol", version)
+      }
+      logMissingActionWarning("protocol")    }
 
     if (metadata == null) {
       recordDeltaEvent(
@@ -318,7 +330,11 @@ class Snapshot(
         opType = "delta.assertions.missingAction",
         data = Map(
           "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot"))
-      throw DeltaErrors.actionNotFoundException("metadata", version)
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("metadata", version)
+      }
+      logMissingActionWarning("metadata")
+      metadata = Metadata()
     }
 
     protocol -> metadata
