@@ -68,7 +68,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
   private[delta] def listFrom(startVersion: Long): Iterator[FileStatus] = {
-    store.listFrom(checkpointPrefix(logPath, startVersion), newDeltaHadoopConf())
+    store.listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
   }
 
   /** Returns true if the path is delta log files. Delta log files can be delta commit file

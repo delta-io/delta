@@ -202,7 +202,7 @@ class DeltaHistoryManager(
    */
   private[delta] def getEarliestRecreatableCommit: Long = {
     val files = deltaLog.store.listFrom(
-        FileNames.deltaFile(deltaLog.logPath, 0),
+        FileNames.listingPrefix(deltaLog.logPath, 0),
         deltaLog.newDeltaHadoopConf())
       .filter(f => FileNames.isDeltaFile(f) || FileNames.isCheckpointFile(f))
 
@@ -281,7 +281,7 @@ object DeltaHistoryManager extends DeltaLogging {
    */
   def getEarliestDeltaFile(deltaLog: DeltaLog): Long = {
     val earliestVersionOpt = deltaLog.store.listFrom(
-      FileNames.deltaFile(deltaLog.logPath, 0),
+      FileNames.listingPrefix(deltaLog.logPath, 0),
       deltaLog.newDeltaHadoopConf())
       .filter(FileNames.isDeltaFile)
       .take(1).toArray.headOption
@@ -311,7 +311,7 @@ object DeltaHistoryManager extends DeltaLogging {
       end: Option[Long],
       hadoopConf: Configuration): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
-    val commits = logStore.listFrom(deltaFile(logPath, start), hadoopConf)
+    val commits = logStore.listFrom(listingPrefix(logPath, start), hadoopConf)
       .filter(isDeltaFile)
       .map { fileStatus =>
         Commit(deltaVersion(fileStatus), fileStatus.getModificationTime)

@@ -137,7 +137,11 @@ object ScanWithDeletionVectors {
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
     val newScanOutput = inputScan.output :+
       AttributeReference(skipRowField.name, skipRowField.dataType)()
-    val newScanSchema = StructType(inputScan.schema).add(skipRowField)
+
+    // Data schema and scan schema could be different. The scan schema may contain additional
+    // columns such as `_metadata.file_path` (metadata columns) which are populated in Spark scan
+    // operator after the data is read from the underlying file reader.
+    val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
     val hadoopConfBroadcast = spark.sparkContext.broadcast(
       new SerializableConfiguration(tahoeFileIndex.deltaLog.newDeltaHadoopConf()))
@@ -146,7 +150,7 @@ object ScanWithDeletionVectors {
       tahoeFileIndex.path.toString, filePathToDVBroadcastMap, hadoopConfBroadcast)
     val newRelation = hadoopFsRelation.copy(
       fileFormat = newFileFormat,
-      dataSchema = newScanSchema)(hadoopFsRelation.sparkSession)
+      dataSchema = newDataSchema)(hadoopFsRelation.sparkSession)
 
     // Create a new scan LogicalRelation
     inputScan.copy(relation = newRelation, output = newScanOutput)

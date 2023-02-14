@@ -809,6 +809,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
+    buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
+      .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
+        "deletion files. This could cause data duplication and is strongly not recommended.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -1091,6 +1099,22 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .createWithDefault(0.05d)
+
+  val DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED =
+    buildConf("tablePropertyConstraintsCheck.enabled")
+      .internal()
+      .doc(
+        """Check that all table-properties satisfy validity constraints.
+          |Only change this for testing!""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELETE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("delete.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in the Delete command.")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

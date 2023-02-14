@@ -261,7 +261,7 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
-      Some((col.name.init, field, col.position.map(toV2Position)))
+        Some((col.name.init, field, col.position.map(toV2Position)))
     }
   }
 }
@@ -356,16 +356,18 @@ case class AlterTableChangeColumnDeltaCommand(
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          val newField =
-            // Take the name, comment, nullability and data type from newField
-            // It's crucial to keep the old column's metadata, which may contain column mapping
-            // metadata.
-            newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
-              .copy(
-                name = newColumn.name,
-                dataType =
-                  SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-                nullable = newColumn.nullable)
+          val newField = {
+              // Take the name, comment, nullability and data type from newField
+              // It's crucial to keep the old column's metadata, which may contain column mapping
+              // metadata.
+              var result = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              result
+                .copy(
+                  name = newColumn.name,
+                  dataType =
+                    SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
+                  nullable = newColumn.nullable)
+          }
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>

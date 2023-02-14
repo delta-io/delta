@@ -45,8 +45,8 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   def withDeletionVectorsEnabled(enabled: Boolean = true)(thunk: => Unit): Unit = {
     val enabledStr = enabled.toString
     withSQLConf(
-      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr
-    ) {
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr,
+      DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr) {
       thunk
     }
   }
@@ -103,6 +103,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       assert(dv.cardinality === bitmap.cardinality)
     }
   }
+
+  /** Enable persistent Deletion Vectors in a Delta table. */
+  def enableDeletionVectorsInTable(tablePath: Path, enable: Boolean): Unit =
+    spark.sql(
+      s"""ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$enable')
+         |""".stripMargin)
 
   // ======== HELPER METHODS TO WRITE DVs ==========
   /** Helper method to remove the specified rows in the given file using DVs */

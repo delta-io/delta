@@ -1595,14 +1595,11 @@ class DeltaSuite extends QueryTest
         Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
       val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
-
-      val filesToDelete = inputFiles.take(4)
-      filesToDelete.foreach { f =>
-        val deleted = tryDeleteNonRecursive(
-          tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
-          new Path(tempDirPath, f))
-        assert(deleted)
-      }
+      val fileToDelete = inputFiles.head
+      val pathToDelete = new Path(tempDirPath, fileToDelete)
+      val deleted = tryDeleteNonRecursive(
+        tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()), pathToDelete)
+      assert(deleted)
 
       val thrown = intercept[SparkException] {
         data.toDF().collect()

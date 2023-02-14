@@ -54,10 +54,16 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       assert(metrics.numFilesRemoved == startCount)
       assert(metrics.filesAdded.min.get == finalSizes.min)
       assert(metrics.filesAdded.max.get == finalSizes.max)
+      assert(metrics.filesAdded.totalSize == finalSizes.sum)
+      assert(metrics.filesAdded.totalFiles == finalSizes.length)
       assert(metrics.filesRemoved.max.get == startSizes.max)
       assert(metrics.filesRemoved.min.get == startSizes.min)
+      assert(metrics.filesRemoved.totalSize == startSizes.sum)
+      assert(metrics.filesRemoved.totalFiles == startSizes.length)
       assert(metrics.totalConsideredFiles == startCount)
       assert(metrics.totalFilesSkipped == 0)
+      assert(metrics.numTableColumns == 2)
+      assert(metrics.numTableColumnsWithStats == 2)
     }
   }
 
@@ -118,7 +124,9 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("totalClusterParallelism", LongType, nullable = false),
       StructField("totalScheduledTasks", LongType, nullable = false),
       StructField("autoCompactParallelismStats", parallelismMetricsSchema, nullable = true),
-      StructField("deletionVectorStats", dvMetricsSchema, nullable = true)
+      StructField("deletionVectorStats", dvMetricsSchema, nullable = true),
+      StructField("numTableColumns", LongType, nullable = false),
+      StructField("numTableColumnsWithStats", LongType, nullable = false)
     ))
     val optimizeSchema = StructType(Seq(
       StructField("path", StringType, nullable = true),
@@ -198,11 +206,43 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         startTimeMs = actMetrics.startTimeMs,
         endTimeMs = actMetrics.endTimeMs,
         totalClusterParallelism = 2,
-        totalScheduledTasks = 0)
+        totalScheduledTasks = 0,
+        numTableColumns = 1,
+        numTableColumnsWithStats = 1)
 
       assert(actMetrics === expMetrics)
     }
   }
+
+  test("optimize metrics when certain table columns have no stats") {
+    val tblName = "tblName"
+    withTable(tblName) {
+      // Create Delta table with 5 columns
+      spark.range(10)
+        .withColumn("col2", 'id * 2)
+        .withColumn("col3", 'id * 3)
+        .withColumn("col4", 'id * 4)
+        .withColumn("col5", 'id * 5)
+        .write.format("delta").saveAsTable(tblName)
+
+      // Set to only collect data skipping stats on 3 columns
+      spark.sql(s"""
+                  |ALTER TABLE $tblName
+                  |SET TBLPROPERTIES (
+                  |  'delta.dataSkippingNumIndexedCols' = '3'
+                  |)""".stripMargin)
+
+      // Optimize
+      val res = spark.sql(s"OPTIMIZE $tblName")
+      val actMetrics: OptimizeMetrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+
+      // The table has 5 columns
+      assert(actMetrics.numTableColumns == 5)
+      // There are only 3 columns to collect stats because of the dataSkippingNumIndexedCols config
+      assert(actMetrics.numTableColumnsWithStats == 3)
+    }
+  }
+
 
   test("optimize ZOrderBy operation metrics in Delta table history") {
     withSQLConf(

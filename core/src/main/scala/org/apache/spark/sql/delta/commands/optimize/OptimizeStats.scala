@@ -39,6 +39,8 @@ case class OptimizeStats(
     var totalClusterParallelism: Long = 0,
     var totalScheduledTasks: Long = 0,
     var deletionVectorStats: Option[DeletionVectorStats] = None,
+    var numTableColumns: Long = 0,
+    var numTableColumnsWithStats: Long = 0,
     var autoCompactParallelismStats: AutoCompactParallelismStats = AutoCompactParallelismStats()) {
 
   def toOptimizeMetrics: OptimizeMetrics = {
@@ -60,6 +62,8 @@ case class OptimizeStats(
       totalClusterParallelism = totalClusterParallelism,
       totalScheduledTasks = totalScheduledTasks,
       deletionVectorStats = deletionVectorStats,
+      numTableColumns = numTableColumns,
+      numTableColumnsWithStats = numTableColumnsWithStats,
       autoCompactParallelismStats = autoCompactParallelismStats.toMetrics)
   }
 }
@@ -204,8 +208,10 @@ object FileSizeStatsWithHistogram {
  * @param endTimeMs The end time of Optimize command.
  * @param totalClusterParallelism The total number of parallelism of this cluster.
  * @param totalScheduledTasks The total number of optimize task scheduled.
- * @param parallelismMetrics The metrics of cluster and session parallelism used by optimize
- *                           command.
+ * @param autoCompactParallelismStats The metrics of cluster and session parallelism.
+ * @param deletionVectorStats Statistics related with Deletion Vectors.
+ * @param numTableColumns Number of columns in the table.
+ * @param numTableColumnsWithStats Number of table columns to collect data skipping stats.
  */
 case class OptimizeMetrics(
     numFilesAdded: Long,
@@ -227,7 +233,9 @@ case class OptimizeMetrics(
     totalClusterParallelism: Long = 0,
     totalScheduledTasks: Long = 0,
     autoCompactParallelismStats: Option[ParallelismMetrics] = None,
-    deletionVectorStats: Option[DeletionVectorStats] = None
+    deletionVectorStats: Option[DeletionVectorStats] = None,
+    numTableColumns: Long = 0,
+    numTableColumnsWithStats: Long = 0
   )
 
 /**

@@ -2550,6 +2550,251 @@ abstract class MergeIntoSuiteBase
     expectedWithoutEvolution = ((0, 0) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
   )
 
+  // Schema evolution with UPDATE SET alone
+  testEvolution("new column with update set")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
+    expected = ((0, 0, null) +: (3, 30, null) +: (1, 1, "extra1") +: Nil)
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
+  testEvolution("new column updated with value from existing column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = update(set = "extra = s.value") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, 1) +: (3, 30, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, Integer)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
+  // Schema evolution with INSERT alone
+  testEvolution("new column with insert values")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = insert(values = "(key, value, extra) VALUES (s.key, s.value, s.extra)") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (2, 2, "extra2") +: Nil)
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause")
+
+   testEvolution("new column inserted with value from existing column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = insert(values = "(key, extra) VALUES (s.key, s.value)") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (2, null, 2) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, Integer)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause")
+
+  // Schema evolution (UPDATE) with two new columns in the source but only one added to the target.
+  testEvolution("new column with update set and column not updated")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1", "unused1"), (2, 2, "extra2", "unused2"))
+      .toDF("key", "value", "extra", "unused"),
+    clauses = update(set = "extra = s.extra") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, "extra1") +: (3, 30, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
+  testEvolution("new column updated from other new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1", "unused1"), (2, 2, "extra2", "unused2"))
+      .toDF("key", "value", "extra", "unused"),
+    clauses = update(set = "extra = s.unused") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, "unused1") +: (3, 30, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
+  // Schema evolution (INSERT) with two new columns in the source but only one added to the target.
+  testEvolution("new column with insert values and column not inserted")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1", "unused1"), (2, 2, "extra2", "unused2"))
+      .toDF("key", "value", "extra", "unused"),
+    clauses = insert(values = "(key, extra) VALUES (s.key, s.extra)") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (2, null, "extra2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause")
+
+  testEvolution("new column inserted from other new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1", "unused1"), (2, 2, "extra2", "unused2"))
+      .toDF("key", "value", "extra", "unused"),
+    clauses = insert(values = "(key, extra) VALUES (s.key, s.unused)") :: Nil,
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (2, null, "unused2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause")
+
+  // Schema evolution with two new columns added by UPDATE and INSERT resp.
+  testEvolution("new column added by insert and other new column added by update")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1", "other1"), (2, 2, "extra2", "other2"))
+      .toDF("key", "value", "extra", "other"),
+    clauses = update(set = "extra = s.extra") ::
+      insert(values = "(key, other) VALUES (s.key, s.other)") :: Nil,
+    expected =
+      ((0, 0, null, null) +:
+       (1, 10, "extra1", null) +:
+       (3, 30, null, null) +:
+       (2, null, null, "other2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String, String)]]
+      .toDF("key", "value", "extra", "other"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
+
+  // Nested Schema evolution with UPDATE alone
+  testNestedStructsEvolution("new nested source field added when updating top-level column")(
+    target = """{ "key": "A", "value": { "a": 1 }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    clauses = update("value = s.value") :: Nil,
+    result = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested source field not in update is ignored")(
+    target = """{ "key": "A", "value": { "a": 1 }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    clauses = update("value.a = s.value.a") :: Nil,
+    result = """{ "key": "A", "value": { "a": 2 }""",
+    resultWithoutEvolution = """{ "key": "A", "value": { "a": 2 }""")
+
+  testNestedStructsEvolution("two new nested source fields with update: one added, one ignored")(
+    target = """{ "key": "A", "value": { "a": 1 }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)
+          .add("c", IntegerType)),
+    clauses = update("value.b = s.value.b") :: Nil,
+    result = """{ "key": "A", "value": { "a": 1, "b": 3 }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+
+  // Nested Schema evolution with INSERT alone
+  testNestedStructsEvolution("new nested source field added when inserting top-level column")(
+    target = """{ "key": "A", "value": { "a": 1 }""",
+    source = """{ "key": "B", "value": { "a": 2, "b": 3 }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    clauses = insert("(value) VALUES (s.value)") :: Nil,
+    result =
+    """{ "key": "A", "value": { "a": 1, "b": null }
+       { "key": "B", "value": { "a": 2, "b": 3 }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("insert new nested source field not supported")(
+    target = """{ "key": "A", "value": { "a": 1 }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)
+          .add("c", IntegerType)),
+    clauses = insert("(value.b) VALUES (s.value.b)") :: Nil,
+    expectErrorContains = "Nested field is not supported in the INSERT clause of MERGE operation",
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+  // No schema evolution
+  testEvolution("old column updated from new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = update(set = "value = s.extra") :: Nil,
+    expected = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"))
+
+  testEvolution("old column inserted from new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = insert(values = "(key) VALUES (s.extra)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"))
+
+  testEvolution("new column with insert existing column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = insert(values = "(key) VALUES (s.key)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (2, null) +: (3, 30) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (2, null) +: (3, 30) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"))
+
+  // Column doesn't exist with UPDATE/INSERT alone.
+  testEvolution("update set nonexistent column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = update(set = "nonexistent = s.extra") :: Nil,
+    expectErrorContains = "cannot resolve nonexistent in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
+
+  testEvolution("insert values nonexistent column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = insert(values = "(nonexistent) VALUES (s.extra)") :: Nil,
+    expectErrorContains = "cannot resolve nonexistent in INSERT clause",
+    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in INSERT clause")
+
   testEvolution("new column with update set and update *")(
     targetData = Seq((0, 0), (1, 10), (2, 20)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
@@ -2631,6 +2876,21 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
     expectErrorWithoutEvolutionContains = "Cannot cast"
   )
+
+  testNestedStructsEvolution("add non-nullable column to target schema")(
+    target = """{ "key": "A" }""",
+    source = """{ "key": "B", "value": 4}""",
+    targetSchema = new StructType()
+      .add("key", StringType),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = false),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": null }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = false),
+    resultWithoutEvolution = """{ "key": "A" }""")
 
   // scalastyle:off line.size.limit
   testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer source")(
@@ -4706,8 +4966,7 @@ abstract class MergeIntoSuiteBase
         sourceData.write.format("delta").saveAsTable("source")
         targetData.write.format("delta").saveAsTable("target")
 
-        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
-          s".*Invalid expressions: \\[$function.*"
+        val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
         def checkExpression(
             expectException: Boolean,

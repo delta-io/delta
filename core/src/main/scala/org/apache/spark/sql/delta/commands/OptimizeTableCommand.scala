@@ -220,6 +220,11 @@ class OptimizeExecutor(
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
       optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
+      val numTableColumns = txn.snapshot.metadata.schema.size
+      optimizeStats.numTableColumns = numTableColumns
+      optimizeStats.numTableColumnsWithStats =
+        DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(txn.snapshot.metadata)
+          .min(numTableColumns)
       if (removedDVs.size > 0) {
         optimizeStats.deletionVectorStats = Some(DeletionVectorStats(
           numDeletionVectorsRemoved = removedDVs.size,
@@ -306,10 +311,11 @@ class OptimizeExecutor(
           bins += currentBin.toVector
         }
 
-        bins.map(b => (partition, b))
-          // select bins that have at least two files or in case of multi-dim clustering
-          // select all bins
-          .filter(_._2.size > 1 || isMultiDimClustering)
+        bins.filter { bin =>
+          bin.size > 1 || // bin has more than one file or
+          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          isMultiDimClustering // multi-clustering
+        }.map(b => (partition, b))
     }
   }
 
