@@ -2634,6 +2634,16 @@ trait DeltaErrorsBase
   def generateNotSupportedWithDeletionVectors(): Throwable =
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+
+  def unsupportedExpression(
+    causedBy: String,
+    expType: DataType,
+    supportedTypes: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION",
+      messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

@@ -921,6 +921,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_INVALID_TABLE_VALUE_FUNCTION" : {
+    "message" : [
+      "Function <function> is an unsupported table valued function for CDC reads."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_TIMESTAMP_FORMAT" : {
     "message" : [
       "The provided timestamp <timestamp> does not match the expected syntax <format>."
@@ -1846,6 +1852,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_EXPRESSION" : {
+    "message" : [
+      "Unsupported expression type(<expType>) for <causedBy>. The supported types are [<supportedTypes>]."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
       "<expression> cannot be used in a generated column"
@@ -2067,6 +2079,12 @@
       "<colName> is a partition column. Z-Ordering can only be performed on data columns"
     ],
     "sqlState" : "42P10"
+  },
+  "INCORRECT_NUMBER_OF_ARGUMENTS" : {
+    "message" : [
+      "<failure>, <functionName> requires at least <minArgs> arguments and at most <maxArgs> arguments."
+    ],
+    "sqlState" : "22023"
   },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
