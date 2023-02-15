@@ -62,8 +62,9 @@ object DeletedRowsMarkingFilter {
       // that keeps all rows
       new KeepAllRowsFilter
     } else {
+      require(tablePath.nonEmpty, "Table path is required for non-empty deletion vectors")
       val dvStore = DeletionVectorStore.createInstance(hadoopConf)
-      val storedBitmap = new StoredBitmap(deletionVector, tablePath)
+      val storedBitmap = StoredBitmap.create(deletionVector, tablePath.get)
       val bitmap = storedBitmap.load(dvStore)
       new DeletedRowsMarkingFilter(bitmap)
     }
