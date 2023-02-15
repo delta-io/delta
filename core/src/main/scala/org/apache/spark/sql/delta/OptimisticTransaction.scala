@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.OptimisticTransaction.assertNoDeletionVectors
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
@@ -131,6 +132,8 @@ class OptimisticTransaction
   extends OptimisticTransactionImpl
   with DeltaLogging {
 
+  assertNoDeletionVectors(snapshot.metadata, spark)
+
   /** Creates a new OptimisticTransaction.
    *
    * @param deltaLog The Delta Log for the table this transaction is modifying.
@@ -186,6 +189,23 @@ object OptimisticTransaction {
    */
   private[delta] def clearActive(): Unit = {
     active.set(null)
+  }
+
+  /**
+   * Utility method that checks the table has no Deletion Vectors enabled. Deletion vectors
+   * are supported only in read-mode for now. Any updates to tables with deletion vectors
+   * feature are disabled until we add support.
+   */
+  def assertNoDeletionVectors(metadata: Metadata, spark: SparkSession): Unit = {
+    val disable =
+      Utils.isTesting && // We are in testing and enabled blocking updates on DV tables
+        spark.conf.get(DeltaSQLConf.DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES)
+    if (!disable &&
+      DeletionVectorsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
+        throw new UnsupportedOperationException(
+          "Updates to tables with Deletion Vectors feature enabled are not supported in " +
+            "this version of Delta Lake.")
+    }
   }
 }
 
@@ -504,6 +524,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(latestMetadata)
     }
 
+
+
+    assertNoDeletionVectors(latestMetadata, spark)
 
     newMetadata = Some(latestMetadata)
   }
