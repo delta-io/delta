@@ -22,7 +22,7 @@ import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.types.{DateType, DoubleType, IntegerType, StringType, TimestampType, LongType, DecimalType}
+import org.apache.spark.sql.types.{DateType, DoubleType, StringType, TimestampType, LongType, DecimalType}
 
 /**
  * Defines rules to convert a data filter to a partition filter for a special generation expression
