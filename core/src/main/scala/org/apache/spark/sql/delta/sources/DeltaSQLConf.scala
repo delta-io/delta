@@ -961,6 +961,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID =
+    buildConf("columnMapping.checkMaxColumnId")
+      .doc(
+        s"""If enabled, check if delta.columnMapping.maxColumnId is correctly assigned at each
+           |Delta transaction commit.
+           |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +

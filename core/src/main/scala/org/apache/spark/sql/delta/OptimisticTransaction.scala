@@ -568,8 +568,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
       }
     } else {
-      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(
-        metadata.schema, metadata.columnMappingMode)
+      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {

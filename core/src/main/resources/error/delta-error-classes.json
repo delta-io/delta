@@ -318,6 +318,18 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET" : {
+    "message" : [
+      "The max column id property (<prop>) is not set on a column mapping enabled table."
+    ],
+    "sqlState" : "42703"
+  },
+  "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY" : {
+    "message" : [
+      "The max column id property (<prop>) on a column mapping enabled table is <tableMax>, which cannot be smaller than the max column id for all fields (<fieldMax>)."
+    ],
+    "sqlState" : "42703"
+  },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
       "Unable to find the column `<columnName>` given [<columnList>]"

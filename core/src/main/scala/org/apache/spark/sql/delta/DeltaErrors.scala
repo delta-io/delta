@@ -1869,6 +1869,21 @@ trait DeltaErrorsBase
     )
   }
 
+  def maxColumnIdNotSet: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET",
+      messageParameters = Array(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+    )
+  }
+
+  def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
+      messageParameters = Array(
+        DeltaConfigs.COLUMN_MAPPING_MAX_ID.key, tableMax.toString, fieldMax.toString)
+    )
+  }
+
   def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",

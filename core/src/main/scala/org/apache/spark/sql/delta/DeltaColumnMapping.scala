@@ -24,10 +24,12 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
@@ -286,17 +288,26 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     maxId
   }
 
-  def checkColumnIdAndPhysicalNameAssignments(
-      schema: StructType,
-      mode: DeltaColumnMappingMode): Unit = {
+  /**
+   * Verify the metadata for valid column mapping metadata assignment. This is triggered for every
+   * commit as a last defense.
+   *
+   * 1. Ensure column mapping metadata is set for the appropriate mode
+   * 2. Ensure no duplicate column id/physical names set
+   * 3. Ensure max column id is in a good state (set, and greater than all field ids available)
+   */
+  def checkColumnIdAndPhysicalNameAssignments(metadata: Metadata): Unit = {
+    val schema = metadata.schema
+    val mode = metadata.columnMappingMode
+
     // physical name/column id -> full field path
     val columnIds = mutable.Set[Int]()
     val physicalNames = mutable.Set[String]()
-
     // use id mapping to keep all column mapping metadata
     // this method checks for missing physical name & column id already
     val physicalSchema = createPhysicalSchema(schema, schema, IdMapping, checkSupportedMode = false)
 
+    // Check id / physical name duplication
     SchemaMergingUtils.transformColumns(physicalSchema) ((parentPhysicalPath, field, _) => {
       // field.name is now physical name
       // We also need to apply backticks to column paths with dots in them to prevent a possible
@@ -317,6 +328,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
       field
     })
+
+    // Check assignment of the max id property
+    if (SQLConf.get.getConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID)) {
+      if (!metadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)) {
+        throw DeltaErrors.maxColumnIdNotSet
+      }
+      val fieldMaxId = DeltaColumnMapping.findMaxColumnId(schema)
+      if (metadata.columnMappingMaxId < DeltaColumnMapping.findMaxColumnId(schema)) {
+        throw DeltaErrors.maxColumnIdNotSetCorrectly(metadata.columnMappingMaxId, fieldMaxId)
+      }
+    }
   }
 
   /**
