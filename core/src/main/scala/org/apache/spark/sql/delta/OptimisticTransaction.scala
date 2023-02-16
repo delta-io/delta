@@ -381,62 +381,62 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * field, which will be added to the actions to commit in [[prepareCommit]].
    */
   protected def updateMetadataInternal(
-      _metadata: Metadata,
+      proposedNewMetadata: Metadata,
       ignoreDefaultProperties: Boolean = false): Unit = {
-    var latestMetadata = _metadata
+    var newMetadataTmp = proposedNewMetadata
     if (readVersion == -1 || isCreatingNewTable) {
       // We need to ignore the default properties when trying to create an exact copy of a table
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
-        latestMetadata = withGlobalConfigDefaults(latestMetadata)
+        newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
       }
       isCreatingNewTable = true
     }
     val protocolBeforeUpdate = protocol
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
-    latestMetadata = DeltaColumnMapping.verifyAndUpdateMetadataChange(
+    newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
       deltaLog,
       protocolBeforeUpdate,
       snapshot.metadata,
-      latestMetadata,
+      newMetadataTmp,
       isCreatingNewTable)
 
-    if (latestMetadata.schemaString != null) {
+    if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
-      var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
-      latestMetadata = latestMetadata.copy(schemaString = schema.json)
+      var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(newMetadataTmp.schema)
+      newMetadataTmp = newMetadataTmp.copy(schemaString = schema.json)
     }
 
-    latestMetadata = if (snapshot.metadata.schemaString == latestMetadata.schemaString) {
+    newMetadataTmp = if (snapshot.metadata.schemaString == newMetadataTmp.schemaString) {
       // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
       // It's fine if two different but semantically equivalent schema strings skip this special
       // case - that indicates that something upstream attempted to do a no-op schema change, and
       // we'll just end up doing a bit of redundant work in the else block.
-      latestMetadata
+      newMetadataTmp
     } else {
       val fixedSchema = SchemaUtils.removeUnenforceableNotNullConstraints(
-        latestMetadata.schema, spark.sessionState.conf).json
-      latestMetadata.copy(schemaString = fixedSchema)
+        newMetadataTmp.schema, spark.sessionState.conf).json
+      newMetadataTmp.copy(schemaString = fixedSchema)
     }
 
 
     if (canAssignAnyNewProtocol) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
-      newProtocol = Some(Protocol.forNewTable(spark, Some(latestMetadata)))
-    } else if (latestMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
-      latestMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
+      newProtocol = Some(Protocol.forNewTable(spark, Some(newMetadataTmp)))
+    } else if (newMetadataTmp.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
+      newMetadataTmp.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
       // If the request contains protocol bump for an existing table, we must apply this change to
       // the `newProtocol` variable so that it can be committed by the transaction.
 
       // Collect new reader and writer versions from table properties, or maintain the existing
       // version.
-      val newReaderVersion = latestMetadata.configuration
+      val newReaderVersion = newMetadataTmp.configuration
         .get(Protocol.MIN_READER_VERSION_PROP)
         .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
         .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val newWriterVersion = latestMetadata.configuration
+      val newWriterVersion = newMetadataTmp.configuration
         .get(Protocol.MIN_WRITER_VERSION_PROP)
         .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
         .getOrElse(protocolBeforeUpdate.minWriterVersion)
@@ -452,10 +452,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocol = Some(protocolBeforeUpdate.merge(newProtocolFromMetadata))
     }
 
-    latestMetadata = if (isCreatingNewTable) {
+    newMetadataTmp = if (isCreatingNewTable) {
       // Creating a new table will drop all existing data, so we don't need to fix the old
       // metadata.
-      latestMetadata
+      newMetadataTmp
     } else {
       // This is not a new table. The new schema may be merged from the existing schema. We
       // decide whether we should keep the Generated or IDENTITY columns by checking whether the
@@ -466,19 +466,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         ColumnWithDefaultExprUtils.satisfiesIdentityColumnProtocol(protocolBeforeUpdate)
       if (keepGeneratedColumns && keepIdentityColumns) {
         // If a protocol satisfies both requirements, we do nothing here.
-        latestMetadata
+        newMetadataTmp
       } else {
         // As the protocol doesn't match, this table is created by an old version that doesn't
         // support generated columns or identity columns. We should remove the generation
         // expressions to fix the schema to avoid bumping the writer version incorrectly.
         val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(
-          latestMetadata.schema,
+          newMetadataTmp.schema,
           keepGeneratedColumns = keepGeneratedColumns,
           keepIdentityColumns = keepIdentityColumns)
-        if (newSchema ne latestMetadata.schema) {
-          latestMetadata.copy(schemaString = newSchema.json)
+        if (newSchema ne newMetadataTmp.schema) {
+          newMetadataTmp.copy(schemaString = newSchema.json)
         } else {
-          latestMetadata
+          newMetadataTmp
         }
       }
     }
@@ -497,7 +497,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
       TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
-        latestMetadata.configuration,
+        newMetadataTmp.configuration,
         TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
     val featuresFromTableConf = newFeaturesFromTableConf.map(_.name)
     val existingFeatures = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
@@ -506,29 +506,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     // We are done with protocol versions and features, time to remove related table properties.
-    val configsWithoutProtocolProps = latestMetadata.configuration.filter {
+    val configsWithoutProtocolProps = newMetadataTmp.configuration.filter {
       case (Protocol.MIN_READER_VERSION_PROP, _) => false
       case (Protocol.MIN_WRITER_VERSION_PROP, _) => false
       case (k, _) if k.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) => false
       case _ => true
     }
-    latestMetadata = latestMetadata.copy(configuration = configsWithoutProtocolProps)
-    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
-    assertMetadata(latestMetadata)
+    newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
+    assertMetadata(newMetadataTmp)
 
     // Enabling table features Part 2: add automatically-enabled features.
     //
     // This code path is for existing tables. The new table case has been handled by
     // [[Protocol.forNewTable]] earlier in this method.
     if (!isCreatingNewTable) {
-      setNewProtocolWithFeaturesEnabledByMetadata(latestMetadata)
+      setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
 
 
-    assertNoDeletionVectors(latestMetadata, spark)
+    assertNoDeletionVectors(newMetadataTmp, spark)
 
-    newMetadata = Some(latestMetadata)
+    newMetadata = Some(newMetadataTmp)
   }
 
   /**
