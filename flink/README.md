@@ -331,7 +331,7 @@ Scala 2.12:
     <properties>
         <scala.main.version>2.12</scala.main.version>
         <delta-connectors-version>0.6.0</delta-connectors-version>
-        <flink-version>1.15.3</flink-version>
+        <flink-version>1.16.1</flink-version>
         <hadoop-version>3.1.0</hadoop-version>
     </properties>
 

@@ -39,7 +39,6 @@ import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.connector.file.sink.writer.FileWriterTest;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.MetricGroup;
@@ -181,7 +180,9 @@ public class DeltaWriterTest {
     }
 
     /**
-     * Just following {@link FileWriterTest#testContextPassingNormalExecution()} here.
+     * Just following {@code org.apache.flink.connector.file.sink.writer
+     * .FileWriterTest#testContextPassingNormalExecution()}
+     * here.
      */
     @Test
     public void testContextPassingNormalExecution() throws Exception {
@@ -189,7 +190,9 @@ public class DeltaWriterTest {
     }
 
     /**
-     * Just following {@link FileWriterTest#testContextPassingNullTimestamp()} here.
+     * Just following {@code org.apache.flink.connector.file.sink.writer
+     * .FileWriterTest#testContextPassingNullTimestamp()}
+     * here.
      */
     @Test
     public void testContextPassingNullTimestamp() throws Exception {
@@ -320,7 +323,7 @@ public class DeltaWriterTest {
     }
 
     /**
-     * Borrowed from {@link org.apache.flink.connector.file.sink.writer.FileWriterTest}
+     * Borrowed from {@code org.apache.flink.connector.file.sink.writer.FileWriterTest}
      */
     private static class ContextImpl implements SinkWriter.Context {
         private final long watermark;
@@ -347,7 +350,7 @@ public class DeltaWriterTest {
     }
 
     /**
-     * Borrowed from {@link org.apache.flink.connector.file.sink.writer.FileWriterTest}
+     * Borrowed from {@code org.apache.flink.connector.file.sink.writer.FileWriterTest}
      */
     private static class ManuallyTriggeredProcessingTimeService
         implements Sink.ProcessingTimeService {

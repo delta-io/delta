@@ -56,7 +56,6 @@ import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
-import org.apache.flink.connector.file.sink.StreamingExecutionFileSinkITCase;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
@@ -406,7 +405,7 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
 
     /**
      * Implementation idea and some functions is borrowed from 'StreamingExecutionTestSource' in
-     * {@link StreamingExecutionFileSinkITCase}
+     * {@code org.apache.flink.connector.file.sink.StreamingExecutionFileSinkITCase}
      */
     private static class DeltaStreamingExecutionTestSource
         extends RichParallelSourceFunction<RowData>
