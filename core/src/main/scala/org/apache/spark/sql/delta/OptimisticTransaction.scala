@@ -497,17 +497,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     //
     // This transaction's new metadata might contain some table properties to enable some
     // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
-    // action, and bump the protocol version to (3, 7).
+    // action, and bump the protocol version to (3, 7) or (_, 7), depending on the existence of
+    // any reader-writer feature.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
       TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
         newMetadataTmp.configuration,
         TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+    val readerVersionForNewProtocol =
+      if (newFeaturesFromTableConf.exists(_.isReaderWriterFeature)) {
+        TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
+      } else {
+        newProtocolBeforeAddingFeatures.minReaderVersion
+      }
     val existingFeatureNames = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
     if (!newFeaturesFromTableConf.map(_.name).subsetOf(existingFeatureNames)) {
       newProtocol = Some(
         Protocol(
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          readerVersionForNewProtocol,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
           .merge(newProtocolBeforeAddingFeatures)
           .withFeatures(newFeaturesFromTableConf))

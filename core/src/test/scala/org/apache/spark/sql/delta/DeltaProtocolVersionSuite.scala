@@ -904,6 +904,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         .withFeature(TestLegacyReaderWriterFeature)))
 
   testCreateTable(
+    "legacy protocol, legacy writer feature, feature property",
+    Map(s"delta.feature.${TestLegacyWriterFeature.name}" -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyWriterFeature)))
+
+  testCreateTable(
     "legacy protocol, native feature, metadata",
     Map(TestReaderWriterMetadataFeature.TABLE_PROP_KEY -> "true"),
     expectedFinalProtocol = Some(
@@ -1026,6 +1033,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestLegacyReaderWriterFeature)))
+
+  testAlterTable(
+    "legacy protocol, legacy writer feature, feature property",
+    Map(s"delta.feature.${TestLegacyWriterFeature.name}" -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyWriterFeature)
+        .merge(Protocol(1, 2))),
+    tableProtocol = Protocol(1, 2))
 
   testAlterTable(
     "legacy protocol, native feature, metadata",
