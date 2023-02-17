@@ -377,6 +377,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * This updates the protocol for the table with a given protocol.
+   * Note that the protocol set by this method can be overwritten by other methods,
+   * such as [[updateMetadata]].
+   */
+  def updateProtocol(protocol: Protocol): Unit = {
+      newProtocol = Some(protocol)
+  }
+
+  /**
    * Do the actual checks and works to update the metadata and save it into the `newMetadata`
    * field, which will be added to the actions to commit in [[prepareCommit]].
    */
@@ -536,7 +545,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * this transaction is logically creating a new table, e.g. replacing a previous table with new
    * metadata. Note that this must be done before writing out any files so that file writing
    * and checks happen with the final metadata for the table.
-   *
    * IMPORTANT: It is the responsibility of the caller to ensure that files currently
    * present in the table are still valid under the new metadata.
    */

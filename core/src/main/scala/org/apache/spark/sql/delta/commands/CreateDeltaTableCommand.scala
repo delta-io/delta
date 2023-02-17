@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -45,6 +44,7 @@ import org.apache.spark.sql.types.StructType
  * @param query The query to commit into the Delta table if it exist. This can come from
  *                - CTAS
  *                - saveAsTable
+ * @param protocol This is used to create a table with specific protocol version
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -53,7 +53,8 @@ case class CreateDeltaTableCommand(
     query: Option[LogicalPlan],
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
-    override val output: Seq[Attribute] = Nil)
+    override val output: Seq[Attribute] = Nil,
+    protocol: Option[Protocol] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
@@ -185,7 +186,9 @@ case class CreateDeltaTableCommand(
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
-
+            protocol.foreach { protocol =>
+              txn.updateProtocol(protocol)
+            }
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)
           } else {

@@ -366,7 +366,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
-  private def verifyTableAndSolidify(
+  def verifyTableAndSolidify(
       tableDesc: CatalogTable,
       query: Option[LogicalPlan]): CatalogTable = {
 
@@ -395,7 +395,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Checks if a table already exists for the provided identifier. */
-  private def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
