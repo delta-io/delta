@@ -497,21 +497,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     //
     // This transaction's new metadata might contain some table properties to enable some
     // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
-    // action.
-    // Unlike auto-enabled features, the following logic will not auto upgrade protocol version
-    // silently to which the feature requests. In other words, here we will explicitly list the
-    // table features that are required to be added, and assume it's supported by the protocol.
-    // When this turns out to be not true, the `withFeatures` method will fail and ask users to
-    // upgrade their table.
+    // action, and bump the protocol version to (3, 7).
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
       TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
         newMetadataTmp.configuration,
         TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
-    val featuresFromTableConf = newFeaturesFromTableConf.map(_.name)
-    val existingFeatures = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
-    if (!featuresFromTableConf.subsetOf(existingFeatures)) {
-      newProtocol = Some(newProtocolBeforeAddingFeatures.withFeatures(newFeaturesFromTableConf))
+    val existingFeatureNames = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
+    if (!newFeaturesFromTableConf.map(_.name).subsetOf(existingFeatureNames)) {
+      newProtocol = Some(
+        Protocol(
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+          .merge(newProtocolBeforeAddingFeatures)
+          .withFeatures(newFeaturesFromTableConf))
     }
 
     // We are done with protocol versions and features, time to remove related table properties.

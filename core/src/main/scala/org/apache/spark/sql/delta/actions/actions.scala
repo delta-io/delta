@@ -220,19 +220,25 @@ object Protocol {
       getEnabledFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
     val sessionEnabledFeatures =
       getEnabledFeaturesFromConfigs(sessionConf.getAllConfs, DEFAULT_FEATURE_PROP_PREFIX)
-    val featuresFromMetadata =
+    val tablePropOrSessionEnabledFeatures = tablePropEnabledFeatures ++ sessionEnabledFeatures
+    val metadataEnabledFeatures =
       metadataOpt.map(extractAutomaticallyEnabledFeatures(spark, _)).getOrElse(Set[TableFeature]())
-    val allEnabledFeatures =
-      tablePropEnabledFeatures ++ sessionEnabledFeatures ++ featuresFromMetadata
+    val allEnabledFeatures = tablePropOrSessionEnabledFeatures ++ metadataEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties,
-    // session defaults or metadata. If all features are legacy, we start from (0, 0). If any
-    // feature is native and reader-writer, we start from (3, 7). Otherwise we start from (0, 7)
+    // session defaults or metadata. If any table property or session default is specified, we
+    // start from (3, 7) or (0, 7) depending on the existence of any writer-only feature.
+    // If there's no table property or session default, we look at metadata-enabled features:
+    // if no feature is enabled or all features are legacy, we start from (0, 0). If any feature
+    // is native and is reader-writer, we start from (3, 7). Otherwise we start from (0, 7)
     // because there must exist a native writer-only feature.
-    val initialProtocol = if (allEnabledFeatures.forall(_.isLegacyFeature)) {
+    val initialProtocol = if (tablePropOrSessionEnabledFeatures.exists(_.isReaderWriterFeature)) {
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+    } else if (tablePropOrSessionEnabledFeatures.nonEmpty) {
+      Protocol(0, TABLE_FEATURES_MIN_WRITER_VERSION)
+    } else if (metadataEnabledFeatures.forall(_.isLegacyFeature)) { // also true for empty set
       Protocol(0, 0)
-    } else if (allEnabledFeatures.exists(f =>
-        !f.isLegacyFeature && f.isReaderWriterFeature)) {
+    } else if (metadataEnabledFeatures.exists(f => !f.isLegacyFeature && f.isReaderWriterFeature)) {
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
     } else {
       Protocol(0, TABLE_FEATURES_MIN_WRITER_VERSION)
