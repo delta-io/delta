@@ -302,4 +302,27 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       }
     }
   }
+
+
+  test("table_changes and table_changes_by_path with not a delta table") {
+    withTempDir { dir =>
+      withTable("tbl") {
+        spark.range(10).write.format("parquet")
+          .option("path", dir.getAbsolutePath)
+          .saveAsTable("tbl")
+
+        var e = intercept[AnalysisException] {
+          spark.sql(s"SELECT * FROM table_changes('tbl', 0, 1)")
+        }
+        assert(e.getErrorClass == "DELTA_TABLE_NOT_FOUND")
+        assert(e.getMessage.contains("Delta table `default`.`tbl` doesn't exist"))
+
+        e = intercept[AnalysisException] {
+          spark.sql(s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', 0, 1)")
+        }
+        assert(e.getErrorClass == "DELTA_TABLE_NOT_FOUND")
+        assert(e.getMessage.contains(s"Delta table `${dir.getAbsolutePath}` doesn't exist"))
+      }
+    }
+  }
 }
