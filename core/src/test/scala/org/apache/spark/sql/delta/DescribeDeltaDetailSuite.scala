@@ -254,7 +254,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           p.minReaderVersion,
           p.minWriterVersion,
           p.implicitlyEnabledFeatures.map(_.name).toArray.sorted),
-        Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
+        Seq("minReaderVersion", "minWriterVersion", "tableFeatures"))
 
       val features = p.readerAndWriterFeatureNames ++ p.implicitlyEnabledFeatures.map(_.name)
       sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
@@ -269,7 +269,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           TABLE_FEATURES_MIN_READER_VERSION,
           TABLE_FEATURES_MIN_WRITER_VERSION,
           (features + TestReaderWriterFeature.name).toArray.sorted),
-        Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
+        Seq("minReaderVersion", "minWriterVersion", "tableFeatures"))
     }
   }
 

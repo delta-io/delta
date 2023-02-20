@@ -48,7 +48,7 @@ case class TableDetail(
     properties: Map[String, String],
     minReaderVersion: java.lang.Integer,
     minWriterVersion: java.lang.Integer,
-    enabledTableFeatures: Seq[String]
+    tableFeatures: Seq[String]
     )
 
 object TableDetail {
@@ -151,7 +151,7 @@ case class DescribeDeltaDetailCommand(
         properties = table.properties,
         minReaderVersion = null,
         minWriterVersion = null,
-        enabledTableFeatures = null
+        tableFeatures = null
       ))
   }
 
@@ -171,7 +171,7 @@ case class DescribeDeltaDetailCommand(
         properties = Map.empty,
         minReaderVersion = null,
         minWriterVersion = null,
-        enabledTableFeatures = null))
+        tableFeatures = null))
   }
 
   private def describeDeltaTable(
@@ -200,7 +200,7 @@ case class DescribeDeltaDetailCommand(
         properties = snapshot.metadata.configuration,
         minReaderVersion = snapshot.protocol.minReaderVersion,
         minWriterVersion = snapshot.protocol.minWriterVersion,
-        enabledTableFeatures = featureNames
+        tableFeatures = featureNames
       ))
   }
 }
