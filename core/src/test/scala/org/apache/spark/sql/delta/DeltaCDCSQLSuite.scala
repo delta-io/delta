@@ -285,7 +285,6 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       }
       assert(e.getErrorClass == "MISSING_COLUMN")
       assert(e.getMessage.contains("Column 'id' does not exist"))
-
     }
   }
 
@@ -304,7 +303,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
   }
 
 
-  test("table_changes and table_changes_by_path with not a delta table") {
+  test("table_changes and table_changes_by_path with a non-delta table") {
     withTempDir { dir =>
       withTable("tbl") {
         spark.range(10).write.format("parquet")

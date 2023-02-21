@@ -76,19 +76,19 @@ object DeltaTableValueFunctions {
       throw new DeltaAnalysisException(
         errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
         messageParameters = Array(
-          "not enough args",
-          fnName,
-          "2",
-          "3"))
+          "not enough args", // failure
+          fnName, // functionName
+          "2", // minArgs
+          "3")) // maxArgs
     }
     if (args.size > 3) {
       throw new DeltaAnalysisException(
         errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
         messageParameters = Array(
-          "too many args",
-          fnName,
-          "2",
-          "3"))
+          "too many args", // failure
+          fnName, // functionName
+          "2", // minArgs
+          "3")) // maxArgs
     }
 
     val tableNameExpr = args.head
@@ -188,5 +188,3 @@ case class CDCNameBased(override val functionArgs: Seq[Expression])
  */
 case class CDCPathBased(override val functionArgs: Seq[Expression])
   extends DeltaTableValueFunction(DeltaTableValueFunctions.CDC_PATH_BASED)
-
-
