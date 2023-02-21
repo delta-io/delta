@@ -1474,6 +1474,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "'someExp' cannot be used in a generated column")
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedExpression("Merge", DataTypes.DateType, Seq("Integer", "Long"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_EXPRESSION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Unsupported expression type(DateType) for Merge. " +
+        "The supported types are [Integer,Long].")
+    }
+    {
       val expr = "someExp"
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsUDF(expr.expr)
@@ -2777,6 +2786,33 @@ trait DeltaErrorsSuiteBase
            |Two paths were provided as the CLONE target so it is ambiguous which to use. An external
            |location for CLONE was provided at external-location at the same time as the path
            |`table1`.""".stripMargin)
+    }
+    {
+      val e = intercept[AnalysisException] {
+        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+          spark, fnName = "dummy", args = Seq.empty)
+      }
+      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+      assert(e.getMessage.contains(
+        "not enough args, dummy requires at least 2 arguments and at most 3 arguments."))
+    }
+    {
+      val e = intercept[AnalysisException] {
+        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+          spark, fnName = "dummy", args = Seq("1".expr, "2".expr, "3".expr, "4".expr, "5".expr))
+      }
+      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+      assert(e.getMessage.contains(
+        "too many args, dummy requires at least 2 arguments and at most 3 arguments."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidTableValueFunction("invalid1")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_TABLE_VALUE_FUNCTION")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Function invalid1 is an unsupported table valued function for CDC reads.")
     }
   }
 }

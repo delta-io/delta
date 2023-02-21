@@ -211,6 +211,15 @@ class DeltaAnalysis(session: SparkSession)
         index.partitionFilters.reduce(And),
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
 
+    // SQL CDC table value functions "table_changes" and "table_changes_by_path"
+    case t: DeltaTableValueFunction if t.functionArgs.forall(_.resolved)
+    =>
+      DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+        session,
+        t.fnName,
+        t.functionArgs
+      )
+
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in
