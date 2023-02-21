@@ -212,7 +212,8 @@ object SchemaUtils extends DeltaLogging {
           case Some(original) => original.name
           // This is a virtual partition column used for doing CDC writes. It's not actually
           // in the table schema.
-          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
+          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME ||
+            field.name == CDCReader.CDC_PARTITION_COL => field.name
           case None =>
             throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
         }
