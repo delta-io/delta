@@ -53,6 +53,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_AMBIGUOUS_CONFIGURATION_KEYS" : {
+    "message" : [
+      "Ambiguous configurations were specified: <key1>=<value1>, <key2>=<value2>"
+    ],
+    "sqlState" : "TODO"
+  },
   "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
     "message" : [
       "Ambiguous partition column <column> can be <colMatches>."

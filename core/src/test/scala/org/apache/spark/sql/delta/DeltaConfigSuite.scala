@@ -16,15 +16,15 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ExecutionException, TimeUnit}
 
 import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
@@ -199,6 +199,47 @@ class DeltaConfigSuite extends SparkFunSuite
       }
       val msg = "invalid isolation level 'InvalidSerializable'"
       assert(e.getMessage == msg)
+    }
+  }
+
+  test("support new conf prefix and deprecated conf prefix") {
+    // case 1: Current config and deprecated config have different values.
+    withTempDir { dir =>
+      withSQLConf("spark.delta.properties.defaults.checkpointInterval" -> "1",
+        "spark.databricks.delta.properties.defaults.checkpointInterval" -> "2") {
+        val ee = intercept[ExecutionException] {
+          sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+        }
+        ee.getCause match {
+          case dae: DeltaAnalysisException =>
+            assert(dae.getErrorClass === "DELTA_AMBIGUOUS_CONFIGURATION_KEYS")
+            assert(dae.getMessage === s"Ambiguous configurations were specified: " +
+              s"spark.delta.properties.defaults.checkpointInterval=1, " +
+              s"spark.databricks.delta.properties.defaults.checkpointInterval=2")
+        }
+      }
+    }
+
+    // case 2: Current config and deprecated config have the same value.
+    withTempDir { dir =>
+      withSQLConf("spark.delta.properties.defaults.checkpointInterval" -> "1",
+        "spark.databricks.delta.properties.defaults.checkpointInterval" -> "1") {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+      }
+    }
+
+    // case 3: Use current config only.
+    withTempDir { dir =>
+      withSQLConf("spark.delta.properties.defaults.checkpointInterval" -> "1") {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+      }
+    }
+
+    // case 4: Use deprecated config only.
+    withTempDir { dir =>
+      withSQLConf("spark.databricks.delta.properties.defaults.checkpointInterval" -> "1") {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+      }
     }
   }
 }
