@@ -320,7 +320,7 @@ object TableFeatureProtocolUtils {
       // Feature status is not lower cased in any case.
       val name = key.stripPrefix(propertyPrefix).toLowerCase(Locale.ROOT)
       val status = value.toLowerCase(Locale.ROOT)
-      if (status != FEATURE_PROP_SUPPORTED || status != FEATURE_PROP_ENABLED) {
+      if (status != FEATURE_PROP_SUPPORTED && status != FEATURE_PROP_ENABLED) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(name, status)
       }
       val featureOpt = TableFeature.featureNameToFeature(name)
