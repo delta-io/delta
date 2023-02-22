@@ -242,7 +242,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     withTable("t1") {
       Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
       val p = DeltaLog.forTable(spark, TableIdentifier("t1")).snapshot.protocol
-      val features = p.readerAndWriterFeatureNames ++ p.implicitlyEnabledFeatures.map(_.name)
+      val features = p.readerAndWriterFeatureNames ++ p.implicitlySupportedFeatures.map(_.name)
       sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
              |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
              |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
