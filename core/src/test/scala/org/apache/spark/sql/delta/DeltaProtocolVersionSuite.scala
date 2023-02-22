@@ -1267,6 +1267,21 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("table feature status") {
+    withTempDir { path =>
+      withSQLConf(
+        defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED,
+        defaultPropertyKey(GeneratedColumnsTableFeature) -> FEATURE_PROP_ENABLED) {
+        spark.range(10).write.format("delta").save(path.getCanonicalPath)
+        val log = DeltaLog.forTable(spark, path)
+        val protocol = log.update().protocol
+
+        assert(protocol.isFeatureSupported(ChangeDataFeedTableFeature))
+        assert(protocol.isFeatureSupported(GeneratedColumnsTableFeature))
+      }
+    }
+  }
+
   private def assertPropertiesAndShowTblProperties(
       deltaLog: DeltaLog,
       tableHasFeatures: Boolean = false): Unit = {
@@ -1294,7 +1309,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val name = row.getAs[String]("key").substring(FEATURE_PROP_PREFIX.length)
       val status = row.getAs[String]("value")
       assert(TableFeature.featureNameToFeature(name).isDefined)
-      assert(status == FEATURE_PROP_ENABLED)
+      assert(status == FEATURE_PROP_SUPPORTED)
     }
   }
 }

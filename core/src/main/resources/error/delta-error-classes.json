@@ -1872,7 +1872,7 @@
   },
   "DELTA_UNSUPPORTED_FEATURE_STATUS" : {
     "message" : [
-      "Expecting the status for table feature <feature> to be \"enabled\", but got \"<status>\"."
+      "Expecting the status for table feature <feature> to be \"supported\", but got \"<status>\"."
     ],
     "sqlState" : "0AKDE"
   },

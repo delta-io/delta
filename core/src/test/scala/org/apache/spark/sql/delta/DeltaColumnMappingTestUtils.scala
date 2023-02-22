@@ -262,7 +262,7 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
         Protocol.minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)._3
           .map(f => (
             s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}${f.name}",
-            TableFeatureProtocolUtils.FEATURE_PROP_ENABLED))
+            TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     }
     props
   }

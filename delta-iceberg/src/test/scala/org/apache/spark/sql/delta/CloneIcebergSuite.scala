@@ -394,7 +394,7 @@ trait CloneIcebergSuiteBase extends QueryTest
       spark.sql(s"CREATE TABLE $cloneTable $mode CLONE $source")
       val log = DeltaLog.forTable(spark, TableIdentifier(cloneTable))
       val protocol = log.update().protocol
-      assert(protocol.isFeatureEnabled(ColumnMappingTableFeature))
+      assert(protocol.isFeatureSupported(ColumnMappingTableFeature))
     }
   }
 }

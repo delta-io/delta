@@ -483,10 +483,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
-    // Enabling table features Part 1: add manually-enabled features in table properties start
+    // Enabling table features Part 1: add manually-supported features in table properties start
     // with [[FEATURE_PROP_PREFIX]].
     //
-    // This transaction's new metadata might contain some table properties to enable some
+    // This transaction's new metadata might contain some table properties to support some
     // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
     // action.
     // Unlike auto-enabled features, the following logic will not auto upgrade protocol version
@@ -496,7 +496,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // upgrade their table.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
-      TableFeatureProtocolUtils.getEnabledFeaturesFromConfigs(
+      TableFeatureProtocolUtils.getSupportedFeaturesFromConfigs(
         latestMetadata.configuration,
         TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
     val featuresFromTableConf = newFeaturesFromTableConf.map(_.name)

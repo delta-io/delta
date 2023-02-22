@@ -31,23 +31,23 @@ import org.apache.spark.sql.SparkSession
 /**
  * A base class for all table features.
  *
- * A feature can be <b>explicitly enabled</b> by a table's protocol when the protocol contains a
+ * A feature can be <b>explicitly supported</b> by a table's protocol when the protocol contains a
  * feature's `name`. Writers (for writer-only features) or readers and writers (for reader-writer
- * features) must recognize enabled features and must handle them appropriately.
+ * features) must recognize supported features and must handle them appropriately.
  *
  * A table feature that released before Delta Table Features (reader version 3 and writer version
- * 7) is considered as a <b>legacy feature</b>. Legacy features are <b>implicitly enabled</b> when
- * (a) the protocol does not support table features, i.e., has reader version less than 3 or
+ * 7) is considered as a <b>legacy feature</b>. Legacy features are <b>implicitly supported</b>
+ * when (a) the protocol does not support table features, i.e., has reader version less than 3 or
  * writer version less than 7 and (b) the feature's minimum reader/writer version is less than or
  * equal to the current protocol's reader/writer version.
  *
- * Separately, a feature can be automatically enabled in a table's metadata when certain
+ * Separately, a feature can be automatically supported by a table's metadata when certain
  * feature-specific table properties are set. For example, `changeDataFeed` is automatically
- * enabled when there's a table property `delta.enableChangeDataFeed=true`. This is independent of
- * the table's enabled features. When a feature is enabled (explicitly or implicitly) by the table
- * protocol but its metadata requirements are not satisfied, then clients still have to understand
- * the feature (at least to the extent that they can read and preserve the existing data in the
- * table that uses the feature). See the documentation of
+ * supported when there's a table property `delta.enableChangeDataFeed=true`. This is independent
+ * of the table's enabled features. When a feature is supported (explicitly or implicitly) by the
+ * table protocol but its metadata requirements are not satisfied, then clients still have to
+ * understand the feature (at least to the extent that they can read and preserve the existing
+ * data in the table that uses the feature). See the documentation of
  * [[FeatureAutomaticallyEnabledByMetadata]] for more information.
  *
  * @param name
@@ -55,14 +55,14 @@ import org.apache.spark.sql.SparkSession
  *   (a-z, A-Z), digits (0-9), '-', or '_'. Words must be in camelCase.
  * @param minReaderVersion
  *   the minimum reader version this feature requires. For a feature that can only be explicitly
- *   enabled, this is either `0` or `3` (the reader protocol version that supports table
+ *   supported, this is either `0` or `3` (the reader protocol version that supports table
  *   features), depending on the feature is writer-only or reader-writer. For a legacy feature
- *   that can be implicitly enabled, this is the first protocol version which the feature is
+ *   that can be implicitly supported, this is the first protocol version which the feature is
  *   introduced.
  * @param minWriterVersion
  *   the minimum writer version this feature requires. For a feature that can only be explicitly
- *   enabled, this is the writer protocol `7` that supports table features. For a legacy feature
- *   that can be implicitly enabled, this is the first protocol version which the feature is
+ *   supported, this is the writer protocol `7` that supports table features. For a legacy feature
+ *   that can be implicitly supported, this is the first protocol version which the feature is
  *   introduced.
  */
 // @TODO: distinguish Delta and 3rd-party features and give appropriate error messages
@@ -75,15 +75,15 @@ sealed abstract class TableFeature(
 
   /**
    * Get a [[Protocol]] object stating the minimum reader and writer versions this feature
-   * requires. For a feature that can only be explicitly enabled, this method returns a protocol
+   * requires. For a feature that can only be explicitly supported, this method returns a protocol
    * version that supports table features, either `(0,7)` or `(3,7)` depending on the feature is
-   * writer-only or reader-writer. For a legacy feature that can be implicitly enabled, this
+   * writer-only or reader-writer. For a legacy feature that can be implicitly supported, this
    * method returns the first protocol version which introduced the said feature.
    *
    * For all features, if the table's protocol version does not support table features, then the
    * minimum protocol version is enough. However, if the protocol version supports table features
    * for the feature type (writer-only or reader-writer), then the minimum protocol version is not
-   * enough to enable a feature. In this case the feature must also be explicitly enabled in the
+   * enough to support a feature. In this case the feature must also be explicitly listed in the
    * appropriate feature sets in the [[Protocol]].
    */
   def minProtocolVersion: Protocol = Protocol(minReaderVersion, minWriterVersion)
@@ -110,20 +110,20 @@ sealed trait LegacyFeatureType
  *
  * When the feature's metadata requirements are satisfied during table creation
  * ([[actions.Protocol.forNewTable]]) or commit ([[OptimisticTransaction.updateMetadata]]), the
- * client will silently add the feature to the protocol's `readerFeatures` and/or `writerFeatures`
- * with `status` = `enabled`.
+ * client will silently add the feature to the protocol's `readerFeatures` and/or
+ * `writerFeatures`.
  */
 sealed trait FeatureAutomaticallyEnabledByMetadata {
 
   /**
-   * Determine whether the feature must be enabled because its metadata requirements are
-   * satisfied.
+   * Determine whether the feature must be supported and enabled because its metadata requirements
+   * are satisfied.
    */
   def metadataRequiresFeatureToBeEnabled(metadata: Metadata, spark: SparkSession): Boolean
 }
 
 /**
- * A base class for all writer-only table features that can only be explicitly enabled.
+ * A base class for all writer-only table features that can only be explicitly supported.
  *
  * @param name
  *   a globally-unique string indicator to represent the feature. All characters must be letters
@@ -136,7 +136,7 @@ sealed abstract class WriterFeature(name: String)
     minWriterVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
 
 /**
- * A base class for all reader-writer table features that can only be explicitly enabled.
+ * A base class for all reader-writer table features that can only be explicitly supported.
  *
  * @param name
  *   a globally-unique string indicator to represent the feature. All characters must be letters

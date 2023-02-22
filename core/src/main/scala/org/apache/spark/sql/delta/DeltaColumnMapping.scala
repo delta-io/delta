@@ -63,7 +63,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     .contains(field.name.toLowerCase(Locale.ROOT))
 
   def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureEnabled(ColumnMappingTableFeature)
+    protocol.isFeatureSupported(ColumnMappingTableFeature)
 
   /**
    * The only allowed mode change is from NoMapping to NameMapping. Other changes
