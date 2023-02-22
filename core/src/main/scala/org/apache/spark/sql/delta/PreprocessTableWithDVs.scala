@@ -84,9 +84,6 @@ object ScanWithDeletionVectors {
       hadoopRelation: HadoopFsRelation,
       fileFormat: DeltaParquetFileFormat,
       index: TahoeFileIndex): Option[LogicalPlan] = {
-    // If the table has no DVs enabled, no change needed
-    if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
-
     require(!index.isInstanceOf[TahoeLogFileIndex],
       "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
