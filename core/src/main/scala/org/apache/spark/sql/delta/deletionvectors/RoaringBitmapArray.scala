@@ -21,7 +21,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 
 import scala.collection.immutable.NumericRange
 
-import com.google.common.primitives.{Ints, UnsignedInts}
+import com.google.common.primitives.{Ints, UnsignedInteger, UnsignedInts}
 import org.roaringbitmap.{RelativeRangeConsumer, RoaringBitmap}
 
 /**
@@ -317,7 +317,7 @@ final class RoaringBitmapArray extends Equals {
    * @param length Maximum number of values to consume.
    * @param rrc Code to be executed for each present or absent value.
    */
-  def forAllInRange(start: Long, length: Int, rrc: RelativeRangeConsumer): Unit = {
+  def forAllInRange(start: Long, length: Int, consumer: RelativeRangeConsumer): Unit = {
     // This one is complicated and deserves its own PR,
     // when we actually want to enable it.
     throw new UnsupportedOperationException
@@ -413,7 +413,8 @@ final class RoaringBitmapArray extends Equals {
 object RoaringBitmapArray {
 
   /** The largest value a [[RoaringBitmapArray]] can possibly represent. */
-  final val MAX_REPRESENTABLE_VALUE = composeFromHighLowBytes(Int.MaxValue - 1, Int.MinValue)
+  final val MAX_REPRESENTABLE_VALUE: Long = composeFromHighLowBytes(Int.MaxValue - 1, Int.MinValue)
+  final val MAX_BITMAP_CARDINALITY: Long = 1L << 32
 
   /** Create a new [[RoaringBitmapArray]] with the given `values`. */
   def apply(values: Long*): RoaringBitmapArray = {

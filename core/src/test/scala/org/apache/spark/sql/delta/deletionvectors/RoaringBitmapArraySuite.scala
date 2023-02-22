@@ -21,6 +21,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 import scala.collection.immutable.TreeSet
 
 import com.google.common.primitives.Ints
+import org.roaringbitmap.RelativeRangeConsumer
 
 import org.apache.spark.SparkFunSuite
 
@@ -475,4 +476,5 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
     assert(RoaringBitmapArray(Seq(0L, 10L, 21474852865L, 500L, 45L): _*).last === 21474852865L)
     assert(RoaringBitmapArray(Seq(0L, 10L, 55834591233L, 500L, 45L): _*).last === 55834591233L)
   }
+
 }
