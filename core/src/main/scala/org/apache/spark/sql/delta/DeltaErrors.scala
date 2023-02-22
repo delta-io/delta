@@ -2639,6 +2639,13 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def deletionVectorInvalidRowIndex(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
   def deletionVectorChecksumMismatch(): Throwable = {
     new DeltaChecksumException(
       errorClass = "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH",

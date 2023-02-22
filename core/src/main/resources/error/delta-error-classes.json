@@ -510,6 +510,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered an invalid row index."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
     "message" : [
       "Deletion vector integrity check failed. Encountered a size mismatch."

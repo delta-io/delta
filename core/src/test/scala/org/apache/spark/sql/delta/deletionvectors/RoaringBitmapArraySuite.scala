@@ -464,4 +464,15 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
     assert(!bitmap.contains(3L * Int.MaxValue.toLong))
     assert(!bitmap.contains(3L * Int.MaxValue.toLong + 42L))
   }
+
+  test("last") {
+    assert(RoaringBitmapArray(Seq(0L): _*).last === 0L)
+    assert(RoaringBitmapArray(Seq(0L, 10L, 500L, 45L): _*).last === 500L)
+    assert(RoaringBitmapArray(Seq(0L, 10L, 4294967297L, 500L, 45L): _*).last === 4294967297L)
+    assert(RoaringBitmapArray(
+      Seq(0L, 10L, 12884918273L, 500L, 4294967297L, 45L): _*).last === 12884918273L)
+    assert(RoaringBitmapArray(Seq(12884918273L, 1L, 345L): _*).last === 12884918273L)
+    assert(RoaringBitmapArray(Seq(0L, 10L, 21474852865L, 500L, 45L): _*).last === 21474852865L)
+    assert(RoaringBitmapArray(Seq(0L, 10L, 55834591233L, 500L, 45L): _*).last === 55834591233L)
+  }
 }

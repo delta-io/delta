@@ -333,6 +333,13 @@ final class RoaringBitmapArray extends Equals {
     }
   }
 
+  /** Get the last (largest) long, that is, returns the maximum of the set. */
+  def last: Long = {
+    require(bitmaps.length > 0)
+    val (bitmap, high) = bitmaps.zipWithIndex.last
+    composeFromHighLowBytes(high, bitmap.last())
+  }
+
   override def canEqual(that: Any): Boolean = that.isInstanceOf[RoaringBitmapArray]
 
   override def equals(other: Any): Boolean = {

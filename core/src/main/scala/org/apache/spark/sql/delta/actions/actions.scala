@@ -467,7 +467,21 @@ case class AddFile(
   def removeRows(
         deletionVector: DeletionVectorDescriptor,
         dataChange: Boolean = true): (AddFile, RemoveFile) = {
-    val withUpdatedDV = this.copy(deletionVector = deletionVector, dataChange = dataChange)
+    // Verify DV does not contain any invalid row indexes. Note, maxRowIndex is optional
+    // and not all commands may set it when updating DVs.
+    (numPhysicalRecords, deletionVector.maxRowIndex) match {
+      case (Some(numPhysicalRecords), Some(maxRowIndex))
+        if (maxRowIndex + 1 > numPhysicalRecords) =>
+          throw DeltaErrors.deletionVectorInvalidRowIndex()
+      case _ => // Nothing to check.
+    }
+    // We make sure maxRowIndex is not stored in the log.
+    val dvDescriptorWithoutMaxRowIndex = deletionVector.maxRowIndex match {
+      case Some(_) => deletionVector.copy(maxRowIndex = None)
+      case _ => deletionVector
+    }
+    val withUpdatedDV =
+      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
     val addFile = withUpdatedDV
     val removeFile = this.removeWithTimestamp(dataChange = dataChange)
     (addFile, removeFile)
@@ -508,6 +522,15 @@ case class AddFile(
   private case class ParsedStatsFields(
       numLogicalRecords: Option[Long]
   )
+
+  /**
+   * Before serializing make sure deletionVector.maxRowIndex is not defined.
+   * This is only a transient property and it is not intended to be stored in the log.
+   */
+  override def json: String = {
+    if (deletionVector != null) assert(!deletionVector.maxRowIndex.isDefined)
+    super.json
+  }
 
   @JsonIgnore
   @transient
