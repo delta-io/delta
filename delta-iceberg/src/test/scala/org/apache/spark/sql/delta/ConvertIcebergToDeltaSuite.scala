@@ -988,9 +988,7 @@ class ConvertIcebergToDeltaSQLSuite extends ConvertIcebergToDeltaSuiteBase {
   }
 }
 
-class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
-  with ConvertIcebergToDeltaUtils
-{
+class ConvertIcebergToDeltaPartitioningSuite extends QueryTest with ConvertIcebergToDeltaUtils {
 
   import testImplicits._
 
@@ -1463,10 +1461,18 @@ class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
       val filterExpr = if (filter == "") "" else s"where $filter"
       if (policy == "EXCEPTION" && filterExpr != "" &&
         partitionSchemaDDL != "ts_year int" && partitionSchemaDDL != "ts_day date") {
-        val msg = intercept[SparkException] {
+        var thrownError = false
+        val msg = try {
           spark.sql(s"select * from delta.`$deltaPath` $filterExpr").collect()
-        }.getMessage
-        assert(msg.contains("spark.sql.legacy.timeParserPolicy"))
+        } catch {
+          case e: Throwable if e.isInstanceOf[org.apache.spark.SparkThrowable] &&
+            e.getMessage.contains("spark.sql.legacy.timeParserPolicy") =>
+            // SparkThrowable includes both SparkException and SparkUpgradeException which DBR
+            // and Photon throws respectively.
+            thrownError = true
+          case other => throw other
+        }
+        assert(thrownError, s"Error message $msg is incorrect.")
       } else {
         // check results of iceberg == delta
         checkAnswer(
