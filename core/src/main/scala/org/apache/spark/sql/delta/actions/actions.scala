@@ -217,9 +217,9 @@ object Protocol {
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...` or by session defaults.
     val tablePropEnabledFeatures =
-      getEnabledFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
+      getSupportedFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
     val sessionEnabledFeatures =
-      getEnabledFeaturesFromConfigs(sessionConf.getAllConfs, DEFAULT_FEATURE_PROP_PREFIX)
+      getSupportedFeaturesFromConfigs(sessionConf.getAllConfs, DEFAULT_FEATURE_PROP_PREFIX)
     val tablePropOrSessionEnabledFeatures = tablePropEnabledFeatures ++ sessionEnabledFeatures
     val metadataEnabledFeatures =
       metadataOpt.map(extractAutomaticallyEnabledFeatures(spark, _)).getOrElse(Set[TableFeature]())

@@ -385,7 +385,7 @@ class Snapshot(
     if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
       val features = protocol.readerAndWriterFeatureNames.map(name =>
         s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
-          TableFeatureProtocolUtils.FEATURE_PROP_ENABLED)
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
       base ++ features.toSeq.sorted
     } else {
       base

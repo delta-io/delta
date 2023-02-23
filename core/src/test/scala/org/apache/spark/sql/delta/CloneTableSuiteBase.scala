@@ -896,7 +896,7 @@ trait CloneTableSuiteBase extends QueryTest
         tableProperties = tblPropertyOverrides)
 
       val targetLog = DeltaLog.forTable(spark, target)
-      assert(targetLog.update().protocol.isFeatureEnabled(TestWriterFeature))
+      assert(targetLog.update().protocol.isFeatureSupported(TestWriterFeature))
   }
 }
 

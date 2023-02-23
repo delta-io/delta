@@ -103,7 +103,7 @@ class DeltaTableFeatureSuite
 
   test("implicitly-enabled features") {
     assert(
-      Protocol(2, 6).implicitlyEnabledFeatures === Set(
+      Protocol(2, 6).implicitlySupportedFeatures === Set(
         AppendOnlyTableFeature,
         ColumnMappingTableFeature,
         InvariantsTableFeature,
@@ -114,7 +114,7 @@ class DeltaTableFeatureSuite
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature))
     assert(
-      Protocol(2, 5).implicitlyEnabledFeatures === Set(
+      Protocol(2, 5).implicitlySupportedFeatures === Set(
         AppendOnlyTableFeature,
         ColumnMappingTableFeature,
         InvariantsTableFeature,
@@ -122,11 +122,11 @@ class DeltaTableFeatureSuite
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
         TestLegacyWriterFeature))
-    assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlyEnabledFeatures === Set())
+    assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlySupportedFeatures === Set())
     assert(
       Protocol(
         TABLE_FEATURES_MIN_READER_VERSION,
-        TABLE_FEATURES_MIN_WRITER_VERSION).implicitlyEnabledFeatures === Set())
+        TABLE_FEATURES_MIN_WRITER_VERSION).implicitlySupportedFeatures === Set())
   }
 
   test("implicit feature listing") {
@@ -238,7 +238,7 @@ class DeltaTableFeatureSuite
 
   test("native automatically-enabled feature can't be implicitly enabled") {
     val p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    assert(p.implicitlyEnabledFeatures.isEmpty)
+    assert(p.implicitlySupportedFeatures.isEmpty)
   }
 
   test("Can enable legacy metadata table feature by setting default table property key") {

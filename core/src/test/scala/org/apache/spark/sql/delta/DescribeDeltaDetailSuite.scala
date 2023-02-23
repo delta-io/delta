@@ -253,10 +253,10 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         Seq(
           p.minReaderVersion,
           p.minWriterVersion,
-          p.implicitlyEnabledFeatures.map(_.name).toArray.sorted),
+          p.implicitlySupportedFeatures.map(_.name).toArray.sorted),
         Seq("minReaderVersion", "minWriterVersion", "tableFeatures"))
 
-      val features = p.readerAndWriterFeatureNames ++ p.implicitlyEnabledFeatures.map(_.name)
+      val features = p.readerAndWriterFeatureNames ++ p.implicitlySupportedFeatures.map(_.name)
       sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
              |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
              |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,

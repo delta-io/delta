@@ -64,7 +64,7 @@ trait DeletionVectorUtils {
       metadata = newMetadata.getOrElse(snapshot.metadata))
 
   def deletionVectorsWritable(protocol: Protocol, metadata: Metadata): Boolean =
-    protocol.isFeatureEnabled(DeletionVectorsTableFeature) &&
+    protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
       DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
 
   def deletionVectorsReadable(
@@ -79,7 +79,7 @@ trait DeletionVectorUtils {
   def deletionVectorsReadable(
       protocol: Protocol,
       metadata: Metadata): Boolean = {
-    protocol.isFeatureEnabled(DeletionVectorsTableFeature) &&
+    protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
       metadata.format.provider == "parquet" // DVs are only supported on parquet tables.
   }
 }
