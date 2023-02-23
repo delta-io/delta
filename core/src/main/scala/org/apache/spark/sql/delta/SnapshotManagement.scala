@@ -735,7 +735,7 @@ trait SnapshotManagement { self: DeltaLog =>
 }
 
 object SnapshotManagement {
-  protected lazy val deltaLogAsyncUpdateThreadPool = {
+  protected[delta] lazy val deltaLogAsyncUpdateThreadPool = {
     val tpe = ThreadUtils.newDaemonCachedThreadPool("delta-state-update", 8)
     ExecutionContext.fromExecutorService(tpe)
   }
