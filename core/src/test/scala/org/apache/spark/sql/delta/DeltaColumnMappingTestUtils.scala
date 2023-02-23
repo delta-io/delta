@@ -251,7 +251,9 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
 
   /** Return KV pairs of Protocol-related stuff for checking the result of DESCRIBE TABLE. */
   protected def buildProtocolProps(snapshot: Snapshot): Seq[(String, String)] = {
-    val metadata = snapshot.metadata
+    val mergedConf =
+      DeltaConfigs.mergeGlobalConfigs(spark.sessionState.conf, snapshot.metadata.configuration)
+    val metadata = snapshot.metadata.copy(configuration = mergedConf)
     var props = Seq(
       (Protocol.MIN_READER_VERSION_PROP,
         Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString),

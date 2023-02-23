@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.actions.Protocol.minProtocolComponentsForNewTable
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -248,7 +247,7 @@ abstract class CloneTableBase(
     val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
-      minProtocolComponentsForNewTable(spark, Some(metadataWithOverrides))
+      Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)
 
     // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
     // time travel.

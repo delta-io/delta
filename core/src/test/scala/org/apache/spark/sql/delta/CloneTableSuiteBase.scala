@@ -23,7 +23,7 @@ import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
@@ -637,6 +637,34 @@ trait CloneTableSuiteBase extends QueryTest
         }
       }
     }
+  }
+
+  cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
+    (source, clone) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+        // Create table without a default property setting.
+        spark.range(1L).write.format("delta").mode("overwrite").save(source)
+        val oldProtocol = DeltaLog.forTable(spark, source).update().protocol
+        assert(oldProtocol === Protocol(1, 1))
+        // Just use something that can be default.
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
+          TableFeatureProtocolUtils.defaultPropertyKey(TestWriterFeature) -> "enabled") {
+          // Clone in a session with default properties and check that they aren't merged
+          // (i.e. target properties are identical to source properties).
+          runAndValidateClone(
+            source,
+            clone
+          )()
+        }
+
+        val log = DeltaLog.forTable(spark, clone)
+        val targetProtocol = log.update().protocol
+        assert(targetProtocol === oldProtocol)
+      }
   }
 
   testAllClones("clone a time traveled source using timestamp") { (source, clone, isShallow) =>

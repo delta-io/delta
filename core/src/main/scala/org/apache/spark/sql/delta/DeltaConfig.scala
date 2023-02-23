@@ -182,11 +182,13 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * Table properties for new tables can be specified through SQL Configurations using the
-   * `sqlConfPrefix`. This method checks to see if any of the configurations exist among the SQL
-   * configurations and merges them with the user provided configurations. User provided configs
-   * take precedence.
+   * [[sqlConfPrefix]] and [[TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX]]. This method
+   * checks to see if any of the configurations exist among the SQL configurations and merges them
+   * with the user provided configurations. User provided configs take precedence.
    */
-  def mergeGlobalConfigs(sqlConfs: SQLConf, tableConf: Map[String, String]): Map[String, String] = {
+  def mergeGlobalConfigs(
+      sqlConfs: SQLConf,
+      tableConf: Map[String, String]): Map[String, String] = {
     import collection.JavaConverters._
 
     val globalConfs = entries.asScala.flatMap { case (key, config) =>
@@ -197,7 +199,17 @@ trait DeltaConfigsBase extends DeltaLogging {
       }
     }
 
-    globalConfs.toMap ++ tableConf
+    // Table features configured in session must be merged manually because there's no
+    // ConfigEntry registered for table features in SQL configs or Table props.
+    val globalFeatureConfs = sqlConfs.getAllConfs
+      .filterKeys(_.startsWith(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX))
+      .map { case (key, value) =>
+        val featureName = key.stripPrefix(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX)
+        val tableKey = TableFeatureProtocolUtils.FEATURE_PROP_PREFIX + featureName
+        tableKey -> value
+      }
+
+    globalConfs.toMap ++ globalFeatureConfs.toMap ++ tableConf
   }
 
   /**

@@ -368,12 +368,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * IMPORTANT: It is the responsibility of the caller to ensure that files currently
    * present in the table are still valid under the new metadata.
    */
-  def updateMetadata(_metadata: Metadata, ignoreDefaultProperties: Boolean = false): Unit = {
+  def updateMetadata(
+      proposedNewMetadata: Metadata,
+      ignoreDefaultProperties: Boolean = false): Unit = {
     assert(!hasWritten,
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
-    updateMetadataInternal(_metadata, ignoreDefaultProperties)
+    updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
   }
 
   /**
@@ -436,29 +438,50 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocol = Some(Protocol.forNewTable(spark, Some(newMetadataTmp)))
     } else if (newMetadataTmp.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
       newMetadataTmp.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
-      // If the request contains protocol bump for an existing table, we must apply this change to
-      // the `newProtocol` variable so that it can be committed by the transaction.
-
-      // Collect new reader and writer versions from table properties, or maintain the existing
-      // version.
-      val newReaderVersion = newMetadataTmp.configuration
+      // Collect new reader and writer versions from table properties, which could be provided by
+      // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
+      val readerVersionInNewMetadataTmp = newMetadataTmp.configuration
         .get(Protocol.MIN_READER_VERSION_PROP)
         .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
         .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val newWriterVersion = newMetadataTmp.configuration
+      val writerVersionInNewMetadataTmp = newMetadataTmp.configuration
         .get(Protocol.MIN_WRITER_VERSION_PROP)
         .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
         .getOrElse(protocolBeforeUpdate.minWriterVersion)
-      val newProtocolFromMetadata = Protocol(newReaderVersion, newWriterVersion)
 
-      // Check protocol downgrade before protocol merge to throw the appropriate error message.
+      // If the collected reader and writer versions are provided by the user, we must use them,
+      // and throw ProtocolDowngradeException when they are lower than what the table have before
+      // this transaction.
+      // If they are copied over from session defaults (this code path is for existing table, the
+      // only case this can happen is therefore during `REPLACE`), we will update the target table
+      // protocol when the session defaults are higher, and not throw ProtocolDowngradeException
+      // when the defaults are lower.
+      val (isReaderVersionUserProvided, isWriterVersionUserProvided) = (
+        proposedNewMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP),
+        proposedNewMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP))
+      val newReaderVersion = if (isReaderVersionUserProvided) {
+        readerVersionInNewMetadataTmp
+      } else {
+        readerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minReaderVersion)
+      }
+      val newWriterVersion = if (isWriterVersionUserProvided) {
+        writerVersionInNewMetadataTmp
+      } else {
+        writerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minWriterVersion)
+      }
+      val newProtocolForLatestMetadata = Protocol(newReaderVersion, newWriterVersion)
+
       if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
         newWriterVersion < protocolBeforeUpdate.minWriterVersion) {
-        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolFromMetadata)
+        // Prevent protocol downgrade.
+        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolForLatestMetadata)
+      } else if (newReaderVersion > protocolBeforeUpdate.minReaderVersion ||
+        newWriterVersion > protocolBeforeUpdate.minWriterVersion) {
+        // Upgrade the table's protocol and enable all implicitly-enabled features.
+        newProtocol = Some(protocolBeforeUpdate.merge(newProtocolForLatestMetadata))
+      } else {
+        // Protocol version unchanged. Do nothing.
       }
-      // Use the merge logic (when newReaderVersion and newWriterVersion support table features)
-      // to explicitly enable implicitly-enabled features of the old protocol.
-      newProtocol = Some(protocolBeforeUpdate.merge(newProtocolFromMetadata))
     }
 
     newMetadataTmp = if (isCreatingNewTable) {
@@ -528,7 +551,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ => true
     }
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
-    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     assertMetadata(newMetadataTmp)
 
     // Enabling table features Part 2: add automatically-enabled features.
@@ -543,6 +565,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     assertNoDeletionVectors(newMetadataTmp, spark)
 
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
   }
 
