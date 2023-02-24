@@ -64,16 +64,7 @@ import org.apache.hadoop.fs.RawLocalFileSystem;
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
-    /**
-     * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list
-     * requests. The feature is enabled by setting the property delta.enableFastS3AListFrom in the
-     * Hadoop configuration.
-     *
-     * This feature requires the Hadoop file system used for S3 paths to be castable to
-     * org.apache.hadoop.fs.s3a.S3AFileSystem.
-     */
-    private final boolean enableFastListFrom
-            = initHadoopConf().getBoolean("delta.enableFastS3AListFrom", false);
+    private final boolean enableFastListFrom = S3LogStoreUtil.fastListFromEnabled(initHadoopConf());
 
     ///////////////////////////
     // Static Helper Methods //

@@ -103,7 +103,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      * First checks if there is any incomplete entry in the external store. If so, tries to perform
      * a recovery/fix.
      *
-     * Then, performs a normal listFrom user the `super` implementation.
+     * By default, performs a normal listFrom user the `super` implementation. That listFrom call
+     * can be overriden by the child.
      */
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
@@ -116,11 +117,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             fixDeltaLog(fs, entry.get());
         }
 
-        // This is predicated on the storage system providing consistent listing
-        // If there was a recovery performed in the `fixDeltaLog` call, then some temp file
-        // was just copied into some N.json in the delta log. Because of consistent listing,
-        // the `super.listFrom` is guaranteed to see N.json.
-        return super.listFrom(path, hadoopConf);
+        return listFromInternal(path, hadoopConf);
     }
 
     /**
@@ -232,6 +229,16 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /////////////////////////////////////////////////////////////
     // Protected Members (for interaction with external store) //
     /////////////////////////////////////////////////////////////
+
+    protected Iterator<FileStatus> listFromInternal(
+            Path path,
+            Configuration hadoopConf) throws IOException {
+        // This is predicated on the storage system providing consistent listing
+        // If there was a recovery performed in the `fixDeltaLog` call, then some temp file
+        // was just copied into some N.json in the delta log. Because of consistent listing,
+        // the `super.listFrom` is guaranteed to see N.json.
+        return super.listFrom(path, hadoopConf);
+    }
 
     /**
      * Write file with actions under a specific path.
