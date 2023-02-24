@@ -21,7 +21,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 
 import scala.collection.immutable.NumericRange
 
-import com.google.common.primitives.{Ints, UnsignedInteger, UnsignedInts}
+import com.google.common.primitives.{Ints, UnsignedInts}
 import org.roaringbitmap.{RelativeRangeConsumer, RoaringBitmap}
 
 /**
@@ -186,6 +186,9 @@ final class RoaringBitmapArray extends Equals {
   /** Returns the number of distinct integers added to the bitmap (e.g., number of bits set). */
   def cardinality: Long = bitmaps.foldLeft(0L)((sum, bitmap) => sum + bitmap.getLongCardinality)
 
+  /** Tests whether the bitmap is empty. */
+  def isEmpty: Boolean = bitmaps.forall(_.isEmpty)
+
   /**
    * Use a run-length encoding where it is more space efficient.
    *
@@ -195,6 +198,19 @@ final class RoaringBitmapArray extends Equals {
     var changeApplied = false
     for (bitmap <- bitmaps) {
       changeApplied |= bitmap.runOptimize()
+    }
+    changeApplied
+  }
+
+  /**
+   * Remove run-length encoding even when it is more space efficient.
+   *
+   * @return `true` if a change was applied
+   */
+  def removeRunCompression(): Boolean = {
+    var changeApplied = false
+    for (bitmap <- bitmaps) {
+      changeApplied |= bitmap.removeRunCompression()
     }
     changeApplied
   }
@@ -333,13 +349,6 @@ final class RoaringBitmapArray extends Equals {
     }
   }
 
-  /** Get the last (largest) long, that is, returns the maximum of the set. */
-  def last: Long = {
-    require(bitmaps.length > 0)
-    val (bitmap, high) = bitmaps.zipWithIndex.last
-    composeFromHighLowBytes(high, bitmap.last())
-  }
-
   override def canEqual(that: Any): Boolean = that.isInstanceOf[RoaringBitmapArray]
 
   override def equals(other: Any): Boolean = {
@@ -358,6 +367,26 @@ final class RoaringBitmapArray extends Equals {
 
   def mkString(start: String = "", sep: String = "", end: String = ""): String =
     toArray.mkString(start, sep, end)
+
+  def first: Option[Long] = {
+    for ((bitmap, high) <- bitmaps.zipWithIndex) {
+      if (!bitmap.isEmpty) {
+        val low = bitmap.first()
+        return Some(composeFromHighLowBytes(high, low))
+      }
+    }
+    None
+  }
+
+  def last: Option[Long] = {
+    for ((bitmap, high) <- bitmaps.zipWithIndex.reverse) {
+      if (!bitmap.isEmpty) {
+        val low = bitmap.last()
+        return Some(composeFromHighLowBytes(high, low))
+      }
+    }
+    None
+  }
 
   /**
    * Utility method to extend the array of [[RoaringBitmap]] to given length, keeping

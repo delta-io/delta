@@ -21,7 +21,6 @@ import java.nio.{ByteBuffer, ByteOrder}
 import scala.collection.immutable.TreeSet
 
 import com.google.common.primitives.Ints
-import org.roaringbitmap.RelativeRangeConsumer
 
 import org.apache.spark.SparkFunSuite
 
@@ -165,6 +164,7 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
 
   test("empty") {
     val bitmap = RoaringBitmapArray()
+    assert(bitmap.isEmpty)
     assert(bitmap.cardinality === 0L)
     assert(!bitmap.contains(0L))
     assert(bitmap.toArray === Array.empty[Long])
@@ -466,15 +466,29 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
     assert(!bitmap.contains(3L * Int.MaxValue.toLong + 42L))
   }
 
-  test("last") {
-    assert(RoaringBitmapArray(Seq(0L): _*).last === 0L)
-    assert(RoaringBitmapArray(Seq(0L, 10L, 500L, 45L): _*).last === 500L)
-    assert(RoaringBitmapArray(Seq(0L, 10L, 4294967297L, 500L, 45L): _*).last === 4294967297L)
-    assert(RoaringBitmapArray(
-      Seq(0L, 10L, 12884918273L, 500L, 4294967297L, 45L): _*).last === 12884918273L)
-    assert(RoaringBitmapArray(Seq(12884918273L, 1L, 345L): _*).last === 12884918273L)
-    assert(RoaringBitmapArray(Seq(0L, 10L, 21474852865L, 500L, 45L): _*).last === 21474852865L)
-    assert(RoaringBitmapArray(Seq(0L, 10L, 55834591233L, 500L, 45L): _*).last === 55834591233L)
+  test("first/last") {
+    {
+      val bitmap = RoaringBitmapArray()
+      assert(bitmap.first.isEmpty)
+      assert(bitmap.last.isEmpty)
+    }
+    // Single value bitmaps.
+    val valuesOfInterest = Seq(0L, 1L, 64L, CONTAINER_BOUNDARY, BITMAP_BOUNDARY, BITMAP2_NUMBER)
+    for (v <- valuesOfInterest) {
+      val bitmap = RoaringBitmapArray(v)
+      assert(bitmap.first === Some(v))
+      assert(bitmap.last === Some(v))
+    }
+    // Two value bitmaps.
+    for {
+      start <- valuesOfInterest
+      end <- valuesOfInterest
+      if start < end
+    } {
+      val bitmap = RoaringBitmapArray(start, end)
+      assert(bitmap.first === Some(start))
+      assert(bitmap.last === Some(end))
+    }
   }
 
 }
