@@ -958,7 +958,9 @@ object DeltaLog extends DeltaLogging {
     }
 
     override def apply(path: String): String = {
+      // scalastyle:off pathfromuri
       val hadoopPath = new Path(new URI(path))
+      // scalastyle:on pathfromuri
       if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
         fs.makeQualified(hadoopPath).toUri.toString
       } else {

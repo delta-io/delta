@@ -410,7 +410,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val resultFiles = committer.addedStatuses.map { a =>
       a.copy(stats = optionalStatsTracker.map(
-        _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
+        _.recordedStats(a.toPath.getName)).getOrElse(a.stats))
     }.filter {
       // In some cases, we can write out an empty `inputData`. Some examples of this (though, they
       // may be fixed in the future) are the MERGE command when you delete with empty source, or

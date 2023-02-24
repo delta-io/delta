@@ -99,7 +99,9 @@ abstract class TahoeFileIndex(
   override def partitionSchema: StructType = metadata.partitionSchema
 
   protected def absolutePath(child: String): Path = {
+    // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
+    // scalastyle:on pathfromuri
     if (p.isAbsolute) {
       p
     } else {

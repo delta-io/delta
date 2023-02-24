@@ -48,7 +48,7 @@ case class DeltaLogFileIndex private (
     PartitionDirectory(InternalRow(), files) :: Nil
   }
 
-  override val inputFiles: Array[String] = files.map(_.getPath).map(_.toString)
+  override val inputFiles: Array[String] = files.map(_.getPath.toString)
 
   override def refresh(): Unit = {}
 

@@ -35,6 +35,8 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
@@ -433,12 +435,16 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
+
+  def toPath: Path = new Path(pathAsUri)
 }
 
 /**
  * Adds a new file to the table. When multiple [[AddFile]] file actions
  * are seen with the same `path` only the metadata from the last one is
  * kept.
+ *
+ * [[path]] is URL-encoded.
  */
 case class AddFile(
     override val path: String,

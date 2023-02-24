@@ -461,7 +461,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     }
   }
 
+  // scalastyle:off pathfromuri
   protected def stringToPath(path: String): Path = new Path(new URI(path))
+  // scalastyle:on pathfromuri
 
   protected def pathToString(path: Path): String = path.toUri.toString
 
