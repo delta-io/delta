@@ -110,7 +110,8 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     /**
      * Performance flags
      */
-    private final boolean enableFastListFrom = S3LogStoreUtil.fastListFromEnabled(initHadoopConf());
+    private final boolean enableFastListFrom
+        = initHadoopConf().getBoolean("delta.enableFastS3AListFrom", false);
 
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
@@ -148,7 +149,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             Configuration hadoopConf) throws IOException {
         if (enableFastListFrom) {
             final FileSystem fs = path.getFileSystem(hadoopConf);
-            final Path resolvedPath = fs.makeQualified(path);
+            final Path resolvedPath = resolvePath(fs, path);
             final Path parentPath = resolvedPath.getParent();
             return S3LogStoreUtil.s3ListFromIter(fs, resolvedPath, parentPath);
         } else {

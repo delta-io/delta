@@ -64,7 +64,16 @@ import org.apache.hadoop.fs.RawLocalFileSystem;
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
-    private final boolean enableFastListFrom = S3LogStoreUtil.fastListFromEnabled(initHadoopConf());
+    /**
+     * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list
+     * requests. The feature is enabled by setting the property delta.enableFastS3AListFrom in the
+     * Hadoop configuration.
+     *
+     * This feature requires the Hadoop file system used for S3 paths to be castable to
+     * org.apache.hadoop.fs.s3a.S3AFileSystem.
+     */
+    private final boolean enableFastListFrom
+        = initHadoopConf().getBoolean("delta.enableFastS3AListFrom", false);
 
     ///////////////////////////
     // Static Helper Methods //
@@ -132,33 +141,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      */
     private boolean isInitialVersion(Path path) {
         return FileNameUtils.isDeltaFile(path) && FileNameUtils.deltaVersion(path) == 0L;
-    }
-
-    private Path resolvePath(FileSystem fs, Path path) {
-        return stripUserInfo(fs.makeQualified(path));
-    }
-
-    private Path stripUserInfo(Path path) {
-        final URI uri = path.toUri();
-
-        try {
-            final URI newUri = new URI(
-                uri.getScheme(),
-                null, // userInfo
-                uri.getHost(),
-                uri.getPort(),
-                uri.getPath(),
-                uri.getQuery(),
-                uri.getFragment()
-            );
-
-            return new Path(newUri);
-        } catch (URISyntaxException e) {
-            // Propagating this URISyntaxException to callers would mean we would have to either
-            // include it in the public LogStore.java interface or wrap it in an
-            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
-            throw new IllegalArgumentException(e);
-        }
     }
 
     /**
@@ -235,6 +217,9 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         ) {
             statuses = fs.listStatus(parentPath);
         } else {
+            // TODO: when this fast-list-from feature becomes the default, we need to
+            // ensure that if the filesystem cast to S3AFileSystem fails, then we default to the
+            // normal listStatus call
             statuses = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, parentPath);
         }
 

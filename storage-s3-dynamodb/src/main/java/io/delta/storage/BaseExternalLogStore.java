@@ -226,9 +226,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         return false;
     }
 
-    /////////////////////////////////////////////////////////////
-    // Protected Members (for interaction with external store) //
-    /////////////////////////////////////////////////////////////
+    ///////////////////////
+    // Protected Members //
+    ///////////////////////
 
     protected Iterator<FileStatus> listFromInternal(
             Path path,
@@ -389,32 +389,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             throw new java.nio.file.FileAlreadyExistsException(dst.toString());
         } finally {
             inputStream.close();
-        }
-    }
-
-    /**
-     * Returns path stripped user info.
-     */
-    private Path stripUserInfo(Path path) {
-        final URI uri = path.toUri();
-
-        try {
-            final URI newUri = new URI(
-                uri.getScheme(),
-                null, // userInfo
-                uri.getHost(),
-                uri.getPort(),
-                uri.getPath(),
-                uri.getQuery(),
-                uri.getFragment()
-            );
-
-            return new Path(newUri);
-        } catch (URISyntaxException e) {
-            // Propagating this URISyntaxException to callers would mean we would have to either
-            // include it in the public LogStore.java interface or wrap it in an
-            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
-            throw new IllegalArgumentException(e);
         }
     }
 }

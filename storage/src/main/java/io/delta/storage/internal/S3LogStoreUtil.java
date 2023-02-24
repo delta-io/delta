@@ -17,7 +17,6 @@
 package io.delta.storage.internal;
 
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.s3a.*;
 
@@ -29,7 +28,6 @@ import java.util.Iterator;
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
-
 
 /**
  * Static utility methods for the S3SingleDriverLogStore.
@@ -82,18 +80,6 @@ public final class S3LogStoreUtil {
     /////////////////
     // Public APIs //
     /////////////////
-
-    /**
-     * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list
-     * requests. The feature is enabled by setting the property delta.enableFastS3AListFrom in the
-     * Hadoop configuration.
-     *
-     * This feature requires the Hadoop file system used for S3 paths to be castable to
-     * org.apache.hadoop.fs.s3a.S3AFileSystem.
-     */
-    public static boolean fastListFromEnabled(Configuration hadoopConf) {
-        return hadoopConf.getBoolean("delta.enableFastS3AListFrom", false);
-    }
 
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
