@@ -502,11 +502,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
       "DeltaCatalog", "alterTable") {
-    val table = loadTable(ident) match {
-      case deltaTable: DeltaTableV2 => deltaTable
-      case _ => return super.alterTable(ident, changes: _*)
-    }
-
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.
@@ -514,6 +509,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val grouped = changes.groupBy {
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
+    }
+    val table = loadTable(ident) match {
+      case deltaTable: DeltaTableV2 => deltaTable
+      case _ => return super.alterTable(ident, changes: _*)
     }
 
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
