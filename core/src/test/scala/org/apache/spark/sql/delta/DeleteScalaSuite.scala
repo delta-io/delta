@@ -46,6 +46,14 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
     checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
   }
 
+  test("delete usage test - with userMetadata") {
+    append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
+    val table = io.delta.tables.DeltaTable.forPath(tempPath)
+    table.delete(functions.expr("key = 1 or key = 2"), Some("test user metadata"))
+    checkAnswer(readDeltaUserMetadataByPath(tempPath),
+      Row(None) :: Row("test user metadata") :: Nil)
+  }
+
   override protected def executeDelete(target: String, where: String = null): Unit = {
 
     def parse(tableNameWithAlias: String): (String, Option[String]) = {
@@ -70,16 +78,17 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
         val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
         io.delta.tables.DeltaTable.forPath(spark, path)
       } else {
-        DeltaTableTestUtils.createTable(spark.table(tableNameOrPath),
+        DeltaTableTestUtils.createTable(
+          spark.table(tableNameOrPath),
           DeltaLog.forTable(spark, tableNameOrPath))
       }
       optionalAlias.map(table.as(_)).getOrElse(table)
     }
 
     if (where != null) {
-      deltaTable.delete(where)
+      deltaTable.delete(where, None)
     } else {
-      deltaTable.delete()
+      deltaTable.delete(None)
     }
   }
 }

@@ -38,11 +38,23 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
  */
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
-  protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
-    val delete = DeleteFromTable(
-      self.toDF.queryExecution.analyzed,
-      condition.getOrElse(Literal.TrueLiteral))
-    toDataset(sparkSession, delete)
+  protected def executeDelete(
+      condition: Option[Expression],
+      userMetadata: Option[String] = None): Unit = improveUnsupportedOpError {
+    val previousMetadata = sparkSession.conf.getOption("userMetadata")
+    userMetadata match {
+      case Some(metadata) =>
+        sparkSession.conf.set("userMetadata", metadata)
+      case None => None
+    }
+    val delete =
+      DeleteFromTable(self.toDF.queryExecution.analyzed, condition.getOrElse(Literal.TrueLiteral))
+    val dataset = toDataset(sparkSession, delete)
+    previousMetadata match {
+      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
+      case None => sparkSession.conf.unset("userMetadata")
+    }
+    dataset
   }
 
   protected def executeHistory(
@@ -62,9 +74,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
+    val tableId: TableIdentifier = sparkSession.sessionState.sqlParser
       .parseTableIdentifier(tblIdentifier)
     val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
     toDataset(sparkSession, generate)
@@ -72,12 +82,24 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeUpdate(
       set: Map[String, Column],
-      condition: Option[Column]): Unit = improveUnsupportedOpError {
+      condition: Option[Column],
+      userMetadata: Option[String] = None): Unit = improveUnsupportedOpError {
+    val previousMetadata = sparkSession.conf.getOption("userMetadata")
+    userMetadata match {
+      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
+      case None => None
+    }
     val assignments = set.map { case (targetColName, column) =>
       Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
     }.toSeq
-    val update = UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
-    toDataset(sparkSession, update)
+    val update =
+      UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
+    val dataset = toDataset(sparkSession, update)
+    previousMetadata match {
+      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
+      case None => sparkSession.conf.unset("userMetadata")
+    }
+    dataset
   }
 
   protected def executeVacuum(
@@ -92,17 +114,12 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       table: DeltaTableV2,
       versionAsOf: Option[Long],
       timestampAsOf: Option[String]): DataFrame = {
-    val identifier = table.getTableIdentifierIfExists.map(
-      id => Identifier.of(id.database.toArray, id.table))
+    val identifier =
+      table.getTableIdentifierIfExists.map(id => Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, identifier)
 
     val restore = RestoreTableStatement(
-      TimeTravel(
-        sourceRelation,
-        timestampAsOf.map(Literal(_)),
-        versionAsOf,
-        Some("deltaTable"))
-      )
+      TimeTravel(sourceRelation, timestampAsOf.map(Literal(_)), versionAsOf, Some("deltaTable")))
     toDataset(sparkSession, restore)
   }
 

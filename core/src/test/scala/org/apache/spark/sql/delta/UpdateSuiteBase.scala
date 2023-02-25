@@ -85,6 +85,10 @@ abstract class UpdateSuiteBase
     writer.save(deltaLog.dataPath.toString)
   }
 
+  protected def readDeltaUserMetadataByPath(path: String): DataFrame = {
+    io.delta.tables.DeltaTable.forPath(spark, path).history().select("userMetadata")
+  }
+
   implicit def jsonStringToSeq(json: String): Seq[String] = json.split("\n")
 
   val fileFormat: String = "parquet"

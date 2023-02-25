@@ -23,7 +23,7 @@ import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, FakeFileSystem}
-import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -38,19 +38,13 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-class DeltaTableSuite extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
+class DeltaTableSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   test("forPath") {
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
-      checkAnswer(
-        DeltaTable.forPath(spark, dir.getAbsolutePath).toDF,
-        testData.collect().toSeq)
-      checkAnswer(
-        DeltaTable.forPath(dir.getAbsolutePath).toDF,
-        testData.collect().toSeq)
+      checkAnswer(DeltaTable.forPath(spark, dir.getAbsolutePath).toDF, testData.collect().toSeq)
+      checkAnswer(DeltaTable.forPath(dir.getAbsolutePath).toDF, testData.collect().toSeq)
     }
   }
 
@@ -68,12 +62,8 @@ class DeltaTableSuite extends QueryTest
       withTable("deltaTable") {
         testData.write.format("delta").saveAsTable("deltaTable")
 
-        checkAnswer(
-          DeltaTable.forName(spark, "deltaTable").toDF,
-          testData.collect().toSeq)
-        checkAnswer(
-          DeltaTable.forName("deltaTable").toDF,
-          testData.collect().toSeq)
+        checkAnswer(DeltaTable.forName(spark, "deltaTable").toDF, testData.collect().toSeq)
+        checkAnswer(DeltaTable.forName("deltaTable").toDF, testData.collect().toSeq)
 
       }
     }
@@ -98,7 +88,9 @@ class DeltaTableSuite extends QueryTest
     withTempDir { dir =>
       withTempView("viewOnDeltaTable") {
         testData.write.format("delta").save(dir.getAbsolutePath)
-        spark.read.format("delta").load(dir.getAbsolutePath)
+        spark.read
+          .format("delta")
+          .load(dir.getAbsolutePath)
           .createOrReplaceTempView("viewOnDeltaTable")
         testForNameOnNonDeltaName("viewOnDeltaTable")
       }
@@ -109,12 +101,8 @@ class DeltaTableSuite extends QueryTest
     // for name should work on Delta table paths
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
-      checkAnswer(
-        DeltaTable.forName(spark, s"delta.`$dir`").toDF,
-        testData.collect().toSeq)
-      checkAnswer(
-        DeltaTable.forName(s"delta.`$dir`").toDF,
-        testData.collect().toSeq)
+      checkAnswer(DeltaTable.forName(spark, s"delta.`$dir`").toDF, testData.collect().toSeq)
+      checkAnswer(DeltaTable.forName(s"delta.`$dir`").toDF, testData.collect().toSeq)
     }
 
     // using forName on non Delta Table paths should fail
@@ -181,10 +169,14 @@ class DeltaTableSuite extends QueryTest
     withTempDir { dir =>
       testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
       val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
-      spark.range(5).as[Long].map{ row: Long =>
-        val foo = dt
-        row + 3
-      }.count()
+      spark
+        .range(5)
+        .as[Long]
+        .map { row: Long =>
+          val foo = dt
+          row + 3
+        }
+        .count()
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
@@ -192,33 +184,40 @@ class DeltaTableSuite extends QueryTest
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
-        spark.range(5).as[Long].map{ row: Long =>
-          dt.toDF
-          row + 3
-        }.count()
+        spark
+          .range(5)
+          .as[Long]
+          .map { row: Long =>
+            dt.toDF
+            row + 3
+          }
+          .count()
       }
     }.getMessage
     assert(e.contains("DeltaTable cannot be used in executors"))
   }
 }
 
-class DeltaTableHadoopOptionsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+class DeltaTableHadoopOptionsSuite
+    extends QueryTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest {
 
   import testImplicits._
+
+  private def readDeltaUserMetadataByPath(path: String): DataFrame = {
+    io.delta.tables.DeltaTable.forPath(spark, path).history().select("userMetadata")
+  }
 
   protected override def sparkConf =
     super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
 
   /**
-   * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,
-   * it won't be able to read/write any files using `fake://`.
+   * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them, it
+   * won't be able to read/write any files using `fake://`.
    */
   private def fakeFileSystemOptions: Map[String, String] = {
-    Map(
-      "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-      "fs.fake.impl.disable.cache" -> "true"
-    )
+    Map("fs.fake.impl" -> classOf[FakeFileSystem].getName, "fs.fake.impl.disable.cache" -> "true")
   }
 
   /** Create a fake file system path to test from the dir path. */
@@ -231,9 +230,13 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   // Ensure any new API from [[DeltaTable]] has to verify it can work with custom file system
   // options.
   private val publicMethods =
-  scala.reflect.runtime.universe.typeTag[io.delta.tables.DeltaTable].tpe.decls
-    .filter(_.isPublic)
-    .map(_.name.toString).toSet
+    scala.reflect.runtime.universe
+      .typeTag[io.delta.tables.DeltaTable]
+      .tpe
+      .decls
+      .filter(_.isPublic)
+      .map(_.name.toString)
+      .toSet
 
   private val ignoreMethods = Seq()
 
@@ -252,8 +255,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     "update",
     "updateExpr",
     "upgradeTableProtocol",
-    "vacuum"
-  )
+    "vacuum")
 
   val untestedMethods = publicMethods -- ignoreMethods -- testedMethods
   assert(
@@ -323,8 +325,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       // verify java friendly API.
       import scala.collection.JavaConverters._
-      val deltaTable2 = io.delta.tables.DeltaTable.forPath(
-        spark, path, new java.util.HashMap[String, String](fsOptions.asJava))
+      val deltaTable2 = io.delta.tables.DeltaTable
+        .forPath(spark, path, new java.util.HashMap[String, String](fsOptions.asJava))
       checkAnswer(deltaTable2.toDF, testDataSeq)
     }
   }
@@ -340,7 +342,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       table.updateExpr(Map("key" -> "100"))
 
-      checkAnswer(readDeltaTableByPath(path),
+      checkAnswer(
+        readDeltaTableByPath(path),
         Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
     }
   }
@@ -355,7 +358,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       table.update(Map("key" -> functions.expr("100")))
 
-      checkAnswer(readDeltaTableByPath(path),
+      checkAnswer(
+        readDeltaTableByPath(path),
         Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
     }
   }
@@ -383,21 +387,73 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       val table = io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
 
-      table.merge(source, "key1 = key2")
-        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
-        .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+      table
+        .merge(source, "key1 = key2")
+        .whenMatched()
+        .updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatched()
+        .insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
         .execute()
 
       checkAnswer(readDeltaTableByPath(path), Row(1, 100) :: Row(2, 20) :: Row(3, 30) :: Nil)
     }
   }
 
+  test("updateExpr - with userMetadata") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      df.write.format("delta").save(path)
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+
+      table.updateExpr(Map("key" -> "100"), Some("test user metadata"))
+
+      checkAnswer(readDeltaUserMetadataByPath(path), Row(None) :: Row("test user metadata") :: Nil)
+    }
+  }
+
+  test("update - with userMetadata") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      df.write.format("delta").save(path)
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+
+      table.update(Map("key" -> functions.expr("100")), Some("test user metadata"))
+
+      checkAnswer(readDeltaUserMetadataByPath(path), Row(None) :: Row("test user metadata") :: Nil)
+    }
+  }
+
+  test("merge - with userMetadata") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val target = Seq((1, 10), (2, 20)).toDF("key1", "value1")
+      target.write.options(fakeFileSystemOptions).format("delta").save(path)
+      val source = Seq((1, 100), (3, 30)).toDF("key2", "value2")
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
+
+      table
+        .merge(source, "key1 = key2", Some("test user metadata"))
+        .whenMatched()
+        .updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatched()
+        .insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .execute()
+
+      checkAnswer(readDeltaUserMetadataByPath(path),
+        Row(None) :: Row(None) :: Row("test user metadata") :: Nil)
+    }
+  }
+
   test("vacuum - with filesystem options") {
     // Note: verify that [DeltaTableUtils.findDeltaTableRoot] works when either
     // DELTA_FORMAT_CHECK_CACHE_ENABLED is on or off.
-    Seq("true", "false").foreach{ deltaFormatCheckEnabled =>
-      withSQLConf(
-        "spark.databricks.delta.formatCheck.cache.enabled" -> deltaFormatCheckEnabled) {
+    Seq("true", "false").foreach { deltaFormatCheckEnabled =>
+      withSQLConf("spark.databricks.delta.formatCheck.cache.enabled" -> deltaFormatCheckEnabled) {
         withTempDir { dir =>
           val path = fakeFileSystemPath(dir)
           testData.write.options(fakeFileSystemOptions).format("delta").save(path)
@@ -420,7 +476,6 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
-
   test("optimize - with filesystem options") {
     withTempDir { dir =>
       val path = fakeFileSystemPath(dir)
@@ -428,7 +483,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       Seq(1, 2, 3).toDF().write.options(fsOptions).format("delta").save(path)
       Seq(4, 5, 6)
-        .toDF().write.options(fsOptions).format("delta").mode("append").save(path)
+        .toDF()
+        .write
+        .options(fsOptions)
+        .format("delta")
+        .mode("append")
+        .save(path)
 
       val origData: DataFrame = spark.read.options(fsOptions).format("delta").load(path)
 
@@ -456,7 +516,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   }
 
   test("generate - with filesystem options") {
-    withSQLConf("spark.databricks.delta.symlinkFormatManifest.fileSystemCheck.enabled" -> "false") {
+    withSQLConf(
+      "spark.databricks.delta.symlinkFormatManifest.fileSystemCheck.enabled" -> "false") {
       withTempDir { dir =>
         val path = fakeFileSystemPath(dir)
         val fsOptions = fakeFileSystemOptions
@@ -501,10 +562,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
         deltaTable.restoreToVersion(1)
 
-        checkAnswer(
-          spark.read.format("delta").options(fsOptions).load(path),
-          df1.union(df2)
-        )
+        checkAnswer(spark.read.format("delta").options(fsOptions).load(path), df1.union(df2))
 
         // set the time to first file with a early time and verify the delta table can be restored
         // to it.
@@ -519,10 +577,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
         deltaTable2.restoreToTimestamp(desiredTime)
 
-        checkAnswer(
-          spark.read.format("delta").options(fsOptions).load(path),
-          df1
-        )
+        checkAnswer(spark.read.format("delta").options(fsOptions).load(path), df1)
       }
     }
   }
@@ -553,16 +608,13 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   }
 
   test("details - with filesystem options.") {
-    withTempDir{ dir =>
+    withTempDir { dir =>
       val path = fakeFileSystemPath(dir)
       val fsOptions = fakeFileSystemOptions
       Seq(1, 2, 3).toDF().write.format("delta").options(fsOptions).save(path)
 
       val deltaTable = DeltaTable.forPath(spark, path, fsOptions)
-      checkAnswer(
-        deltaTable.detail().select("format"),
-        Seq(Row("delta"))
-      )
+      checkAnswer(deltaTable.detail().select("format"), Seq(Row("delta")))
     }
   }
 }
