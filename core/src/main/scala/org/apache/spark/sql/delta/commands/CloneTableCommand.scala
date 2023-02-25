@@ -175,19 +175,14 @@ class CloneDeltaSource(
   override def close(): Unit = {}
 }
 
-/** A parquet table source to be cloned from */
-class CloneParquetSource(
-  tableIdentifier: TableIdentifier,
-  override val catalogTable: Option[CatalogTable],
-  spark: SparkSession) extends CloneSource {
+/** A convertible non-delta table source to be cloned from */
+abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
 
-  protected lazy val convertTargetTable: ConvertTargetTable = {
-    val baseDir = catalogTable.map(_.location.toString).getOrElse(tableIdentifier.table)
-    val provider = catalogTable.map(_.provider).getOrElse(tableIdentifier.database)
-    ConvertToDeltaCommand.getParquetTable(spark, baseDir, catalogTable, None)
-  }
+  // The converter which produces delta metadata from non-delta table, child class must implement
+  // this converter.
+  protected def convertTargetTable: ConvertTargetTable
 
-  def format: String = CloneSourceFormat.PARQUET
+  def format: String = CloneSourceFormat.UNKNOWN
 
   def protocol: Protocol = {
     // This is quirky but necessary to add table features such as column mapping if the default
@@ -196,9 +191,6 @@ class CloneParquetSource(
   }
 
   override val clock: Clock = new SystemClock()
-
-  def name: String = catalogTable.map(_.identifier.unquotedString)
-    .getOrElse(s"parquet.`${tableIdentifier.table}`")
 
   def dataPath: Path = new Path(convertTargetTable.fileManifest.basePath)
 
@@ -256,13 +248,32 @@ class CloneParquetSource(
 }
 
 /**
+ * A parquet table source to be cloned from
+ */
+case class CloneParquetSource(
+    tableIdentifier: TableIdentifier,
+    override val catalogTable: Option[CatalogTable],
+    spark: SparkSession) extends CloneConvertedSource(spark) {
+
+  override lazy val convertTargetTable: ConvertTargetTable = {
+    val baseDir = catalogTable.map(_.location.toString).getOrElse(tableIdentifier.table)
+    ConvertToDeltaCommand.getParquetTable(spark, baseDir, catalogTable, None)
+  }
+
+  override def format: String = CloneSourceFormat.PARQUET
+
+  override def name: String = catalogTable.map(_.identifier.unquotedString)
+    .getOrElse(s"parquet.`${tableIdentifier.table}`")
+}
+
+/**
  * A iceberg table source to be cloned from
  */
 case class CloneIcebergSource(
   tableIdentifier: TableIdentifier,
   sparkTable: Option[Table],
   tableSchema: Option[StructType],
-  spark: SparkSession) extends CloneParquetSource(tableIdentifier, None, spark) {
+  spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
     ConvertToDeltaCommand.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
@@ -271,4 +282,6 @@ case class CloneIcebergSource(
 
   override def name: String =
     sparkTable.map(_.name()).getOrElse(s"iceberg.`${tableIdentifier.table}`")
+
+  override def catalogTable: Option[CatalogTable] = None
 }
