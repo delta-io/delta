@@ -536,9 +536,13 @@ class DeltaTable private[tables](
   def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
     val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
       table,
-      Map(
-        "delta.minReaderVersion" -> readerVersion.toString,
-        "delta.minWriterVersion" -> writerVersion.toString))
+      DeltaConfigs.validateConfigurations(
+        Map(
+          "delta.minReaderVersion" -> readerVersion.toString,
+          "delta.minWriterVersion" -> writerVersion.toString
+        )
+      )
+    )
     toDataset(sparkSession, alterTableCmd)
   }
 }
