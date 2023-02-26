@@ -266,6 +266,14 @@ class DeltaMergeBuilder private (
     // DeltaAnalysis rule do the resolving correctly. This can be solved by generating
     // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
     // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
+
+    val previousMetadata = sparkSession.conf.getOption(
+      "spark.databricks.delta.commitInfo.userMetadata")
+    userMetadata match {
+      case Some(metadata) =>
+        sparkSession.conf.set("spark.databricks.delta.commitInfo.userMetadata", metadata)
+      case None => None
+    }
     val resolvedMergeInto =
       DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferences(sparkSession) _)
@@ -279,7 +287,14 @@ class DeltaMergeBuilder private (
       PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
         .asInstanceOf[MergeIntoCommand]
     sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
+    val dataset = mergeIntoCommand.run(sparkSession)
+    previousMetadata match {
+      case Some(metadata) => sparkSession.conf.set(
+        "spark.databricks.delta.commitInfo.userMetadata", metadata)
+      case None => sparkSession.conf.unset(
+        "spark.databricks.delta.commitInfo.userMetadata")
+    }
+    dataset
   }
 
   /**
