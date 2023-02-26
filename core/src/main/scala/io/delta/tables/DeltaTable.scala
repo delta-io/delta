@@ -565,7 +565,8 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param condition
-   *   boolean expression as SQL formatted string object specifying which rows to update, with user metadata.
+   *   boolean expression as SQL formatted string object specifying which rows to update,
+   *   with user metadata.
    * @param set
    *   rules to update a row as a Scala map between target column names and corresponding update
    *   expressions as SQL formatted strings.
@@ -620,7 +621,8 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param condition
-   *   boolean expression as SQL formatted string object specifying which rows to update, with user metadata.
+   *   boolean expression as SQL formatted string object specifying which rows to update,
+   *   with user metadata.
    * @param set
    *   rules to update a row as a Java map between target column names and corresponding update
    *   expressions as SQL formatted strings.
