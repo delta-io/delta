@@ -597,7 +597,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
         .execute()
 
       checkAnswer(readDeltaUserMetadataByPath(tempPath),
-        Row(null) :: Row(null) :: Row("test user metadata") :: Nil)
+        Row(null) :: Row("test user metadata") :: Nil)
     }
   }
 
