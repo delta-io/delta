@@ -412,8 +412,6 @@ class DeltaTable private[tables] (
    * @param set
    *   rules to update a row as a Java map between target column names and corresponding update
    *   expressions as Column objects.
-   * @param userMetadata
-   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
@@ -438,7 +436,7 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param condition
-   *   boolean expression as Column object specifying which rows to update.
+   *   boolean expression as Column object specifying which rows to update, with metadata.
    * @param set
    *   rules to update a row as a Java map between target column names and corresponding update
    *   expressions as Column objects.
@@ -481,6 +479,8 @@ class DeltaTable private[tables] (
    * @param set
    *   rules to update a row as a Scala map between target column names and corresponding update
    *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def updateExpr(set: Map[String, String], userMetadata: Option[String]): Unit = {
@@ -522,7 +522,9 @@ class DeltaTable private[tables] (
    *
    * @param set
    *   rules to update a row as a Java map between target column names and corresponding update
-   *   expressions as SQL formatted strings.
+   *   expressions as SQL formatted strings, with user metadata.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def updateExpr(set: java.util.Map[String, String], userMetadata: Option[String]): Unit = {
@@ -563,10 +565,12 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param condition
-   *   boolean expression as SQL formatted string object specifying which rows to update.
+   *   boolean expression as SQL formatted string object specifying which rows to update, with user metadata.
    * @param set
    *   rules to update a row as a Scala map between target column names and corresponding update
    *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def updateExpr(
@@ -616,10 +620,12 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param condition
-   *   boolean expression as SQL formatted string object specifying which rows to update.
+   *   boolean expression as SQL formatted string object specifying which rows to update, with user metadata.
    * @param set
    *   rules to update a row as a Java map between target column names and corresponding update
    *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def updateExpr(
@@ -733,9 +739,11 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param source
-   *   source Dataframe to be merged.
+   *   source Dataframe to be merged, with user metadata.
    * @param condition
    *   boolean expression as SQL formatted string
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def merge(
@@ -849,9 +857,11 @@ class DeltaTable private[tables] (
    * }}}
    *
    * @param source
-   *   source Dataframe to be merged.
+   *   source Dataframe to be merged, with user metadata.
    * @param condition
    *   boolean expression as a Column object
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
    * @since 0.3.0
    */
   def merge(

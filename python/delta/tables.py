@@ -87,7 +87,7 @@ class DeltaTable(object):
         self._jdt.generate(mode)
 
     @since(0.4)  # type: ignore[arg-type]
-    def delete(self, condition: OptionalExpressionOrColumn = None) -> None:
+    def delete(self, condition: OptionalExpressionOrColumn = None, userMetadata: Optional[str] = None) -> None:
         """
         Delete data from the table that match the given ``condition``.
 
@@ -99,11 +99,17 @@ class DeltaTable(object):
 
         :param condition: condition of the update
         :type condition: str or pyspark.sql.Column
+        :param userMetadata: user metadata to add to commit
+        :type userMetadata: str
         """
-        if condition is None:
+        if condition is None and userMetadata is None:
             self._jdt.delete()
-        else:
+        elif condition is None:
+            self._jdt.delete(userMetadata)
+        elif userMetadata is None:
             self._jdt.delete(DeltaTable._condition_to_jcolumn(condition))
+        else:
+            self._jdt.delete(DeltaTable._condition_to_jcolumn(condition),userMetadata)
 
     @overload
     def update(
@@ -118,7 +124,8 @@ class DeltaTable(object):
     def update(
         self,
         condition: OptionalExpressionOrColumn = None,
-        set: OptionalColumnMapping = None
+        set: OptionalColumnMapping = None,
+        userMetadata: Optional[str] = None
     ) -> None:
         """
         Update data from the table on the rows that match the given ``condition``,
@@ -142,19 +149,25 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
+        :param userMetadata: user metadata to add to commit
+        :type userMetadata: str
 
         .. versionadded:: 0.4
         """
         jmap = DeltaTable._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = DeltaTable._condition_to_jcolumn(condition)
-        if condition is None:
+        if condition is None and userMetadata is None:
             self._jdt.update(jmap)
-        else:
+        elif condition is None:
+            self._jdt.update(jmap,userMetadata)
+        elif userMetadata is None:
             self._jdt.update(jcolumn, jmap)
+        else:
+            self._jdt.update(jcolumn, jmap, userMetadata)
 
     @since(0.4)  # type: ignore[arg-type]
     def merge(
-        self, source: DataFrame, condition: ExpressionOrColumn
+        self, source: DataFrame, condition: ExpressionOrColumn, userMetadata: Optional[str]
     ) -> "DeltaMergeBuilder":
         """
         Merge data from the `source` DataFrame based on the given merge `condition`. This returns
@@ -207,6 +220,8 @@ class DeltaTable(object):
         :type source: pyspark.sql.DataFrame
         :param condition: Condition to match sources rows with the Delta table rows.
         :type condition: str or pyspark.sql.Column
+        :param userMetadata: user metadata to add to commit
+        :type userMetadata: str
 
         :return: builder object to specify whether to update, delete or insert rows based on
                  whether the condition matched or not
@@ -219,7 +234,10 @@ class DeltaTable(object):
         if condition is None:
             raise ValueError("'condition' in merge cannot be None")
 
-        jbuilder = self._jdt.merge(source._jdf, DeltaTable._condition_to_jcolumn(condition))
+        if userMetadata is None:
+            jbuilder = self._jdt.merge(source._jdf, DeltaTable._condition_to_jcolumn(condition))
+        else:
+            jbuilder = self._jdt.merge(source._jdf, DeltaTable._condition_to_jcolumn(condition), userMetadata)
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
