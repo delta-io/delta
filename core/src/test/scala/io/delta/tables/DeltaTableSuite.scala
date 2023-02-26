@@ -409,7 +409,7 @@ class DeltaTableHadoopOptionsSuite
 
       table.updateExpr(Map("key" -> "100"), Some("test user metadata"))
 
-      checkAnswer(readDeltaUserMetadataByPath(path), Row(None) :: Row("test user metadata") :: Nil)
+      checkAnswer(readDeltaUserMetadataByPath(path), Row(null) :: Row("test user metadata") :: Nil)
     }
   }
 
@@ -423,7 +423,7 @@ class DeltaTableHadoopOptionsSuite
 
       table.update(Map("key" -> functions.expr("100")), Some("test user metadata"))
 
-      checkAnswer(readDeltaUserMetadataByPath(path), Row(None) :: Row("test user metadata") :: Nil)
+      checkAnswer(readDeltaUserMetadataByPath(path), Row(null) :: Row("test user metadata") :: Nil)
     }
   }
 
@@ -445,7 +445,7 @@ class DeltaTableHadoopOptionsSuite
         .execute()
 
       checkAnswer(readDeltaUserMetadataByPath(path),
-        Row(None) :: Row(None) :: Row("test user metadata") :: Nil)
+        Row(null) :: Row(null) :: Row("test user metadata") :: Nil)
     }
   }
 

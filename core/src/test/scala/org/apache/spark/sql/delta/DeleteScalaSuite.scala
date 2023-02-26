@@ -51,7 +51,7 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.delete(functions.expr("key = 1 or key = 2"), Some("test user metadata"))
     checkAnswer(readDeltaUserMetadataByPath(tempPath),
-      Row(None) :: Row("test user metadata") :: Nil)
+      Row(null) :: Row("test user metadata") :: Nil)
   }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {

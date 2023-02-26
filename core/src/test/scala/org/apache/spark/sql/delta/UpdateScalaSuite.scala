@@ -67,7 +67,7 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
       Map("key" -> functions.expr("100"), "value" -> functions.expr("101"))
       , Some("test user metadata"))
     checkAnswer(readDeltaUserMetadataByPath(tempPath),
-      Row(None) :: Row(None) :: Row("test user metadata") :: Nil)
+      Row(null) :: Row(null) :: Row("test user metadata") :: Nil)
   }
 
   override protected def executeUpdate(
