@@ -41,18 +41,21 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeDelete(
       condition: Option[Expression],
       userMetadata: Option[String] = None): Unit = improveUnsupportedOpError {
-    val previousMetadata = sparkSession.conf.getOption("userMetadata")
+    val previousMetadata = sparkSession.conf.getOption(
+      "spark.databricks.delta.commitInfo.userMetadata")
     userMetadata match {
       case Some(metadata) =>
-        sparkSession.conf.set("userMetadata", metadata)
+        sparkSession.conf.set("spark.databricks.delta.commitInfo.userMetadata", metadata)
       case None => None
     }
     val delete =
       DeleteFromTable(self.toDF.queryExecution.analyzed, condition.getOrElse(Literal.TrueLiteral))
     val dataset = toDataset(sparkSession, delete)
     previousMetadata match {
-      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
-      case None => sparkSession.conf.unset("userMetadata")
+      case Some(metadata) => sparkSession.conf.set(
+        "spark.databricks.delta.commitInfo.userMetadata", metadata)
+      case None => sparkSession.conf.unset(
+        "spark.databricks.delta.commitInfo.userMetadata")
     }
     dataset
   }
@@ -84,9 +87,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       set: Map[String, Column],
       condition: Option[Column],
       userMetadata: Option[String] = None): Unit = improveUnsupportedOpError {
-    val previousMetadata = sparkSession.conf.getOption("userMetadata")
+    val previousMetadata = sparkSession.conf.getOption(
+      "spark.databricks.delta.commitInfo.userMetadata")
     userMetadata match {
-      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
+      case Some(metadata) => sparkSession.conf.set(
+        "spark.databricks.delta.commitInfo.userMetadata", metadata)
       case None => None
     }
     val assignments = set.map { case (targetColName, column) =>
@@ -96,8 +101,10 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
     val dataset = toDataset(sparkSession, update)
     previousMetadata match {
-      case Some(metadata) => sparkSession.conf.set("userMetadata", metadata)
-      case None => sparkSession.conf.unset("userMetadata")
+      case Some(metadata) => sparkSession.conf.set(
+        "spark.databricks.delta.commitInfo.userMetadata", metadata)
+      case None => sparkSession.conf.unset(
+        "spark.databricks.delta.commitInfo.userMetadata")
     }
     dataset
   }
