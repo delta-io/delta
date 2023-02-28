@@ -236,6 +236,7 @@ trait CloneTableSuiteBase extends QueryTest
     assert(blob("isReplaceDelta") === replacingDeltaTable)
     assert(blob("sourceTableSize") === cloneSource.sizeInBytes)
     assert(blob("sourceNumOfFiles") === cloneSource.numOfFiles)
+    assert(blob("partitionBy") === cloneSource.metadata.partitionColumns)
 
 
     // Check whether resulting metadata of target and source at version is the same
