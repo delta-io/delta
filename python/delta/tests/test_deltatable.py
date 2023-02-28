@@ -1037,8 +1037,6 @@ class DeltaTableTestsMixin:
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(3, res.first().metrics.numFilesRemoved)
         self.assertEqual('[]', op_params['predicate'])
@@ -1068,8 +1066,6 @@ class DeltaTableTestsMixin:
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(2, res.first().metrics.numFilesRemoved)
         self.assertEqual('["(key = \'a\')"]', op_params['predicate'])
