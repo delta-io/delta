@@ -2592,7 +2592,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage ==
         "Detected a data update (for example removedFile) in the source table at version " +
           "10. This is currently not supported. If you'd like to ignore updates, set the " +
-          "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
+          "option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, " +
           "please restart this query with a fresh checkpoint directory. The source table can be " +
           "found at path tablePath.")
     }

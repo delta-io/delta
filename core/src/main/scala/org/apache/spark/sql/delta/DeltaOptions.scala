@@ -163,6 +163,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val ignoreDeletes = options.get(IGNORE_DELETES_OPTION).exists(toBoolean(_, IGNORE_DELETES_OPTION))
 
+  val skipChangeCommits = options.get(SKIP_CHANGE_COMMITS_OPTION)
+    .exists(toBoolean(_, SKIP_CHANGE_COMMITS_OPTION))
+
   val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
     .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
 
@@ -240,6 +243,7 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
+  val SKIP_CHANGE_COMMITS_OPTION = "skipChangeCommits"
   val FAIL_ON_DATA_LOSS_OPTION = "failOnDataLoss"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
   val DATA_CHANGE_OPTION = "dataChange"
