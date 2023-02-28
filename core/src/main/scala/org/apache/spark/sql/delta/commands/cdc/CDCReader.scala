@@ -549,6 +549,7 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeChangeFileIndex(
           spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, readSchemaSnapshot),
+        readSchemaSnapshot.protocol,
         readSchemaSnapshot.metadata,
         isStreaming))
     }
@@ -582,6 +583,7 @@ trait CDCReaderImpl extends DeltaLogging {
       dfs.append(scanIndex(
         spark,
         new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        snapshot.protocol,
         snapshot.metadata,
         isStreaming))
     }
@@ -590,6 +592,7 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeRemoveFileIndex(
           spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        snapshot.protocol,
         snapshot.metadata,
         isStreaming))
     }
@@ -666,6 +669,7 @@ trait CDCReaderImpl extends DeltaLogging {
   protected def scanIndex(
       spark: SparkSession,
       index: TahoeFileIndex,
+      protocol: Protocol,
       metadata: Metadata,
       isStreaming: Boolean = false): DataFrame = {
     val relation = HadoopFsRelation(
@@ -673,7 +677,7 @@ trait CDCReaderImpl extends DeltaLogging {
       index.partitionSchema,
       cdcReadSchema(metadata.schema),
       bucketSpec = None,
-      new DeltaParquetFileFormat(metadata),
+      new DeltaParquetFileFormat(protocol, metadata),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
     Dataset.ofRows(spark, plan)

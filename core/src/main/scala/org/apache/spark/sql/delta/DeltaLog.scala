@@ -474,7 +474,7 @@ class DeltaLog private(
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
         ColumnWithDefaultExprUtils.removeDefaultExpressions(metadata.schema)),
       bucketSpec = None,
-      fileFormat(metadata),
+      fileFormat(snapshot.protocol, metadata),
       hadoopOptions)(spark)
 
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
@@ -523,7 +523,7 @@ class DeltaLog private(
         ColumnWithDefaultExprUtils.removeDefaultExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
-      fileFormat(snapshotToUse.metadata),
+      fileFormat(snapshotToUse.protocol, snapshotToUse.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
       // store any file system options since they may contain credentials. Hence, it will never
       // conflict with `DeltaLog.options`.

@@ -69,7 +69,7 @@ import org.apache.spark.sql.SparkSession
 sealed abstract class TableFeature(
     val name: String,
     val minReaderVersion: Int,
-    val minWriterVersion: Int) {
+    val minWriterVersion: Int) extends java.io.Serializable {
 
   require(name.forall(c => c.isLetterOrDigit || c == '-' || c == '_'))
 

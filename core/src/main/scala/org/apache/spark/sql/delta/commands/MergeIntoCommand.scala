@@ -991,7 +991,7 @@ case class MergeIntoCommand(
       // because under column mapping, the reference schema within DeltaParquetFileFormat
       // that is used to populate metadata needs to be updated
       if (deltaTxn.metadata.columnMappingMode != NoMapping) {
-        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.metadata)
+        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.protocol, deltaTxn.metadata)
         DeltaTableUtils.replaceFileFormat(transformed, updatedFileFormat)
       } else {
         transformed
