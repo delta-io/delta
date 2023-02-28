@@ -79,10 +79,10 @@ class BitmapAggregatorE2ESuite extends QueryTest
     val aggregationOutput = baseDF
       .groupBy("file")
       .agg(bitmapAgg)
-      .as[(String, (Long, Array[Byte]))]
+      .as[(String, (Long, Long, Array[Byte]))]
       .collect()
       .toMap
-      .mapValues(v => RoaringBitmapArray.readFrom(v._2))
+      .mapValues(v => RoaringBitmapArray.readFrom(v._3))
 
     val dfFile1 = baseDF
       .select("id")
@@ -148,9 +148,9 @@ class BitmapAggregatorE2ESuite extends QueryTest
     val aggregationOutput = baseDF
       .groupBy("file")
       .agg(bitmapAgg, count("id"))
-      .as[(String, (Long, Array[Byte]), Long)]
+      .as[(String, (Long, Long, Array[Byte]), Long)]
       .collect()
-      .map(t => (t._1 -> (RoaringBitmapArray.readFrom(t._2._2), t._3)))
+      .map(t => (t._1 -> (RoaringBitmapArray.readFrom(t._2._3), t._3)))
       .toMap
     // scalastyle:on countstring
 

@@ -62,12 +62,15 @@ case class BitmapAggregator(
   }
 
   /**
-   * Return bitmap cardinality and serialized bitmap.
+   * Return bitmap cardinality, last and serialized bitmap.
    */
   override def eval(bitmapIntegerSet: RoaringBitmapArray): GenericInternalRow = {
     // reduce the serialized size via RLE optimisation
     bitmapIntegerSet.runOptimize()
-    new GenericInternalRow(Array(bitmapIntegerSet.cardinality, serialize(bitmapIntegerSet)))
+    new GenericInternalRow(Array(
+      bitmapIntegerSet.cardinality,
+      bitmapIntegerSet.last.getOrElse(null),
+      serialize(bitmapIntegerSet)))
   }
 
   override def serialize(buffer: RoaringBitmapArray): Array[Byte] = {
@@ -90,6 +93,7 @@ case class BitmapAggregator(
   override def dataType: StructType = StructType(
     Seq(
       StructField("cardinality", LongType),
+      StructField("last", LongType),
       StructField("bitmap", BinaryType)
     )
   )
