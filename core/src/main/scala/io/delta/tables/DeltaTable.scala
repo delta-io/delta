@@ -539,10 +539,7 @@ class DeltaTable private[tables](
       DeltaConfigs.validateConfigurations(
         Map(
           "delta.minReaderVersion" -> readerVersion.toString,
-          "delta.minWriterVersion" -> writerVersion.toString
-        )
-      )
-    )
+          "delta.minWriterVersion" -> writerVersion.toString)))
     toDataset(sparkSession, alterTableCmd)
   }
 }
