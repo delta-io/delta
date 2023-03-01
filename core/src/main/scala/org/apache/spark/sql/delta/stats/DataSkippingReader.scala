@@ -38,7 +38,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -168,6 +168,7 @@ private[delta] object DataSkippingReader {
   val trueLiteral: Column = col(TrueLiteral)
   val falseLiteral: Column = col(FalseLiteral)
   val nullStringLiteral: Column = col(new Literal(null, StringType))
+  val nullBooleanLiteral: Column = col(new Literal(null, BooleanType))
   val oneMillisecondLiteralExpr: Literal = {
     val oneMillisecond = new CalendarInterval(0, 0, 1000 /* micros */)
     new Literal(oneMillisecond, CalendarIntervalType)
@@ -226,6 +227,19 @@ trait DataSkippingReaderBase
    */
   final def withStats: DataFrame = {
     withStatsInternal
+  }
+
+  /**
+   * Constructs a [[DataSkippingPredicate]] for isNotNull predicates.
+   */
+   protected def constructNotNullFilter(
+      statsProvider: StatsProvider,
+      pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
+    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn)
+    val numRecordsCol = StatsColumn(NUM_RECORDS)
+    statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
+      (nullCount, numRecords) => nullCount < numRecords
+    }
   }
 
   /**
@@ -455,13 +469,9 @@ trait DataSkippingReaderBase
         constructDataFilters(IsNotNull(e))
 
       // Match any file whose null count is less than the row count.
-      // Note When comparing numRecords to nullCount we should NOT take into account DV cardinality
       case IsNotNull(SkippingEligibleColumn(a, _)) =>
-        val nullCountCol = StatsColumn(NULL_COUNT, a)
-        val numRecordsCol = StatsColumn(NUM_RECORDS)
-        statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
-          (nullCount, numRecords) => nullCount < numRecords
-        }
+        constructNotNullFilter(statsProvider, a)
+
       case Not(IsNotNull(e)) =>
         constructDataFilters(IsNull(e))
 
@@ -681,21 +691,18 @@ trait DataSkippingReaderBase
       // caller will negate the expression we return. In case a stats column is NULL, `NOT(expr)`
       // must return `TRUE`, and without these NULL checks it would instead return
       // `NOT(NULL)` => `NULL`.
-      // NOTE: Here we only verify the existence of statistics. Therefore, DVs do not
-      // cause any issue. Furthermore, the check below NUM_RECORDS === NULL_COUNT should NOT
-      // take into the DV cardinality.
       referencedStats.flatMap { stat => stat match {
         case StatsColumn(MIN, _) | StatsColumn(MAX, _) =>
           Seq(stat, StatsColumn(NULL_COUNT, stat.pathToColumn), StatsColumn(NUM_RECORDS))
         case _ =>
           Seq(stat)
       }}.map{stat => stat match {
+        // A usable MIN or MAX stat must be non-NULL, unless the column is provably all-NULL
+        //
+        // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
+        // separate NULL checks we emit for those columns will force the overall validation
+        // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
         case StatsColumn(MIN, _) | StatsColumn(MAX, _) =>
-          // A usable MIN or MAX stat must be non-NULL, unless the column is provably all-NULL
-          //
-          // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
-          // separate NULL checks we emit for those columns will force the overall validation
-          // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
           getStatsColumnOrNullLiteral(stat).isNotNull ||
             (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
               getStatsColumnOrNullLiteral(NUM_RECORDS))
