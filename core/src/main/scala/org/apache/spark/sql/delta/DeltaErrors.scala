@@ -1720,6 +1720,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def schemaContainsTimestampNTZType(
+      schema: StructType,
+      requiredProtocol: Protocol,
+      currentProtocol: Protocol): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ",
+      messageParameters = Array(
+        s"${formatSchema(schema)}",
+        s"$requiredProtocol",
+        s"$currentProtocol"
+      )
+    )
+  }
+
   def tableAlreadyExists(table: CatalogTable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ALREADY_EXISTS",
