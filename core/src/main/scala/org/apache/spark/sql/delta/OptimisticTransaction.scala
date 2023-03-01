@@ -413,6 +413,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newMetadataTmp,
       isCreatingNewTable)
 
+    // Check for existence of TimestampNTZ in the schema and throw an error if the feature
+    // is not enabled.
+    if (!protocolBeforeUpdate.isFeatureSupported(TimestampNTZTableFeature) &&
+        SchemaUtils.checkForTimestampNTZColumnsRecursively(newMetadataTmp.schema)) {
+      // The timestampNTZ feature is enabled if there is a table prop in this transaction,
+      // or if this is a new table
+      val isEnabled = isCreatingNewTable || TableFeatureProtocolUtils
+        .getSupportedFeaturesFromConfigs(
+          newMetadataTmp.configuration, TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+        .contains(TimestampNTZTableFeature)
+
+      if (!isEnabled) {
+        throw DeltaErrors.schemaContainsTimestampNTZType(
+          newMetadataTmp.schema,
+          TimestampNTZTableFeature.minProtocolVersion.withFeature(TimestampNTZTableFeature),
+          snapshot.protocol
+        )
+      }
+    }
+
     if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
       var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(newMetadataTmp.schema)

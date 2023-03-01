@@ -1577,9 +1577,6 @@ class SchemaUtilsSuite extends QueryTest
     assertUnsupportedDataType(DateType, Nil)
     assertUnsupportedDataType(TimestampType, Nil)
     assertUnsupportedDataType(
-      TimestampNTZType,
-      Seq(UnsupportedDataTypeInfo("col", TimestampNTZType)))
-    assertUnsupportedDataType(
       CalendarIntervalType,
       Seq(UnsupportedDataTypeInfo("col", CalendarIntervalType)))
     assertUnsupportedDataType(BinaryType, Nil)
@@ -1635,27 +1632,6 @@ class SchemaUtilsSuite extends QueryTest
     assertUnsupportedDataType(
       new UnsupportedUDT,
       Seq(UnsupportedDataTypeInfo("col", UnsupportedDataType)))
-  }
-
-  test("unsupported data type check") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-
-      def createTableUsingTimestampNTZType(): Unit = {
-        DeltaTable.create().addColumn("t", TimestampNTZType, true).location(path).execute()
-      }
-
-      val e = intercept[AnalysisException] {
-        createTableUsingTimestampNTZType()
-      }
-      assert(
-        e.getMessage.contains("Found columns using unsupported data types: [t: TimestampNTZType]"))
-      assert(e.getMessage.contains(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key))
-
-      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key -> "false") {
-        createTableUsingTimestampNTZType()
-      }
-    }
   }
 
   test("findUndefinedTypes: basic types") {

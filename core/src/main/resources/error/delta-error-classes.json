@@ -2021,6 +2021,21 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ" : {
+    "message" : [
+      "Your table schema <schema> contains a column of type TimestampNTZ.",
+      "TimestampNTZ type is not supported by your table's protocol.",
+      "",
+      "Required Delta protocol version and features for TimestampNTZ:",
+      "<requiredVersion>",
+      "Your table's current Delta protocol version and enabled features:",
+      "<currentVersion>",
+      "",
+      "Run the following command to add TimestampNTZ support to your table.",
+      "ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')"
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."

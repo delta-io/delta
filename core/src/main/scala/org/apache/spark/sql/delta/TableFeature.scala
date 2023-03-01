@@ -20,9 +20,12 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types.TimestampNTZType
 
 /* --------------------------------------- *
  |  Table features base class definitions  |
@@ -197,6 +200,7 @@ object TableFeature {
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
+      TimestampNTZTableFeature,
       DeletionVectorsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
@@ -293,6 +297,15 @@ object IdentityColumnsTableFeature
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
+  }
+}
+
+object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
+    with FeatureAutomaticallyEnabledByMetadata {
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
 }
 
