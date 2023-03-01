@@ -780,7 +780,7 @@ When enabling:
 When Row IDs are enabled (when the table property `delta.rowIds.enabled` is set to `true`) and Row IDs are to be read, then:
 - When requested, readers must reconstruct stable Row IDs as follows:
   1. Readers must use the materialized Row ID if the physical Row ID column determined by `delta.rowIds.physicalColumnName` is present in the data file and the column contains a non `null` value for a row.
-  2. Readers must use the default generated Row ID if the materialized Row ID cannot be used for a row and the `baseRowId` field of the file is set.
+  2. Readers must use the default generated Row ID if the materialized Row ID cannot be used for a row.
 - Readers cannot read Row IDs while reading change data files.
 
 ## Writer Requirements for Row IDs
@@ -791,7 +791,7 @@ When Row IDs are supported (when the `writerFeatures` field of a table's `protoc
     Writers must set the `baseRowId` field in all `add` actions that they commit.
     Writers must not commit `add` actions with default generated Row IDs that overlap with any previously committed `add` actions with a different `path`,
     or with any other `add` action in the same commit.
-    An `add` action contains default generated Row IDs ranging from `add.baseRowId` (inclusive) to `add.baseRowId + add.stats.numRecords` (exclusive).
+    An `add` action contains default generated Row IDs ranging from `add.baseRowId` (inclusive) to `add.baseRowId + add.stats.numRecords` (exclusive) for non-empty files. Empty files contain no default generated Row IDs.
   - `add` actions for new physical files must have a value in the `baseRowId` field that is larger than the `highWaterMark` value in the last committed `rowIdHighWaterMark` action.
     If the table doesn't have any committed `rowIdHighWaterMark` action, the `highWaterMark` value is -1.
   - `add` actions for existing physical files must have the same value in the `baseRowId` as the last committed `add` action with the same `path`.
