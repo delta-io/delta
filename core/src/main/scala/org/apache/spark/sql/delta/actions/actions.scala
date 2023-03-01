@@ -178,19 +178,25 @@ object Protocol {
     // `minProtocolComponentsFromMetadata` does not consider sessions defaults,
     // so we must copy sessions defaults to table metadata.
     val conf = spark.sessionState.conf
-    val defaultGlobalConf = Map(
-      MIN_READER_VERSION_PROP ->
-        conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).toString,
-      MIN_WRITER_VERSION_PROP ->
-        conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).toString)
+    val ignoreProtocolDefaults = DeltaConfigs.ignoreProtocolDefaultsIsSet(
+      sqlConfs = conf,
+      tableConf = metadataOpt.map(_.configuration).getOrElse(Map.empty))
+    val defaultGlobalConf = if (ignoreProtocolDefaults) {
+      Map(MIN_READER_VERSION_PROP -> 1.toString, MIN_WRITER_VERSION_PROP -> 1.toString)
+    } else {
+      Map(
+        MIN_READER_VERSION_PROP ->
+          conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).toString,
+        MIN_WRITER_VERSION_PROP ->
+          conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).toString)
+    }
     val overrideGlobalConf = DeltaConfigs
-      .mergeGlobalConfigs(spark.sessionState.conf, Map.empty)
-      .filterKeys { // We care only about protocol related stuff
-        case MIN_READER_VERSION_PROP | MIN_WRITER_VERSION_PROP => true
-        case k if k.startsWith(FEATURE_PROP_PREFIX) => true
-        case _ => false
-      }
-      .toMap
+      .mergeGlobalConfigs(
+        sqlConfs = spark.sessionState.conf,
+        tableConf = Map.empty,
+        ignoreProtocolConfsOpt = Some(ignoreProtocolDefaults))
+      // We care only about protocol related stuff
+      .filter { case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k) }
     var metadata = metadataOpt.getOrElse(Metadata())
     // Priority: user-provided > override of session defaults > session defaults
     metadata = metadata.copy(configuration =
@@ -343,6 +349,10 @@ object Protocol {
       !metadata.configuration.keys.exists(_.startsWith(FEATURE_PROP_PREFIX)),
       "Should not have " +
         s"table features (starts with '$FEATURE_PROP_PREFIX') as part of table properties")
+    assert(
+      !metadata.configuration.contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key),
+      "Should not have the table property " +
+        s"${DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key} stored in table metadata")
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
 

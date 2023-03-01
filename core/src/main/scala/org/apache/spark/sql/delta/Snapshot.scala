@@ -536,9 +536,13 @@ class InitialSnapshot(
     deltaLog,
     Metadata(
       configuration = DeltaConfigs.mergeGlobalConfigs(
-        SparkSession.active.sessionState.conf, Map.empty),
-      createdTime = Some(System.currentTimeMillis()))
-  )
+        sqlConfs = SparkSession.active.sessionState.conf,
+        tableConf = Map.empty,
+        ignoreProtocolConfsOpt = Some(
+          DeltaConfigs.ignoreProtocolDefaultsIsSet(
+            sqlConfs = SparkSession.active.sessionState.conf,
+            tableConf = deltaLog.allOptions))),
+      createdTime = Some(System.currentTimeMillis())))
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
   override def stateDF: DataFrame = emptyDF

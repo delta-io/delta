@@ -1702,8 +1702,6 @@ class DeltaTableCreationSuite
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     loadTable(tableName).properties().asScala.toMap
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
-      .filterKeys(k =>
-        k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
       .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
   }
