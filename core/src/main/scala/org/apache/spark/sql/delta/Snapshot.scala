@@ -102,7 +102,7 @@ class Snapshot(
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
-  private def stateReconstruction: Dataset[SingleAction] = {
+  protected def stateReconstruction: Dataset[SingleAction] = {
     recordFrameProfile("Delta", "snapshot.stateReconstruction") {
       // for serializability
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
@@ -213,6 +213,13 @@ class Snapshot(
     )
   }
 
+  def extractComputedState(stateDF: DataFrame): State =
+    recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
+      val aggregations =
+        aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
+      stateDF.select(aggregations: _*).as[State].first()
+    }
+
   /**
    * Computes some statistics around the transaction log, therefore on the actions made on this
    * Delta table.
@@ -221,11 +228,7 @@ class Snapshot(
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
       recordFrameProfile("Delta", "snapshot.computedState") {
         val startTime = System.nanoTime()
-        val aggregations =
-          aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
-        val _computedState = recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
-          stateDF.select(aggregations: _*).as[State].first()
-        }
+        val _computedState = extractComputedState(stateDF)
         if (_computedState.protocol == null) {
           recordDeltaEvent(
             deltaLog,

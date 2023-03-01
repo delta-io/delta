@@ -223,7 +223,7 @@ trait DataSkippingReaderBase
    * Returns a parsed and cached representation of files with statistics.
    *
    *
-   * @return cached [[DataFrame]]
+   * @return [[DataFrame]]
    */
   final def withStats: DataFrame = {
     withStatsInternal
