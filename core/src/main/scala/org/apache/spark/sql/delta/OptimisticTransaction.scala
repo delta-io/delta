@@ -1352,11 +1352,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
-   * Returns true if we should checkpoint the version that has just been committed.
+   * Sets needsCheckpoint if we should checkpoint the version that has just been committed.
    */
-  protected def shouldCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = {
+  protected def setNeedsCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Unit = {
     def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    committedVersion != 0 && committedVersion % checkpointInterval == 0
+    needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   private[delta] def isCommitLockEnabled: Boolean = {
@@ -1495,7 +1495,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
-    needsCheckpoint = shouldCheckpoint(attemptVersion, postCommitSnapshot)
+    setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,

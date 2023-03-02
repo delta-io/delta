@@ -410,6 +410,8 @@ class OptimisticTransactionSuite
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+      sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+        s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
       val testTxn = log.startTransaction()
       val testTxnStartTs = System.currentTimeMillis()
       for (_ <- 1 to 11) {
@@ -418,17 +420,17 @@ class OptimisticTransactionSuite
       val testTxnEndTs = System.currentTimeMillis()
 
       // preCommitLogSegment should not get updated until a commit is triggered
-      assert(testTxn.preCommitLogSegment.version == 0)
+      assert(testTxn.preCommitLogSegment.version == 1)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
-      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == None)
 
       testTxn.commit(Seq.empty, ManualUpdate)
 
       // preCommitLogSegment should get updated to the version right before the txn commits
-      assert(testTxn.preCommitLogSegment.version == 11)
+      assert(testTxn.preCommitLogSegment.version == 12)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
-      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
     }
   }
