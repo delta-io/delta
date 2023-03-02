@@ -2625,6 +2625,48 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def failToDeserializeSchemaLog(location: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_DESERIALIZE_FAILED",
+      messageParameters = Array(location)
+    )
+  }
+
+  def failToParseSchemaLog: Throwable = {
+    new DeltaRuntimeException(errorClass = "DELTA_STREAMING_SCHEMA_LOG_PARSE_SCHEMA_FAILED")
+  }
+
+  def sourcesWithConflictingSchemaTrackingLocation(
+      schemaTrackingLocatiob: String,
+      tableOrPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT",
+      messageParameters = Array(schemaTrackingLocatiob, tableOrPath))
+  }
+
+  def incompatibleSchemaLogPartitionSchema(
+      persistedPartitionSchema: StructType,
+      tablePartitionSchema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_PARTITION_SCHEMA",
+      messageParameters = Array(persistedPartitionSchema.json, tablePartitionSchema.json))
+  }
+
+  def incompatibleSchemaLogDeltaTable(
+      persistedTableId: String,
+      tableId: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID",
+      messageParameters = Array(persistedTableId, tableId))
+  }
+
+  def schemaTrackingLocationNotUnderCheckpointLocation(
+      schemaTrackingLocation: String,
+      checkpointLocation: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT",
+      messageParameters = Array(schemaTrackingLocation, checkpointLocation))
+  }
 
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(

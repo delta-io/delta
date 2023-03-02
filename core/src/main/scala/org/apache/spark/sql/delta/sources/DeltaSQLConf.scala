@@ -918,6 +918,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION =
+    buildConf("streaming.allowSchemaLocationOutsideCheckpointLocation")
+      .doc(
+        "When enabled, Delta streaming can set a schema location outside of the " +
+        "query's checkpoint location. This is not recommended.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
     buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
       .doc(
