@@ -61,6 +61,8 @@ case class CommitStats(
   stateReconstructionDurationMs: Long,
   numAdd: Int,
   numRemove: Int,
+  /** The number of [[SetTransaction]] actions in the committed actions. */
+  numSetTransaction: Int,
   bytesNew: Long,
   /** The number of files in the table as of version `readVersion`. */
   numFilesTotal: Long,
@@ -1044,6 +1046,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var numAbsolutePaths: Int = 0
       var numAddFiles: Int = 0
       var numRemoveFiles: Int = 0
+      var numSetTransaction: Int = 0
       var bytesNew: Long = 0L
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
@@ -1058,6 +1061,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           case r: RemoveFile =>
             numRemoveFiles += 1
             removeFilesHistogram.foreach(_.insert(r.getFileSize))
+          case _: SetTransaction =>
+            numSetTransaction += 1
           case _ =>
         }
         action
@@ -1094,6 +1099,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
         numAdd = numAddFiles,
         numRemove = numRemoveFiles,
+        numSetTransaction = numSetTransaction,
         bytesNew = bytesNew,
         numFilesTotal = postCommitSnapshot.numOfFiles,
         sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
@@ -1478,6 +1484,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     var bytesNew: Long = 0L
     var numAdd: Int = 0
     var numRemove: Int = 0
+    var numSetTransaction: Int = 0
     var numCdcFiles: Int = 0
     var cdcBytesNew: Long = 0L
     actions.foreach {
@@ -1491,6 +1498,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case c: AddCDCFile =>
         numCdcFiles += 1
         cdcBytesNew += c.size
+      case _: SetTransaction =>
+        numSetTransaction += 1
       case _ =>
     }
     val info = currentTransactionInfo.commitInfo
@@ -1507,6 +1516,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
       numAdd = numAdd,
       numRemove = numRemove,
+      numSetTransaction = numSetTransaction,
       bytesNew = bytesNew,
       numFilesTotal = postCommitSnapshot.numOfFiles,
       sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
