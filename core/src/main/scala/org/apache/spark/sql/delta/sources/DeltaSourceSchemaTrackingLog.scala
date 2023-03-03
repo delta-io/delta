@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta.sources
 
 import java.io.{InputStream, OutputStream}
 import java.nio.charset.StandardCharsets.UTF_8
+import java.util.Locale
 
 import scala.io.{Source => IOSource}
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
@@ -116,12 +117,18 @@ class DeltaSourceSchemaTrackingLog private(
     currentLatestSchemaOpt
   }
 
-  protected val schemaCommitVersionAtLogInit: Option[Long] = getLatest().map(_._1)
+  protected val schemaBatchIdAtLogInit: Option[Long] = getLatest().map(_._1)
 
   // Next schema version to write, this should be updated after each schema evolution.
   // This allow HDFSMetadataLog to best detect concurrent schema log updates.
-  protected var nextVersionToWrite: Long = schemaCommitVersionAtLogInit.map(_ + 1).getOrElse(0L)
+  protected var nextVersionToWrite: Long = schemaBatchIdAtLogInit.map(_ + 1).getOrElse(0L)
+
+  // Current tracked schema log entry
   protected var currentTrackedSchema: Option[PersistedSchema] = schemaAtLogInit
+
+  // Previous tracked schema log entry
+  protected var previousTrackedSchema: Option[PersistedSchema] =
+    schemaBatchIdAtLogInit.map(_ - 1L).flatMap(get)
 
   override protected def deserialize(in: InputStream): PersistedSchema = {
     // Called inside a try-finally where the underlying stream is closed in the caller
@@ -150,10 +157,15 @@ class DeltaSourceSchemaTrackingLog private(
   protected[delta] def getLatestSchema: Option[PersistedSchema] = getLatest().map(_._2)
 
   /**
-   * The initial schema loaded when this schema log is created. This is typically used as the
-   * read schema for Delta streaming source.
+   * The current schema being tracked since this schema log is created. This is typically used as
+   * the read schema for Delta streaming source.
    */
   def getCurrentTrackedSchema: Option[PersistedSchema] = currentTrackedSchema
+
+  /**
+   * The previous schema being tracked since this schema log is created.
+   */
+  def getPreviousTrackedSchema: Option[PersistedSchema] = previousTrackedSchema
 
   def evolveSchema(newSchema: PersistedSchema): Unit = {
     // Write to schema log
@@ -163,6 +175,7 @@ class DeltaSourceSchemaTrackingLog private(
       throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         rootSchemaLocation, sourceSnapshot.deltaLog.dataPath.toString)
     }
+    previousTrackedSchema = currentTrackedSchema
     currentTrackedSchema = Some(newSchema)
     nextVersionToWrite += 1
   }

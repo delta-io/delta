@@ -2700,6 +2700,28 @@ trait DeltaErrorsBase
       messageParameters = Array(schemaTrackingLocation, checkpointLocation))
   }
 
+  def cannotContinueStreamingPostSchemaEvolution(
+      nonAdditiveSchemaChangeOpType: String,
+      schemaChangeVersion: Long,
+      checkpointHash: Int,
+      allowAllMode: String,
+      opTypeSpecificAllowMode: String): Throwable = {
+    val allowAllSqlConfKey = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allowAllMode"
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
+      messageParameters = Array(
+        nonAdditiveSchemaChangeOpType, schemaChangeVersion.toString,
+        // Allow this stream to pass for this particular version
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash", schemaChangeVersion.toString,
+        // Allow this stream to pass
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash", "always",
+        // Allow all streams to pass
+        allowAllSqlConfKey, "always",
+        allowAllMode, opTypeSpecificAllowMode
+      )
+    )
+  }
+
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(
       errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
@@ -3006,7 +3028,7 @@ class DeltaTableFeatureException(
 
 class DeltaRuntimeException(
     errorClass: String,
-    messageParameters: Array[String] = Array.empty)
+    val messageParameters: Array[String] = Array.empty)
   extends RuntimeException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {

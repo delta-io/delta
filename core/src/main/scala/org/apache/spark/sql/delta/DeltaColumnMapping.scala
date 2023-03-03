@@ -513,8 +513,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       return false
     }
 
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+    isDropColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
+  }
+
+  def isDropColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
     // are any of the current physical names missing in the new schema?
     currentPhysicalToLogicalMap
@@ -538,8 +542,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       return false
     }
 
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+    isRenameColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
+  }
+
+  def isRenameColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
     // do any two columns with the same physical name have different logical names?
     currentPhysicalToLogicalMap

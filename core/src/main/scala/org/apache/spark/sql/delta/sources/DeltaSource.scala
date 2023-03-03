@@ -149,7 +149,16 @@ trait DeltaSourceBase extends Source
    * streaming source.
    */
   protected val persistedSchemaAtSourceInit: Option[PersistedSchema] =
-    schemaTrackingLog.flatMap(_.getCurrentTrackedSchema)
+    schemaTrackingLog.flatMap(_.getCurrentTrackedSchema).map { currentTrackedSchema =>
+      // While loading the current persisted schema, validate against previous persisted schema
+      // to check if the stream can move ahead with the custom SQL conf
+      val previousTrackedSchemaOpt = schemaTrackingLog.flatMap(_.getPreviousTrackedSchema)
+      previousTrackedSchemaOpt.foreach { previousTrackedSchema =>
+        validateIfSchemaChangeCanBeUnblockedWithSQLConf(currentTrackedSchema, previousTrackedSchema)
+      }
+      // If validation passed, return the current tracked schema
+      currentTrackedSchema
+    }
 
   /**
    * The read schema for this source during initialization, taking in account of SchemaLog.
@@ -158,6 +167,15 @@ trait DeltaSourceBase extends Source
     persistedSchemaAtSourceInit.map(_.dataSchema).getOrElse {
       snapshotAtSourceInit.schema
     }
+
+  /**
+   * The read schema version for this source during initialization, taking in account of SchemaLog.
+   */
+  protected val readSchemaVersionAtSourceInit: Long =
+    persistedSchemaAtSourceInit.map(_.deltaCommitVersion).getOrElse {
+      snapshotAtSourceInit.version
+    }
+
 
   /**
    * A global flag to mark whether we have done a per-stream start check for column mapping
@@ -585,6 +603,7 @@ case class DeltaSource(
     deltaLog: DeltaLog,
     options: DeltaOptions,
     snapshotAtSourceInit: Snapshot,
+    metadataPath: String,
     schemaTrackingLog: Option[DeltaSourceSchemaTrackingLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
