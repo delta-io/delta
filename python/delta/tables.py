@@ -1289,6 +1289,31 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.property(key, value)
         return self
 
+    @since(2.3)  # type: ignore[arg-type]
+    def properties(self, properties: Dict[str, str]) -> "DeltaTableBuilder":
+        """
+        Specify a group of table properties
+
+        :param properties: the table properties dictionary
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+
+        jvm: "JVMView" = self._spark._sc._jvm  # type: ignore[attr-defined]
+
+        jmap: "JavaMap" = jvm.java.util.HashMap()
+
+        for key, value in properties.items():
+            if type(key) is not str or type(value) is not str:
+                self._raise_type_error("Key and value of property must be string.",
+                                       [key, value])
+            jmap.put(key, value)
+
+        self._jbuilder = self._jbuilder.properties(jmap)
+        return self
+
     @since(1.0)  # type: ignore[arg-type]
     def execute(self) -> DeltaTable:
         """

@@ -372,8 +372,10 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   test("delta table property case") {
-    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
-    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
+    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar",
+      "key" -> "value")
+    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar",
+      "key" -> "value")
 
     sealed trait DeltaTablePropertySetOperation {
       def setTableProperty(tablePath: String): Unit
@@ -391,7 +393,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     case object SetPropertyThroughCreate extends CasePreservingTablePropertySetOperation {
       def setTableProperty(tablePath: String): Unit = sql(
         s"CREATE TABLE delta.`$tablePath`(id INT) " +
-          s"USING delta TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar' ) "
+          s"USING delta TBLPROPERTIES" +
+          s"('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar', 'key'='value')"
       )
 
       val description = "Setting Table Property at Table Creation"
@@ -401,7 +404,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       def setTableProperty(tablePath: String): Unit = {
         spark.range(1, 10).write.format("delta").save(tablePath)
         sql(s"ALTER TABLE delta.`$tablePath` " +
-          s"SET TBLPROPERTIES('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar')")
+          s"SET TBLPROPERTIES" +
+          s"('delta.appendOnly'='true', 'Foo'='Bar', 'foo'='Bar', 'key'='value')")
       }
 
       val description = "Setting Table Property via Table Alter"
@@ -418,6 +422,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
             .property("delta.appendOnly", "true")
             .property("Foo", "Bar")
             .property("foo", "Bar")
+            .properties(Map("key" -> "value"))
             .execute()
         }
       }

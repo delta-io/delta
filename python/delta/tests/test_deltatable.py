@@ -923,6 +923,14 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.property("1", 1)  # type: ignore[arg-type]
 
+        # bad property key in dict
+        with self.assertRaises(TypeError):
+            builder.properties({1: '1'})  # type: ignore[arg-type]
+
+        # bad property value in dict
+        with self.assertRaises(TypeError):
+            builder.properties({'1': 1})  # type: ignore[arg-type]
+
     def test_protocolUpgrade(self) -> None:
         try:
             self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
