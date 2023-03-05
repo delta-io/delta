@@ -75,7 +75,9 @@ class DeltaSink(
     if (selfScan) {
       txn.readWholeTable()
     }
-
+    if (options.ignoreReadChanges) {
+      txn.ignoreReadChanges()
+    }
     // Streaming sinks can't blindly overwrite schema. See Schema Management design doc for details
     updateMetadata(data.sparkSession, txn, data.schema, partitionColumns, Map.empty,
       outputMode == OutputMode.Complete(), rearrangeOnly = false)

@@ -97,6 +97,9 @@ case class WriteIntoDelta(
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata)
+      if (options.ignoreReadChanges) {
+        txn.ignoreReadChanges()
+      }
       txn.commit(actions, operation)
     }
     Seq.empty

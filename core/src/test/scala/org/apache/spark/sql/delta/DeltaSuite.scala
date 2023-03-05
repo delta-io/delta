@@ -2099,6 +2099,16 @@ class DeltaSuite extends QueryTest
         checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Row(1) :: Row(1) :: Nil)
         assert(sql("desc history blind_append")
           .select("version", "isBlindAppend").head == Row(3, false))
+        sql("INSERT INTO blind_append VALUES(2)") // version = 4
+        spark.read.format("delta").load(path)
+          .where("value = 2")
+          .write.mode("append").format("delta")
+          .option(DeltaOptions.IGNORE_READ_CHANGES_OPTION, true)
+          .save(path) // version = 5
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Row(1) :: Row(1) :: Row(2)
+          :: Row(2) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(5, true))
       }
     }
   }
@@ -2115,6 +2125,14 @@ class DeltaSuite extends QueryTest
         checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Nil)
         assert(sql("desc history blind_append")
           .select("version", "isBlindAppend").head == Row(2, false))
+        spark.read.format("delta").load(path)
+          .where("value = 1")
+          .writeTo("blind_append")
+          .option(DeltaOptions.IGNORE_READ_CHANGES_OPTION, "true")
+          .append() // version = 3
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(3, true))
       }
     }
   }

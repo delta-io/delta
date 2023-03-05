@@ -245,6 +245,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Whether the whole table was read during the transaction. */
   protected var readTheWholeTable = false
 
+  /**
+   * Whether to ignore any changes to files read
+   * which is relevant for conflict checking or blind appends.
+   */
+  protected var ignoreFilesReadChanges = false
+
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
@@ -739,6 +745,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     readTheWholeTable = true
   }
 
+  /** Ignore any changes to files read during conflict checking for transaction. */
+  def ignoreReadChanges(): Unit = {
+    ignoreFilesReadChanges = true
+  }
+
   /** Mark the given files as read within this transaction. */
   def withFilesRead(files: Seq[AddFile]): Unit = {
     readFiles ++= files
@@ -912,7 +923,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
           val onlyAddFiles =
             preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
-          onlyAddFiles && !dependsOnFiles
+          onlyAddFiles && (!dependsOnFiles || ignoreFilesReadChanges)
         }
 
         commitInfo = CommitInfo(
@@ -1579,7 +1590,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       spark,
       currentTransactionInfo,
       otherCommitVersion,
-      commitIsolationLevel)
+      commitIsolationLevel,
+      ignoreFilesReadChanges)
     conflictChecker.checkConflicts()
   }
 

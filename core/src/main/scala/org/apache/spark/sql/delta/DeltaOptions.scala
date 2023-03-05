@@ -23,7 +23,7 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, IGNORE_READ_CHANGES_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -137,6 +137,17 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
       mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     }
   }
+
+  /**
+   * Whether to ignore any changes (added files, deletes) to files read.
+   * If changes to files read don't matter to you and you set this option
+   * you will not get a ConcurrentAppendException if these files were changed by
+   * other transactions, and your transactions might become blind appends if the
+   * files read prevented it from becoming this.
+   */
+  def ignoreReadChanges: Boolean = {
+    options.get(IGNORE_READ_CHANGES_OPTION).exists(toBoolean(_, IGNORE_READ_CHANGES_OPTION))
+  }
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -240,6 +251,7 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
+  val IGNORE_READ_CHANGES_OPTION = "ignoreReadChanges"
   val FAIL_ON_DATA_LOSS_OPTION = "failOnDataLoss"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
   val DATA_CHANGE_OPTION = "dataChange"
@@ -273,6 +285,7 @@ object DeltaOptions extends DeltaLogging {
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
     IGNORE_DELETES_OPTION,
+    IGNORE_READ_CHANGES_OPTION,
     FAIL_ON_DATA_LOSS_OPTION,
     OPTIMIZE_WRITE_OPTION,
     DATA_CHANGE_OPTION,

@@ -458,12 +458,14 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
 
       def tableData: DataFrame = spark.read.format("delta").load(outputDir.toString)
 
-      def appendToTable(df: DataFrame): Unit = failAfter(streamingTimeout) {
+      def appendToTable(df: DataFrame, options: Map[String, String] = Map.empty
+      ): Unit = failAfter(streamingTimeout) {
         var q: StreamingQuery = null
         try {
           input.addData(0)
           q = df.writeStream
             .format("delta")
+            .options(options)
             .option("checkpointLocation", checkpointDir.toString)
             .start(outputDir.toString)
           q.processAllAvailable()
@@ -493,6 +495,13 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
       assert(
         !isLastCommitBlindAppend,
         "joining with target table in the query should have isBlindAppend = false")
+
+      // Join with the table should have isBlindAppend = true if ignoreReadChanges = true
+      appendToTable(inputDataStream.join(tableData, "value"), Map("ignoreReadChanges" -> "true"))
+      assert(
+        isLastCommitBlindAppend,
+        "joining with target table in the query should have isBlindAppend = true" +
+          " if ignoreReadChanges = true")
     }
   }
 
