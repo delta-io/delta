@@ -792,9 +792,7 @@ case class SerializableFileStatus(
   def getHadoopPath: Path = new Path(path)
 
   def toFileStatus: FileStatus = {
-    new LocatedFileStatus(
-      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
-      Array.empty[BlockLocation])
+    new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path))
   }
 
   override def equals(obj: Any): Boolean = obj match {
