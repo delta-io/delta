@@ -667,7 +667,12 @@ object Checkpoints extends DeltaLogging {
       // file already exists as per File System spec. But the LocalFS doesn't follow this and it
       // overrides the final path even if it already exists. So we use exists here to handle that
       // case.
-      !fs.exists(finalPath) && fs.rename(tempPath, finalPath)
+      // TODO: Remove isTesting and fs.exists check after fixing LocalFS
+      if (Utils.isTesting && fs.exists(finalPath)) {
+        false
+      } else {
+        fs.rename(tempPath, finalPath)
+      }
     } catch {
       case _: org.apache.hadoop.fs.FileAlreadyExistsException => false
     }
