@@ -549,7 +549,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       }
       checkErrorHelper(
         exception = e,
-        errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
+        errorClass = subClass.tag
       )
     }
 

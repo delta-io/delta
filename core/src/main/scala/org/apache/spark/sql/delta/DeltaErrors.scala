@@ -2963,29 +2963,29 @@ sealed trait DeltaTablePropertyValidationFailedSubClass {
 final object DeltaTablePropertyValidationFailedSubClass {
   final case object PersistentDeletionVectorsWithIncrementalManifestGeneration
     extends DeltaTablePropertyValidationFailedSubClass {
-    override val tag = "PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+    override val tag = "DELTA_PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
   }
   final case object ExistingDeletionVectorsWithIncrementalManifestGeneration
     extends DeltaTablePropertyValidationFailedSubClass {
-    override val tag = "EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+    override val tag = "DELTA_EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
     /** This subclass needs the table parameters in two places. */
     override def messageParameters(table: String): Array[String] = Array(table, table)
   }
   final case object PersistentDeletionVectorsInNonParquetTable
     extends DeltaTablePropertyValidationFailedSubClass {
-    override val tag = "PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE"
+    override val tag = "DELTA_PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE"
   }
 }
 
 class DeltaTablePropertyValidationFailedException(
     table: String,
     subClass: DeltaTablePropertyValidationFailedSubClass)
-  extends RuntimeException(DeltaThrowableHelper.getMessage(
-    errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
-    messageParameters = subClass.messageParameters(table)))
+  extends RuntimeException(
+    DeltaThrowableHelper.getMessage(
+      errorClass = subClass.tag,
+      messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
-  override def getErrorClass: String =
-    "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
+  override def getErrorClass: String = subClass.tag
 }
 
 /** Errors thrown around column mapping. */
