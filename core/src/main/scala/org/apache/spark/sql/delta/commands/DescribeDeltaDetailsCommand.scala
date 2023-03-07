@@ -115,7 +115,8 @@ case class DescribeDeltaDetailCommand(
           // This should be a catalog table.
           try {
             val metadata = spark.sessionState.catalog.getTableMetadata(i)
-            if (metadata.tableType == CatalogTableType.VIEW) {
+            val isView = metadata.tableType == CatalogTableType.VIEW
+            if (isView) {
               throw DeltaErrors.viewInDescribeDetailException(i)
             }
             new Path(metadata.location) -> Some(metadata)
