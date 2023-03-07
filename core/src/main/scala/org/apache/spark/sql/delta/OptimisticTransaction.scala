@@ -93,7 +93,7 @@ case class CommitStats(
 )
 
 /**
- * Represents a partition read predicate on a Delta table.
+ * Represents the partition and data predicates of a query on a Delta table.
  *
  * Partition predicates can either reference the table's logical partition columns, or the
  * physical [[AddFile]]'s schema. When a predicate refers to the logical partition columns it needs
@@ -114,10 +114,16 @@ case class CommitStats(
  * An example of a predicate that does not need to be rewritten is:
  * (partitionValues = Map(XX -> 0))
  */
-private[delta] case class DeltaTablePartitionReadPredicate(
-  predicate: Expression, shouldRewriteFilter: Boolean = true)
+private[delta] case class DeltaTableReadPredicate(
+    partitionPredicates: Seq[Expression] = Seq.empty,
+    dataPredicates: Seq[Expression] = Seq.empty,
+    shouldRewriteFilter: Boolean = true) {
 
-/**
+  val partitionPredicate: Expression =
+    partitionPredicates.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+}
+
+  /**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
  * state of the log.  All reads from the [[DeltaLog]], MUST go through this instance rather
  * than directly to the [[DeltaLog]] otherwise they will not be check for logical conflicts
@@ -239,7 +245,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the data that could have been seen by recording the partition
    * predicates by which files have been queried by this transaction.
    */
-  protected val readPredicates = new ArrayBuffer[DeltaTablePartitionReadPredicate]
+  protected val readPredicates = new ArrayBuffer[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
@@ -675,19 +681,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     keepNumRecords: Boolean = false
   ): DeltaScan = {
     val scan = snapshot.filesForScan(filters, keepNumRecords)
-    val partitionFilters = filters.filter { f =>
-      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
-    }
-    readPredicates += DeltaTablePartitionReadPredicate(
-      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
-    readFiles ++= scan.files
+    trackReadPredicates(filters)
+    trackFilesRead(scan.files)
     scan
   }
 
   /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
   override def filesForScan(limit: Long): DeltaScan = {
     val scan = snapshot.filesForScan(limit)
-    readFiles ++= scan.files
+    trackFilesRead(scan.files)
     scan
   }
 
@@ -702,17 +704,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           s" expected, found $f")
     }
     val scan = snapshot.filesForScan(limit, partitionFilters)
-    readPredicates += DeltaTablePartitionReadPredicate(
-      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
-    readFiles ++= scan.files
+    trackReadPredicates(partitionFilters, partitionOnly = true)
+    trackFilesRead(scan.files)
     scan
   }
 
   override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
     val metadata = snapshot.filesWithStatsForScan(partitionFilters)
-    readPredicates += DeltaTablePartitionReadPredicate(
-      partitionFilters.reduceLeftOption(And).getOrElse(Literal(true)))
-    withFilesRead(filterFiles(partitionFilters))
+    trackReadPredicates(partitionFilters, partitionOnly = true)
+    trackFilesRead(filterFiles(partitionFilters))
     metadata
   }
 
@@ -722,12 +722,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression], keepNumRecords: Boolean = false): Seq[AddFile] = {
     val scan = snapshot.filesForScan(filters, keepNumRecords)
-    val partitionFilters = filters.filter { f =>
-      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
-    }
-    readPredicates += DeltaTablePartitionReadPredicate(
-      partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral))
-    readFiles ++= scan.files
+    trackReadPredicates(filters)
+    trackFilesRead(scan.files)
     scan.files
   }
 
@@ -747,20 +743,49 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       .withColumn("stats", DataSkippingReader.nullStringLiteral)
       .as[AddFile]
       .collect()
-    readPredicates += DeltaTablePartitionReadPredicate(isFileInTouchedPartitions.expr,
-      shouldRewriteFilter = false)
+    trackReadPredicates(
+      Seq(isFileInTouchedPartitions.expr), partitionOnly = true, shouldRewriteFilter = false)
     filteredFiles
   }
 
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
-    readPredicates += DeltaTablePartitionReadPredicate(Literal.TrueLiteral)
+    trackReadPredicates(Seq.empty)
     readTheWholeTable = true
   }
 
   /** Mark the given files as read within this transaction. */
-  def withFilesRead(files: Seq[AddFile]): Unit = {
+  def trackFilesRead(files: Seq[AddFile]): Unit = {
     readFiles ++= files
+  }
+
+  /** Mark the predicates that have been queried by this transaction. */
+  def trackReadPredicates(
+      filters: Seq[Expression],
+      partitionOnly: Boolean = false,
+      shouldRewriteFilter: Boolean = true): Unit = {
+    val (partitionFilters, dataFilters) = if (partitionOnly) {
+      (filters, Seq.empty[Expression])
+    } else {
+      filters.partition { f =>
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+      }
+    }
+
+    readPredicates += DeltaTableReadPredicate(
+      partitionPredicates = partitionFilters,
+      dataPredicates = dataFilters,
+      shouldRewriteFilter = shouldRewriteFilter)
+  }
+
+  /** Mark the partition predicates that have been queried by this transaction. */
+  def trackReadPartitionPredicates(
+      partitionFilters: Seq[Expression],
+      shouldRewriteFilter: Boolean = true): Unit = {
+    readPredicates += DeltaTableReadPredicate(
+      partitionPredicates = partitionFilters,
+      dataPredicates = Seq.empty,
+      shouldRewriteFilter = shouldRewriteFilter)
   }
 
   /**
