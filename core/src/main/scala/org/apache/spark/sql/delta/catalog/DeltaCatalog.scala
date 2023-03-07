@@ -521,8 +521,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     grouped.foreach {
       case (t, newColumns) if t == classOf[AddColumn] =>
+        val tableToUpdate = table
         AlterTableAddColumnsDeltaCommand(
-          table,
+          tableToUpdate,
           newColumns.asInstanceOf[Seq[AddColumn]].map { col =>
             // Convert V2 `AddColumn` to V1 `QualifiedColType` as `AlterTableAddColumnsDeltaCommand`
             // is a V1 command.
