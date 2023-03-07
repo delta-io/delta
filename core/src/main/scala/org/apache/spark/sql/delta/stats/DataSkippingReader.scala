@@ -1089,7 +1089,7 @@ trait DataSkippingReaderBase
     df.as[AddFile].collect()
   }
 
-  protected def pruneFilesByLimit(df: DataFrame, limit: Long): ScanAfterLimit = {
+  protected[delta] def pruneFilesByLimit(df: DataFrame, limit: Long): ScanAfterLimit = {
     val withNumRecords = {
       getFilesAndNumRecords(df)
     }
