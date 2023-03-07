@@ -22,10 +22,6 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import com.fasterxml.jackson.annotation.JsonIgnore
-import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.module.scala.JsonScalaEnumeration
-
-import org.apache.spark.util.Utils
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
@@ -337,11 +333,13 @@ object TableFeatureProtocolUtils {
 
   /**
    * Checks if the the given table property key is a Table Protocol property, i.e.,
-   * `delta.minReaderVersion`, `delta.minWriterVersion`, or anything starts with `delta.feature.`
+   * `delta.minReaderVersion`, `delta.minWriterVersion`, ``delta.ignoreProtocolDefaults``, or
+   * anything that starts with `delta.feature.`
    */
   def isTableProtocolProperty(key: String): Boolean = {
     key == Protocol.MIN_READER_VERSION_PROP ||
     key == Protocol.MIN_WRITER_VERSION_PROP ||
+    key == DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key ||
     key.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
   }
 }

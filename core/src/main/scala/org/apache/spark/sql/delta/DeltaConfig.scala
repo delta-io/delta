@@ -185,31 +185,66 @@ trait DeltaConfigsBase extends DeltaLogging {
    * [[sqlConfPrefix]] and [[TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX]]. This method
    * checks to see if any of the configurations exist among the SQL configurations and merges them
    * with the user provided configurations. User provided configs take precedence.
+   *
+   * When `ignoreProtocolConfsOpt` is `true` (or `false`), this method will not (or will) copy
+   * protocol-related configs. If `ignoreProtocolConfsOpt` is None, whether to copy
+   * protocol-related configs will be depending on the existence of
+   * [[DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS]] (`delta.ignoreProtocolDefaults`) in
+   * SQL or table configs.
+   *
+   * <i>"Protocol-related configs" includes `delta.minReaderVersion`, `delta.minWriterVersion`,
+   * `delta.ignoreProtocolDefaults`, and anything that starts with `delta.feature.`</i>
    */
   def mergeGlobalConfigs(
       sqlConfs: SQLConf,
-      tableConf: Map[String, String]): Map[String, String] = {
+      tableConf: Map[String, String],
+      ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
     import collection.JavaConverters._
 
-    val globalConfs = entries.asScala.flatMap { case (key, config) =>
-      val sqlConfKey = sqlConfPrefix + config.key.stripPrefix("delta.")
-      Option(sqlConfs.getConfString(sqlConfKey, null)) match {
-        case Some(default) => Some(config(default))
-        case _ => None
+    val ignoreProtocolConfs =
+      ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
+
+    val shouldCopyFunc: (String => Boolean) =
+      !ignoreProtocolConfs || !TableFeatureProtocolUtils.isTableProtocolProperty(_)
+
+    val globalConfs = entries.asScala
+      .filter { case (_, config) => shouldCopyFunc(config.key) }
+      .flatMap { case (_, config) =>
+        val sqlConfKey = sqlConfPrefix + config.key.stripPrefix("delta.")
+        Option(sqlConfs.getConfString(sqlConfKey, null)).map(config(_))
       }
-    }
 
     // Table features configured in session must be merged manually because there's no
     // ConfigEntry registered for table features in SQL configs or Table props.
-    val globalFeatureConfs = sqlConfs.getAllConfs
-      .filterKeys(_.startsWith(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX))
-      .map { case (key, value) =>
-        val featureName = key.stripPrefix(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX)
-        val tableKey = TableFeatureProtocolUtils.FEATURE_PROP_PREFIX + featureName
-        tableKey -> value
-      }
+    val globalFeatureConfs = if (ignoreProtocolConfs) {
+      Map.empty[String, String]
+    } else {
+      sqlConfs.getAllConfs
+        .filterKeys(_.startsWith(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX))
+        .map { case (key, value) =>
+          val featureName = key.stripPrefix(TableFeatureProtocolUtils.DEFAULT_FEATURE_PROP_PREFIX)
+          val tableKey = TableFeatureProtocolUtils.FEATURE_PROP_PREFIX + featureName
+          tableKey -> value
+        }
+    }
 
     globalConfs.toMap ++ globalFeatureConfs.toMap ++ tableConf
+  }
+
+  /**
+   * Whether [[DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS]] is set in Spark session
+   * configs or table properties.
+   */
+  private[delta] def ignoreProtocolDefaultsIsSet(
+      sqlConfs: SQLConf,
+      tableConf: Map[String, String]): Boolean = {
+    tableConf
+      .getOrElse(
+        DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key,
+        sqlConfs.getConfString(
+          DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey,
+          "false"))
+      .toBoolean
   }
 
   /**
@@ -286,6 +321,19 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     v => v > 0 && v <= Action.supportedProtocolVersion().minWriterVersion,
     s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minWriterVersion}].")
+
+  /**
+   * Ignore protocol-related configs set in SQL config.
+   * When set to true, CREATE TABLE and REPLACE TABLE commands will not consider default
+   * protocol versions and table features in the current Spark session.
+   */
+  val CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS = buildConfig[Boolean](
+    "ignoreProtocolDefaults",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only

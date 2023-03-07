@@ -566,11 +566,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     // We are done with protocol versions and features, time to remove related table properties.
-    val configsWithoutProtocolProps = newMetadataTmp.configuration.filter {
-      case (Protocol.MIN_READER_VERSION_PROP, _) => false
-      case (Protocol.MIN_WRITER_VERSION_PROP, _) => false
-      case (k, _) if k.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) => false
-      case _ => true
+    val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
+      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
     }
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
     assertMetadata(newMetadataTmp)
