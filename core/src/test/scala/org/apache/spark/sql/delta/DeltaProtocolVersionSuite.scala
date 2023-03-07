@@ -21,6 +21,7 @@ import java.io.File
 import java.util.Locale
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -416,6 +417,105 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(e1.getMessage.contains("cannot be downgraded from (1,3) to (1,2)"))
     }
   }
+
+  private case class SessionAndTableConfs(name: String, session: Seq[String], table: Seq[String])
+
+  for (confs <- Seq(
+      SessionAndTableConfs(
+        "session",
+        session = Seq(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey),
+        table = Seq.empty[String]),
+      SessionAndTableConfs(
+        "table",
+        session = Seq.empty[String],
+        table = Seq(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))))
+    test(s"CREATE TABLE can ignore protocol defaults, configured in ${confs.name}") {
+      withTempDir { path =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+          defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED) {
+          withSQLConf(confs.session.map(_ -> "true"): _*) {
+            spark
+              .range(10)
+              .write
+              .format("delta")
+              .options(confs.table.map(_ -> "true").toMap)
+              .save(path.getCanonicalPath)
+          }
+        }
+
+        val snapshot = DeltaLog.forTable(spark, path).update()
+        assert(snapshot.protocol === Protocol(1, 1))
+        assert(
+          !snapshot.metadata.configuration
+            .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+      }
+    }
+
+  for (ignoreProtocolDefaults <- BOOLEAN_DOMAIN)
+    for (op <- Seq(
+        "ALTER TABLE",
+        "SHALLOW CLONE",
+        "RESTORE")) {
+      test(s"$op always ignore protocol defaults (flag = $ignoreProtocolDefaults)"
+      ) {
+        withTempDir { path =>
+          val expectedProtocol = if (ignoreProtocolDefaults) {
+            Protocol(1, 1)
+          } else {
+            Protocol(
+              spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
+              spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+          }
+
+          val cPath = path.getCanonicalPath
+          spark
+            .range(10)
+            .write
+            .format("delta")
+            .option(
+              DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key,
+              ignoreProtocolDefaults.toString)
+            .save(cPath)
+          val snapshot = DeltaLog.forTable(spark, path).update()
+          assert(snapshot.protocol === expectedProtocol)
+          assert(
+            !snapshot.metadata.configuration
+              .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+
+          withSQLConf(
+            DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+            DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+            defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED) {
+            val snapshotAfter = op match {
+              case "ALTER TABLE" =>
+                sql(s"ALTER TABLE delta.`$cPath` ALTER COLUMN id COMMENT 'hallo'")
+                DeltaLog.forTable(spark, path).update()
+              case "SHALLOW CLONE" =>
+                var s: Snapshot = null
+                withTempDir { cloned =>
+                  sql(
+                    s"CREATE TABLE delta.`${cloned.getCanonicalPath}` " +
+                      s"SHALLOW CLONE delta.`$cPath`")
+                  s = DeltaLog.forTable(spark, cloned).update()
+                }
+                s
+              case "RESTORE" =>
+                sql(s"INSERT INTO delta.`$cPath` VALUES (99)") // version 2
+                sql(s"RESTORE TABLE delta.`$cPath` TO VERSION AS OF 1")
+                DeltaLog.forTable(spark, path).update()
+              case _ =>
+                throw new RuntimeException("OP is invalid. Add a match!")
+            }
+            assert(snapshotAfter.protocol === expectedProtocol)
+            assert(
+              !snapshotAfter.metadata.configuration
+                .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+          }
+        }
+      }
+    }
 
   test("concurrent upgrade") {
     withTempDir { path =>
@@ -1508,6 +1608,29 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             TestReaderWriterFeature.minProtocolVersion.withFeature(TestReaderWriterFeature)))
       }
     }
+
+  test("REPLACE AS can ignore protocol defaults") {
+    withTempDir { path =>
+      withSQLConf(
+          DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey -> "true") {
+        spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      }
+      val log = DeltaLog.forTable(spark, path)
+      assert(log.update().protocol === Protocol(1, 1))
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+          defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED,
+          DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey -> "true") {
+        replaceTableAs(path)
+      }
+      assert(log.update().protocol === Protocol(1, 1))
+      assert(
+        !log.update().metadata.configuration
+          .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+    }
+  }
 
   private def assertPropertiesAndShowTblProperties(
       deltaLog: DeltaLog,

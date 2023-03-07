@@ -63,11 +63,19 @@ import org.apache.spark.util._
  * Internally, this class implements an optimistic concurrency control
  * algorithm to handle multiple readers or writers. Any single read
  * is guaranteed to see a consistent snapshot of the table.
+ *
+ * @param logPath Path of the Delta log JSONs.
+ * @param dataPath Path of the data files.
+ * @param options Filesystem options filtered from `allOptions`.
+ * @param allOptions All options provided by the user, for example via `df.write.option()`. This
+ *                   includes but not limited to filesystem and table properties.
+ * @param clock Clock to be used when starting a new transaction.
  */
 class DeltaLog private(
     val logPath: Path,
     val dataPath: Path,
     val options: Map[String, String],
+    val allOptions: Map[String, String],
     val clock: Clock
   ) extends Checkpoints
   with MetadataCleanup
@@ -785,6 +793,7 @@ object DeltaLog extends DeltaLogging {
             logPath = path,
             dataPath = path.getParent,
             options = fileSystemOptions,
+            allOptions = options,
             clock = clock
           )
         }
