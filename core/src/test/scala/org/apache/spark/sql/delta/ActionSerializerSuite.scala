@@ -483,8 +483,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         val settings = Seq(
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
-          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
@@ -500,8 +499,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             FileNames.deltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
-          assert(committedActions.size == 1)
-          val serializedJson = committedActions.head
+          assert(committedActions.size == 2)
+          val serializedJson = committedActions.last
           assert(serializedJson === expectedJson)
           val asObject = Action.fromJson(serializedJson)
           assert(action === asObject)

@@ -951,27 +951,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
 
-      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED)) {
-        val isBlindAppend = {
-          val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
-          val onlyAddFiles =
-            preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
-          onlyAddFiles && !dependsOnFiles
-        }
-
-        commitInfo = CommitInfo(
-          clock.getTimeMillis(),
-          op.name,
-          op.jsonEncodedValues,
-          Map.empty,
-          Some(readVersion).filter(_ >= 0),
-          Option(isolationLevelToUse.toString),
-          Some(isBlindAppend),
-          getOperationMetrics(op),
-          getUserMetadata(op),
-          tags = None,
-          txnId = Some(txnId))
+      val isBlindAppend = {
+        val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
+        val onlyAddFiles =
+          preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+        onlyAddFiles && !dependsOnFiles
       }
+
+      commitInfo = CommitInfo(
+        clock.getTimeMillis(),
+        op.name,
+        op.jsonEncodedValues,
+        Map.empty,
+        Some(readVersion).filter(_ >= 0),
+        Option(isolationLevelToUse.toString),
+        Some(isBlindAppend),
+        getOperationMetrics(op),
+        getUserMetadata(op),
+        tags = None,
+        txnId = Some(txnId))
 
       val currentTransactionInfo = new CurrentTransactionInfo(
         txnId = txnId,

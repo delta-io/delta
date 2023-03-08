@@ -40,12 +40,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_COMMIT_INFO_ENABLED =
-    buildConf("commitInfo.enabled")
-      .doc("Whether to log commit information into the Delta log.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_COMMIT_LOCK_ENABLED =
     buildConf("commitLock.enabled")
       .internal()
@@ -81,7 +75,7 @@ trait DeltaSQLConfBase {
 
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
-      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo.")
       .stringConf
       .createOptional
 
@@ -297,7 +291,6 @@ trait DeltaSQLConfBase {
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
-        " 'spark.databricks.delta.commitInfo.enabled' should be enabled when using this config." +
         " Users should only set this config to 'true' when the underlying file system safely" +
         " supports concurrent writes.")
       .booleanConf
