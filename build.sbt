@@ -101,6 +101,9 @@ lazy val core = (project in file("core"))
       "-Xmx1024m"
     ),
 
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+    Test / envVars += ("DELTA_TESTING", "1"),
+
     // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
     createTargetClassesDir := {
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"

@@ -53,7 +53,6 @@ def run_sbt_tests(root_dir, coverage, scala_version=None):
     cmd += ["-J-XX:+UseG1GC"]
     # 4x the default heap size (set in delta/built.sbt)
     cmd += ["-J-Xmx4G"]
-    run_cmd(cmd, env={"DELTA_TESTING": "1"}, stream_output=True)
 
 
 def run_python_tests(root_dir):
