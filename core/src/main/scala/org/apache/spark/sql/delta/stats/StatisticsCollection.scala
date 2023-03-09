@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -88,7 +89,7 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  *  |    |    |    |    |-- c: long (nullable = true)
  *  }}}
  */
-trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
+trait StatisticsCollection extends DeltaLogging {
   protected def spark: SparkSession
   def tableDataSchema: StructType
   def dataSchema: StructType

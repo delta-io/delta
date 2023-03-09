@@ -20,25 +20,24 @@ import org.apache.spark.sql.Column
 import org.apache.spark.sql.functions.col
 
 /**
- * A mixin trait for all interfaces that would like to use information stored in Delta's transaction
- * log.
- */
-trait UsesMetadataFields {
-  /* The total number of records in the file. */
-  final val NUM_RECORDS = "numRecords"
-  /* The smallest (possibly truncated) value for a column. */
-  final val MIN = "minValues"
-  /* The largest (possibly truncated) value for a column. */
-  final val MAX = "maxValues"
-  /* The number of null values present for a column. */
-  final val NULL_COUNT = "nullCount"
-}
-
-/**
  * A mixin trait that provides access to the stats fields in the transaction log.
  */
-trait ReadsMetadataFields extends UsesMetadataFields {
+trait ReadsMetadataFields {
   /** Returns a Column that references the stats field data skipping should use */
   def getBaseStatsColumn: Column = col(getBaseStatsColumnName)
   def getBaseStatsColumnName: String = "stats"
+}
+
+/**
+ * A singleton of the Delta statistics field names.
+ */
+object DeltaStatistics {
+  /* The total number of records in the file. */
+  val NUM_RECORDS = "numRecords"
+  /* The smallest (possibly truncated) value for a column. */
+  val MIN = "minValues"
+  /* The largest (possibly truncated) value for a column. */
+  val MAX = "maxValues"
+  /* The number of null values present for a column. */
+  val NULL_COUNT = "nullCount"
 }

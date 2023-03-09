@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
+import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.Path
 
@@ -63,7 +64,7 @@ case class NumRecords(numPhysicalRecords: java.lang.Long, numLogicalRecords: jav
  * Represents a stats column (MIN, MAX, etc) for a given (nested) user table column name. Used to
  * keep track of which stats columns a data skipping query depends on.
  *
- * The `statType` is any value accepted by `getStatsColumnOpt()` (see trait `UsesMetadataFields`);
+ * The `statType` is any value accepted by `getStatsColumnOpt()` (see object `DeltaStatistics`);
  * `pathToColumn` is the nested name of the user column whose stats are to be accessed.
  */
 private [stats] case class StatsColumn(
@@ -591,7 +592,7 @@ trait DataSkippingReaderBase
    * Returns an expression to access the given statistics for a specific column, or None if that
    * stats column does not exist.
    *
-   * @param statType One of the fields declared by trait `UsesMetadataFields`
+   * @param statType One of the fields declared by object `DeltaStatistics`
    * @param pathToColumn The components of the nested column name to get stats for.
    */
   final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
