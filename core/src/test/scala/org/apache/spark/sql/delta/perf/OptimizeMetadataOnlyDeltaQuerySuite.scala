@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.perf
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.delta.DeltaTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -318,5 +320,17 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     assertResult(optimizationEnabledQueryPlan) {
       optimizationDisabledQueryPlan
     }
+  }
+
+  test(".collect() and .show() both use this optimization") {
+    val collectPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+      spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
+    }
+    assert(collectPlans.collect { case x: LocalRelation => x }.size === 1)
+
+    val showPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+      spark.sql(s"SELECT COUNT(*) FROM $testTableName").show()
+    }
+    assert(showPlans.collect { case x: LocalRelation => x }.size === 1)
   }
 }
