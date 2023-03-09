@@ -419,11 +419,11 @@ trait SnapshotManagement { self: DeltaLog =>
           Some(cp.version),
           deltas.last.getModificationTime))
       case None =>
-        val deltas =
+        val (deltas, deltaVersions) =
           listDeltaAndCheckpointFiles(startVersion = 0, versionToLoad = Some(snapshotVersion))
             .getOrElse(Array.empty)
-            .filter(isDeltaFile)
-        val deltaVersions = deltas.map(deltaVersion)
+            .flatMap(DeltaFile.unapply(_))
+            .unzip
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
         } catch {

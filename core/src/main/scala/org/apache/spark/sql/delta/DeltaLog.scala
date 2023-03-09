@@ -274,13 +274,12 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val hadoopConf = newDeltaHadoopConf()
-    val deltas = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
-      .filter(isDeltaFile)
+    val deltasWithVersion = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
+      .flatMap(DeltaFile.unapply(_))
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltas.map { status =>
+    deltasWithVersion.map { case (status, version) =>
       val p = status.getPath
-      val version = deltaVersion(p)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
@@ -296,12 +295,12 @@ class DeltaLog private(
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltas = store.listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
-      .filter(isDeltaFile)
+    val deltasWithVersion = store
+      .listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
+      .flatMap(DeltaFile.unapply(_))
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltas.map { status =>
-      val version = deltaVersion(status)
+    deltasWithVersion.map { case (status, version) =>
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
