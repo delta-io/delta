@@ -778,16 +778,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       shouldRewriteFilter = shouldRewriteFilter)
   }
 
-  /** Mark the partition predicates that have been queried by this transaction. */
-  def trackReadPartitionPredicates(
-      partitionFilters: Seq[Expression],
-      shouldRewriteFilter: Boolean = true): Unit = {
-    readPredicates += DeltaTableReadPredicate(
-      partitionPredicates = partitionFilters,
-      dataPredicates = Seq.empty,
-      shouldRewriteFilter = shouldRewriteFilter)
-  }
-
   /**
    * Returns the latest version that has committed for the idempotent transaction with given `id`.
    */
