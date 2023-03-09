@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTest
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite.{table1Path, table2Path, table3Path}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -83,9 +84,13 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
     }
   }
 
-  test("VACUUM is blocked on table with DVs") {
+  for (enableLogging <- BOOLEAN_DOMAIN)
+  test(s"VACUUM is blocked on table with DVs with logging enabled=$enableLogging") {
     assertDVTableUpdatesAreDisabled(testTablePath = Some(table1WithDVs)) { _ =>
-      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        // Logging influencing whether a transaction is committed to DeltaLog or not
+        DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> enableLogging.toString) {
         spark.sql(s"VACUUM $table1WithDVs RETAIN 0 HOURS")
       }
     }
@@ -101,6 +106,25 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
     assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
       withDeletionVectorsEnabled() {
         createTempTable(tablePath)
+      }
+    }
+  }
+
+  test("CREATE TABLE with DV feature enabled is blocked") {
+    assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
+      withTable("tab") {
+        spark.sql(s"CREATE TABLE tab (c1 int) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.deletionVectors' = 'supported');")
+      }
+    }
+  }
+
+  test("ALTER TABLE to add DV feature is blocked") {
+    assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
+      withTable("tab") {
+        spark.sql("CREATE TABLE tab (c1 int) USING DELTA;")
+        spark.sql("ALTER TABLE tab SET " +
+          "TBLPROPERTIES ('delta.feature.deletionVectors' = 'supported');")
       }
     }
   }
