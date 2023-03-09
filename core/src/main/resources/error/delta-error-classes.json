@@ -565,8 +565,8 @@
     ],
     "sqlState" : "22001"
   },
-  "DELTA_EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION": {
-    "message": [
+  "DELTA_EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION" : {
+    "message" : [
       "The validation of the properties of table <table> has been violated:",
       "Symlink manifest generation is unsupported while deletion vectors are present in the table.",
       "In order to produce a version of the table without deletion vectors, run 'REORG TABLE <table> APPLY (PURGE)'."
@@ -1351,15 +1351,15 @@
     ],
     "sqlState" : "42K04"
   },
-  "DELTA_PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE": {
-    "message": [
+  "DELTA_PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE" : {
+    "message" : [
       "The validation of the properties of table <table> has been violated:",
       "Persistent deletion vectors are only supported on Parquet-based Delta tables."
     ],
     "sqlState" : "0A000"
   },
-  "DELTA_PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION": {
-    "message": [
+  "DELTA_PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION" : {
+    "message" : [
       "The validation of the properties of table <table> has been violated:",
       "Persistent deletion vectors and incremental symlink manifest generation are mutually exclusive."
     ],
