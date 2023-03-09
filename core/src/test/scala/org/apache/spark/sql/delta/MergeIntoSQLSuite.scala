@@ -349,6 +349,51 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
+  test("Complex Data Type - Map with Struct Values") {
+    withTable("source") {
+      withTable("target") {
+        // scalastyle:off line.size.limit
+        sql("CREATE TABLE source(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
+        sql("CREATE TABLE target(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
+        // scalastyle:on line.size.limit
+        sql(
+          s"""
+             |MERGE INTO target as t
+             |USING source as s
+             |ON s.id = t.id
+             |WHEN MATCHED THEN
+             |  UPDATE SET t.map = s.map
+             |WHEN NOT MATCHED THEN
+             |  INSERT *
+             """.stripMargin)
+      }
+    }
+  }
+
+  test("Disallow changing map key types in merge") {
+    withTable("source") {
+      withTable("target") {
+        // scalastyle:off line.size.limit
+        sql("CREATE TABLE source(`id` STRING,`map` MAP<INT, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
+        sql("CREATE TABLE target(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
+        // scalastyle:on line.size.limit
+        val e = intercept[DeltaAnalysisException](
+        sql(
+          s"""
+             |MERGE INTO target as t
+             |USING source as s
+             |ON s.id = t.id
+             |WHEN MATCHED THEN
+             |  UPDATE SET *
+             |WHEN NOT MATCHED THEN
+             |  INSERT *
+             """.stripMargin)
+        )
+        assert(e.getMessage.contains("Changing map key type is not supported"))
+      }
+    }
+  }
+
   Seq(true, false).foreach { partitioned =>
     test(s"User defined _change_type column doesn't get dropped - partitioned=$partitioned") {
       withTable("target") {

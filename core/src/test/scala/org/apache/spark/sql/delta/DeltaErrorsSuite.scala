@@ -53,7 +53,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
+import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MapType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -2813,6 +2813,19 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "22000")
       assert(e.getMessage ==
         "Function invalid1 is an unsupported table valued function for CDC reads.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedMapKeyTypeChange(
+          StringType,
+          IntegerType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE")
+      assert(e.getSqlState == "0AKDC")
+      assert(
+        e.getMessage ==
+          "Changing map key type is not supported: 'string' to 'int' in map<string,struct<a:int,b:int>>.")
     }
   }
 }

@@ -114,6 +114,29 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   ArrayType(toEt, containsNull = true)
                 )
             }
+
+          case (MapType(kt: DataType, _: StructType, _),
+          MapType(ktTo: DataType, toEt: StructType, toContainsNull)) =>
+
+            if (kt.sameType(ktTo)) {
+              fromExpression match {
+                case _ =>
+                  val structConverter: (Expression, Expression) => Expression = (key, _) =>
+                    castIfNeeded(GetMapValue(fromExpression, key), toEt, allowStructEvolution)
+                  val transformLambdaFunc = {
+                    val keyVar = NamedLambdaVariable("keyVar", kt, false)
+                    val valueVar = NamedLambdaVariable("valueVar", kt, toContainsNull)
+                    LambdaFunction(structConverter(keyVar, valueVar), Seq(keyVar, valueVar))
+                  }
+                  cast(
+                    TransformValues(fromExpression, transformLambdaFunc),
+                    MapType(kt, toEt, valueContainsNull = true)
+                  )
+              }
+            }
+            else {
+              throw DeltaErrors.unsupportedMapKeyTypeChange(dataType, kt, ktTo)
+            }
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

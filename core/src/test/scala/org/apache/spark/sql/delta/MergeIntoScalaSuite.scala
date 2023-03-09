@@ -637,7 +637,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
           val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
           if (setColExprStr.trim == "*") {          // UPDATE SET *
             actionBuilder.updateAll()
-          } else if (setColExprStr.contains("array_")) { // UPDATE SET x = array_union(..)
+          } else if (setColExprStr.contains("array_") || setColExprStr.contains("map_")) {
+            // UPDATE SET x = array_union(..) / map_concat(..)
             val setColExprPairs = parseUpdate(setColExprStr)
             actionBuilder.updateExpr(setColExprPairs)
           } else {                                 // UPDATE SET x = a, y = b, z = c

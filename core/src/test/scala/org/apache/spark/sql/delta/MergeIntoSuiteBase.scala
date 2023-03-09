@@ -19,20 +19,16 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
-
 import scala.language.implicitConversions
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -4936,6 +4932,109 @@ abstract class MergeIntoSuiteBase
     expectErrorContains = "Cannot add column 'value.a.z' with type 'void'",
     expectErrorWithoutEvolutionContains = "All nested columns must match")
 
+  testNestedStructsEvolution("new source column in map struct")(
+    target = """{ "key": "A", "map": { "key": { "a": 1 } } }""",
+    source =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": 2 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": 2 } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+
+  testNestedStructsEvolution("new source column in nested map struct")(
+    target = """{"key": "A", "map": { "key": { "innerKey": { "a": 1 } } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType)))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast map")
+
+  testNestedStructsEvolution("source map struct value contains less columns than target")(
+    target = """{ "key": "A", "map": { "key": { "a": 1, "b": 1 } } }""",
+    source =
+      """{ "key": "A", "map": { "key": { "a": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": null } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": null } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast struct")
+
+  testNestedStructsEvolution("source nested map struct value contains less columns than target")(
+    target = """{"key": "A", "map": { "key": { "innerKey": { "a": 1, "b": 1 } } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2 } } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType)))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": null } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": null } } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast map")
 
   /**
    * @param function the unsupported function.

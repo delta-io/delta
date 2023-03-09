@@ -2666,6 +2666,14 @@ trait DeltaErrorsBase
       messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
     )
   }
+
+  def unsupportedMapKeyTypeChange(in: DataType, fromKT: DataType, toKT: DataType): Throwable = {
+
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE",
+      messageParameters = Array(in.catalogString, fromKT.catalogString, toKT.catalogString)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
