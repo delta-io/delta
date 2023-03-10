@@ -1548,6 +1548,50 @@
     ],
     "sqlState" : "KD002"
   },
+  "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT" : {
+    "message" : [
+      "Detected conflicting schema location '<loc>' while streaming from table or table located at '<table>'.",
+      "Another stream may be reusing the same schema location, which is not allowed.",
+      "Please provide a new unique `schemaTrackingLocation` path or `streamingSourceTrackingId` as a reader option for one of the streams from this table."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT" : {
+    "message" : [
+      "Schema location '<schemaTrackingLocation>' must be placed under checkpoint location '<checkpointLocation>'."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_DESERIALIZE_FAILED" : {
+    "message" : [
+      "Incomplete log file in the Delta streaming source schema log at '<location>'.",
+      "The schema log may have been corrupted. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID" : {
+    "message" : [
+      "Detected incompatible Delta table id when trying to read Delta stream.",
+      "Persisted table id: <persistedId>, Table id: <tableId>",
+      "The schema log might have been reused. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_PARTITION_SCHEMA" : {
+    "message" : [
+      "Detected incompatible partition schema when trying to read Delta stream.",
+      "Persisted schema: <persistedSchema>, Delta partition schema: <partitionSchema>",
+      "Please pick a new schema location to reinitialize the schema log if you have manually changed the table's partition schema recently."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_PARSE_SCHEMA_FAILED" : {
+    "message" : [
+      "Failed to parse the schema from the Delta streaming source schema log.",
+      "The schema log may have been corrupted. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
       "Unable to enable Change Data Capture on the table. The table already contains",

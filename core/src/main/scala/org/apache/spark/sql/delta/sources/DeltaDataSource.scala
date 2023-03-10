@@ -90,7 +90,10 @@ class DeltaDataSource
 
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
     val readSchema = {
-          snapshot.schema
+      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+        // Use `getSchemaAtLogInit` so it's always consistent between analysis and execution phase
+        .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+        .getOrElse(snapshot.schema)
     }
 
     val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchema)
@@ -119,8 +122,11 @@ class DeltaDataSource
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
-    val readSchema =
-          snapshot.schema
+    val schemaLogOpt =
+      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+    val readSchema = schemaLogOpt
+      .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+      .getOrElse(snapshot.schema)
 
     if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
@@ -129,7 +135,8 @@ class DeltaDataSource
       sqlContext.sparkSession,
       deltaLog,
       options,
-      snapshot
+      snapshot,
+      schemaLog = schemaLogOpt
     )
   }
 
@@ -227,6 +234,21 @@ class DeltaDataSource
     DeltaSourceUtils.ALT_NAME
   }
 
+  /**
+   * Create a schema log for Delta streaming source if possible
+   */
+  private def getSchemaLogForDeltaSource(
+      spark: SparkSession,
+      sourceSnapshot: Snapshot,
+      parameters: Map[String, String]): Option[DeltaSourceSchemaLog] = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+      .map { schemaTrackingLocation =>
+        DeltaSourceSchemaLog.create(
+          spark, schemaTrackingLocation, sourceSnapshot,
+          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)))
+      }
+  }
 
 }
 

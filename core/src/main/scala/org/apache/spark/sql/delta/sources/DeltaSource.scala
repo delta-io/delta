@@ -131,8 +131,20 @@ trait DeltaSourceBase extends Source
   protected lazy val forceEnableUnsafeReadOnNullabilityChange =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
 
+  /**
+   * The persisted schema from the schema log that must be used to read data files in this Delta
+   * streaming source.
+   */
+  protected val persistedSchemaAtSourceInit: Option[PersistedSchema] =
+    schemaLog.flatMap(_.getSchemaAtLogInit)
+
+  /**
+   * The read schema for this source during initialization, taking in account of SchemaLog.
+   */
   protected val readSchemaAtSourceInit: StructType =
+    persistedSchemaAtSourceInit.map(_.dataSchema).getOrElse {
       snapshotAtSourceInit.schema
+    }
 
 
   /**
@@ -268,7 +280,8 @@ trait DeltaSourceBase extends Source
     deltaLog.createDataFrame(
       snapshotAtSourceInit,
       addFilesList,
-      isStreaming = true
+      isStreaming = true,
+      customReadSchema = persistedSchemaAtSourceInit
     )
   }
 
@@ -499,6 +512,7 @@ case class DeltaSource(
     deltaLog: DeltaLog,
     options: DeltaOptions,
     snapshotAtSourceInit: Snapshot,
+    schemaLog: Option[DeltaSourceSchemaLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport {

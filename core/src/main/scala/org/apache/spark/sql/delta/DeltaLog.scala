@@ -457,20 +457,37 @@ class DeltaLog private(
    * Returns a [[org.apache.spark.sql.DataFrame]] containing the new files within the specified
    * version range.
    *
+   * It can optionally take a customReadSchema which consists of the actual read schema to read
+   * the files. This is used to support non-additive Delta Source streaming schema evolution.
+   * The customReadSchema requires that its partitionSchema for the Delta table does not change from
+   * the snapshot's partitionSchema.
    */
   def createDataFrame(
       snapshot: Snapshot,
       addFiles: Seq[AddFile],
       isStreaming: Boolean = false,
-      actionTypeOpt: Option[String] = None
+      actionTypeOpt: Option[String] = None,
+      customReadSchema: Option[PersistedSchema] = None
   ): DataFrame = {
     val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
+    // It's ok to not pass down the partitionSchema to TahoeBatchFileIndex. Schema evolution will
+    // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
+    // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
 
     val hadoopOptions = snapshot.metadata.format.options ++ options
     val partitionSchema = snapshot.metadata.partitionSchema
-    val metadata = snapshot.metadata
+    var metadata = snapshot.metadata
 
+    require(customReadSchema.forall(_.partitionSchema == partitionSchema),
+      "Cannot specify a custom read schema with different partition schema than the Delta table")
+
+    // Replace schema inside snapshot metadata so that later `fileFormat()` can generate the correct
+    // DeltaParquetFormat with the correct schema to references, the customReadSchema should also
+    // contain the correct column mapping metadata if needed after being loaded from schema log.
+    customReadSchema.map(_.dataSchema).foreach { readSchema =>
+      metadata = snapshot.metadata.copy(schemaString = readSchema.json)
+    }
 
     val relation = HadoopFsRelation(
       fileIndex,

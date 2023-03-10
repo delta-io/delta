@@ -203,6 +203,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   provideOneStartingOption()
 
+  val schemaTrackingLocation = options.get(SCHEMA_TRACKING_LOCATION)
+
+  val sourceTrackingId = options.get(STREAMING_SOURCE_TRACKING_ID)
 }
 
 
@@ -264,6 +267,17 @@ object DeltaOptions extends DeltaLogging {
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
 
+  /**
+   * An option to allow column mapping enabled tables to conduct schema evolution during streaming
+   */
+  val SCHEMA_TRACKING_LOCATION = "schemaTrackingLocation"
+  /**
+   * An option to instruct DeltaSource to pick a customized subdirectory for schema log in case of
+   * rare conflicts such as when a stream needs to do a self-union of two Delta sources from the
+   * same table.
+   * The final schema log location will be $parent/_schema_log_${tahoeId}_${sourceTrackingId}.
+   */
+  val STREAMING_SOURCE_TRACKING_ID = "streamingSourceTrackingId"
 
 
   val validOptionKeys : Set[String] = Set(
@@ -292,6 +306,8 @@ object DeltaOptions extends DeltaLogging {
     MAX_RECORDS_PER_FILE,
     TXN_APP_ID,
     TXN_VERSION,
+    SCHEMA_TRACKING_LOCATION,
+    STREAMING_SOURCE_TRACKING_ID,
     "queryName",
     "checkpointLocation",
     "path",
