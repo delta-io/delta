@@ -689,7 +689,17 @@ case class DeltaSource(
     } else {
       getNextOffsetFromPreviousOffset(previousOffset, limits)
     }
-    logDebug(s"previousOffset -> currentOffset: $previousOffset -> $currentOffset")
+    val startingVersion = if (previousOffset == null) -1 else previousOffset.reservoirVersion
+    val endVersion = currentOffset.map(DeltaSourceOffset(tableId, _).reservoirVersion)
+      .getOrElse(-1L)
+    val offsetRangeInfo = "(latestOffsetInternal)previousOffset -> currentOffset:" +
+      s" $previousOffset -> $currentOffset"
+    if (endVersion - startingVersion > 1000L) {
+      // Improve the log level if the source is processing a large batch.
+      logInfo(offsetRangeInfo)
+    } else {
+      logDebug(offsetRangeInfo)
+    }
     if (shouldValidateOffsets && previousOffset != null) {
       currentOffset.foreach { current =>
         DeltaSourceOffset.validateOffsets(previousOffset, DeltaSourceOffset(tableId, current))
@@ -857,7 +867,14 @@ case class DeltaSource(
       (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion,
         Some(startOffset.sourceVersion))
     }
-    logDebug(s"start: $startOffsetOption end: $end")
+    val offsetRangeInfo = s"(getBatch)start: $startOffsetOption end: $end"
+    if (endOffset.reservoirVersion - startVersion > 1000L) {
+      // Improve the log level if the source is processing a large batch.
+      logInfo(offsetRangeInfo)
+    } else {
+      logDebug(offsetRangeInfo)
+    }
+
 
     // Check for column mapping + streaming incompatible schema changes
     // Note for initial snapshot, the startVersion should be the same as the latestOffset's version
