@@ -533,13 +533,6 @@ case class DeltaSource(
    * set of files. */
   private val skipChangeCommits = options.skipChangeCommits
 
-  /** A check on the source table that disallows deletes on the source data. */
-  private val ignoreChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
-
-  /** A check on the source table that disallows commits that only include deletes to the data. */
-  private val ignoreDeletes = options.ignoreDeletes || ignoreFileDeletion || ignoreChanges ||
-    skipChangeCommits
-
   protected val excludeRegex: Option[Regex] = options.excludeRegex
 
   // This was checked before creating ReservoirSource
@@ -575,20 +568,14 @@ case class DeltaSource(
           if (filestatus.getLen <
             spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
             // entire file can be read into memory
-            val actions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
+            val inMemoryActions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
               .map(Action.fromJson)
-            val addFiles = validateCommitAndFilterAddFiles(
-              actions, version, verifyMetadataAction)
-
-            (Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
-              .map(_.asInstanceOf[AddFile])
-              .zipWithIndex.map { case (action, index) =>
-              IndexedFile(version, index.toLong, action, isLast = index + 1 == addFiles.size)
-            }).toClosable
-
+            val shouldSkipCommit = validateCommitAndDecideSkipping(inMemoryActions.toIterator,
+              version, verifyMetadataAction)
+            filterAndGetIndexedFiles(inMemoryActions.toIterator, version, shouldSkipCommit)
+              .toClosable
           } else { // file too large to read into memory
-            var fileIterator = deltaLog.store.readAsIterator(
-              filestatus,
+            var fileIterator = deltaLog.store.readAsIterator(filestatus,
               deltaLog.newDeltaHadoopConf())
             val shouldSkipCommit = try {
               validateCommitAndDecideSkipping(fileIterator.map(Action.fromJson), version,
@@ -596,20 +583,10 @@ case class DeltaSource(
             } finally {
               fileIterator.close()
             }
-            fileIterator = if (shouldSkipCommit) Iterator.empty.toClosable
-            else deltaLog.store.readAsIterator(filestatus.getPath, deltaLog.newDeltaHadoopConf())
-
+            fileIterator = deltaLog.store.readAsIterator(filestatus.getPath,
+              deltaLog.newDeltaHadoopConf())
             fileIterator.withClose { it =>
-              val addFiles = it.map(Action.fromJson).filter {
-                case a: AddFile if a.dataChange => true
-                case _ => false
-              }
-              Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
-                .map(_.asInstanceOf[AddFile])
-                .zipWithIndex
-                .map { case (action, index) =>
-                  IndexedFile(version, index.toLong, action, isLast = !addFiles.hasNext)
-                }
+              filterAndGetIndexedFiles(it.map(Action.fromJson), version, shouldSkipCommit)
             }
           }
       }
@@ -761,6 +738,28 @@ case class DeltaSource(
   }
 
   /**
+   * Filter the iterator with only add files that contain data change and get indexed files.
+   * @return indexed add files
+   */
+  private def filterAndGetIndexedFiles(
+      iterator: Iterator[Action],
+      version: Long,
+      shouldSkipCommit: Boolean): Iterator[IndexedFile] = {
+    val filteredIterator =
+      if (shouldSkipCommit) {
+        Iterator.empty.toClosable
+      } else iterator.filter {
+        case a: AddFile if a.dataChange => true
+        case _ => false
+      }
+    Iterator.single(IndexedFile(version, -1, null)) ++ filteredIterator
+      .map(_.asInstanceOf[AddFile])
+      .zipWithIndex.map { case (action, index) =>
+      IndexedFile(version, index.toLong, action, isLast = !iterator.hasNext)
+    }
+  }
+
+  /**
    * Check stream for violating any constraints.
    *
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
@@ -772,6 +771,11 @@ case class DeltaSource(
       actions: Iterator[Action],
       version: Long,
       verifyMetadataAction: Boolean = true): Boolean = {
+    /** A check on the source table that disallows changes on the source data. */
+    val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
+    /** A check on the source table that disallows commits that only include deletes to the data. */
+    val shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes || ignoreFileDeletion
+
     var seenFileAdd = false
     var skippedCommit = false
     var removeFileActionPath: Option[String] = None
@@ -793,13 +797,13 @@ case class DeltaSource(
       case _ => ()
     }
     if (removeFileActionPath.isDefined) {
-      if (seenFileAdd && !ignoreChanges) {
+      if (seenFileAdd && !shouldAllowChanges) {
         throw DeltaErrors.deltaSourceIgnoreChangesError(
           version,
           removeFileActionPath.get,
           deltaLog.dataPath.toString
         )
-      } else if (!seenFileAdd && !ignoreDeletes) {
+      } else if (!seenFileAdd && !shouldAllowDeletes) {
         throw DeltaErrors.deltaSourceIgnoreDeleteError(
           version,
           removeFileActionPath.get,
@@ -808,70 +812,6 @@ case class DeltaSource(
       }
     }
     skippedCommit
-  }
-
-  /**
-   * Check the stream for violating any constraints.
-   *
-   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
-   * metadata changes.
-   */
-  protected def validateCommitAndFilterAddFiles(
-    actions: Seq[Action],
-    version: Long,
-    verifyMetadataAction: Boolean = true): Seq[Action] = {
-    var seenFileAdd = false
-    var removeFileActionPath: Option[String] = None
-    val filteredActions = actions.filter {
-      case a: AddFile if a.dataChange =>
-        seenFileAdd = true
-        true
-      case a: AddFile =>
-        // Created by a data compaction
-        false
-      case r: RemoveFile if r.dataChange =>
-        if (removeFileActionPath.isEmpty) {
-          removeFileActionPath = Some(r.path)
-        }
-        false
-      case _: AddCDCFile =>
-        false
-      case _: RemoveFile =>
-        false
-      case m: Metadata =>
-        if (verifyMetadataAction) {
-          checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          verifySchemaChange(m.schema, version)
-        }
-        false
-      case protocol: Protocol =>
-        deltaLog.protocolRead(protocol)
-        false
-      case _: SetTransaction | _: CommitInfo =>
-        false
-      case null => // Some crazy future feature. Ignore
-        false
-    }
-    if (removeFileActionPath.isDefined) {
-      if (skipChangeCommits) {
-        return Seq.empty
-      }
-      if (seenFileAdd && !ignoreChanges) {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(
-          version,
-          removeFileActionPath.get,
-          deltaLog.dataPath.toString
-        )
-      } else if (!seenFileAdd && !ignoreDeletes) {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(
-          version,
-          removeFileActionPath.get,
-          deltaLog.dataPath.toString
-        )
-      }
-    }
-
-    filteredActions
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
