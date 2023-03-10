@@ -51,6 +51,7 @@ import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.LocalZonedTimestampType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.logical.RowType.RowField;
 import org.apache.flink.table.types.logical.SmallIntType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.flink.table.types.logical.TinyIntType;
@@ -58,6 +59,7 @@ import org.apache.flink.table.types.logical.VarBinaryType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.types.Row;
+import org.hamcrest.core.IsEqual;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +69,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.standalone.DeltaLog;
@@ -177,6 +180,142 @@ public class DeltaSinkWriteReadITCase {
         waitUntilDeltaLogExists(deltaLog);
 
         validateNestedData(deltaLog.snapshot(), testRow);
+    }
+
+    /**
+     * This test tries to write a Parquet file with schema {@code ROW<Array<Array<Int>>>} This
+     * is expected to fail due to issue in flink-parquet library, were writing complex nested types
+     * is still not implemented fully.
+     */
+    @Test
+    public void testNestedComplexTypes_ArrayOfArrays() {
+        // GIVEN
+        RowType rowType = new RowType(
+            Collections.singletonList(
+                new RowField("f2", new ArrayType(new ArrayType(new IntType())))
+            ));
+
+        int value = 1;
+        Integer[] testArray = {value};
+        Integer[][] testArrayOfArrays = new Integer[][] {testArray};
+
+        // We need this casting to an Object because Row.of(...) accepts varargs and without the
+        // cast, during the runtime an array is interpreted as varargs and not single object
+        // making the test fail on rowToRowData(...) before starting Flink Job.
+        // The issue is also reported by Intellij code hints:
+        // "Confusing argument '(testArrayOfArrays)', unclear if a varargs or non-varargs call is
+        // desired. Cast to Object"
+        Row testRow = Row.of((Object) testArrayOfArrays);
+
+        // WHEN
+        RuntimeException exception = assertThrows(
+            RuntimeException.class,
+            () -> runFlinkJob(rowType, rowToRowData(rowType, testRow))
+        );
+
+        // THEN
+        System.out.println(exception.getCause().getCause().getCause().getMessage());
+
+        assertThat(
+            exception.getCause().getCause().getCause().getMessage(),
+            IsEqual.equalTo(
+                "org.apache.parquet.io.ParquetEncodingException: empty fields are illegal,"
+                    + " the field should be ommited completely instead")
+        );
+    }
+
+    /**
+     * This test tries to write a Parquet file with schema {@code ROW<Array<Row<Int>>>} This
+     * is expected to fail due to issue in flink-parquet library, were writing complex nested types
+     * is still not implemented fully.
+     */
+    @Test
+    public void testNestedComplexTypes_ArrayOfRows() {
+        // GIVEN
+        RowType rowType = new RowType(
+            Collections.singletonList(
+                new RowField("f1", new ArrayType(new RowType(Collections.singletonList(
+                    new RowField("f01", new IntType())
+                ))))
+            ));
+
+        Integer value = 1;
+        Row nestedRow = Row.of(value);
+        Row[] testArrayOfRows = new Row[] {nestedRow};
+
+        // We need this casting to an Object because Row.of(...) accepts varargs and without the
+        // cast, during the runtime an array is interpreted as varargs and not single object
+        // making the test fail on rowToRowData(...) before starting Flink Job.
+        // The issue is also reported by Intellij code hints:
+        // "Confusing argument '(testArrayOfArrays)', unclear if a varargs or non-varargs call is
+        // desired. Cast to Object"
+        Row testRow = Row.of((Object) testArrayOfRows);
+
+        // WHEN
+        RuntimeException exception = assertThrows(
+            RuntimeException.class,
+            () -> runFlinkJob(rowType, rowToRowData(rowType, testRow))
+        );
+
+        // THEN
+        System.out.println(exception.getCause().getCause().getCause().getMessage());
+
+        assertThat(
+            exception.getCause().getCause().getCause().getMessage(),
+            IsEqual.equalTo(
+                "org.apache.parquet.io.ParquetEncodingException: empty fields are illegal,"
+                    + " the field should be ommited completely instead")
+        );
+    }
+
+    /**
+     * This test tries to write a Parquet file with schema {@code ROW<Array<Map<String, Int>>>} This
+     * is expected to fail due to issue in flink-parquet library, were writing complex nested types
+     * is still not implemented fully.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testNestedComplexTypes_ArrayOfMap() {
+
+        // GIVEN
+        RowType rowType = new RowType(
+            Collections.singletonList(
+                new RowField(
+                    "f1",
+                    new ArrayType(new MapType(new VarCharType(), new IntType()))
+                )
+            ));
+
+        Integer value = 1;
+        Map<String, Integer> testMap = new HashMap<String, Integer>() {{
+                put(String.valueOf(value), value);
+            }};
+
+        Map<String, Integer>[] testArrayOfMaps = new Map[] {testMap};
+
+        // We need this casting to an Object because Row.of(...) accepts varargs and without the
+        // cast, during the runtime an array is interpreted as varargs and not single object
+        // making the test fail on rowToRowData(...) before starting Flink Job.
+        // The issue is also reported by Intellij code hints:
+        // "Confusing argument '(testArrayOfArrays)', unclear if a varargs or non-varargs call is
+        // desired. Cast to Object"
+        Row testRow = Row.of((Object) testArrayOfMaps);
+
+        // WHEN
+        RuntimeException exception = assertThrows(
+            RuntimeException.class,
+            () -> runFlinkJob(rowType, rowToRowData(rowType, testRow))
+        );
+
+        // THEN
+        System.out.println(exception.getCause().getCause().getCause().getMessage());
+
+        assertThat(
+            exception.getCause().getCause().getCause().getMessage(),
+            IsEqual.equalTo(
+                "org.apache.parquet.io.ParquetEncodingException: empty fields are illegal,"
+                    + " the field should be ommited completely instead")
+        );
     }
 
     /**
