@@ -87,7 +87,9 @@ public class DeltaGlobalCommitter
     implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
+
     private static final String APPEND_MODE = "Append";
+
     private static final String ENGINE_INFO =
         "flink-engine/" + io.delta.flink.sink.internal.committer.Meta.FLINK_VERSION +
         " flink-delta-connector/" + io.delta.flink.sink.internal.committer.Meta.CONNECTOR_VERSION;
@@ -96,11 +98,6 @@ public class DeltaGlobalCommitter
      * Hadoop configuration that is passed to {@link DeltaLog} instance when creating it
      */
     private final Configuration conf;
-
-    /**
-     * Root path of the DeltaTable
-     */
-    private final Path basePath;
 
     /**
      * RowType object from which the Delta's {@link StructType} will be deducted
@@ -112,6 +109,13 @@ public class DeltaGlobalCommitter
      */
     private final boolean mergeSchema;
 
+    /**
+     * Keeping a reference to the DeltaLog will make future `deltaLog.startTransaction()` calls,
+     * which internally will call `deltaLog.update()`, cheaper. This is because we don't need to
+     * do a full table replay, but instead only need to append the changes to the latest snapshot`.
+     */
+    private final transient DeltaLog deltaLog;
+
     private transient boolean firstCommit = true;
 
     public DeltaGlobalCommitter(
@@ -121,9 +125,10 @@ public class DeltaGlobalCommitter
             boolean mergeSchema) {
 
         this.conf = conf;
-        this.basePath = basePath;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
+        this.deltaLog = DeltaLog.forTable(conf,
+            new org.apache.hadoop.fs.Path(basePath.toUri()));
     }
 
     /**
@@ -158,6 +163,16 @@ public class DeltaGlobalCommitter
      */
     @Override
     public DeltaGlobalCommittable combine(List<DeltaCommittable> committables) {
+
+        if (LOG.isTraceEnabled()) {
+            for (DeltaCommittable committable : committables) {
+                LOG.trace("Creating global committable object with committable for: " +
+                    "appId=" + committable.getAppId() +
+                    " checkpointId=" + committable.getCheckpointId() +
+                    " deltaPendingFile=" + committable.getDeltaPendingFile()
+                );
+            }
+        }
         return new DeltaGlobalCommittable(committables);
     }
 
@@ -222,20 +237,18 @@ public class DeltaGlobalCommitter
         String appId = resolveAppId(globalCommittables);
         if (appId != null) { // means there are committables to process
 
-            final DeltaLog deltaLog = DeltaLog.forTable(conf,
-                new org.apache.hadoop.fs.Path(basePath.toUri()));
-
             SortedMap<Long, List<CheckpointData>> committablesPerCheckpoint =
                 getCommittablesPerCheckpoint(
                     appId,
                     globalCommittables,
-                    deltaLog);
+                    this.deltaLog);
 
-            for (long checkpointId : committablesPerCheckpoint.keySet()) {
+            // We used SortedMap and SortedMap.values() maintain the sorted order.
+            for (List<CheckpointData> checkpointData : committablesPerCheckpoint.values()) {
                 doCommit(
-                    deltaLog.startTransaction(),
-                    committablesPerCheckpoint.get(checkpointId),
-                    deltaLog.tableExists());
+                    this.deltaLog.startTransaction(),
+                    checkpointData,
+                    this.deltaLog.tableExists());
             }
         }
 
@@ -378,7 +391,9 @@ public class DeltaGlobalCommitter
 
         StringJoiner logFiles = new StringJoiner(", ");
         for (CheckpointData data : checkpointData) {
-            logFiles.add(data.addFile.getPath());
+            if (LOG.isDebugEnabled()) {
+                logFiles.add(data.addFile.getPath());
+            }
             commitActions.add(data.addFile);
 
             DeltaPendingFile deltaPendingFile = data.committable.getDeltaPendingFile();
@@ -406,10 +421,7 @@ public class DeltaGlobalCommitter
             numOutputBytes += deltaPendingFile.getFileSize();
         }
 
-        LOG.info("Files to be committed to the Delta table: " +
-            "appId=" + appId +
-            " checkpointId=" + checkpointId +
-            " files [" + logFiles + "].");
+        logGlobalCommitterData(appId, checkpointId, logFiles);
 
         List<String> partitionColumns = partitionColumnsSet == null
             ? Collections.emptyList() : new ArrayList<>(partitionColumnsSet);
@@ -433,6 +445,27 @@ public class DeltaGlobalCommitter
         LOG.info(String.format(
             "Successfully committed transaction (appId='%s', checkpointId='%s')",
             appId, checkpointId));
+    }
+
+    /**
+     * Log based on log level, GlobalCommitter information about data that will be committed to
+     * _delta_log.
+     */
+    private void logGlobalCommitterData(String appId, long checkpointId, StringJoiner logFiles) {
+        if (LOG.isInfoEnabled()) {
+            LOG.info(
+                logFiles.length() + " files to be committed to the Delta table for " +
+                    "appId=" + appId +
+                    " checkpointId=" + checkpointId + ".");
+        }
+
+        // This will log path for all files that should be committed to delta log.
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Files to be committed to the Delta table: " +
+                "appId=" + appId +
+                " checkpointId=" + checkpointId +
+                " files [" + logFiles + "].");
+        }
     }
 
     /**

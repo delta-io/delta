@@ -214,10 +214,18 @@ public class DeltaWriterBucket<IN> {
         }
 
         List<DeltaCommittable> committables = new ArrayList<>();
-        pendingFiles.forEach(pendingFile -> committables.add(
-            new DeltaCommittable(pendingFile, appId, checkpointId)));
-        pendingFiles.clear();
 
+        for (DeltaPendingFile pendingFile : pendingFiles) {
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Creating committable object for: " +
+                    "appId=" + appId +
+                    " checkpointId=" + checkpointId +
+                    " deltaPendingFile=" + pendingFile
+                );
+            }
+            committables.add(new DeltaCommittable(pendingFile, appId, checkpointId));
+        }
+        pendingFiles.clear();
         return committables;
     }
 

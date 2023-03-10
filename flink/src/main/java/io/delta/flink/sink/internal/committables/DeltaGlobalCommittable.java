@@ -62,13 +62,6 @@ public class DeltaGlobalCommittable {
     private final List<DeltaCommittable> deltaCommittables;
 
     public DeltaGlobalCommittable(List<DeltaCommittable> deltaCommittables) {
-        for (DeltaCommittable committable : deltaCommittables) {
-            LOG.info("Creating global committable object with committable for: " +
-                "appId=" + committable.getAppId() +
-                " checkpointId=" + committable.getCheckpointId() +
-                " deltaPendingFile=" + committable.getDeltaPendingFile()
-            );
-        }
         this.deltaCommittables = checkNotNull(deltaCommittables);
     }
 
