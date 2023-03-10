@@ -132,7 +132,7 @@ class OptimisticTransaction
   extends OptimisticTransactionImpl
   with DeltaLogging {
 
-  DeletionVectorUtils.assertNoDeletionVectors(spark, snapshot.metadata, snapshot.protocol)
+  DeletionVectorUtils.assertDVTablesAreNotUpdatable(spark, snapshot.metadata, snapshot.protocol)
 
   /** Creates a new OptimisticTransaction.
    *
@@ -544,10 +544,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
-    DeletionVectorUtils.assertNoDeletionVectors(
+    DeletionVectorUtils.assertDVTablesAreNotUpdatable(
       spark,
       newMetadataTmp,
-      newProtocol.getOrElse(protocolBeforeUpdate))
+      protocol)
 
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
