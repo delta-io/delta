@@ -21,8 +21,8 @@ import java.lang
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite.{table1Path, table2Path, table3Path}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -62,7 +62,13 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
 
   test("INSERT INTO is blocked on table with DVs") {
     assertDVTableUpdatesAreDisabled(testTablePath = Some(table1WithDVs)) { _ =>
-      spark.sql(s"INSERT INTO $table2WithDVs SELECT 200, 2450")
+      spark.sql(s"INSERT INTO $table2WithDVs SELECT 200")
+    }
+  }
+
+  test("INSERT INTO is blocked on table with DV feature supported, but no DVs") {
+    assertDVTableUpdatesAreDisabled(testTablePath = Some(table4WithDVFeatureSupported)) { _ =>
+      spark.sql(s"INSERT INTO $table4WithDVFeatureSupported SELECT 200L")
     }
   }
 
@@ -173,4 +179,5 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
 
   private val table2WithDVs = s"delta.`${new File(table2Path).getAbsolutePath}`"
   private val table1WithDVs = s"delta.`${new File(table1Path).getAbsolutePath}`"
+  private val table4WithDVFeatureSupported = s"delta.`${new File(table4Path).getAbsolutePath}`"
 }
