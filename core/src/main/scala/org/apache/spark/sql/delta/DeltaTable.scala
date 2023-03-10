@@ -377,7 +377,7 @@ object DeltaTableUtils extends PredicateHelper
 
   /**
    * Given a time travel node, resolve which version it is corresponding to for the given table and
-   * return the resolved version as well as the access type, i.e. by version or timestamp.
+   * return the resolved version as well as the access type, i.e. by `version` or `timestamp`.
    */
   def resolveTimeTravelVersion(
       conf: SQLConf,
