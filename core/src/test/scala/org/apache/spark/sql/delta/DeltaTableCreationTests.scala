@@ -397,7 +397,10 @@ trait DeltaTableCreationTests
         val ex = intercept[AnalysisException] {
           createTableUsingDF
         }
-        assert(ex.getMessage.contains("invalid character(s)"))
+        assert(
+          ex.getMessage.contains("[INVALID_COLUMN_NAME_AS_PATH]") ||
+            ex.getMessage.contains("invalid character(s)")
+        )
         assert(!tableLoc.exists())
       } else {
         // column mapping modes support creating table with arbitrary col names
@@ -411,7 +414,10 @@ trait DeltaTableCreationTests
         val ex2 = intercept[AnalysisException] {
           createTableUsingSQL
         }
-        assert(ex2.getMessage.contains("invalid character(s)"))
+        assert(
+          ex2.getMessage.contains("[INVALID_COLUMN_NAME_AS_PATH]") ||
+            ex2.getMessage.contains("invalid character(s)")
+        )
         assert(!tableLoc.exists())
       } else {
         // column mapping modes support creating table with arbitrary col names
