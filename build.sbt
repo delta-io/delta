@@ -96,6 +96,14 @@ lazy val releaseSettings = Seq(
   Test / publishArtifact := false,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
+  pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+  sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
+  credentials += Credentials(
+    "Sonatype Nexus Repository Manager",
+    "oss.sonatype.org",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ),
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
