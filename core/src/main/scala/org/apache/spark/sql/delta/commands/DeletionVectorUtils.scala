@@ -89,16 +89,12 @@ trait DeletionVectorUtils {
    * are supported only in read-mode for now. Any updates to tables with deletion vectors
    * feature are disabled until we add support.
    */
-  def assertDVTablesAreNotUpdatable(
+  def assertDeletionVectorsNotReadable(
       spark: SparkSession, metadata: Metadata, protocol: Protocol): Unit = {
     val disable =
       Utils.isTesting && // We are in testing and enabled blocking updates on DV tables
           spark.conf.get(DeltaSQLConf.DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES)
-    if (!disable &&
-        (protocol.isFeatureSupported(DeletionVectorsTableFeature) ||
-            DeletionVectorsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
-        )
-    ) {
+    if (!disable && deletionVectorsWritable(protocol, metadata)) {
       throw new UnsupportedOperationException(
         "Updates to tables with Deletion Vectors feature enabled are not supported in " +
             "this version of Delta Lake.")
