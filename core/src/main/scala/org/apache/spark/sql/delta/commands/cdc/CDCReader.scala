@@ -386,6 +386,10 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
+    if(startVersionSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(start)
+    }
+
     // Check schema read-compatibility
     val forceEnableUnsafeBatchReadOnIncompatibleSchemaChanges =
       spark.sessionState.conf.getConf(
@@ -501,11 +505,9 @@ trait CDCReaderImpl extends DeltaLogging {
             totalFiles += 1L
             totalBytes += c.size
           case a: AddFile =>
-            assertNoDeletionVectors(v, a)
             totalFiles += 1L
             totalBytes += a.size
           case r: RemoveFile =>
-            assertNoDeletionVectors(v, r)
             totalFiles += 1L
             totalBytes += r.size.getOrElse(0L)
           case i: CommitInfo => commitInfo = Some(i)
@@ -709,17 +711,6 @@ trait CDCReaderImpl extends DeltaLogging {
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
     ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
-  }
-
-  def assertNoDeletionVectors(version: Long, file: FileAction): Unit = {
-    val dv = file match {
-      case a: AddFile => a.deletionVector
-      case r: RemoveFile => r.deletionVector
-      case _ => null
-    }
-    if (dv != null) {
-      throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(version)
-    }
   }
 
   /**
