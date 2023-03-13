@@ -324,7 +324,8 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
   test(".collect() and .show() both use this optimization") {
     val collectPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
-      spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
+      val result = spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
+      assert(result(0)(0) === totalRows)
     }
     assert(collectPlans.collect { case x: LocalRelation => x }.size === 1)
 
