@@ -1054,12 +1054,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var bytesNew: Long = 0L
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
+      val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
       var allActions = (extraActions.toIterator ++ actions).map { action =>
         commitSize += 1
         action match {
           case a: AddFile =>
             numAddFiles += 1
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
+            assertDeletionVectorWellFormed(a)
             if (a.dataChange) bytesNew += a.size
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
