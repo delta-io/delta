@@ -544,10 +544,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
-    DeletionVectorUtils.assertDeletionVectorsNotReadable(
-      spark,
-      newMetadataTmp,
-      protocol)
+    DeletionVectorUtils.assertDeletionVectorsNotEnabled(spark, newMetadataTmp, protocol)
 
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)

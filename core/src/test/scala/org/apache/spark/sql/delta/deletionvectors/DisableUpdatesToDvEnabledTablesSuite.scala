@@ -150,9 +150,12 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
       }
     }
     assert(ex.isInstanceOf[UnsupportedOperationException])
-    assert(ex.getMessage.contains(
-      "Updates to tables with Deletion Vectors feature enabled are not supported in " +
-        "this version of Delta Lake."))
+    val msg = ex.getMessage
+    assert(
+      msg.contains("Updates to tables with Deletion Vectors feature enabled are " +
+        "not supported in this version of Delta Lake.") |
+      msg.contains("Enabling Deletion Vectors on the table is not supported in this " +
+        "version of Delta Lake."))
 
     val dataAfter = testTablePath.map(path => spark.sql(s"SELECT * FROM $path"))
     if (testTablePath.isDefined) {
