@@ -31,6 +31,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, Filter, PrunedFilteredScan}
@@ -386,7 +387,7 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
-    if(startVersionSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+    if (DeletionVectorUtils.deletionVectorsReadable(startVersionSnapshot)) {
       throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(start)
     }
 
