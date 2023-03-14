@@ -29,6 +29,7 @@ import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.OptimisticTransaction.assertNoDeletionVectors
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
@@ -631,6 +632,32 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val requiredProtocolOpt = Protocol.checkProtocolRequirements(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
+    }
+  }
+
+  /**
+   * Must make sure that deletion vectors are never added to a table where that isn't allowed.
+   * Note, statistics recomputation is still allowed even though DVs might be currently disabled.
+   *
+   * This method returns a function that can be used to validate a single Action.
+   */
+  protected def getAssertDeletionVectorWellFormedFunc(
+      spark: SparkSession,
+      op: DeltaOperations.Operation): (Action => Unit) = {
+    val deletionVectorCreationAllowed =
+      DeletionVectorUtils.deletionVectorsWritable(snapshot, newProtocol, newMetadata)
+    val isComputeStatsOperation = op.isInstanceOf[DeltaOperations.ComputeStats]
+    val commitCheckEnabled = spark.conf.get(DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED)
+
+    val deletionVectorDisallowedForAddFiles =
+      commitCheckEnabled && !isComputeStatsOperation && !deletionVectorCreationAllowed
+
+    action => action match {
+      case a: AddFile =>
+        if (deletionVectorDisallowedForAddFiles && a.deletionVector != null) {
+          throw DeltaErrors.addingDeletionVectorsDisallowedException()
+        }
+      case _ => // Not an AddFile, nothing to do.
     }
   }
 

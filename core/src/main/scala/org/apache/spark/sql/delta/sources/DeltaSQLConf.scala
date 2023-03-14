@@ -1134,6 +1134,16 @@ trait DeltaSQLConfBase {
       .doc("Enable persistent Deletion Vectors in the Delete command.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
+    buildConf("deletionVectors.skipCommitCheck")
+      .internal()
+      .doc(
+        """Check the table-property and verify that deletion vectors may be added
+          |to this table.
+          |Only change this for testing!""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
