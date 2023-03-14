@@ -560,12 +560,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       val fsOptions = fakeFileSystemOptions
 
       // create a table with a default Protocol.
-      val testSchema = spark.range(1).schema.asNullable
+      val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, path, fsOptions)
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
-        Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 1).json),
+        Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
         overwrite = false,
         log.newDeltaHadoopConf())
       log.update()
@@ -573,10 +573,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // update the protocol to support a writer feature.
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.addFeatureSupport(TestWriterFeature.name)
-      assert(log.update().protocol === Protocol(1, 7).withFeature(TestWriterFeature))
+      assert(log.update().protocol === Protocol(1, 7)
+        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
       table.addFeatureSupport(TestReaderWriterFeature.name)
       assert(
         log.update().protocol === Protocol(3, 7)
+          .merge(Protocol(1, 2))
           .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
 
       // update the protocol again with invalid feature name.
