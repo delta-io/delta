@@ -119,6 +119,7 @@ trait CloneTableSuiteBase extends QueryTest
       isReplaceOperation: Boolean = false,
       // If we are doing a replace, whether it is on a Delta table
       isReplaceDelta: Boolean = true,
+      tableProperties: Map[String, String] = Map.empty,
       commitLargeMetricsMap: Map[String, String] = Map.empty,
       expectedDataframe: DataFrame = spark.emptyDataFrame)
       (f: () => Unit =
@@ -132,7 +133,8 @@ trait CloneTableSuiteBase extends QueryTest
           sourceVersion,
           sourceTimestamp,
           isCreate,
-          isReplaceOperation)): Unit = {
+          isReplaceOperation,
+          tableProperties)): Unit = {
     // scalastyle:on
 
     // Truncate table before REPLACE
@@ -811,6 +813,19 @@ trait CloneTableSuiteBase extends QueryTest
           sourceFormat = "parquet",
           expectedDataframe = df)()
       }
+  }
+
+  testAllClones("CLONE with table properties to disable DV") { (source, target, isShallow) =>
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+      spark.range(10).write.format("delta").save(source)
+      spark.sql(s"DELETE FROM delta.`$source` WHERE id = 1")
+    }
+    intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
+      runAndValidateClone(
+        source,
+        target,
+        tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
+    }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
   }
 
   testAllClones("clone parquet source - create or replace existing table using name",

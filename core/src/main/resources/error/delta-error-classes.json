@@ -11,6 +11,12 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADDING_DELETION_VECTORS_DISALLOWED" : {
+    "message" : [
+      "The current operation attempted to add a deletion vector to a table that does not permit the creation of new deletion vectors. Please file a bug report."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to add column <columnName> is lower than 0"
