@@ -2657,6 +2657,10 @@ trait DeltaErrorsBase
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
 
+  def addingDeletionVectorsDisallowedException(): Throwable =
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_ADDING_DELETION_VECTORS_DISALLOWED")
+
   def unsupportedExpression(
     causedBy: String,
     expType: DataType,
