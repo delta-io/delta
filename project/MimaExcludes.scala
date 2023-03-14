@@ -82,11 +82,11 @@ object MimaExcludes {
 
       // Changes in 1.2.0
       ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.LogStore"),
-      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator")
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator"),
 
       // ... removed methods flagged after adding user metadata
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.this")
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeDelete")
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeDelete"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeUpdate")
       // scalastyle:on line.size.limit
   )
