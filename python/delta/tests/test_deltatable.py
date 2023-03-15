@@ -570,11 +570,12 @@ class DeltaTableTestsMixin:
             fields.append(StructField(col, dataType, col in nullables, metadata))
         self.assertEqual(StructType(fields), schema)
         if len(properties) > 0:
-            tablePropertyMap: Dict[str, str] = (
+            result = (
                 self.spark.sql(  # type: ignore[assignment, misc]
                     "SHOW TBLPROPERTIES {}".format(tableName)
                 )
-                .rdd.collectAsMap())
+                .collect())
+            tablePropertyMap = {row.key: row.value for row in result}
             for key in properties:
                 self.assertIn(key, tablePropertyMap)
                 self.assertEqual(tablePropertyMap[key], properties[key])
@@ -862,7 +863,7 @@ class DeltaTableTestsMixin:
                                        tblComment="comment")
 
     def test_delta_table_builder_with_bad_args(self) -> None:
-        builder = DeltaTable.create(self.spark)
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad table name
         with self.assertRaises(TypeError):
@@ -887,6 +888,7 @@ class DeltaTableTestsMixin:
         # bad column datatype - can't be pared
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
+            builder.execute()
 
         # bad comment
         with self.assertRaises(TypeError):
