@@ -22,6 +22,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -384,6 +385,10 @@ trait CDCReaderImpl extends DeltaLogging {
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
     if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
+    }
+
+    if (DeletionVectorUtils.deletionVectorsReadable(startVersionSnapshot)) {
+      throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(start)
     }
 
     // Check schema read-compatibility
