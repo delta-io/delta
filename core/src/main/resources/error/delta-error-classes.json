@@ -1832,6 +1832,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS" : {
+    "message" : [
+      "Reading Change Data Feed from Version {version}, which contains Deletion Vectors, is unsupported by this version of Delta Lake."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",

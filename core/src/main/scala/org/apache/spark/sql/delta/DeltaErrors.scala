@@ -2709,6 +2709,12 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS",
+      messageParameters = Array(version.toString))
+  }
+
   def generateNotSupportedWithDeletionVectors(): Throwable =
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
