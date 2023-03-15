@@ -310,4 +310,8 @@ object DeletionVectorsSuite {
   // Table at version 4: inserts rows with id = 1353, 1567
   val table3V4Added = Set(1353, 1567)
   val expectedTable3DataV4 = expectedTable3DataV3 ++ table3V4Added
+
+  // Table with DV table feature as supported but no DVs
+  val table4Path = "src/test/resources/delta/table-with-dv-feature-enabled"
+  val expectedTable4DataV0 = Seq(1L)
 }

@@ -114,6 +114,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       require(snapshot.version >= 0, "No state defined for this table. Is this really " +
         "a Delta table? Refusing to garbage collect.")
 
+      DeletionVectorUtils.assertDeletionVectorsNotReadable(
+        spark, snapshot.metadata, snapshot.protocol)
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
@@ -316,11 +319,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     try {
       val rawResolvedUri: URI = logStore.resolvePathOnPhysicalStorage(path, hadoopConf).toUri
       val scheme = rawResolvedUri.getScheme
-      if (supportedFsForLogging.contains(scheme)) {
-        true
-      } else {
-        false
-      }
+      supportedFsForLogging.contains(scheme)
     } catch {
       case _: UnsupportedOperationException =>
         logWarning("Vacuum event logging" +
