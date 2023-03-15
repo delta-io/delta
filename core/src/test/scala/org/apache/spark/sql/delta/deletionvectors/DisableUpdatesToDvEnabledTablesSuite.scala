@@ -21,10 +21,11 @@ import java.lang
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite.{table1Path, table2Path, table3Path}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -61,7 +62,13 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
 
   test("INSERT INTO is blocked on table with DVs") {
     assertDVTableUpdatesAreDisabled(testTablePath = Some(table1WithDVs)) { _ =>
-      spark.sql(s"INSERT INTO $table2WithDVs SELECT 200, 2450")
+      spark.sql(s"INSERT INTO $table2WithDVs SELECT 200")
+    }
+  }
+
+  test("INSERT INTO is blocked on table with DV feature supported, but no DVs") {
+    assertDVTableUpdatesAreDisabled(testTablePath = Some(table4WithDVFeatureSupported)) { _ =>
+      spark.sql(s"INSERT INTO $table4WithDVFeatureSupported SELECT 200L")
     }
   }
 
@@ -83,9 +90,13 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
     }
   }
 
-  test("VACUUM is blocked on table with DVs") {
+  for (enableLogging <- BOOLEAN_DOMAIN)
+    test(s"VACUUM is blocked on table with DVs with logging enabled=$enableLogging") {
     assertDVTableUpdatesAreDisabled(testTablePath = Some(table1WithDVs)) { _ =>
-      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        // Logging influencing whether a transaction is committed to DeltaLog or not
+        DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> enableLogging.toString) {
         spark.sql(s"VACUUM $table1WithDVs RETAIN 0 HOURS")
       }
     }
@@ -105,6 +116,25 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
     }
   }
 
+  test("CREATE TABLE with DV feature enabled is blocked") {
+    assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
+      withTable("tab") {
+        spark.sql(s"CREATE TABLE tab (c1 int) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.deletionVectors' = 'supported');")
+      }
+    }
+  }
+
+  test("ALTER TABLE to add DV feature is blocked") {
+    assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
+      withTable("tab") {
+        spark.sql("CREATE TABLE tab (c1 int) USING DELTA;")
+        spark.sql("ALTER TABLE tab SET " +
+          "TBLPROPERTIES ('delta.feature.deletionVectors' = 'supported');")
+      }
+    }
+  }
+
   test("Enabling DV feature on a table is blocked") {
     assertDVTableUpdatesAreDisabled(testTablePath = None) { tablePath =>
       createTempTable(tablePath)
@@ -120,9 +150,12 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
       }
     }
     assert(ex.isInstanceOf[UnsupportedOperationException])
-    assert(ex.getMessage.contains(
-      "Updates to tables with Deletion Vectors feature enabled are not supported in " +
-        "this version of Delta Lake."))
+    val msg = ex.getMessage
+    assert(
+      msg.contains("Updates to tables with Deletion Vectors feature enabled are " +
+        "not supported in this version of Delta Lake.") |
+      msg.contains("Enabling Deletion Vectors on the table is not supported in this " +
+        "version of Delta Lake."))
 
     val dataAfter = testTablePath.map(path => spark.sql(s"SELECT * FROM $path"))
     if (testTablePath.isDefined) {
@@ -149,4 +182,5 @@ class DisableUpdatesToDvEnabledTablesSuite extends QueryTest
 
   private val table2WithDVs = s"delta.`${new File(table2Path).getAbsolutePath}`"
   private val table1WithDVs = s"delta.`${new File(table1Path).getAbsolutePath}`"
+  private val table4WithDVFeatureSupported = s"delta.`${new File(table4Path).getAbsolutePath}`"
 }
