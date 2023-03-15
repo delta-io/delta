@@ -82,7 +82,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
 
   /** Returns all [[AddFile]] actions of a Delta table that contain Deletion Vectors. */
   def getFilesWithDeletionVectors(log: DeltaLog): Seq[AddFile] =
-    log.unsafeVolatileSnapshot.allFiles.collect().filter(_.deletionVector != null).toSeq
+    log.update().allFiles.collect().filter(_.deletionVector != null).toSeq
 
   /** Helper to check that the Deletion Vectors of the provided file actions exist on disk. */
   def assertDeletionVectorsExist(log: DeltaLog, filesWithDVs: Seq[AddFile]): Unit = {
