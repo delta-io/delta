@@ -76,6 +76,8 @@ private[delta] class CurrentTransactionInfo(
    * issues.
    */
   val partitionSchemaAtReadTime: StructType = readSnapshot.metadata.partitionSchema
+
+  def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
 /**
@@ -304,9 +306,7 @@ private[delta] class ConflictChecker(
     // transaction i.e. the winning transaction have [[SetTransaction]] corresponding to
     // some appId on which current transaction depends on. Example - This can happen when
     // multiple instances of the same streaming query are running at the same time.
-    val txnOverlap = winningCommitSummary.appLevelTransactions.map(_.appId).toSet intersect
-      currentTransactionInfo.readAppIds
-    if (txnOverlap.nonEmpty) {
+    if (winningCommitSummary.appLevelTransactions.exists(currentTransactionInfo.isConflict(_))) {
       throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
     }
   }
