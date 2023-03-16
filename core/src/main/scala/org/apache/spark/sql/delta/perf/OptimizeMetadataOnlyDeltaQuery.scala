@@ -86,7 +86,11 @@ trait OptimizeMetadataOnlyDeltaQuery {
         ),
         PhysicalOperation(_, Nil, DeltaTable(i: TahoeLogFileIndex))
       ) if i.partitionFilters.isEmpty =>
-        extractGlobalCount(i).map { count => UTF8String.fromString(count.toString) }
+        extractGlobalCount(i).map { count =>
+          // The following code is following how Spark casts a long type to a string type.
+          // See org.apache.spark.sql.catalyst.expressions.Cast#castToString.
+          UTF8String.fromString(count.toString)
+        }
       case _ => None
     }
   }

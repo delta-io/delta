@@ -322,16 +322,20 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
+  // scalastyle:off println
   test(".collect() and .show() both use this optimization") {
     val collectPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
-      val result = spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
-      assert(result(0)(0) === totalRows)
+      spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
     }
-    assert(collectPlans.collect { case x: LocalRelation => x }.size === 1)
+    val collectResultData = collectPlans.collect { case x: LocalRelation => x.data }
+    assert(collectResultData.size === 1)
+    assert(collectResultData.head.head.getLong(0) === totalRows)
 
     val showPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
       spark.sql(s"SELECT COUNT(*) FROM $testTableName").show()
     }
-    assert(showPlans.collect { case x: LocalRelation => x }.size === 1)
+    val showResultData = showPlans.collect { case x: LocalRelation => x.data }
+    assert(showResultData.size === 1)
+    assert(showResultData.head.head.getString(0).toLong === totalRows)
   }
 }
