@@ -183,24 +183,27 @@ trait DeltaSourceBase extends Source
    * initialize the internal states for AvailableNow if this method is called first time after
    * `prepareForTriggerAvailableNow`.
    */
-  protected def initForTriggerAvailableNowIfNeeded(): Unit = {
+  protected def initForTriggerAvailableNowIfNeeded(
+    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
     if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
       isLastOffsetForTriggerAvailableNowInitialized = true
-      initLastOffsetForTriggerAvailableNow()
+      initLastOffsetForTriggerAvailableNow(startOffsetOpt)
     }
   }
 
-  protected def initLastOffsetForTriggerAvailableNow(): Unit = {
-    val offset = latestOffsetInternal(ReadLimit.allAvailable())
-    if (offset != null) {
-      lastOffsetForTriggerAvailableNow = DeltaSourceOffset(tableId, offset)
+  protected def initLastOffsetForTriggerAvailableNow(
+    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
+    val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
+    if (offset.isDefined) {
+      lastOffsetForTriggerAvailableNow = offset.get
       logInfo("lastOffset for Trigger.AvailableNow has set to " +
         s"${lastOffsetForTriggerAvailableNow.json}")
     }
   }
 
   /** An internal `latestOffsetInternal` to get the latest offset. */
-  protected def latestOffsetInternal(limit: ReadLimit): streaming.Offset
+  protected def latestOffsetInternal(
+    startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset]
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
@@ -295,7 +298,7 @@ trait DeltaSourceBase extends Source
   protected def getStartingOffsetFromSpecificDeltaVersion(
       fromVersion: Long,
       isStartingVersion: Boolean,
-      limits: Option[AdmissionLimits]): Option[Offset] = {
+      limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
 
     val changes = getFileChangesWithRateLimit(
       fromVersion,
@@ -319,7 +322,7 @@ trait DeltaSourceBase extends Source
    */
   protected def getNextOffsetFromPreviousOffset(
       previousOffset: DeltaSourceOffset,
-      limits: Option[AdmissionLimits]): Option[Offset] = {
+      limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
     val changes = getFileChangesWithRateLimit(
       previousOffset.reservoirVersion,
       previousOffset.index,
@@ -376,7 +379,7 @@ trait DeltaSourceBase extends Source
       startIndex: Long,
       isStartingVersion: Boolean,
       startSourceVersion: Option[Long],
-      startOffsetOption: Option[Offset],
+      startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): DataFrame = {
     getFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
   }
@@ -540,8 +543,6 @@ case class DeltaSource(
 
   protected val tableId = snapshotAtSourceInit.metadata.id
 
-  private var previousOffset: DeltaSourceOffset = null
-
   // A metadata snapshot when starting the query.
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
@@ -654,8 +655,7 @@ case class DeltaSource(
     }
   }
 
-  private def getStartingOffset(
-      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
+  private def getStartingOffset(limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
 
     val (version, isStartingVersion) = getStartingVersion match {
       case Some(v) => (v, false)
@@ -672,40 +672,43 @@ case class DeltaSource(
     new AdmissionLimits().toReadLimit
   }
 
+  def toDeltaSourceOffset(offset: streaming.Offset): DeltaSourceOffset = {
+    DeltaSourceOffset(tableId, offset)
+  }
+
   /**
    * This should only be called by the engine. Call `latestOffsetInternal` instead if you need to
    * get the latest offset.
    */
   override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
-    initForTriggerAvailableNowIfNeeded()
-    latestOffsetInternal(limit)
+    val deltaStartOffset = Option(startOffset).map(toDeltaSourceOffset)
+    initForTriggerAvailableNowIfNeeded(deltaStartOffset)
+    latestOffsetInternal(deltaStartOffset, limit).orNull
   }
 
-  override protected def latestOffsetInternal(limit: ReadLimit): streaming.Offset = {
+  override protected def latestOffsetInternal(
+    startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset] = {
     val limits = AdmissionLimits(limit)
 
-    val currentOffset = if (previousOffset == null) {
-      getStartingOffset(limits)
-    } else {
-      getNextOffsetFromPreviousOffset(previousOffset, limits)
-    }
-    val startingVersion = if (previousOffset == null) -1 else previousOffset.reservoirVersion
-    val endVersion = currentOffset.map(DeltaSourceOffset(tableId, _).reservoirVersion)
-      .getOrElse(-1L)
-    val offsetRangeInfo = "(latestOffsetInternal)previousOffset -> currentOffset:" +
-      s" $previousOffset -> $currentOffset"
-    if (endVersion - startingVersion > 1000L) {
+    val endOffset = startOffset.map(getNextOffsetFromPreviousOffset(_, limits))
+      .getOrElse(getStartingOffset(limits))
+
+    val startVersion = startOffset.map(_.reservoirVersion).getOrElse(-1L)
+    val endVersion = endOffset.map(_.reservoirVersion).getOrElse(-1L)
+    lazy val offsetRangeInfo = "(latestOffsetInternal)startOffset -> endOffset:" +
+      s" $startOffset -> $endOffset"
+    if (endVersion - startVersion > 1000L) {
       // Improve the log level if the source is processing a large batch.
       logInfo(offsetRangeInfo)
     } else {
       logDebug(offsetRangeInfo)
     }
-    if (shouldValidateOffsets && previousOffset != null) {
-      currentOffset.foreach { current =>
-        DeltaSourceOffset.validateOffsets(previousOffset, DeltaSourceOffset(tableId, current))
+    if (shouldValidateOffsets && startOffset.isDefined) {
+      endOffset.foreach { endOffset =>
+        DeltaSourceOffset.validateOffsets(startOffset.get, endOffset)
       }
     }
-    currentOffset.orNull
+    endOffset
   }
 
   override def getOffset: Option[Offset] = {
@@ -825,12 +828,12 @@ case class DeltaSource(
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
-    val endOffset = DeltaSourceOffset(tableId, end)
-    previousOffset = endOffset // For recovery
-    // We need to initialize after `previousOffset` is set so that we can use `previousOffset` to
-    // know whether we are going to process files in a snapshot or a commit after restart. Even for
-    // the same table table, the indexes of a file in a snpshot and a commit are different.
-    initForTriggerAvailableNowIfNeeded()
+    val endOffset = toDeltaSourceOffset(end)
+    val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
+    // We need to initialize from `endOffset` so that we can use it to know whether we are going to
+    // process files in a snapshot or a commit after restart. Even for the same table table, the
+    // indexes of a file in a snapshot and a commit are different.
+    initForTriggerAvailableNowIfNeeded(Some(endOffset))
 
     val (startVersion,
         startIndex,
@@ -852,7 +855,7 @@ case class DeltaSource(
           }
       }
     } else {
-      val startOffset = DeltaSourceOffset(tableId, startOffsetOption.get)
+      val startOffset = startDeltaOffsetOption.get
       if (!startOffset.isStartingVersion) {
         // unpersist `snapshot` because it won't be used any more.
         cleanUpSnapshotResources()
@@ -867,7 +870,7 @@ case class DeltaSource(
       (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion,
         Some(startOffset.sourceVersion))
     }
-    val offsetRangeInfo = s"(getBatch)start: $startOffsetOption end: $end"
+    val offsetRangeInfo = s"(getBatch)start: $startDeltaOffsetOption end: $end"
     if (endOffset.reservoirVersion - startVersion > 1000L) {
       // Improve the log level if the source is processing a large batch.
       logInfo(offsetRangeInfo)
@@ -875,14 +878,13 @@ case class DeltaSource(
       logDebug(offsetRangeInfo)
     }
 
-
     // Check for column mapping + streaming incompatible schema changes
     // Note for initial snapshot, the startVersion should be the same as the latestOffset's version
     // and therefore this check won't have any effect.
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion)
 
     val createdDf = createDataFrameBetweenOffsets(startVersion, startIndex, isStartingVersion,
-      startSourceVersion, startOffsetOption, endOffset)
+      startSourceVersion, startDeltaOffsetOption, endOffset)
 
     createdDf
   }
