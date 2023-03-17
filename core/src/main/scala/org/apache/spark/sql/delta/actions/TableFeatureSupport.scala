@@ -334,11 +334,11 @@ object TableFeatureProtocolUtils {
         unsupportedFeatureConfigs += key
       }
       featureOpt
-    }
+    }.toSet
     if (unsupportedFeatureConfigs.nonEmpty) {
       throw DeltaErrors.unsupportedTableFeatureConfigsException(unsupportedFeatureConfigs)
     }
-    collectedFeatures.toSet
+    collectedFeatures
   }
 
   /**
