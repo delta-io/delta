@@ -275,9 +275,22 @@ class DeltaAnalysis(session: SparkSession)
             HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
           val tableIdent = catalogTable.map(_.identifier)
             .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
+          val provider = if (catalogTable.isDefined) {
+            catalogTable.get.provider.getOrElse("Unknown")
+          } else {
+            "parquet"
+          }
+          // Only plain Parquet sources are eligible for CLONE, extensions like 'deltaSharing' are
+          // NOT supported.
+          if (!provider.equalsIgnoreCase("parquet")) {
+            throw DeltaErrors.cloneFromUnsupportedSource(
+              tableIdent.unquotedString,
+              provider)
+          }
+
           resolveCloneCommand(
             cloneStatement.target,
-            new CloneParquetSource(tableIdent, catalogTable, session), cloneStatement)
+            CloneParquetSource(tableIdent, catalogTable, session), cloneStatement)
 
         case HiveTableRelation(catalogTable, _, _, _, _) =>
           if (!ConvertToDeltaCommand.isHiveStyleParquetTable(catalogTable)) {
@@ -287,7 +300,7 @@ class DeltaAnalysis(session: SparkSession)
           }
           resolveCloneCommand(
             cloneStatement.target,
-            new CloneParquetSource(catalogTable.identifier, Some(catalogTable), session),
+            CloneParquetSource(catalogTable.identifier, Some(catalogTable), session),
             cloneStatement)
 
         case v: View =>
