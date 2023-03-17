@@ -279,12 +279,18 @@ object TableFeatureProtocolUtils {
   val TABLE_FEATURES_MIN_WRITER_VERSION = 7
 
   /** Get the table property config key for the `feature`. */
-  def propertyKey(feature: TableFeature): String =
-    s"$FEATURE_PROP_PREFIX${feature.name}"
+  def propertyKey(feature: TableFeature): String = propertyKey(feature.name)
+
+  /** Get the table property config key for the `featureName`. */
+  def propertyKey(featureName: String): String =
+    s"$FEATURE_PROP_PREFIX$featureName"
 
   /** Get the session default config key for the `feature`. */
-  def defaultPropertyKey(feature: TableFeature): String =
-    s"$DEFAULT_FEATURE_PROP_PREFIX${feature.name}"
+  def defaultPropertyKey(feature: TableFeature): String = defaultPropertyKey(feature.name)
+
+  /** Get the session default config key for the `featureName`. */
+  def defaultPropertyKey(featureName: String): String =
+    s"$DEFAULT_FEATURE_PROP_PREFIX$featureName"
 
   /**
    * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
@@ -324,11 +330,11 @@ object TableFeatureProtocolUtils {
         unsupportedFeatureConfigs += key
       }
       featureOpt
-    }
+    }.toSet
     if (unsupportedFeatureConfigs.nonEmpty) {
       throw DeltaErrors.unsupportedTableFeatureConfigsException(unsupportedFeatureConfigs)
     }
-    collectedFeatures.toSet
+    collectedFeatures
   }
 
   /**
