@@ -1252,15 +1252,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       // If this is the first commit and no metadata is specified, throw an exception
       if (!finalActions.exists(_.isInstanceOf[Metadata])) {
-        recordDeltaEvent(deltaLog, "delta.metadataCheck.noMetadataInInitialCommit")
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.metadataCheck.noMetadataInInitialCommit",
+          data =
+            Map("stacktrace" -> Thread.currentThread.getStackTrace.toSeq.take(20).mkString("\n\t"))
+        )
         if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
           throw DeltaErrors.metadataAbsentException()
         }
-        logWarning(
-          s"""
-            |Detected no metadata in initial commit but commit validation was turned off. To turn
-            |it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
-          """.stripMargin)
+        logWarning("Detected no metadata in initial commit but commit validation was turned off.")
       }
     }
 

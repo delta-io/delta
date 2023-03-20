@@ -2083,12 +2083,8 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_METADATA_ABSENT")
       assert(e.getSqlState == "XXKDS")
-
-      val msg =
-        s"""Couldn't find Metadata while committing the first version of the Delta table. To disable
-           |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
-           |""".stripMargin
-      assert(e.getMessage == msg)
+      assert(e.getMessage == "Couldn't find Metadata while committing the first version of the " +
+        "Delta table.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
