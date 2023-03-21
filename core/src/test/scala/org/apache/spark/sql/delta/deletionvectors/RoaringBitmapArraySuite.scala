@@ -371,6 +371,45 @@ class RoaringBitmapArraySuite extends SparkFunSuite {
     assert(leftBitmap.toArray === expected)
   }
 
+  test("and") {
+    // Empty result
+    testAnd(left = TreeSet.empty, right = TreeSet.empty)
+    testAnd(left = TreeSet.empty, right = TreeSet(1L))
+    testAnd(left = TreeSet.empty, right = TreeSet(1L, BITMAP_BOUNDARY - 1L))
+    testAnd(left = TreeSet.empty, right = TreeSet(0L, CONTAINER_BOUNDARY, BITMAP2_NUMBER))
+    testAnd(left = TreeSet(1L), right = TreeSet.empty)
+    testAnd(left = TreeSet(1L), right = TreeSet(BITMAP_BOUNDARY))
+    testAnd(left = TreeSet(1L), right = TreeSet(CONTAINER_BOUNDARY))
+    testAnd(left = TreeSet(1L, BITMAP_BOUNDARY - 1L), right = TreeSet.empty)
+    testAnd(left = TreeSet(0L, CONTAINER_BOUNDARY, BITMAP2_NUMBER), right = TreeSet.empty)
+    testAnd(
+      left = TreeSet(0L, CONTAINER_BOUNDARY, BITMAP2_NUMBER),
+      right = TreeSet(1L, BITMAP_BOUNDARY - 1L))
+    testAnd(
+      left = TreeSet(0L, CONTAINER_BOUNDARY),
+      right = TreeSet(1L, BITMAP_BOUNDARY - 1L, BITMAP2_NUMBER))
+
+    // Non empty result
+    testAnd(left = TreeSet(0L, 5L, 10L), right = TreeSet(5L, 15L))
+    testAnd(
+      left = TreeSet(0L, CONTAINER_BOUNDARY, BITMAP2_NUMBER),
+      right = TreeSet(1L, BITMAP2_NUMBER))
+    testAnd(
+      left = TreeSet(1L, BITMAP_BOUNDARY, CONTAINER_BOUNDARY),
+      right = TreeSet(1L, BITMAP_BOUNDARY, CONTAINER_BOUNDARY))
+  }
+
+  private def testAnd(left: TreeSet[Long], right: TreeSet[Long]): Unit = {
+    val leftBitmap = RoaringBitmapArray()
+    leftBitmap.addAll(left.toSeq: _*)
+    val rightBitmap = RoaringBitmapArray()
+    rightBitmap.addAll(right.toSeq: _*)
+
+    leftBitmap.and(rightBitmap)
+    val expected = left.intersect(right)
+    assert(leftBitmap.toArray === expected.toArray)
+  }
+
   test("clear") {
     testEquality(Nil)(_.add(1), _.clear())
     testEquality(Nil)(_.add(1), _.add(1), _.clear())
