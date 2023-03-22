@@ -44,7 +44,7 @@ class TahoeRemoveFileIndex(
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     // Make some fake AddFiles to satisfy the interface.
     val addFiles = filesByVersion.flatMap {
-      case CDCDataSpec(version, ts, files) =>
+      case CDCDataSpec(version, ts, files, ci) =>
         files.map { r =>
           if (!r.extendedFileMetadata.getOrElse(false)) {
             // This shouldn't happen in user queries - the CDC flag was added at the same time as
