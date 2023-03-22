@@ -328,6 +328,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
 
+
   /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
@@ -659,6 +660,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case a: AddFile =>
         if (deletionVectorDisallowedForAddFiles && a.deletionVector != null) {
           throw DeltaErrors.addingDeletionVectorsDisallowedException()
+        }
+        // Protocol requirement checks:
+        // 1. All files with DVs must have `stats` with `numRecords`.
+        if (a.deletionVector != null && (a.stats == null || a.numPhysicalRecords.isEmpty)) {
+          throw DeltaErrors.addFileWithDVsMissingNumRecordsException
         }
       case _ => // Not an AddFile, nothing to do.
     }
