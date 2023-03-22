@@ -1636,13 +1636,6 @@ trait DeltaErrorsBase
         s"$numActions", s"$totalCommitAttemptTime"))
   }
 
-  def generatedColumnsNonDeltaFormatError(): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_INVALID_GENERATED_COLUMN_FORMAT",
-      messageParameters = Array.empty
-    )
-  }
-
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))

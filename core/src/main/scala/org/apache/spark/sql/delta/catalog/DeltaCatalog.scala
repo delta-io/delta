@@ -59,6 +59,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   with SupportsPathIdentifier
   with DeltaLogging {
 
+
   val spark = SparkSession.active
 
   /**
@@ -253,6 +254,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   ): Table = {
       super.createTable(ident, schema, partitions, properties)
   }
+
 
   override def createTable(
       ident: Identifier,

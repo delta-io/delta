@@ -853,12 +853,6 @@
     ],
     "sqlState" : "XXKDS"
   },
-  "DELTA_INVALID_GENERATED_COLUMN_FORMAT" : {
-    "message" : [
-      "Generated columns are only supported by Delta"
-    ],
-    "sqlState" : "0AKDD"
-  },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [
       "A generated column cannot use a non-existent column or another generated column"
