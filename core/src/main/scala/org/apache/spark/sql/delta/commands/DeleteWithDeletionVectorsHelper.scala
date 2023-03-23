@@ -21,7 +21,7 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -155,21 +155,51 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     touchedFilesWithMatchedRowIndices.filterNot(_.isUnchanged)
   }
 
-  def processUnmodifiedData(touchedFiles: Seq[TouchedFileWithDV]): Seq[FileAction] = {
+  def processUnmodifiedData(
+      spark: SparkSession,
+      touchedFiles: Seq[TouchedFileWithDV],
+      snapshot: Snapshot): Seq[FileAction] = {
     val (fullyRemovedFiles, notFullyRemovedFiles) =
       touchedFiles.partition(_.isFullyReplaced())
 
     val timestamp = System.currentTimeMillis()
     val fullyRemoved = fullyRemovedFiles.map(_.fileLogEntry.removeWithTimestamp(timestamp))
 
-    // TODO: How do get the stats for these new actions?
     val dvUpdates = notFullyRemovedFiles.map { fileWithDVInfo =>
-      fileWithDVInfo.fileLogEntry.removeRows(
-        deletionVector = fileWithDVInfo.newDeletionVector
-      )}
+      fileWithDVInfo.fileLogEntry.removeRows(deletionVector = fileWithDVInfo.newDeletionVector)
+    }
+    val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
+    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    val (filesWithDeletedRows, newFilesWithDVs) = dvUpdates.unzip
-    fullyRemoved ++ filesWithDeletedRows ++ newFilesWithDVs
+    fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
+  }
+
+  /** Fetch stats for `addFiles`. */
+  private def getActionsWithStats(
+      spark: SparkSession,
+      addFiles: Seq[AddFile],
+      snapshot: Snapshot): Seq[AddFile] = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val statsColName = snapshot.getBaseStatsColumnName
+    val selectionCols = Seq(col("path"), col(statsColName))
+
+    // These files originate from snapshot.filesForScan which resets column statistics.
+    // Since these object don't carry stats and tags, if we were to use them as result actions of
+    // the operation directly, we'd effectively be removing all stats and tags. To resolve this
+    // we join the list of files with DVs with the log (allFiles) to retrieve statistics. This is
+    // expected to have better performance than supporting full stats retrieval
+    // in snapshot.filesForScan because it only affects a subset of the scanned files.
+    val allFiles = snapshot.withStats.select(selectionCols: _*)
+    val addFilesDf = addFiles.toDF(spark).drop("stats")
+    val addFilesWithStats = addFilesDf.join(allFiles, "path")
+
+    // Every operation that adds DVs needs to set tightBounds to false.
+    snapshot
+      .updateStatsToWideBounds(addFilesWithStats, statsColName)
+      .as[AddFile]
+      .collect()
+      .toSeq
   }
 }
 

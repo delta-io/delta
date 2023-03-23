@@ -20,7 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -31,7 +31,7 @@ import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeletionVectorsSuite extends QueryTest
@@ -204,24 +204,33 @@ class DeletionVectorsSuite extends QueryTest
         // Create table with 500 files of 2 rows each.
         val numFiles = 500
         val path = dirName.getAbsolutePath
-        spark.range(0, 1000, step = 1, numPartitions = numFiles)
-          .write.format("delta").save(path)
+        spark.range(0, 1000, step = 1, numPartitions = numFiles).write.format("delta").save(path)
         val tableName = s"delta.`$path`"
-
-        val beforeDeleteFiles = DeltaLog.forTable(spark, path)
-            .unsafeVolatileSnapshot.allFiles.collect().map(_.path)
+        val log = DeltaLog.forTable(spark, path)
+        val beforeDeleteFiles = log.update().allFiles.collect().map(_.path)
+        val beforeDeleteFilesWithStats = log.update().withStats
 
         val numFilesWithDVs = 100
         val numDeletedRows = numFilesWithDVs * 1
         spark.sql(s"DELETE FROM $tableName WHERE id % 2 = 0 AND id < 200")
 
         // Verify the expected no. of deletion vectors and deleted rows according to DV cardinality
-        val allFiles = DeltaLog.forTable(spark, path).unsafeVolatileSnapshot.allFiles.collect()
-        assert(allFiles.size === numFiles)
-        assert(allFiles.filter(_.deletionVector != null).size === numFilesWithDVs)
+        val allFiles = log.update().allFiles.collect()
+        assert(allFiles.length === numFiles)
+        assert(allFiles.count(_.deletionVector != null) === numFilesWithDVs)
         assert(
           allFiles.filter(_.deletionVector != null).map(_.deletionVector.cardinality).sum ==
-          numDeletedRows)
+            numDeletedRows)
+
+        // Verify stats of actions that have DVs
+        val filesWithDvs = log.update().withStats.filter($"deletionVector".isNotNull)
+        assert(
+          filesWithDvs
+            .filter($"stats.tightBounds" === lit(false))
+            .count() === numFilesWithDVs)
+        val afterDeleteFilesWithStats = log.update().withStats
+
+
 
         val afterDeleteFiles = allFiles.map(_.path)
         // make sure the data file list is the same
@@ -230,8 +239,10 @@ class DeletionVectorsSuite extends QueryTest
         // Contents after the DELETE are as expected
         checkAnswer(
           spark.sql(s"SELECT * FROM $tableName"),
-          Seq.range(0, 1000).filterNot(Seq.range(start = 0, end = 200, step = 2).contains(_)).toDF()
-        )
+          Seq
+            .range(0, 1000)
+            .filterNot(Seq.range(start = 0, end = 200, step = 2).contains(_))
+            .toDF())
       }
     }
   }

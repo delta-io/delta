@@ -40,4 +40,11 @@ object DeltaStatistics {
   val MAX = "maxValues"
   /* The number of null values present for a column. */
   val NULL_COUNT = "nullCount"
+  /*
+   * Whether the column has tight or wide bounds.
+   * This should only be present in tables with Deletion Vectors enabled.
+   */
+  val TIGHT_BOUNDS = "tightBounds"
+
+  val ALL_STAT_FIELDS = Seq(NUM_RECORDS, MIN, MAX, NULL_COUNT, TIGHT_BOUNDS)
 }
