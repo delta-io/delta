@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.types.{IntegerType, StructType}
@@ -601,6 +602,45 @@ class OptimisticTransactionSuite
           sqlState = "2D521",
           parameters = Map.empty[String, String])
       }
+    }
+  }
+
+  test("commitInfo tags") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType().add("id", "long")
+
+      def checkLastCommitTags(expectedTags: Option[Map[String, String]]): Unit = {
+        val ci = deltaLog.getChanges(deltaLog.update().version).map(_._2).flatten.collectFirst {
+          case ci: CommitInfo => ci
+        }.head
+        assert(ci.tags === expectedTags)
+      }
+
+      val metadata = Metadata(schemaString = schema.json)
+      // Check empty tags
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate, tags = Map.empty)
+      }
+      checkLastCommitTags(expectedTags = None)
+
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(addA :: Nil, DeltaOperations.Write(SaveMode.Append), tags = Map.empty)
+      }
+      checkLastCommitTags(expectedTags = None)
+
+      // Check non-empty tags
+      val tags1 = Map("testTag1" -> "testValue1")
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate, tags = tags1)
+      }
+      checkLastCommitTags(expectedTags = Some(tags1))
+
+      val tags2 = Map("testTag1" -> "testValue1", "testTag2" -> "testValue2")
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(addB :: Nil, DeltaOperations.Write(SaveMode.Append), tags = tags2)
+      }
+      checkLastCommitTags(expectedTags = Some(tags2))
     }
   }
 }

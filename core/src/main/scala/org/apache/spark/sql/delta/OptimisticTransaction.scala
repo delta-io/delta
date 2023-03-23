@@ -913,8 +913,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Also skips creating the commit if the configured [[IsolationLevel]] doesn't need us to record
    * the commit from correctness perspective.
    */
-  def commitIfNeeded(actions: Seq[Action], op: DeltaOperations.Operation): Unit = {
-    commitImpl(actions, op, canSkipEmptyCommits = true)
+  def commitIfNeeded(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation,
+      tags: Map[String, String] = Map.empty): Unit = {
+    commitImpl(actions, op, canSkipEmptyCommits = true, tags = tags)
   }
 
   /**
@@ -925,8 +928,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * @param actions     Set of actions to commit
    * @param op          Details of operation that is performing this transactional commit
    */
-  def commit(actions: Seq[Action], op: DeltaOperations.Operation): Long = {
-    commitImpl(actions, op, canSkipEmptyCommits = false).getOrElse {
+  def commit(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation): Long = {
+    commitImpl(actions, op, canSkipEmptyCommits = false, tags = Map.empty).getOrElse {
+      throw new SparkException(s"Unknown error while trying to commit for operation $op")
+    }
+  }
+
+  /**
+   * Modifies the state of the log by adding a new commit that is based on a read at
+   * [[readVersion]]. In the case of a conflict with a concurrent writer this
+   * method will throw an exception.
+   *
+   * @param actions     Set of actions to commit
+   * @param op          Details of operation that is performing this transactional commit
+   * @param tags        Extra tags to set to the CommitInfo action
+   */
+  def commit(
+      actions: Seq[Action],
+      op: DeltaOperations.Operation,
+      tags: Map[String, String]): Long = {
+    commitImpl(actions, op, canSkipEmptyCommits = false, tags = tags).getOrElse {
       throw new SparkException(s"Unknown error while trying to commit for operation $op")
     }
   }
@@ -935,7 +958,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def commitImpl(
       actions: Seq[Action],
       op: DeltaOperations.Operation,
-      canSkipEmptyCommits: Boolean
+      canSkipEmptyCommits: Boolean,
+      tags: Map[String, String]
   ): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
     commitStartNano = System.nanoTime()
 
@@ -969,7 +993,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Some(isBlindAppend),
         getOperationMetrics(op),
         getUserMetadata(op),
-        tags = None,
+        tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       val currentTransactionInfo = new CurrentTransactionInfo(
