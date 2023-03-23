@@ -738,18 +738,19 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
 
-  test("SPARK-41154: Correct relation caching for queries with time travel spec") {
+  // Tests the incorrect behavior that is patch fixed in 3.3.2
+  test("SPARK-41154: Incorrect relation caching for queries with time travel spec") {
     val tblName = "tab"
     withTable(tblName) {
       sql(s"CREATE TABLE $tblName USING DELTA AS SELECT 1 as c")
       sql(s"INSERT INTO $tblName SELECT 2 as c")
-      checkAnswer(
+      assert(
         sql(s"""
           |SELECT * FROM $tblName VERSION AS OF '0'
           |UNION ALL
           |SELECT * FROM $tblName VERSION AS OF '1'
-          |""".stripMargin),
-        Row(1) :: Row(1) :: Row(2) :: Nil)
+          |""".stripMargin
+      ).collect() === Array(Row(1), Row(1))) // this should be Array(Row(1), Row(1), Row(2))
     }
   }
 }
