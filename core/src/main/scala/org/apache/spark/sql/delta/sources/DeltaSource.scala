@@ -992,7 +992,7 @@ case class DeltaSource(
       case maxFiles: ReadMaxFiles => Some(new AdmissionLimits(Some(maxFiles.maxFiles())))
       case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
       case composite: CompositeLimit =>
-        Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
+        Some(new AdmissionLimits(Some(composite.maxFiles.maxFiles()), composite.bytes.maxBytes))
       case other => throw DeltaErrors.unknownReadLimit(other.toString())
     }
   }
