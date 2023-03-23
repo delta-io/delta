@@ -2702,9 +2702,6 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
-  def addFileWithDVsMissingNumRecordsException: Throwable =
-    new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")
-
   def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS",

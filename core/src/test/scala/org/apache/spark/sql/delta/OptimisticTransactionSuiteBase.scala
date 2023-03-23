@@ -19,9 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -30,7 +28,7 @@ import org.apache.spark.util.Utils
 
 trait OptimisticTransactionSuiteBase
   extends QueryTest
-    with SharedSparkSession    with DeletionVectorsTestUtils {
+    with SharedSparkSession {
 
 
   /**
@@ -150,39 +148,5 @@ trait OptimisticTransactionSuiteBase
         }
       }
     }
-  }
-
-  /**
-   * Write 3 files at target path and return AddFiles.
-   */
-  protected def writeDuplicateActionsData(path: String): Seq[AddFile] = {
-    val deltaLog = DeltaLog.forTable(spark, path)
-    spark.range(start = 0, end = 6, step = 1, numPartitions = 3)
-      .write.format("delta").save(path)
-    val files = deltaLog.update().allFiles.collect().sortBy(_.insertionTime)
-    for (file <- files) {
-      assert(file.numPhysicalRecords.isDefined)
-    }
-    files
-  }
-
-  protected def addDVToFileInTable(path: String, file: AddFile): (AddFile, RemoveFile) = {
-    val deltaLog = DeltaLog.forTable(spark, path)
-    val dv = writeDV(deltaLog, RoaringBitmapArray(0L))
-    updateFileDV(file, dv)
-  }
-
-  protected def testRuntimeErrorOnCommit(
-      actions: Seq[FileAction],
-      deltaLog: DeltaLog)(
-      checkErrorFun: DeltaRuntimeException => Unit): Unit = {
-    val operation = DeltaOperations.Optimize(Seq.empty, zOrderBy = Seq.empty, 0, auto = false)
-    val txn = deltaLog.startTransaction()
-    val e = intercept[DeltaRuntimeException] {
-      withSQLConf(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED.key -> "true") {
-        txn.commit(actions, operation)
-      }
-    }
-    checkErrorFun(e)
   }
 }

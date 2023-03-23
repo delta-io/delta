@@ -111,10 +111,6 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
          |SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$enable')
          |""".stripMargin)
 
-  /** Enable persistent Deletion Vectors in a Delta table. */
-  def enableDeletionVectorsInTable(deltaLog: DeltaLog, enable: Boolean = true): Unit =
-    enableDeletionVectorsInTable(deltaLog.dataPath, enable)
-
   // ======== HELPER METHODS TO WRITE DVs ==========
   /** Helper method to remove the specified rows in the given file using DVs */
   protected def removeRowsFromFileUsingDV(
@@ -247,31 +243,5 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     // scalastyle:off deltahadoopconfiguration
     DeletionVectorStore.createInstance(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
-  }
-
-  /**
-   * Updates an [[AddFile]] with a [[DeletionVectorDescriptor]].
-   */
-  protected def updateFileDV(
-      addFile: AddFile,
-      dvDescriptor: DeletionVectorDescriptor): (AddFile, RemoveFile) = {
-    addFile.removeRows(spark, dvDescriptor, updateStats = true)
-  }
-
-  /**
-   * Creates a [[DeletionVectorDescriptor]] from an [[RoaringBitmapArray]]
-   */
-  protected def writeDV(
-      log: DeltaLog,
-      bitmapArray: RoaringBitmapArray): DeletionVectorDescriptor = {
-    val dvFileId = UUID.randomUUID()
-    withDVWriter(log, dvFileId) { writer =>
-      val range = writer.write(serializeRoaringBitmapArrayWithDefaultFormat(bitmapArray))
-      DeletionVectorDescriptor.onDiskWithRelativePath(
-        id = dvFileId,
-        sizeInBytes = range.length,
-        cardinality = bitmapArray.cardinality,
-        offset = Some(range.offset))
-    }
   }
 }

@@ -522,12 +522,6 @@
     ],
     "sqlState" : "XXKDS"
   },
-  "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS" : {
-    "message" : [
-      "It is invalid to commit files with deletion vectors that are missing the numRecords statistic."
-    ],
-    "sqlState" : "2D521"
-  },
   "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
     "message" : [
       "Deletion vector integrity check failed. Encountered a size mismatch."

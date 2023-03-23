@@ -312,7 +312,6 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       size = 1,
       modificationTime = 1,
       dataChange = true,
-      stats = """{"numRecords":3}""",
       tags = Map.empty,
       deletionVector = deletionVectorWithAbsolutePath),
     expectedJson =
@@ -323,7 +322,6 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"size":1,
         |"modificationTime":1,
         |"dataChange":true,
-        |"stats":"{\"numRecords\":3}",
         |"tags":{},
         |"deletionVector":{
         |"storageType":"p",
