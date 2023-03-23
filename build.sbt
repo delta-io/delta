@@ -207,7 +207,7 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     releaseSettings,
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.1.0" % "provided")
           .cross(CrossVersion.binary)
       },
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
