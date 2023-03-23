@@ -541,18 +541,41 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(
       stalenessAcceptable: Boolean = false,
       checkIfUpdatedSinceTs: Option[Long] = None): Snapshot = {
+    val startTimeMs = System.currentTimeMillis()
     // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
+    val oldVersion = capturedSnapshot.snapshot.version
+    def sendEvent(
+      snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false,
+      newSnapshot: Snapshot
+    ): Unit = {
+      recordDeltaEvent(
+        this,
+        opType = "deltaLog.update",
+        data = Map(
+          "snapshotAlreadyUpdatedAfterRequiredTimestamp" ->
+            snapshotAlreadyUpdatedAfterRequiredTimestamp,
+          "newVersion" -> newSnapshot.version,
+          "oldVersion" -> oldVersion,
+          "timeTakenMs" -> (System.currentTimeMillis() - startTimeMs)
+        )
+      )
+    }
     // Eagerly exit if the snapshot is already new enough to satisfy the caller
     if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
+      sendEvent(
+        snapshotAlreadyUpdatedAfterRequiredTimestamp = true,
+        newSnapshot = capturedSnapshot.snapshot)
       return capturedSnapshot.snapshot
     }
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(isAsync = false)
+          val newSnapshot = updateInternal(isAsync = false)
+          sendEvent(newSnapshot = capturedSnapshot.snapshot)
+          newSnapshot
         }
       }
     } else {
