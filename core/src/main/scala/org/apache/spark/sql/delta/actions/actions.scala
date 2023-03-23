@@ -250,7 +250,7 @@ object Protocol {
     val tableConf = metadata.configuration
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
-    val tablePropEnabledFeatures = getSupportedFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
+    val tablePropEnabledFeatures = getSupportedFeaturesFromConfigs(tableConf)
     val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
@@ -282,10 +282,8 @@ object Protocol {
 
     // Protocol version provided in table properties can upgrade the protocol, but only when they
     // are higher than which required by the enabled features.
-    val readerVersionFromTableConfOpt =
-      tableConf.get(MIN_READER_VERSION_PROP).map(getVersion(MIN_READER_VERSION_PROP, _))
-    val writerVersionFromTableConfOpt =
-      tableConf.get(MIN_WRITER_VERSION_PROP).map(getVersion(MIN_WRITER_VERSION_PROP, _))
+    val (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) =
+      getProtocolVersionsFromTableConf(tableConf)
 
     // Decide the final protocol version:
     //   a. 1, aka the lowest version possible
@@ -324,11 +322,21 @@ object Protocol {
     (readerVersion, writerVersion, enabledFeatures)
   }
 
-  /** Cast the table property for the protocol version to an integer. */
-  def getVersion(key: String, value: String): Int = {
-    try value.toInt catch {
-      case n: NumberFormatException => throw DeltaErrors.protocolPropNotIntException(key, value)
+  def getProtocolVersionsFromTableConf(conf: Map[String, String]): (Option[Int], Option[Int]) = {
+    // Cast the table property for the protocol version to an integer.
+    val tryCastToInt = (key: String, value: String) => {
+      try value.toInt
+      catch {
+        case _: NumberFormatException =>
+          throw DeltaErrors.protocolPropNotIntException(key, value)
+      }
     }
+
+    val readerVersionFromTableConfOpt =
+      conf.get(MIN_READER_VERSION_PROP).map(tryCastToInt(MIN_READER_VERSION_PROP, _))
+    val writerVersionFromTableConfOpt =
+      conf.get(MIN_WRITER_VERSION_PROP).map(tryCastToInt(MIN_WRITER_VERSION_PROP, _))
+    (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt)
   }
 
   /**

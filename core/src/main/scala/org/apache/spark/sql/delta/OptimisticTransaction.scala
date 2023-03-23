@@ -403,26 +403,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newMetadataTmp,
       isCreatingNewTable)
 
-    // Check for existence of TimestampNTZ in the schema and throw an error if the feature
-    // is not enabled.
-    if (!protocolBeforeUpdate.isFeatureSupported(TimestampNTZTableFeature) &&
-        SchemaUtils.checkForTimestampNTZColumnsRecursively(newMetadataTmp.schema)) {
-      // The timestampNTZ feature is enabled if there is a table prop in this transaction,
-      // or if this is a new table
-      val isEnabled = isCreatingNewTable || TableFeatureProtocolUtils
-        .getSupportedFeaturesFromConfigs(
-          newMetadataTmp.configuration, TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
-        .contains(TimestampNTZTableFeature)
-
-      if (!isEnabled) {
-        throw DeltaErrors.schemaContainsTimestampNTZType(
-          newMetadataTmp.schema,
-          TimestampNTZTableFeature.minProtocolVersion.withFeature(TimestampNTZTableFeature),
-          snapshot.protocol
-        )
-      }
-    }
-
     if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
       var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(newMetadataTmp.schema)
@@ -450,14 +430,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newMetadataTmp.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
       // Collect new reader and writer versions from table properties, which could be provided by
       // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
-      val readerVersionInNewMetadataTmp = newMetadataTmp.configuration
-        .get(Protocol.MIN_READER_VERSION_PROP)
-        .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
-        .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val writerVersionInNewMetadataTmp = newMetadataTmp.configuration
-        .get(Protocol.MIN_WRITER_VERSION_PROP)
-        .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
-        .getOrElse(protocolBeforeUpdate.minWriterVersion)
+      val (readerVersionInNewMetadataTmp, writerVersionInNewMetadataTmp) = {
+        val (readerVersionInNewMetadataTmpOpt, writerVersionInNewMetadataTmpOpt) =
+          Protocol.getProtocolVersionsFromTableConf(newMetadataTmp.configuration)
+        (readerVersionInNewMetadataTmpOpt.getOrElse(protocolBeforeUpdate.minReaderVersion),
+          writerVersionInNewMetadataTmpOpt.getOrElse(protocolBeforeUpdate.minWriterVersion))
+      }
 
       // If the collected reader and writer versions are provided by the user, we must use them,
       // and throw ProtocolDowngradeException when they are lower than what the table have before
@@ -506,7 +484,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)
       val keepIdentityColumns =
         ColumnWithDefaultExprUtils.satisfiesIdentityColumnProtocol(protocolBeforeUpdate)
-      if (keepGeneratedColumns && keepIdentityColumns) {
+      val fixedNewMetadataTmp = if (keepGeneratedColumns && keepIdentityColumns) {
         // If a protocol satisfies both requirements, we do nothing here.
         newMetadataTmp
       } else {
@@ -523,6 +501,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           newMetadataTmp
         }
       }
+
+      // After having the metadata fixed, assert all table features already supported by this
+      // table, or not supported but required by the fixed metadata, can be automatically
+      // supported by the protocol.
+      // See the doc of [[assertTableFeaturesAutomaticallySupported]] for more info.
+      assertTableFeaturesAutomaticallySupported(protocolBeforeUpdate, fixedNewMetadataTmp)
+      fixedNewMetadataTmp
     }
 
     // Enabling table features Part 1: add manually-supported features in table properties start
@@ -534,9 +519,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // any reader-writer feature.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
-      TableFeatureProtocolUtils.getSupportedFeaturesFromConfigs(
-        newMetadataTmp.configuration,
-        TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+      TableFeatureProtocolUtils.getSupportedFeaturesFromConfigs(newMetadataTmp.configuration)
     val readerVersionForNewProtocol =
       if (newFeaturesFromTableConf.exists(_.isReaderWriterFeature)) {
         TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
@@ -635,6 +618,60 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val requiredProtocolOpt = Protocol.checkProtocolRequirements(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
+    }
+  }
+
+  /**
+   * Ensure all native table features required by `currentMetadata` is supported by
+   * `currentProtocol`. This means these features must be either auto-update capable
+   * ([[FeatureAutomaticallyEnabledByMetadata.automaticallyUpdateProtocolOfExistingTables]] is set
+   * to `true`), or being supported in the same transaction via a table property.
+   */
+  private def assertTableFeaturesAutomaticallySupported(
+      currentProtocol: Protocol,
+      currentMetadata: Metadata): Unit = {
+    val (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) =
+      Protocol.getProtocolVersionsFromTableConf(currentMetadata.configuration)
+    val txnUpdatedProtocol = currentProtocol.merge(
+      Protocol(
+        readerVersionFromTableConfOpt.getOrElse(currentProtocol.minReaderVersion),
+        writerVersionFromTableConfOpt.getOrElse(currentProtocol.minWriterVersion)))
+    // Collect features that (1) are already supported by the current protocol or by a new
+    // protocol that the table will be updated to; (2) will be added to the protocol by this txn
+    // via `delta.feature.xxx` configs.
+    val supportedFeaturesInTxn =
+      TableFeatureProtocolUtils.getSupportedFeaturesFromConfigs(currentMetadata.configuration) ++
+        txnUpdatedProtocol.implicitlySupportedFeatures ++
+        txnUpdatedProtocol.readerAndWriterFeatureNames.flatMap(TableFeature.featureNameToFeature)
+    // Get the min set of features required by the metadata.
+    val (_, _, metadataEnabledFeaturesInTxn) =
+      Protocol.minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, currentMetadata)
+    // Collect native features that are required by the metadata but can't be automatically
+    // activated.
+    val unsupportedNativeFeatures =
+      metadataEnabledFeaturesInTxn.diff(supportedFeaturesInTxn).filter {
+        case f: FeatureAutomaticallyEnabledByMetadata =>
+          !f.automaticallyUpdateProtocolOfExistingTables
+        case f =>
+          throw new RuntimeException(
+            f"Feature ${f.name} should not be here because " +
+            f"it is not activatable via metadata.")
+      }
+    if (unsupportedNativeFeatures.nonEmpty) {
+      // The required protocol we give the user is the current protocol with all features that are
+      // already supported or will be supported, plus which required by the metadata.
+      // `TableFeature.minProtocolVersion` does not contain feature names, so we must add them
+      // using `withFeatures`.
+      val requiredProtocol = currentProtocol
+        .merge(supportedFeaturesInTxn.map(_.minProtocolVersion).toSeq: _*)
+        .merge(metadataEnabledFeaturesInTxn.map(_.minProtocolVersion).toSeq: _*)
+        // `TableFeature.minProtocolVersion` does not contain feature names, we must add them.
+        .withFeatures(supportedFeaturesInTxn)
+        .withFeatures(metadataEnabledFeaturesInTxn)
+      throw DeltaErrors.tableFeaturesRequireManualEnablementException(
+        unsupportedNativeFeatures.map(_.name),
+        requiredProtocol,
+        currentProtocol)
     }
   }
 

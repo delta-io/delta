@@ -657,6 +657,19 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT" : {
+    "message" : [
+      "Your table schema requires the following table feature(s) that require manual enablement: <features>.",
+      "",
+      "To do this, run the following command for each of features listed above:",
+      "  ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.feature_name' = 'supported')",
+      "Replace \"table_name\" and \"feature_name\" with real values.",
+      "",
+      "Required Delta protocol: <requiredVersion>",
+      "Current Delta protocol: <currentVersion>"
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
@@ -2076,21 +2089,6 @@
       "Cannot time travel views, subqueries, streams or change data feed queries."
     ],
     "sqlState" : "0AKDC"
-  },
-  "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ" : {
-    "message" : [
-      "Your table schema <schema> contains a column of type TimestampNTZ.",
-      "TimestampNTZ type is not supported by your table's protocol.",
-      "",
-      "Required Delta protocol version and features for TimestampNTZ:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version and enabled features:",
-      "<currentVersion>",
-      "",
-      "Run the following command to add TimestampNTZ support to your table.",
-      "ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')"
-    ],
-    "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
