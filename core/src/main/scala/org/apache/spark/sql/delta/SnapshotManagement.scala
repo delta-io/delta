@@ -508,22 +508,24 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
-   * Checks if the snapshot has already been updated since the specified timestamp.
+   * Returns the snapshot, if it has been updated since the specified timestamp.
    *
    * Note that this should be used differently from isSnapshotStale. Staleness is
    * used to allow async updates if the table has been updated within the staleness
    * window, which allows for better perf in exchange for possibly using a slightly older
    * view of the table. For eg, if a table is queried multiple times in quick succession.
    *
-   * On the other hand, isSnapshotFresh is used to identify duplicate updates within a
+   * On the other hand, getSnapshotIfFresh is used to identify duplicate updates within a
    * single transaction. For eg, if a table isn't cached and the snapshot was fetched from the
    * logstore, then updating the snapshot again in the same transaction is superfluous. We can
    * use this function to detect and skip such an update.
    */
-  private def isSnapshotFresh(
+  private def getSnapshotIfFresh(
       capturedSnapshot: CapturedSnapshot,
-      checkIfUpdatedSinceTs: Option[Long]): Boolean = {
-    checkIfUpdatedSinceTs.exists(_ <= capturedSnapshot.updateTimestamp)
+      checkIfUpdatedSinceTs: Option[Long]): Option[Snapshot] = {
+    checkIfUpdatedSinceTs.collect {
+      case ts if ts <= capturedSnapshot.updateTimestamp => capturedSnapshot.snapshot
+    }
   }
 
   /**
@@ -547,8 +549,8 @@ trait SnapshotManagement { self: DeltaLog =>
     val capturedSnapshot = currentSnapshot
     val oldVersion = capturedSnapshot.snapshot.version
     def sendEvent(
-      snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false,
-      newSnapshot: Snapshot
+      newSnapshot: Snapshot,
+      snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false
     ): Unit = {
       recordDeltaEvent(
         this,
@@ -563,11 +565,9 @@ trait SnapshotManagement { self: DeltaLog =>
       )
     }
     // Eagerly exit if the snapshot is already new enough to satisfy the caller
-    if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
-      sendEvent(
-        snapshotAlreadyUpdatedAfterRequiredTimestamp = true,
-        newSnapshot = capturedSnapshot.snapshot)
-      return capturedSnapshot.snapshot
+    getSnapshotIfFresh(capturedSnapshot, checkIfUpdatedSinceTs).foreach { snapshot =>
+      sendEvent(snapshot, snapshotAlreadyUpdatedAfterRequiredTimestamp = true)
+      return snapshot
     }
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
