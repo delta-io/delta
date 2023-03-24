@@ -29,6 +29,7 @@ import org.scalatest.BeforeAndAfterEach
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
+import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -987,11 +988,7 @@ abstract class MergeIntoSuiteBase
 
           if (result != null) {
             execMerge()
-            val expectedDf = if (targetSchema != null) {
-              spark.read.schema(targetSchema).json(strToJsonSeq(result).toDS)
-            } else {
-              spark.read.json(strToJsonSeq(result).toDS)
-            }
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
             checkAnswer(spark.table(targetName), expectedDf)
           } else {
             val e = intercept[AnalysisException] {
@@ -2015,7 +2012,9 @@ abstract class MergeIntoSuiteBase
           val deltaPath = if (targetName.startsWith("delta.`")) {
             targetName.stripPrefix("delta.`").stripSuffix("`")
           } else targetName
-          checkAnswer(readDeltaTable(deltaPath), spark.read.json(result.toDS))
+          checkAnswer(
+            readDeltaTable(deltaPath),
+            readFromJSON(result))
         } else {
           val e = intercept[AnalysisException] { execMerge() }
           errorStrs.foreach { s => errorContains(e.getMessage, s) }
@@ -2428,6 +2427,23 @@ abstract class MergeIntoSuiteBase
     )
   )
 
+  /**
+   * Parse the input JSON data into a dataframe, one row per input element.
+   * Throws an exception on malformed inputs or records that don't comply with the provided schema.
+   */
+  protected def readFromJSON(data: Seq[String], schema: StructType = null): DataFrame = {
+    if (schema != null) {
+      spark.read
+        .schema(schema)
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
+    } else {
+      spark.read
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
+    }
+  }
+
   // scalastyle:off argcount
   protected def testNestedStructsEvolution(name: String)(
       target: Seq[String],
@@ -2442,20 +2458,20 @@ abstract class MergeIntoSuiteBase
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq()): Unit = {
     testEvolution(name) (
-      targetData = spark.read.schema(targetSchema).json(target.toDS),
-      sourceData = spark.read.schema(sourceSchema).json(source.toDS),
+      targetData = readFromJSON(target, targetSchema),
+      sourceData = readFromJSON(source, sourceSchema),
       clauses = clauses,
       expected =
         if (result != null ) {
           val schema = if (resultSchema != null) resultSchema else targetSchema
-          spark.read.schema(schema).json(result.toDS)
+          readFromJSON(result, schema)
         } else {
           null
         },
       expectErrorContains = expectErrorContains,
       expectedWithoutEvolution =
         if (resultWithoutEvolution != null) {
-          spark.read.schema(targetSchema).json(resultWithoutEvolution.toDS)
+          readFromJSON(resultWithoutEvolution, targetSchema)
         } else {
           null
         },
@@ -2648,8 +2664,8 @@ abstract class MergeIntoSuiteBase
 
   // Nested Schema evolution with UPDATE alone
   testNestedStructsEvolution("new nested source field added when updating top-level column")(
-    target = """{ "key": "A", "value": { "a": 1 }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2660,7 +2676,7 @@ abstract class MergeIntoSuiteBase
           .add("a", IntegerType)
           .add("b", IntegerType)),
     clauses = update("value = s.value") :: Nil,
-    result = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    result = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
     resultSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2669,8 +2685,8 @@ abstract class MergeIntoSuiteBase
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("new nested source field not in update is ignored")(
-    target = """{ "key": "A", "value": { "a": 1 }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3 }""",
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2681,12 +2697,12 @@ abstract class MergeIntoSuiteBase
           .add("a", IntegerType)
           .add("b", IntegerType)),
     clauses = update("value.a = s.value.a") :: Nil,
-    result = """{ "key": "A", "value": { "a": 2 }""",
-    resultWithoutEvolution = """{ "key": "A", "value": { "a": 2 }""")
+    result = """{ "key": "A", "value": { "a": 2 } }""",
+    resultWithoutEvolution = """{ "key": "A", "value": { "a": 2 } }""")
 
   testNestedStructsEvolution("two new nested source fields with update: one added, one ignored")(
-    target = """{ "key": "A", "value": { "a": 1 }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 }""",
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2698,7 +2714,7 @@ abstract class MergeIntoSuiteBase
           .add("b", IntegerType)
           .add("c", IntegerType)),
     clauses = update("value.b = s.value.b") :: Nil,
-    result = """{ "key": "A", "value": { "a": 1, "b": 3 }""",
+    result = """{ "key": "A", "value": { "a": 1, "b": 3 } }""",
     resultSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2709,8 +2725,8 @@ abstract class MergeIntoSuiteBase
 
   // Nested Schema evolution with INSERT alone
   testNestedStructsEvolution("new nested source field added when inserting top-level column")(
-    target = """{ "key": "A", "value": { "a": 1 }""",
-    source = """{ "key": "B", "value": { "a": 2, "b": 3 }""",
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "B", "value": { "a": 2, "b": 3 } }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2722,8 +2738,8 @@ abstract class MergeIntoSuiteBase
           .add("b", IntegerType)),
     clauses = insert("(value) VALUES (s.value)") :: Nil,
     result =
-    """{ "key": "A", "value": { "a": 1, "b": null }
-       { "key": "B", "value": { "a": 2, "b": 3 }""".stripMargin,
+    """{ "key": "A", "value": { "a": 1, "b": null } }
+       { "key": null, "value": { "a": 2, "b": 3 } }""".stripMargin,
     resultSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -2732,8 +2748,8 @@ abstract class MergeIntoSuiteBase
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("insert new nested source field not supported")(
-    target = """{ "key": "A", "value": { "a": 1 }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 }""",
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", new StructType()
@@ -3482,7 +3498,7 @@ abstract class MergeIntoSuiteBase
   testNestedStructsEvolution("extra nested column in source - update - array of struct - longer source")(
     target =
       """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 } ] }
-          { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": "3" } ] }""",
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 } ] }""",
     source =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "3" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "4" } ] }""",
     targetSchema = new StructType()
@@ -3503,7 +3519,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     result =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 3 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 4 } ] }
-          { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": "3" } ] }""",
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 } ] }""",
     resultSchema = new StructType()
       .add("key", StringType)
       .add("value", ArrayType(
@@ -3518,7 +3534,7 @@ abstract class MergeIntoSuiteBase
   testNestedStructsEvolution("extra nested column in source - update - array of struct - longer target")(
     target =
       """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 }, { "a": { "x": 1, "y": 2 }, "b": 2 } ] }
-          { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": "3" }, { "a": { "x": 40, "y": 30 }, "b": "4" }, { "a": { "x": 40, "y": 30 }, "b": "5" } ] }""",
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 }, { "a": { "x": 40, "y": 30 }, "b": 4 }, { "a": { "x": 40, "y": 30 }, "b": 5 } ] }""",
     source =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" } ] }""",
     targetSchema = new StructType()
@@ -3539,7 +3555,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     result =
       """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 } ] }
-          { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": "3" }, { "a": { "x": 40, "y": 30, "z": null }, "b": "4" }, { "a": { "x": 40, "y": 30, "z": null }, "b": "5" } ] }""".stripMargin,
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 5 } ] }""".stripMargin,
     resultSchema = new StructType()
       .add("key", StringType)
       .add("value", ArrayType(
@@ -3554,9 +3570,9 @@ abstract class MergeIntoSuiteBase
   testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer source")(
     target =
       """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1 } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": "3" } ] }""",
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3 } ] }""",
     source =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 }, { "c": 10, "d": "30", "e": 2 }, { "c": 10, "d": "30", "e": 3 } ] }, "b": "2" } ] }""",
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 }, { "c": 10, "d": "30", "e": 2 }, { "c": 10, "d": "30", "e": 3 } ] }, "b": 2 } ] }""",
     targetSchema = new StructType()
       .add("key", StringType)
       .add("value", ArrayType(
@@ -3597,14 +3613,14 @@ abstract class MergeIntoSuiteBase
           .add("b", IntegerType))),
     clauses = update("*") :: Nil,
     result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 }, { "c": 10, "d": 30, "e": 2 }, { "c": 10, "d": 30, "e": 3 } ] }, "b": 2}]}
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": "3"}]}""",
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 }, { "c": 10, "d": 30, "e": 2 }, { "c": 10, "d": 30, "e": 3 } ] }, "b": 2 } ] }
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
   testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer target")(
     target =
       """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 }, { "c": 1, "d": 2 } ] }, "b": 1 } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 20, "d": 40 }, { "c": 20, "d": 60 } ] }, "b": "3" } ] }""",
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 20, "d": 40 }, { "c": 20, "d": 60 } ] }, "b": 3 } ] }""",
     source =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 } ] }, "b": "2" } ] }""",
     targetSchema = new StructType()
@@ -3648,7 +3664,7 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: Nil,
     result =
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 } ] }, "b": 2 } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 20, "d": 40, "e": null }, { "c": 20, "d": 60, "e": null } ] }, "b": "3" } ] }""",
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 20, "d": 40, "e": null }, { "c": 20, "d": 60, "e": null } ] }, "b": 3 } ] }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 

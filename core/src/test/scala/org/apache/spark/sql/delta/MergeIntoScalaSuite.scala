@@ -750,11 +750,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
 
           if (result != null) {
             execMerge()
-            val expectedDf = if (targetSchema != null) {
-              spark.read.schema(targetSchema).json(strToJsonSeq(result).toDS)
-            } else {
-              spark.read.json(strToJsonSeq(result).toDS)
-            }
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
             checkAnswer(readDeltaTable(pathOrName), expectedDf)
           } else {
             val e = intercept[AnalysisException] {
