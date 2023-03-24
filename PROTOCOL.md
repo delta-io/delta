@@ -647,6 +647,14 @@ When enabled:
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
+# Timestamp without timezone (TimestampNTZ)
+This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
+The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
+
+Enablement:
+ - To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+
 ## Deletion Vector Descriptor Schema
 
 The schema of the `DeletionVectorDescriptor` struct is as follows:
@@ -895,6 +903,7 @@ Feature | Name | Readers or Writers?
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
+[Timestamp without Timezone](#timestamp-ntz) | `timestampNTZ` | Readers and writers
 
 ## Deletion Vector Format
 
@@ -1005,9 +1014,13 @@ Type | Serialization Format
 string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
-timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` For example: `1970-01-01 00:00:00`
+timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
+timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
+
+Note: A `timestamp` value in a partition value doesn't store the time zone due to historical reasons.
+It means its behavior looks similar to `timestamp without time zone` when it is used in a partition column.
 
 ## Schema Serialization Format
 
@@ -1029,7 +1042,10 @@ decimal| signed decimal number with fixed precision (maximum number of digits) a
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
-timestamp| Microsecond precision timestamp without a timezone.
+timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
+timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+
+See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
 Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
 
