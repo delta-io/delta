@@ -255,7 +255,9 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   protected def updateFileDV(
       addFile: AddFile,
       dvDescriptor: DeletionVectorDescriptor): (AddFile, RemoveFile) = {
-    addFile.removeRows(spark, dvDescriptor, updateStats = true)
+    addFile.removeRows(
+      dvDescriptor
+    )
   }
 
   /**

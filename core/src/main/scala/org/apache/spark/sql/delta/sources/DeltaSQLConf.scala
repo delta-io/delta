@@ -1130,6 +1130,15 @@ trait DeltaSQLConfBase {
         .booleanConf
         .createWithDefault(true)
 
+  val DELTA_DUPLICATE_ACTION_CHECK_ENABLED =
+    buildConf("duplicateActionCheck.enabled")
+      .internal()
+      .doc("""
+             |Verify only one action is specified for each file path in one commit.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()

@@ -587,23 +587,6 @@ class OptimisticTransactionSuite
     }
   }
 
-  test("DVs cannot be added to files without numRecords stat") {
-    withTempPath { tempPath =>
-      val path = tempPath.getPath
-      val deltaLog = DeltaLog.forTable(spark, path)
-      val firstFile = writeDuplicateActionsData(path).head
-      enableDeletionVectorsInTable(deltaLog)
-      val (addFileWithDV, removeFile) = addDVToFileInTable(path, firstFile)
-      val addFileWithDVWithoutStats = addFileWithDV.copy(stats = null)
-      testRuntimeErrorOnCommit(Seq(addFileWithDVWithoutStats, removeFile), deltaLog) { e =>
-        checkError(
-          exception = e,
-          errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS",
-          sqlState = "2D521",
-          parameters = Map.empty[String, String])
-      }
-    }
-  }
 
   test("commitInfo tags") {
     withTempDir { tableDir =>

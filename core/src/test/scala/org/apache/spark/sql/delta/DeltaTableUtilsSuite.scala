@@ -24,13 +24,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaTableUtilsSuite extends SharedSparkSession {
 
-  test("findDeltaTableRoot correctly combines paths") {
-    withTempDir { dir =>
-      sql(s"CREATE TABLE myTable (id INT) USING DELTA LOCATION '${dir.getAbsolutePath}'")
-      val path = new Path(s"file://${dir.getAbsolutePath}")
-      assert(DeltaTableUtils.findDeltaTableRoot(spark, path).contains(path))
-    }
-  }
 
   test("safeConcatPaths") {
     val basePath = new Path("s3://my-bucket/subfolder")
