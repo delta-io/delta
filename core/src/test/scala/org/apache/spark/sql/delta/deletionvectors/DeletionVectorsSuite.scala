@@ -31,7 +31,7 @@ import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.functions.{col, lit, to_json}
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeletionVectorsSuite extends QueryTest
@@ -225,12 +225,15 @@ class DeletionVectorsSuite extends QueryTest
         // Verify stats of actions that have DVs
         val filesWithDvs = log.update().withStats.filter($"deletionVector".isNotNull)
         assert(
-          filesWithDvs
-            .filter($"stats.tightBounds" === lit(false))
-            .count() === numFilesWithDVs)
-        val afterDeleteFilesWithStats = log.update().withStats
-
-
+          filesWithDvs.filter($"stats.tightBounds" === lit(false)).count() ===
+            numFilesWithDVs)
+        // Verify all stats are the same except "tightBounds".
+        // Drop "tightBounds" and convert the rest to JSON.
+        val convertStatsToJson: (DataFrame => Array[String]) =
+          _.orderBy("path").select("stats.*").drop("tightBounds").collect().map(_.json)
+        val beforeStats = convertStatsToJson(beforeDeleteFilesWithStats)
+        val afterStats = convertStatsToJson(log.update().withStats)
+        assert(beforeStats === afterStats)
 
         val afterDeleteFiles = allFiles.map(_.path)
         // make sure the data file list is the same
@@ -269,6 +272,7 @@ class DeletionVectorsSuite extends QueryTest
           existingDVs.map(_.deletionVector.cardinality).sum + dataToRemove.size ===
           newDVs.map(_.deletionVector.cardinality).sum
         )
+        assert(newDVs.map(_.stats).forall(_.contains("\"tightBounds\":false")))
 
         // Check the data is valid
         val expectedTable1DataV5 = expectedTable1DataV4.filterNot(e => dataToRemove.contains(e))
