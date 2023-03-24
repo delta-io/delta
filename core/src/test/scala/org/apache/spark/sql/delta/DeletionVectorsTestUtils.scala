@@ -57,7 +57,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       partitionBy: Seq[String] = Seq.empty,
       enableDVs: Boolean = true,
       conf: Seq[(String, String)] = Nil)
-      (fn: (io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
+      (fn: (() => io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
     withTempPath { path =>
       val tablePath = new Path(path.getAbsolutePath)
       withSQLConf(conf: _*) {
@@ -67,7 +67,11 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
           .format("delta")
           .save(tablePath.toString)
       }
-      val targetTable = io.delta.tables.DeltaTable.forPath(tablePath.toString)
+      // Use a function instead of a value, because DeltaTable hangs on to the first snapshot it
+      // resolved for the underlying dataframe, which generally isn't the desired behaviour in
+      // tests.
+      val targetTable =
+        () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
       val targetLog = DeltaLog.forTable(spark, tablePath)
       fn(targetTable, targetLog)
     }

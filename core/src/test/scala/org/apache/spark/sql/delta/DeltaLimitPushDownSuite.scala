@@ -253,7 +253,7 @@ trait DeltaLimitPushDownTests extends QueryTest
         removeRowsFromAllFilesInLog(targetLog, numRowsToRemovePerFile = 10)
         verifyDVsExist(targetLog, 2)
 
-        val targetDF = targetTable.toDF
+        val targetDF = targetTable().toDF
 
         // We have 2 files 50 rows each. We deleted 10 rows from the first file. The first file
         // now contains 50 physical rows and 40 logical. Failing to take into account the DVs in
