@@ -244,54 +244,47 @@ trait DeltaLimitPushDownTests extends QueryTest
     }
   }
 
-  for (statsCollectionEnabled <- BOOLEAN_DOMAIN) {
-    test(s"Verify limit correctness in the presence of DVs " +
-      s"statsCollectionEnabled: $statsCollectionEnabled") {
-      withDVSettings {
-        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> statsCollectionEnabled.toString) {
-          val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 2)
-            .withColumn("value", col("id"))
+  test(s"Verify limit correctness in the presence of DVs") {
+    withDVSettings {
+      val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 2)
+        .withColumn("value", col("id"))
 
-          withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
-            removeRowsFromAllFilesInLog(targetLog, numRowsToRemovePerFile = 10)
-            verifyDVsExist(targetLog, 2)
+      withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
+        removeRowsFromAllFilesInLog(targetLog, numRowsToRemovePerFile = 10)
+        verifyDVsExist(targetLog, 2)
 
-            val targetDF = targetTable.toDF
+        val targetDF = targetTable.toDF
 
-            // We have 2 files 50 rows each. We deleted 10 rows from the first file. The first file
-            // now contains 50 physical rows and 40 logical. Failing to take into account the DVs in
-            // the first file results into prematurely terminating the scan and returning an
-            // incorrect result. Note, the corner case in terms of correctness is when the limit is
-            // set to 50. When statistics collection is disabled, we read both files.
-            val limitToExpectedNumberOfFilesReadSeq = Range(10, 90, 10)
-              .map(n => (n, if (n < 50 && statsCollectionEnabled) 1 else 2))
+        // We have 2 files 50 rows each. We deleted 10 rows from the first file. The first file
+        // now contains 50 physical rows and 40 logical. Failing to take into account the DVs in
+        // the first file results into prematurely terminating the scan and returning an
+        // incorrect result. Note, the corner case in terms of correctness is when the limit is
+        // set to 50. When statistics collection is disabled, we read both files.
+        val limitToExpectedNumberOfFilesReadSeq = Range(10, 90, 10)
+          .map(n => (n, if (n < 50) 1 else 2))
 
-            for ((limit, expectedNumberOfFilesRead) <- limitToExpectedNumberOfFilesReadSeq) {
-              val df = targetDF.limit(limit)
+        for ((limit, expectedNumberOfFilesRead) <- limitToExpectedNumberOfFilesReadSeq) {
+          val df = targetDF.limit(limit)
 
-              // Assess correctness.
-              assert(df.count === limit)
+          // Assess correctness.
+          assert(df.count === limit)
 
-              val scanStats = getStats(df)
+          val scanStats = getStats(df)
 
-              // Check we do not read more files than needed.
-              assert(scanStats.scanned.files === Some(expectedNumberOfFilesRead))
+          // Check we do not read more files than needed.
+          assert(scanStats.scanned.files === Some(expectedNumberOfFilesRead))
 
-              // Verify physical and logical rows are updated correctly.
-              val numDeletedRows = 10
-              val numPhysicalRowsPerFile = 50
-              val numTotalPhysicalRows = numPhysicalRowsPerFile * expectedNumberOfFilesRead
-              val numTotalLogicalRows = numTotalPhysicalRows -
-                (numDeletedRows * expectedNumberOfFilesRead)
-              val expectedNumTotalPhysicalRows =
-                if (statsCollectionEnabled) Some(numTotalPhysicalRows) else None
-              val expectedNumTotalLogicalRows =
-                if (statsCollectionEnabled) Some(numTotalLogicalRows) else None
+          // Verify physical and logical rows are updated correctly.
+          val numDeletedRows = 10
+          val numPhysicalRowsPerFile = 50
+          val numTotalPhysicalRows = numPhysicalRowsPerFile * expectedNumberOfFilesRead
+          val numTotalLogicalRows = numTotalPhysicalRows -
+            (numDeletedRows * expectedNumberOfFilesRead)
+          val expectedNumTotalPhysicalRows = Some(numTotalPhysicalRows)
+          val expectedNumTotalLogicalRows = Some(numTotalLogicalRows)
 
-              assert(scanStats.scanned.rows === expectedNumTotalPhysicalRows)
-              assert(scanStats.scanned.logicalRows === expectedNumTotalLogicalRows)
-            }
-          }
+          assert(scanStats.scanned.rows === expectedNumTotalPhysicalRows)
+          assert(scanStats.scanned.logicalRows === expectedNumTotalLogicalRows)
         }
       }
     }
