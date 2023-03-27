@@ -166,11 +166,13 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     val fullyRemoved = fullyRemovedFiles.map(_.fileLogEntry.removeWithTimestamp(timestamp))
 
     val dvUpdates = notFullyRemovedFiles.map { fileWithDVInfo =>
-      fileWithDVInfo.fileLogEntry.removeRows(deletionVector = fileWithDVInfo.newDeletionVector)
-    }
+      fileWithDVInfo.fileLogEntry.removeRows(
+        deletionVector = fileWithDVInfo.newDeletionVector
+      )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
+    val (filesWithDeletedRows, newFilesWithDVs) = dvUpdates.unzip
     fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
   }
 
@@ -180,7 +182,6 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       addFiles: Seq[AddFile],
       snapshot: Snapshot): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
-
     val statsColName = snapshot.getBaseStatsColumnName
     val selectionCols = Seq(col("path"), col(statsColName))
 

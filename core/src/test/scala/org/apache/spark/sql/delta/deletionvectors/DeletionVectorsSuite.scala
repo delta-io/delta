@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTestUtils, DeltaLog, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -31,7 +31,7 @@ import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.functions.{col, lit, to_json}
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeletionVectorsSuite extends QueryTest
@@ -206,9 +206,10 @@ class DeletionVectorsSuite extends QueryTest
         val path = dirName.getAbsolutePath
         spark.range(0, 1000, step = 1, numPartitions = numFiles).write.format("delta").save(path)
         val tableName = s"delta.`$path`"
+
         val log = DeltaLog.forTable(spark, path)
         val beforeDeleteFiles = log.update().allFiles.collect().map(_.path)
-        val beforeDeleteFilesWithStats = log.update().withStats
+        val beforeDeleteFilesWithStats = log.update().allFiles.collect()
 
         val numFilesWithDVs = 100
         val numDeletedRows = numFilesWithDVs * 1
@@ -220,19 +221,21 @@ class DeletionVectorsSuite extends QueryTest
         assert(allFiles.count(_.deletionVector != null) === numFilesWithDVs)
         assert(
           allFiles.filter(_.deletionVector != null).map(_.deletionVector.cardinality).sum ==
-            numDeletedRows)
+          numDeletedRows)
+
+        val statsCol = "stats"
 
         // Verify stats of actions that have DVs
         val filesWithDvs = log.update().withStats.filter($"deletionVector".isNotNull)
         assert(
-          filesWithDvs.filter($"stats.tightBounds" === lit(false)).count() ===
+          filesWithDvs.filter($"$statsCol.tightBounds" === lit(false)).count() ===
             numFilesWithDVs)
         // Verify all stats are the same except "tightBounds".
         // Drop "tightBounds" and convert the rest to JSON.
-        val convertStatsToJson: (DataFrame => Array[String]) =
-          _.orderBy("path").select("stats.*").drop("tightBounds").collect().map(_.json)
-        val beforeStats = convertStatsToJson(beforeDeleteFilesWithStats)
-        val afterStats = convertStatsToJson(log.update().withStats)
+        val dropTightBounds: (AddFile => String) =
+          _.stats.replaceAll("\"tightBounds\":(false|true)", "")
+        val beforeStats = beforeDeleteFilesWithStats.map(dropTightBounds).sorted
+        val afterStats = log.update().allFiles.collect().map(dropTightBounds).sorted
         assert(beforeStats === afterStats)
 
         val afterDeleteFiles = allFiles.map(_.path)
@@ -242,10 +245,8 @@ class DeletionVectorsSuite extends QueryTest
         // Contents after the DELETE are as expected
         checkAnswer(
           spark.sql(s"SELECT * FROM $tableName"),
-          Seq
-            .range(0, 1000)
-            .filterNot(Seq.range(start = 0, end = 200, step = 2).contains(_))
-            .toDF())
+          Seq.range(0, 1000).filterNot(Seq.range(start = 0, end = 200, step = 2).contains(_)).toDF()
+        )
       }
     }
   }

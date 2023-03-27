@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
-import org.apache.spark.sql.delta.util.ScalaExtensions._
+import com.databricks.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -123,9 +123,9 @@ trait StatisticsCollection extends DeltaLogging {
    * column. If the caller wants to drop the column needs to explicitly return None.
    */
   def applyFuncToStatisticsColumn(
-    statisticsSchema: StructType,
-    statisticsColumn: Column)(
-    function: PartialFunction[(Column, StructField), Option[Column]]): Seq[Column] = {
+      statisticsSchema: StructType,
+      statisticsColumn: Column)(
+      function: PartialFunction[(Column, StructField), Option[Column]]): Seq[Column] = {
     statisticsSchema.flatMap {
       case StructField(name, s: StructType, _, _) =>
         val column = statisticsColumn.getItem(name)
@@ -143,13 +143,13 @@ trait StatisticsCollection extends DeltaLogging {
   /**
    * Sets the TIGHT_BOUNDS column to false and converts the logical nullCount
    * to a tri-state nullCount. The nullCount states are the following:
-   * 1) For "all-nulls" columns we set the physical nullCount which is equal to the
-   * physical numRecords.
-   * 2) "no-nulls" columns remain unchanged, i.e. zero nullCount is the same for both
-   * physical and logical representations.
-   * 3) For "some-nulls" columns, we leave the existing value. In files with wide bounds,
-   * the nullCount in SOME_NULLs columns is considered unknown and it is not taken
-   * into account by data skipping and OptimizeMetadataOnlyDeltaQuery.
+   *    1) For "all-nulls" columns we set the physical nullCount which is equal to the
+   *       physical numRecords.
+   *    2) "no-nulls" columns remain unchanged, i.e. zero nullCount is the same for both
+   *       physical and logical representations.
+   *    3) For "some-nulls" columns, we leave the existing value. In files with wide bounds,
+   *       the nullCount in SOME_NULLs columns is considered unknown and it is not taken
+   *       into account by data skipping and OptimizeMetadataOnlyDeltaQuery.
    *
    * The file's state can transition back to tight when statistics are recomputed. In that case,
    * TIGHT_BOUNDS is set back to true and nullCount back to the logical value.
@@ -158,7 +158,7 @@ trait StatisticsCollection extends DeltaLogging {
    * similarly to allFiles. To further match the behavior of allFiles we always return
    * a column named `stats` instead of statsColName.
    *
-   * @param withStats    A dataFrame of actions with parsed statistics.
+   * @param withStats A dataFrame of actions with parsed statistics.
    * @param statsColName The name of the parsed statistics column.
    */
   def updateStatsToWideBounds(withStats: DataFrame, statsColName: String): DataFrame = {
@@ -208,7 +208,8 @@ trait StatisticsCollection extends DeltaLogging {
 
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
-      Option.when(deletionVectorsSupported) {
+      Option.when(deletionVectorsSupported &&
+          !spark.sessionState.conf.getConf(DeltaSQLConf.TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED)) {
         lit(true).as(TIGHT_BOUNDS)
       }
 
@@ -285,8 +286,8 @@ trait StatisticsCollection extends DeltaLogging {
       Array(NUM_RECORDS -> LongType) ++
       minMaxStatsSchemaOpt.map(MIN -> _) ++
       minMaxStatsSchemaOpt.map(MAX -> _) ++
-      nullCountSchemaOpt.map(NULL_COUNT -> _) ++
-      tightBoundsFieldOpt
+      nullCountSchemaOpt.map(NULL_COUNT -> _)
+      .++(tightBoundsFieldOpt)
 
     StructType(fields.map {
       case (name, dataType) => StructField(name, dataType)

@@ -1137,6 +1137,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
+    buildConf("deletionVectors.disableTightBoundOnFileCreationForDevOnly")
+      .internal()
+      .doc("""Controls whether we generate a tightBounds column in statistics on file creation.
+             |The tightBounds column annotates whether the statistics of the file are tight or wide.
+             |This flag is only used for testing purposes.
+                """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
     buildConf("deletionVectors.skipCommitCheck")
       .internal()

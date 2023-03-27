@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.util
+package com.databricks.sql.util
 
 /** Extension utility classes for built-in Scala functionality. */
 object ScalaExtensions {
