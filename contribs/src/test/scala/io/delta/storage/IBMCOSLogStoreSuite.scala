@@ -16,9 +16,9 @@
 
 package io.delta.storage
 
-import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
+import org.apache.spark.sql.delta.{FakeFileSystem}
 
-class IBMCOSLogStoreSuite extends LogStoreSuiteBase {
+class IBMCOSLogStoreSuite extends ContributesLogStoreSuiteBase {
 
   protected override def sparkConf = {
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)

@@ -157,23 +157,24 @@ abstract class LogStoreSuiteBase extends QueryTest
       assert(store.listFrom(deltas(4), sessionHadoopConf).map(_.getPath.getName).toArray === Nil)
     }
   }
+  protected def testSimpleLogStore(): Unit = {
+    test("simple log store test") {
+      val tempDir = Utils.createTempDir()
+      val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      assert(log1.store.getClass.getName == logStoreClassName)
 
-  test("simple log store test") {
-    val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-    assert(log1.store.getClass.getName == logStoreClassName)
+      val txn = log1.startTransaction()
+      val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
+      txn.commitManually(file: _*)
+      log1.checkpoint()
 
-    val txn = log1.startTransaction()
-    val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
-    txn.commitManually(file: _*)
-    log1.checkpoint()
+      DeltaLog.clearCache()
+      val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      assert(log2.store.getClass.getName == logStoreClassName)
 
-    DeltaLog.clearCache()
-    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-    assert(log2.store.getClass.getName == logStoreClassName)
-
-    assert(log2.readLastCheckpointFile().map(_.version) === Some(0L))
-    assert(log2.snapshot.allFiles.count == 1)
+      assert(log2.readLastCheckpointFile().map(_.version) === Some(0L))
+      assert(log2.snapshot.allFiles.count == 1)
+    }
   }
 
   protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
@@ -441,22 +442,6 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
       }
     }
   }
-}
-
-////////////////////////////////
-// Concrete child test suites //
-////////////////////////////////
-
-class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
-}
-
-class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
-}
-
-class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
 }
 
 ////////////////////////////////

@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.LocalSparkSession._
 import org.apache.spark.sql.SparkSession
@@ -137,9 +136,9 @@ class DelegatingLogStoreSuite
         "io.delta.storage.AzureLogStore",
         "io.delta.storage.HDFSLogStore",
         // deprecated (scala) classes
-        classOf[org.apache.spark.sql.delta.storage.S3SingleDriverLogStore].getName,
-        classOf[org.apache.spark.sql.delta.storage.AzureLogStore].getName,
-        classOf[org.apache.spark.sql.delta.storage.HDFSLogStore].getName,
+        classOf[io.delta.storage.S3SingleDriverLogStore].getName,
+        classOf[io.delta.storage.AzureLogStore].getName,
+        classOf[io.delta.storage.HDFSLogStore].getName,
         customLogStoreClassName)) {
 
         // we set spark.delta.logStore.${scheme}.impl -> $store
