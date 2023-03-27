@@ -1028,7 +1028,7 @@ double| 8-byte double-precision floating-point numbers
 decimal| signed decimal number with fixed precision (maximum number of digits) and scale (number of digits on right side of dot). The precision and scale can be up to 38.
 boolean| `true` or `false`
 binary| A sequence of binary data.
-date| A calendar date, represented as a year-month-day triple without a timezone.
+date| A calendar date, represented as a year-month-day triple without a timezone. Count of days where day 0 is 1970-01-01. Negative numbers represent earlier days.
 timestamp| Microsecond precision timestamp without a timezone.
 
 Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
