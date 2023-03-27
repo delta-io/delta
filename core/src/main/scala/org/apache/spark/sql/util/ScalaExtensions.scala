@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.databricks.sql.util
+package org.apache.spark.sql.util
 
 /** Extension utility classes for built-in Scala functionality. */
 object ScalaExtensions {

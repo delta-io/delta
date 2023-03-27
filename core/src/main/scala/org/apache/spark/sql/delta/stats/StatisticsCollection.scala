@@ -27,14 +27,13 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
-import com.databricks.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.ScalaExtensions._
 
 /**
  * Used to report metrics on how predicates are used to prune the set of
