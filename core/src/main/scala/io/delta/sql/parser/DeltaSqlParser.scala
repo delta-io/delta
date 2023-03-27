@@ -47,6 +47,7 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
+import io.delta.tables.DeltaTable
 import io.delta.tables.execution.VacuumTableCommand
 import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
@@ -58,12 +59,9 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
-import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
-import org.apache.spark.sql.errors.QueryParsingErrors
-import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
+import org.apache.spark.sql.internal.VariableSubstitution
 import org.apache.spark.sql.types._
 
 /**
@@ -303,7 +301,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
-   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir` | db.table) [RETAIN number HOURS] [DRY RUN];
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
@@ -508,6 +506,37 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       }
       ShowTableColumnsCommand(id)
     }.orNull
+  }
+
+  /**
+   * Create a [[ShowTablePartitionsCommand]] logical plan. Example SQL:
+   * {{{
+   * SHOW PARTITIONS [DETAIL] (db.table|'/path/to/dir'|delta.`/path/to/dir`) [PARTITION(clause)];
+   * }}}
+   */
+  override def visitShowPartitions(ctx: ShowPartitionsContext): LogicalPlan = withOrigin(ctx) {
+    val sparkSession = SparkSession.active
+    val deltaPathIdentifier = Option(ctx.path)
+      .map(string)
+      .filter(DeltaTable.isDeltaTable(sparkSession, _))
+      .map(p => DeltaTableIdentifier(Option(p)))
+
+    val deltaTableIdentifier = Option(ctx.table)
+      .map(visitTableIdentifier)
+      .flatMap(DeltaTableIdentifier(sparkSession, _))
+
+    val partitionSpec = Option(ctx.partitionSpec())
+      .map(_.partitionVal().asScala.map(v => v.identifier().getText -> v.constant().getText))
+      .getOrElse(Seq.empty)
+      .toMap
+
+    deltaPathIdentifier
+      .orElse(deltaTableIdentifier)
+      .map(ShowTablePartitionsCommand(
+        _,
+        partitionSpec,
+        ctx.DETAIL() != null
+      )).orNull
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

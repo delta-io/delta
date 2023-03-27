@@ -94,6 +94,8 @@ statement
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | SHOW PARTITIONS DETAIL? (path=STRING | table=qualifiedName)
+     partitionSpec?                                                     #showPartitions
     | .*?                                                               #passThrough
     ;
 
@@ -113,6 +115,14 @@ cloneTableHeader
 zorderSpec
     : ZORDER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     | ZORDER BY interleave+=qualifiedName (COMMA interleave+=qualifiedName)*
+    ;
+
+partitionSpec
+    : PARTITION LEFT_PAREN partitionVal (COMMA partitionVal)* RIGHT_PAREN
+    ;
+
+partitionVal
+    : identifier EQ constant
     ;
 
 temporalClause
@@ -143,6 +153,13 @@ propertyValue
     | booleanValue
     | identifier LEFT_PAREN stringLit COMMA stringLit RIGHT_PAREN
     | value=stringLit
+    ;
+
+constant
+    : NULL
+    | number
+    | booleanValue
+    | stringLit+
     ;
 
 stringLit
@@ -214,6 +231,7 @@ nonReserved
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
     | CLONE | SHALLOW
+    | PARTITIONS | PARTITION
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -275,6 +293,8 @@ VERSION: 'VERSION';
 WHERE: 'WHERE';
 ZORDER: 'ZORDER';
 STATISTICS: 'STATISTICS';
+PARTITIONS: 'PARTITIONS';
+PARTITION: 'PARTITION';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and
