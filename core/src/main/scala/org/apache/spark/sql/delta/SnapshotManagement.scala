@@ -27,13 +27,14 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaThreadPool
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 /**
  * Wraps the most recently updated snapshot along with the timestamp the update was started.
@@ -579,16 +580,23 @@ trait SnapshotManagement { self: DeltaLog =>
         }
       }
     } else {
-      if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
-        val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
-        asyncUpdateTask = Future[Unit] {
-          spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
-          spark.sparkContext.setJobGroup(
-            jobGroup,
-            s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
-            interruptOnCancel = true)
-          tryUpdate(isAsync = true)
-        }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
+      // Kick off an async update, if one is not already obviously running. Intentionally racy.
+      if (Option(asyncUpdateTask).forall(_.isCompleted)) {
+        try {
+          val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
+          asyncUpdateTask = SnapshotManagement.deltaLogAsyncUpdateThreadPool.submit(spark) {
+            spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
+            spark.sparkContext.setJobGroup(
+              jobGroup,
+              s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
+              interruptOnCancel = true)
+            tryUpdate(isAsync = true)
+          }
+        } catch {
+          case NonFatal(e) if !Utils.isTesting =>
+            // Failed to schedule the future -- fail in testing, but just log it in prod.
+            recordDeltaEvent(this, "delta.snapshot.asyncUpdateFailed", data = Map("exception" -> e))
+        }
       }
       currentSnapshot.snapshot
     }
@@ -760,7 +768,7 @@ trait SnapshotManagement { self: DeltaLog =>
 object SnapshotManagement {
   protected[delta] lazy val deltaLogAsyncUpdateThreadPool = {
     val tpe = ThreadUtils.newDaemonCachedThreadPool("delta-state-update", 8)
-    ExecutionContext.fromExecutorService(tpe)
+    new DeltaThreadPool(tpe)
   }
 
   /**
