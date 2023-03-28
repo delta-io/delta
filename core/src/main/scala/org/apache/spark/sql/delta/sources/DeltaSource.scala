@@ -830,10 +830,6 @@ case class DeltaSource(
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
-    // We need to initialize from `endOffset` so that we can use it to know whether we are going to
-    // process files in a snapshot or a commit after restart. Even for the same table table, the
-    // indexes of a file in a snapshot and a commit are different.
-    initForTriggerAvailableNowIfNeeded(Some(endOffset))
 
     val (startVersion,
         startIndex,
