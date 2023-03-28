@@ -1335,6 +1335,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val removes = actions.collect { case r: RemoveFile => r }
     if (removes.exists(_.dataChange)) DeltaLog.assertRemovable(snapshot)
 
+    val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
+    actions.foreach(assertDeletionVectorWellFormed)
+
     finalActions
   }
 

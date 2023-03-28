@@ -331,7 +331,10 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"offset":10,
         |"sizeInBytes":10,
         |"cardinality":2}}
-        |}""".stripMargin.replaceAll("\n", "")
+        |}""".stripMargin.replaceAll("\n", ""),
+    extraSettings = Seq(
+      // Skip the table property check, so this write doesn't fail.
+      DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED.key -> "false")
   )
 
 
