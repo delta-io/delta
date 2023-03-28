@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import java.util.UUID
 
 import scala.collection.generic.Sizing
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction}
@@ -36,6 +37,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.functions.{col, lit}
@@ -309,7 +311,11 @@ case class DeletionVectorData(
     filePath: String,
     deletionVectorId: Option[String],
     deletedRowIndexSet: Array[Byte],
-    deletedRowIndexCount: Long)
+    deletedRowIndexCount: Long) extends Sizing {
+
+  /** The size of the bitmaps to use in [[BinPackingIterator]]. */
+  override def size: Int = deletedRowIndexSet.length
+}
 
 object DeletionVectorData {
   private lazy val _encoder = new DeltaEncoder[DeletionVectorData]
@@ -386,6 +392,51 @@ case class TouchedFileWithDV(
 }
 
 /**
+ * Iterator that packs objects in `inputIter` to create bins that have a total size of
+ * 'targetSize'. Each [[T]] object may contain multiple bitmaps that are always packed into a
+ * single bin. [[T]] instances must inherit from [[Sizing]] and define what is their size.
+ */
+class BinPackingIterator[T <: Sizing](
+  inputIter: Iterator[T],
+  targetSize: Long)
+  extends Iterator[Seq[T]] {
+
+  private val currentBin = new ArrayBuffer[T]()
+  private var sizeOfBitmapsForCurrentBin = 0L
+
+  override def hasNext: Boolean = inputIter.hasNext || currentBin.nonEmpty
+
+  override def next(): Seq[T] = {
+    var resultBin: Seq[T] = null
+    while (inputIter.hasNext && resultBin == null) {
+      val input = inputIter.next()
+
+      val sizeOfBitmapsForCurrentFile = input.size
+
+      // Start a new bin if the deletion vectors for the current Parquet file corresponding to
+      // `row` causes us to go over the target file size.
+      if (currentBin.nonEmpty &&
+        sizeOfBitmapsForCurrentBin + sizeOfBitmapsForCurrentFile > targetSize) {
+        resultBin = currentBin.toVector
+        sizeOfBitmapsForCurrentBin = 0L
+        currentBin.clear()
+      }
+
+      currentBin += input
+      sizeOfBitmapsForCurrentBin += sizeOfBitmapsForCurrentFile
+    }
+
+    // Finish the last bin.
+    if (resultBin == null && !inputIter.hasNext) {
+      resultBin = currentBin.toVector
+      currentBin.clear()
+    }
+
+    resultBin
+  }
+}
+
+/**
  * Utility methods to write the deletion vector to storage. If a particular file already
  * has an existing DV, it will be merged with the new deletion vector and written to storage.
  */
@@ -415,20 +466,22 @@ object DeletionVectorWriter extends DeltaLogging {
       hadoopConf: Configuration,
       table: Path,
       prefixLength: Int)
-      (callbackFn: (DeletionVectorMapperContext, DeletionVectorData) => DeletionVectorResult)
-    : Iterator[DeletionVectorData] => Iterator[DeletionVectorResult] = {
+      (callbackFn: (DeletionVectorMapperContext, InputT) => OutputT)
+    : Iterator[InputT] => Iterator[OutputT] = {
     val broadcastHadoopConf = sparkSession.sparkContext.broadcast(
       new SerializableConfiguration(hadoopConf))
     // hadoop.fs.Path is not Serializable, so close over the String representation instead
     val tablePathString = DeletionVectorStore.pathToString(table)
+    val packingTargetSize =
+      sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
 
     // This is the (partition) mapper function we are returning
-    (rowIterator: Iterator[DeletionVectorData]) => {
+    (rowIterator: Iterator[InputT]) => {
       val dvStore = DeletionVectorStore.createInstance(broadcastHadoopConf.value.value)
       val tablePath = DeletionVectorStore.stringToPath(tablePathString)
       val tablePathWithFS = dvStore.pathWithFileSystem(tablePath)
 
-      val storeDVFunction = (row: DeletionVectorData) => {
+      val perBinFunction: Seq[InputT] => Seq[OutputT] = (rows: Seq[InputT]) => {
         val prefix = DeltaUtils.getRandomPrefix(prefixLength)
         val (writer, fileId) = createWriter(dvStore, tablePathWithFS, prefix)
         val ctx = DeletionVectorMapperContext(
@@ -437,12 +490,14 @@ object DeletionVectorWriter extends DeltaLogging {
           tablePath,
           fileId,
           prefix)
-        SparkUtils.tryWithResource(writer) { _ =>
-          callbackFn(ctx, row)
+        val result = SparkUtils.tryWithResource(writer) { writer =>
+          rows.map(r => callbackFn(ctx, r))
         }
+        result
       }
 
-      rowIterator.map(storeDVFunction)
+      val binPackedRowIterator = new BinPackingIterator(rowIterator, packingTargetSize)
+      binPackedRowIterator.flatMap(perBinFunction)
     }
   }
 
