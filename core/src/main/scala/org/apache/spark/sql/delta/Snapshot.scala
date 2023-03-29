@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.Encoder
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
@@ -60,11 +61,9 @@ class Snapshot(
     val path: Path,
     val version: Long,
     val logSegment: LogSegment,
-    val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
-    val minSetTransactionRetentionTimestamp: Option[Long] = None,
     checkpointMetadataOpt: Option[CheckpointMetaData] = None)
   extends StateCache
   with StatisticsCollection
@@ -159,6 +158,32 @@ class Snapshot(
     }
   }
 
+  private lazy val _pmfEncoder: ExpressionEncoder[(Protocol, Metadata, String)] =
+    ExpressionEncoder[(Protocol, Metadata, String)]()
+
+  implicit private def pmfEncoder: Encoder[(Protocol, Metadata, String)] = {
+    _pmfEncoder.copy()
+  }
+
+  /**
+   * Pulls the protocol and metadata of the table from the files that are used to compute the
+   * Snapshot directly--without triggering a full state reconstruction. This is important, because
+   * state reconstruction depends on protocol and metadata for correctness.
+   */
+  protected def protocolAndMetadataReconstruction(): Array[(Protocol, Metadata)] = {
+
+    val schemaToUse = Action.logSchema(Set("protocol", "metaData"))
+    fileIndices.map(deltaLog.loadIndex(_, schemaToUse))
+      .reduceOption(_.union(_)).getOrElse(emptyDF)
+      .withColumn(ACTION_SORT_COL_NAME, input_file_name())
+      .select("protocol", "metaData", ACTION_SORT_COL_NAME)
+      .where("protocol.minReaderVersion is not null or metaData.id is not null")
+      .as[(Protocol, Metadata, String)]
+      .collect()
+      .sortBy(_._3)
+      .map { case (p, m, _) => p -> m }
+  }
+
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
@@ -230,7 +255,21 @@ class Snapshot(
             if (stateReconstructionCheck) {
               throw DeltaErrors.actionNotFoundException("protocol", version)
             }
+            logMissingActionWarning("protocol")
+          } else if (_computedState.protocol != protocol) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.mismatchedAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
+                "computedState.protocol" -> _computedState.protocol,
+                "extracted.protocol" -> protocol))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("protocol", version)
+            }
+            logMissingActionWarning("protocol")
           }
+
           if (_computedState.metadata == null) {
             recordDeltaEvent(
               deltaLog,
@@ -242,16 +281,68 @@ class Snapshot(
             }
             logMissingActionWarning("metadata")
             _computedState.copy(metadata = Metadata())
-          } else {
-            _computedState
+          } else if (_computedState.metadata != metadata) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.mismatchedAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
+                "computedState.metadata" -> _computedState.metadata,
+                "extracted.metadata" -> metadata))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("metadata", version)
+            }
+            logMissingActionWarning("metadata")
+            _computedState.copy(metadata = Metadata())
           }
+          _computedState
         }
       }
     }
   }
 
-  def protocol: Protocol = computedState.protocol
-  def metadata: Metadata = computedState.metadata
+  // Used by [[protocol]] and [[metadata]] below
+  private lazy val (_protocol, _metadata): (Protocol, Metadata) = {
+    // Should be small. At most 'checkpointInterval' rows, unless new commits are coming
+    // in before a checkpoint can be written
+    var protocol: Protocol = null
+    var metadata: Metadata = null
+    protocolAndMetadataReconstruction().foreach {
+      case (p: Protocol, _) => protocol = p
+      case (_, m: Metadata) => metadata = m
+    }
+    val stateReconstructionCheck = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+
+    if (protocol == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("protocol", version)
+      }
+      logMissingActionWarning("protocol")    }
+
+    if (metadata == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot"))
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("metadata", version)
+      }
+      logMissingActionWarning("metadata")
+      metadata = Metadata()
+    }
+
+    protocol -> metadata
+  }
+
+  def metadata: Metadata = _metadata
+  def protocol: Protocol = _protocol
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
   def sizeInBytes: Long = computedState.sizeInBytes
   def numOfFiles: Long = computedState.numOfFiles
@@ -260,6 +351,22 @@ class Snapshot(
   def numOfProtocol: Long = computedState.numOfProtocol
   def numOfRemoves: Long = computedState.numOfRemoves
   def numOfSetTransactions: Long = computedState.numOfSetTransactions
+
+  /**
+   * Tombstones before the [[minFileRetentionTimestamp]] timestamp will be dropped from the
+   * checkpoint.
+   */
+  private[delta] def minFileRetentionTimestamp: Long = {
+    deltaLog.clock.getTimeMillis() - DeltaLog.tombstoneRetentionMillis(metadata)
+  }
+
+  /**
+   * [[SetTransaction]]s before [[minSetTransactionRetentionTimestamp]] will be considered expired
+   * and dropped from the snapshot.
+   */
+  private[delta] def minSetTransactionRetentionTimestamp: Option[Long] = {
+    DeltaLog.minSetTransactionRetentionInterval(metadata).map(deltaLog.clock.getTimeMillis() - _)
+  }
 
   /**
    * Computes all the information that is needed by the checksum for the current snapshot.
@@ -349,8 +456,8 @@ class Snapshot(
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
-    val dfs = fileIndices.map { index => Dataset.ofRows(spark, deltaLog.indexToRelation(index)) }
-    dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
+    fileIndices.map(deltaLog.loadIndex(_))
+      .reduceOption(_.union(_)).getOrElse(emptyDF)
       .withColumn(ACTION_SORT_COL_NAME, input_file_name())
       .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
   }
@@ -476,11 +583,10 @@ class InitialSnapshot(
     path = logPath,
     version = -1,
     logSegment = LogSegment.empty(logPath),
-    minFileRetentionTimestamp = -1,
     deltaLog = deltaLog,
     timestamp = -1,
-    checksumOpt = None,
-    minSetTransactionRetentionTimestamp = None) {
+    checksumOpt = None
+  ) {
 
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
@@ -494,6 +600,7 @@ class InitialSnapshot(
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
   override def stateDF: DataFrame = emptyDF
   override protected lazy val computedState: Snapshot.State = initialState
+  override def protocol: Protocol = computedState.protocol
   private def initialState: Snapshot.State = {
     val protocol = Protocol.forNewTable(spark, metadata)
     Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L, None)

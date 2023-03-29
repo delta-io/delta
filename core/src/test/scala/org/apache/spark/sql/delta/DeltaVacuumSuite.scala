@@ -831,7 +831,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
                 (retentionHours * 60 * 60 * 1000).toString)
             assert(
               operationParamsBegin("defaultRetentionMillis") ===
-                deltaLog.tombstoneRetentionMillis.toString)
+                DeltaLog.tombstoneRetentionMillis(deltaLog.snapshot.metadata).toString)
 
             assert(operationParamsEnd === Map("status" -> "COMPLETED"))
             assert(operationMetricsEnd === Map("numDeletedFiles" -> filesDeleted.toString,
