@@ -196,7 +196,7 @@ case class TahoeLogFileIndex(
   }
 
   override def refresh(): Unit = {}
-  override val sizeInBytes: Long = deltaLog.snapshot.sizeInBytes
+  override def sizeInBytes: Long = deltaLog.snapshot.sizeInBytes
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
