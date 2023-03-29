@@ -1048,11 +1048,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         val propString = props.map(kv => s"'${kv._1}'='${kv._2}'").mkString(",")
         if (expectedExceptionClass.isDefined) {
-          intercept[SparkThrowable] {
+          assert(intercept[DeltaTableFeatureException] {
             sql(
               s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
                 s"TBLPROPERTIES ($propString)")
-          }.getErrorClass === expectedExceptionClass.get
+          }.getErrorClass === expectedExceptionClass.get)
         } else {
           sql(
             s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
@@ -1101,7 +1101,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   testCreateTable(
     "legacy protocol, native auto-update feature, feature property",
-    Map(s"delta.feature.${TestReaderWriterMetadataAutoUpdateFeature.name}" -> "enabled"),
+    Map(s"delta.feature.${TestReaderWriterMetadataAutoUpdateFeature.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterMetadataAutoUpdateFeature)))
@@ -1217,9 +1217,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         val propString = props.map(kv => s"'${kv._1}'='${kv._2}'").mkString(",")
         if (expectedExceptionClass.isDefined) {
-          intercept[SparkThrowable] {
+          assert(intercept[DeltaTableFeatureException] {
             sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
-          }.getErrorClass === expectedExceptionClass
+          }.getErrorClass === expectedExceptionClass.get)
         } else {
           sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
         }
@@ -1342,7 +1342,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     Map(TestReaderWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY -> "true"),
     tableProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
-    expectedExceptionClass = Some("DELTA_FEATURES_REyQUIRE_MANUAL_ENABLEMENT"))
+    expectedExceptionClass = Some("DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT"))
 
   testAlterTable(
     "table features protocol, native auto-update feature, feature property",
@@ -1378,7 +1378,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
         spark.range(10).writeTo(s"delta.`${dir.getCanonicalPath}`").using("delta").create()
       }
-      assert(deltaLog.update().protocol === Protocol(1, 1))
+      val expectedProtocolOnCreation = Protocol(1, 1)
+      assert(deltaLog.update().protocol === expectedProtocolOnCreation)
 
       assert(intercept[DeltaTableFeatureException] {
         withSQLConf(defaultPropertyKey(TestWriterMetadataNoAutoUpdateFeature) -> "supported") {
@@ -1394,9 +1395,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           s"  '${propertyKey(TestWriterMetadataNoAutoUpdateFeature)}' = 'supported'," +
           s"  '${TestWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY}' = 'true')")
       assert(
-        deltaLog.update().protocol === Protocol(1, 1)
-          .merge(TestWriterMetadataNoAutoUpdateFeature.minProtocolVersion)
-          .withFeature(TestWriterMetadataNoAutoUpdateFeature))
+        deltaLog.update().protocol ===
+          expectedProtocolOnCreation
+            .merge(TestWriterMetadataNoAutoUpdateFeature.minProtocolVersion)
+            .withFeature(TestWriterMetadataNoAutoUpdateFeature))
     }
   }
 
@@ -1421,19 +1423,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               s"  '${TestWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY}' = 'true')")
         }
 
-        import scala.jdk.CollectionConverters.mapAsScalaMapConverter
-
         assert(e.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
-        assert(
-          e.getMessageParameters.asScala === Map(
-            "features" -> TestWriterMetadataNoAutoUpdateFeature.name,
-            "requiredVersion" -> Protocol(1, 4)
-              .merge(TestWriterMetadataNoAutoUpdateFeature.minProtocolVersion)
-              .merge(TestReaderWriterMetadataAutoUpdateFeature.minProtocolVersion)
-              .withFeature(TestWriterMetadataNoAutoUpdateFeature)
-              .withFeature(TestReaderWriterMetadataAutoUpdateFeature)
-              .toString,
-            "currentVersion" -> Protocol(1, 4).toString))
       }
     }
   }

@@ -322,21 +322,25 @@ object Protocol {
     (readerVersion, writerVersion, enabledFeatures)
   }
 
-  def getProtocolVersionsFromTableConf(conf: Map[String, String]): (Option[Int], Option[Int]) = {
-    // Cast the table property for the protocol version to an integer.
-    val tryCastToInt = (key: String, value: String) => {
-      try value.toInt
-      catch {
-        case _: NumberFormatException =>
-          throw DeltaErrors.protocolPropNotIntException(key, value)
-      }
+  /** Cast the table property for the protocol version to an integer. */
+  private def tryCastToInt(key: String, value: String): Int = {
+    try value.toInt
+    catch {
+      case _: NumberFormatException =>
+        throw DeltaErrors.protocolPropNotIntException(key, value)
     }
+  }
 
-    val readerVersionFromTableConfOpt =
-      conf.get(MIN_READER_VERSION_PROP).map(tryCastToInt(MIN_READER_VERSION_PROP, _))
-    val writerVersionFromTableConfOpt =
-      conf.get(MIN_WRITER_VERSION_PROP).map(tryCastToInt(MIN_WRITER_VERSION_PROP, _))
-    (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt)
+  def getReaderVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
+    conf.get(MIN_READER_VERSION_PROP).map(tryCastToInt(MIN_READER_VERSION_PROP, _))
+  }
+
+  def getWriterVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
+    conf.get(MIN_WRITER_VERSION_PROP).map(tryCastToInt(MIN_WRITER_VERSION_PROP, _))
+  }
+
+  def getProtocolVersionsFromTableConf(conf: Map[String, String]): (Option[Int], Option[Int]) = {
+    (getReaderVersionFromTableConf(conf), getWriterVersionFromTableConf(conf))
   }
 
   /**

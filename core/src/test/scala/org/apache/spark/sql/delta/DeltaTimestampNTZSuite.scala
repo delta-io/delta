@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.sql.Timestamp
 import java.time.LocalDateTime
 
-import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkThrowable
