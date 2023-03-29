@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
@@ -1145,6 +1146,14 @@ trait DeltaSQLConfBase {
       .doc("Enable persistent Deletion Vectors in the Delete command.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELETION_VECTOR_PACKING_TARGET_SIZE =
+    buildConf("deletionVectors.packing.targetSize")
+      .internal()
+      .doc("Controls the target file deletion vector file size when packing multiple" +
+        "deletion vectors in a single file.")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(2L * 1024L * 1024L)
 
   val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
     buildConf("deletionVectors.skipCommitCheck")
