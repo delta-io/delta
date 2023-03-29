@@ -25,12 +25,21 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{col, floor, lit, max, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 
+trait OptimizePartitionTableHelper extends QueryTest {
+  def testPartition(str: String)(testFun: => Any): Unit = {
+    test("partitioned table - " + str) {
+      testFun
+    }
+  }
+}
+
 /** Tests for Optimize Z-Order by */
-trait OptimizeZOrderSuiteBase extends QueryTest
+trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   with TestsStatistics
   with SharedSparkSession
   with DeltaColumnMappingTestUtils {
@@ -79,7 +88,7 @@ trait OptimizeZOrderSuiteBase extends QueryTest
     }
   }
 
-  test("optimize on null partition column") {
+  testPartition("optimize on null partition column") {
     withTempDir { tempDir =>
       (1 to 5).foreach { _ =>
         Seq(("a", 1), ("b", 2), (null.asInstanceOf[String], 3), ("", 4)).toDF("part", "value")
@@ -230,13 +239,15 @@ trait OptimizeZOrderSuiteBase extends QueryTest
       ) {
         val res = executeOptimizePath(tempDir.getCanonicalPath, Seq("c1", "c2", "c3"))
         val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
-        assert(metrics.zOrderStats.get.mergedFiles.num == 1)
-        assert(deltaLog.snapshot.allFiles.count() == 4)
-        checkAnswer(statsDF(deltaLog), Seq(
+        val expectedFileCount = 4
+        val expectedStats: Seq[Row] = Seq(
           Row(25, Row(0, 50, 50), Row(49, 99, 99)),
           Row(25, Row(16, 20, 18), Row(79, 83, 85)),
           Row(25, Row(36, 36, 0), Row(63, 63, 96)),
-          Row(25, Row(64, 0, 14), Row(99, 35, 49))))
+          Row(25, Row(64, 0, 14), Row(99, 35, 49)))
+        assert(metrics.zOrderStats.get.mergedFiles.num == 1)
+        assert(deltaLog.snapshot.allFiles.count() == expectedFileCount)
+        checkAnswer(statsDF(deltaLog), expectedStats)
       }
     }
   }
