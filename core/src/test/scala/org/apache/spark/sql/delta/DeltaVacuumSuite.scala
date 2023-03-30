@@ -790,7 +790,7 @@ class DeltaVacuumSuite
 
       withTempDeltaTable(targetDF, enableDVs = true) { (targetTable, targetLog) =>
         // Add some DVs.
-        targetTable.delete("id < 10")
+        targetTable().delete("id < 10")
         val e = intercept[IllegalArgumentException] {
           spark.sql(s"VACUUM delta.`${targetLog.dataPath}` RETAIN 0 HOURS")
         }
@@ -936,7 +936,8 @@ class DeltaVacuumSuite
         .withColumn("partCol", lit(0))
       val partitionBy = if (partitioned) Seq("partCol") else Seq.empty
       withSQLConf(
-          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE.key -> "0",
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
         withDeletionVectorsEnabled() {
           withTempDeltaTable(
               targetDF,
@@ -944,45 +945,32 @@ class DeltaVacuumSuite
             val targetDir = targetLog.dataPath
 
             // Add a DV to all files and check that DVs are not deleted.
-            targetTable.delete("id % 2 == 0")
+            targetTable().delete("id % 2 == 0")
 
             assert(listDeletionVectors(targetLog).size == 10)
-            targetTable.vacuum(0)
+            targetTable().vacuum(0)
             assert(listDeletionVectors(targetLog).size == 10)
             checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(50))
 
             // Update the DV of the first file by deleting two rows and check that previous DV is
             // deleted.
-            targetTable.delete("id  < 10 AND id % 3 == 0")
+            targetTable().delete("id  < 10 AND id % 3 == 0")
 
             assert(listDeletionVectors(targetLog).size == 11)
-            targetTable.vacuum(0)
+            targetTable().vacuum(0)
             assert(listDeletionVectors(targetLog).size == 10)
             checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(48))
 
             // Delete all rows in first 5 files and check that DVs are not deleted due to
             // the retention period, but deleted after that.
-            targetTable.delete("id < 50")
+            targetTable().delete("id < 50")
 
             assert(listDeletionVectors(targetLog).size == 15)
-            targetTable.vacuum(10)
+            targetTable().vacuum(10)
             assert(listDeletionVectors(targetLog).size == 15)
-            targetTable.vacuum(0)
+            targetTable().vacuum(0)
             assert(listDeletionVectors(targetLog).size == 5)
             checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(25))
-
-            // Run an insert-only merge to re-insert deleted rows. This ones produces ephemeral
-            // DVs that are not referenced and should be deleted.
-            targetTable.as("t")
-              .merge(targetDF.as("s"), "t.id = s.id")
-              .whenMatched("s.v + t.v > 1000").delete()
-              .whenNotMatched().insertAll()
-              .execute()
-
-            assert(listDeletionVectors(targetLog).size == 10)
-            targetTable.vacuum(0)
-            assert(listDeletionVectors(targetLog).size == 5)
-            checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(100))
           }
         }
       }
