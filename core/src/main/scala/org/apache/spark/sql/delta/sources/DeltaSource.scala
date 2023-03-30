@@ -566,29 +566,29 @@ case class DeltaSource(
     def filterAndIndexDeltaLogs(startVersion: Long): ClosableIterator[IndexedFile] = {
       deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).flatMapWithClose {
         case (version, filestatus) =>
-          if (filestatus.getLen <
-            spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
-            // entire file can be read into memory
-            val inMemoryActions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
-              .map(Action.fromJson)
-            val shouldSkipCommit = validateCommitAndDecideSkipping(inMemoryActions.toIterator,
-              version, verifyMetadataAction)
-            filterAndGetIndexedFiles(inMemoryActions.toIterator, version, shouldSkipCommit)
-              .toClosable
-          } else { // file too large to read into memory
-            var fileIterator = deltaLog.store.readAsIterator(filestatus,
-              deltaLog.newDeltaHadoopConf())
-            val shouldSkipCommit = try {
-              validateCommitAndDecideSkipping(fileIterator.map(Action.fromJson), version,
-                verifyMetadataAction)
-            } finally {
-              fileIterator.close()
+          lazy val inMemoryActions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
+            .map(Action.fromJson)
+          val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)
+
+          // Return a new [[CloseableIterator]] over the commit. If the commit is smaller than the
+          // threshold, we will read it into memory once and iterate over that every time.
+          // Otherwise, we read it again every time.
+          def createActionsIterator() =
+            if (filestatus.getLen < threshold) {
+              inMemoryActions.toIterator.toClosable
+            } else {
+              deltaLog.store.readAsIterator(filestatus, deltaLog.newDeltaHadoopConf())
+                .withClose { _.map(Action.fromJson) }
             }
-            fileIterator = deltaLog.store.readAsIterator(filestatus.getPath,
-              deltaLog.newDeltaHadoopConf())
-            fileIterator.withClose { it =>
-              filterAndGetIndexedFiles(it.map(Action.fromJson), version, shouldSkipCommit)
-            }
+
+          // First pass reads the whole commit and closes the iterator.
+          val shouldSkipCommit = createActionsIterator().processAndClose { actionsIter =>
+            validateCommitAndDecideSkipping(actionsIter, version, verifyMetadataAction)
+          }
+
+          // Second pass reads the commit lazily.
+          createActionsIterator().withClose { actionsIter =>
+            filterAndGetIndexedFiles(actionsIter, version, shouldSkipCommit)
           }
       }
     }
