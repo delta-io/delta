@@ -317,7 +317,7 @@ object TableFeatureProtocolUtils {
   /**
    * Get a set of [[TableFeature]]s representing supported features set in a table properties map.
    */
-  def getSupportedFeaturesFromConfigs(configs: Map[String, String]): Set[TableFeature] = {
+  def getSupportedFeaturesFromTableConfigs(configs: Map[String, String]): Set[TableFeature] = {
     val featureConfigs = configs.filterKeys(_.startsWith(FEATURE_PROP_PREFIX))
     val unsupportedFeatureConfigs = mutable.Set.empty[String]
     val collectedFeatures = featureConfigs.flatMap { case (key, value) =>

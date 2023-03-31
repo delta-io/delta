@@ -250,7 +250,7 @@ object Protocol {
     val tableConf = metadata.configuration
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
-    val tablePropEnabledFeatures = getSupportedFeaturesFromConfigs(tableConf)
+    val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
     val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
@@ -324,7 +324,7 @@ object Protocol {
   }
 
   /** Cast the table property for the protocol version to an integer. */
-  private def tryCastToInt(key: String, value: String): Int = {
+  private def tryCastProtocolVersionToInt(key: String, value: String): Int = {
     try value.toInt
     catch {
       case _: NumberFormatException =>
@@ -333,11 +333,11 @@ object Protocol {
   }
 
   def getReaderVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
-    conf.get(MIN_READER_VERSION_PROP).map(tryCastToInt(MIN_READER_VERSION_PROP, _))
+    conf.get(MIN_READER_VERSION_PROP).map(tryCastProtocolVersionToInt(MIN_READER_VERSION_PROP, _))
   }
 
   def getWriterVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
-    conf.get(MIN_WRITER_VERSION_PROP).map(tryCastToInt(MIN_WRITER_VERSION_PROP, _))
+    conf.get(MIN_WRITER_VERSION_PROP).map(tryCastProtocolVersionToInt(MIN_WRITER_VERSION_PROP, _))
   }
 
   def getProtocolVersionsFromTableConf(conf: Map[String, String]): (Option[Int], Option[Int]) = {
@@ -377,6 +377,9 @@ object Protocol {
         readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
         .withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
+      // When the current protocol does not satisfy metadata requirement, some additional features
+      // must be supported by the protocol. We assert those features can actually do the the
+      // auto-update.
       assertMetadataTableFeaturesAutomaticallySupported(
         current.implicitlyAndExplicitlySupportedFeatures,
         required.implicitlyAndExplicitlySupportedFeatures)
@@ -387,8 +390,8 @@ object Protocol {
   }
 
   /**
-   * Ensure any feature listed in `currentFeatures` is also listed in `requiredFeatures`, or for
-   * a un-listed feature, make sure it's capable for auto-update a protocol.
+   * Ensure all features listed in `currentFeatures` are also listed in `requiredFeatures`, or, if
+   * one is not listed, it must be capable to auto-update a protocol.
    *
    * Refer to [[FeatureAutomaticallyEnabledByMetadata.automaticallyUpdateProtocolOfExistingTables]]
    * to know more about auto-update capable features.
