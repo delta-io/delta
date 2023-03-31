@@ -128,6 +128,10 @@ trait DeltaErrorsBase
        |get deleted based on retention settings.
      """.stripMargin
 
+  // scalastyle:off
+  def assertionFailedError(msg: String): Throwable = new AssertionError(msg)
+  // scalastyle:on
+
   def deltaSourceIgnoreDeleteError(
       version: Long,
       removedFile: String,
