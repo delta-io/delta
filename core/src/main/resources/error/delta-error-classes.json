@@ -659,15 +659,14 @@
   },
   "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT" : {
     "message" : [
-      "Your table schema requires manually enablement of the following table feature(s): <features>.",
+      "Your table schema requires manually enablement of the following table feature(s): <unsupportedFeatures>.",
       "",
       "To do this, run the following command for each of features listed above:",
       "  ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.feature_name' = 'supported')",
       "Replace \"table_name\" and \"feature_name\" with real values.",
       "Note that the procedure is irreversible: once supported, a feature can never be unsupported again.",
       "",
-      "Required Delta protocol: <requiredVersion>",
-      "Current Delta protocol: <currentVersion>"
+      "Current supported feature(s): <supportedFeatures>."
     ],
     "sqlState" : "0AKDE"
   },

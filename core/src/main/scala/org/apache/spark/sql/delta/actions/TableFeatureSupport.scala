@@ -195,6 +195,12 @@ trait TableFeatureSupport { this: Protocol =>
     }
   }
 
+  @JsonIgnore
+  lazy val implicitlyAndExplicitlySupportedFeatures: Set[TableFeature] = {
+    readerAndWriterFeatureNames.flatMap(TableFeature.featureNameToFeature) ++
+      implicitlySupportedFeatures
+  }
+
   /**
    * Determine whether this protocol can be safely upgraded to a new protocol `to`. This means:
    *   - this protocol has reader protocol version less than or equals to `to`.

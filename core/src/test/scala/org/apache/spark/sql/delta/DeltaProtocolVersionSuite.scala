@@ -1266,7 +1266,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   testAlterTable(
     "legacy protocol, native auto-update feature, feature property",
-    Map(s"delta.feature.${TestReaderWriterMetadataAutoUpdateFeature.name}" -> "enabled"),
+    Map(s"delta.feature.${TestReaderWriterMetadataAutoUpdateFeature.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterMetadataAutoUpdateFeature)))
@@ -1414,7 +1414,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .tableProperty("delta.enableChangeDataFeed", "true")
           .using("delta")
           .create()
-        assert(deltaLog.update().protocol === Protocol(1, 4))
+        val protocolOfNewTable = Protocol(1, 4)
+        assert(deltaLog.update().protocol === protocolOfNewTable)
 
         val e = intercept[DeltaTableFeatureException] {
           sql(
@@ -1423,7 +1424,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               s"  '${TestWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY}' = 'true')")
         }
 
+        val unsupportedFeatures = TestWriterMetadataNoAutoUpdateFeature.name
+        val supportedFeatures =
+          (protocolOfNewTable.implicitlyAndExplicitlySupportedFeatures +
+            TestReaderWriterMetadataAutoUpdateFeature).map(_.name).toSeq.sorted.mkString(", ")
         assert(e.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
+
+        assert(e.getMessage.contains(s" $unsupportedFeatures."))
+        assert(e.getMessage.contains(s" $supportedFeatures."))
+
       }
     }
   }

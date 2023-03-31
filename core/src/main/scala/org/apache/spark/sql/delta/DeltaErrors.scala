@@ -2162,15 +2162,13 @@ trait DeltaErrorsBase
   }
 
   def tableFeaturesRequireManualEnablementException(
-      features: Iterable[String],
-      requiredProtocol: Protocol,
-      currentProtocol: Protocol): Throwable = {
+      unsupportedFeatures: Iterable[TableFeature],
+      supportedFeatures: Iterable[TableFeature]): Throwable = {
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
       messageParameters = Array(
-        features.mkString(", "),
-        requiredProtocol.toString,
-        currentProtocol.toString))
+        unsupportedFeatures.map(_.name).toSeq.sorted.mkString(", "),
+        supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
   def concurrentAppendException(
