@@ -1431,10 +1431,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
         spark.range(10).writeTo(s"delta.`${dir.getCanonicalPath}`")
           .tableProperty("delta.appendOnly", "true")
-          .tableProperty("delta.enableChangeDataFeed", "true")
           .using("delta")
           .create()
-        val protocolOfNewTable = Protocol(1, 4)
+        val protocolOfNewTable = Protocol(1, 2)
         assert(deltaLog.update().protocol === protocolOfNewTable)
 
         val e = intercept[DeltaTableFeatureException] {
@@ -1442,6 +1441,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           withSQLConf(defaultPropertyKey(TestWriterFeature) -> "supported") {
             sql(
               s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (" +
+                s"  'delta.appendOnly' = 'false'," +
+                s"  'delta.enableChangeDataFeed' = 'true'," +
                 s"  '${TestReaderWriterMetadataAutoUpdateFeature.TABLE_PROP_KEY}' = 'true'," +
                 s"  '${TestWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY}' = 'true')")
           }
@@ -1450,6 +1451,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         val unsupportedFeatures = TestWriterMetadataNoAutoUpdateFeature.name
         val supportedFeatures =
           (protocolOfNewTable.implicitlyAndExplicitlySupportedFeatures +
+            ChangeDataFeedTableFeature +
             TestReaderWriterMetadataAutoUpdateFeature).map(_.name).toSeq.sorted.mkString(", ")
         assert(e.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
 
