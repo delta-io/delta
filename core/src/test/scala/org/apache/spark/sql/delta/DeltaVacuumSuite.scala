@@ -80,7 +80,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         result += path
       }
     }
-    result
+    result.toSeq
   }
 
   protected def assertNumFiles(
