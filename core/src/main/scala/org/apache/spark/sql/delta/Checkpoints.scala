@@ -442,7 +442,7 @@ trait Checkpoints extends DeltaLogging {
     logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
     while (cur >= 0) {
       val checkpoints = store.listFrom(
-            checkpointPrefix(logPath, math.max(0, cur - 1000)),
+            listingPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
           // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
           // such files, hence we drop them so that we never pick up such checkpoints.
@@ -667,7 +667,12 @@ object Checkpoints extends DeltaLogging {
       // file already exists as per File System spec. But the LocalFS doesn't follow this and it
       // overrides the final path even if it already exists. So we use exists here to handle that
       // case.
-      !fs.exists(finalPath) && fs.rename(tempPath, finalPath)
+      // TODO: Remove isTesting and fs.exists check after fixing LocalFS
+      if (Utils.isTesting && fs.exists(finalPath)) {
+        false
+      } else {
+        fs.rename(tempPath, finalPath)
+      }
     } catch {
       case _: org.apache.hadoop.fs.FileAlreadyExistsException => false
     }
@@ -723,7 +728,8 @@ object Checkpoints extends DeltaLogging {
         col("add.size"),
         col("add.modificationTime"),
         col("add.dataChange"), // actually not really useful here
-        col("add.tags")) ++
+        col("add.tags"),
+        col("add.deletionVector")) ++
         additionalCols: _*
       ))
     )

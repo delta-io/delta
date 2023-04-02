@@ -19,7 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -913,6 +913,27 @@ class DeltaTable private[tables] (
       Map(
         "delta.minReaderVersion" -> readerVersion.toString,
         "delta.minWriterVersion" -> writerVersion.toString))
+    toDataset(sparkSession, alterTableCmd)
+  }
+
+  /**
+   * Modify the protocol to add a supported feature, and if the table does not support table
+   * features, upgrade the protocol automatically. In such a case when the provided feature is
+   * writer-only, the table's writer version will be upgraded to `7`, and when the provided
+   * feature is reader-writer, both reader and writer versions will be upgraded, to `(3, 7)`.
+   *
+   * See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+   *
+   * @since 2.3.0
+   */
+  def addFeatureSupport(featureName: String): Unit = {
+    // Do not check for the correctness of the provided feature name. The ALTER TABLE command will
+    // do that in a transaction.
+    val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
+      table,
+      Map(
+        TableFeatureProtocolUtils.propertyKey(featureName) ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     toDataset(sparkSession, alterTableCmd)
   }
 }

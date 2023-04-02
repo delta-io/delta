@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.stats
 
+import org.apache.spark.sql.delta.stats.DeltaStatistics.{MAX, MIN}
+
 import org.apache.spark.sql.Column
 
 /**
@@ -74,8 +76,7 @@ object DataSkippingPredicateBuilder {
 /**
  * Predicate builder for skipping eligible columns.
  */
-private [stats] class ColumnPredicateBuilder
-  extends DataSkippingPredicateBuilder with UsesMetadataFields {
+private [stats] class ColumnPredicateBuilder extends DataSkippingPredicateBuilder {
   def equalTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] = {
     statsProvider.getPredicateWithStatTypes(colPath, MIN, MAX) { (min, max) =>

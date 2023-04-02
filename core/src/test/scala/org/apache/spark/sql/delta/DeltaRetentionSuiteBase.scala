@@ -44,7 +44,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =
-    dir.listFiles().filter(_.getName.endsWith(".json"))
+    dir.listFiles().filter(f => FileNames.isDeltaFile(new Path(f.getCanonicalPath)))
 
   protected def getCheckpointFiles(dir: File): Seq[File] =
     dir.listFiles().filter(f => FileNames.isCheckpointFile(new Path(f.getCanonicalPath)))

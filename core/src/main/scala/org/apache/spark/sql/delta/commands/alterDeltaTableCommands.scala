@@ -34,6 +34,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -261,7 +262,7 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
-      Some((col.name.init, field, col.position.map(toV2Position)))
+        Some((col.name.init, field, col.position.map(toV2Position)))
     }
   }
 }
@@ -356,16 +357,18 @@ case class AlterTableChangeColumnDeltaCommand(
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          val newField =
-            // Take the name, comment, nullability and data type from newField
-            // It's crucial to keep the old column's metadata, which may contain column mapping
-            // metadata.
-            newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
-              .copy(
-                name = newColumn.name,
-                dataType =
-                  SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-                nullable = newColumn.nullable)
+          val newField = {
+              // Take the name, comment, nullability and data type from newField
+              // It's crucial to keep the old column's metadata, which may contain column mapping
+              // metadata.
+              var result = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              result
+                .copy(
+                  name = newColumn.name,
+                  dataType =
+                    SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
+                  nullable = newColumn.nullable)
+          }
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>
@@ -488,14 +491,19 @@ case class AlterTableChangeColumnDeltaCommand(
         throw DeltaErrors.cannotUpdateOtherField(table.name(), o)
     }
 
-    if (SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
+    // Analyzer already validates the char/varchar type change of ALTER COLUMN in
+    // `CheckAnalysis.checkAlterTableCommand`. We should normalize char/varchar type to string type
+    // first (original data type is already normalized as we store char/varchar as string type with
+    // special metadata in the Delta log), then apply Delta-specific checks.
+    val newType = CharVarcharUtils.replaceCharVarcharWithString(newColumn.dataType)
+    if (SchemaUtils.canChangeDataType(originalField.dataType, newType, resolver,
         txn.metadata.columnMappingMode, columnPath :+ originalField.name).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
           s"'${originalField.dataType}" +
           s" (nullable = ${originalField.nullable})'",
         s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'${newColumn.dataType}" +
+          s"'$newType" +
           s" (nullable = ${newColumn.nullable})'")
     }
 

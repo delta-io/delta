@@ -17,11 +17,11 @@
 package org.apache.spark.sql.delta.optimize
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.commands.optimize.{DeletionVectorStats, FileSizeStats, OptimizeMetrics, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.tables.DeltaTable
 
@@ -32,7 +32,8 @@ import org.apache.spark.sql.types._
 
 /** Tests that run optimize and verify the returned output (metrics) is expected. */
 trait OptimizeMetricsSuiteBase extends QueryTest
-    with SharedSparkSession  {
+    with SharedSparkSession
+    with DeletionVectorsTestUtils {
 
   import testImplicits._
 
@@ -53,12 +54,19 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       assert(metrics.numFilesRemoved == startCount)
       assert(metrics.filesAdded.min.get == finalSizes.min)
       assert(metrics.filesAdded.max.get == finalSizes.max)
+      assert(metrics.filesAdded.totalSize == finalSizes.sum)
+      assert(metrics.filesAdded.totalFiles == finalSizes.length)
       assert(metrics.filesRemoved.max.get == startSizes.max)
       assert(metrics.filesRemoved.min.get == startSizes.min)
+      assert(metrics.filesRemoved.totalSize == startSizes.sum)
+      assert(metrics.filesRemoved.totalFiles == startSizes.length)
       assert(metrics.totalConsideredFiles == startCount)
       assert(metrics.totalFilesSkipped == 0)
+      assert(metrics.numTableColumns == 2)
+      assert(metrics.numTableColumnsWithStats == 2)
     }
   }
+
 
   /**
    * Ensure public API for metrics persists
@@ -93,6 +101,10 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("maxSessionActiveParallelism", LongType, nullable = true),
       StructField("minSessionActiveParallelism", LongType, nullable = true)
     ))
+    val dvMetricsSchema = StructType(Seq(
+      StructField("numDeletionVectorsRemoved", LongType, nullable = false),
+      StructField("numDeletionVectorRowsRemoved", LongType, nullable = false)
+    ))
 
     val optimizeMetricsSchema = StructType(Seq(
       StructField("numFilesAdded", LongType, nullable = false),
@@ -111,7 +123,10 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("endTimeMs", LongType, nullable = false),
       StructField("totalClusterParallelism", LongType, nullable = false),
       StructField("totalScheduledTasks", LongType, nullable = false),
-      StructField("autoCompactParallelismStats", parallelismMetricsSchema, nullable = true)
+      StructField("autoCompactParallelismStats", parallelismMetricsSchema, nullable = true),
+      StructField("deletionVectorStats", dvMetricsSchema, nullable = true),
+      StructField("numTableColumns", LongType, nullable = false),
+      StructField("numTableColumnsWithStats", LongType, nullable = false)
     ))
     val optimizeSchema = StructType(Seq(
       StructField("path", StringType, nullable = true),
@@ -156,7 +171,9 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           "maxFileSize",
           "p25FileSize",
           "p50FileSize",
-          "p75FileSize").foreach(metric => assert(actualOperationMetrics.get(metric).isDefined))
+          "p75FileSize",
+          "numDeletionVectorsRemoved"
+        ).foreach(metric => assert(actualOperationMetrics.get(metric).isDefined))
       }
     }
   }
@@ -189,11 +206,43 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         startTimeMs = actMetrics.startTimeMs,
         endTimeMs = actMetrics.endTimeMs,
         totalClusterParallelism = 2,
-        totalScheduledTasks = 0)
+        totalScheduledTasks = 0,
+        numTableColumns = 1,
+        numTableColumnsWithStats = 1)
 
       assert(actMetrics === expMetrics)
     }
   }
+
+  test("optimize metrics when certain table columns have no stats") {
+    val tblName = "tblName"
+    withTable(tblName) {
+      // Create Delta table with 5 columns
+      spark.range(10)
+        .withColumn("col2", 'id * 2)
+        .withColumn("col3", 'id * 3)
+        .withColumn("col4", 'id * 4)
+        .withColumn("col5", 'id * 5)
+        .write.format("delta").saveAsTable(tblName)
+
+      // Set to only collect data skipping stats on 3 columns
+      spark.sql(s"""
+                  |ALTER TABLE $tblName
+                  |SET TBLPROPERTIES (
+                  |  'delta.dataSkippingNumIndexedCols' = '3'
+                  |)""".stripMargin)
+
+      // Optimize
+      val res = spark.sql(s"OPTIMIZE $tblName")
+      val actMetrics: OptimizeMetrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+
+      // The table has 5 columns
+      assert(actMetrics.numTableColumns == 5)
+      // There are only 3 columns to collect stats because of the dataSkippingNumIndexedCols config
+      assert(actMetrics.numTableColumnsWithStats == 3)
+    }
+  }
+
 
   test("optimize ZOrderBy operation metrics in Delta table history") {
     withSQLConf(
@@ -240,7 +289,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
             |  "maxFileSize" : "${finalSizes.max}",
             |  "p25FileSize" : "${finalSizes(finalSizes.length / 4)}",
             |  "p50FileSize" : "${finalSizes(finalSizes.length / 2)}",
-            |  "p75FileSize" : "${finalSizes(3 * finalSizes.length / 4)}"
+            |  "p75FileSize" : "${finalSizes(3 * finalSizes.length / 4)}",
+            |  "numDeletionVectorsRemoved" : "0"
             |}""".stripMargin.trim
 
         val expMetrics = JsonUtils.fromJson[Map[String, String]](expMetricsJson)
@@ -298,6 +348,59 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           |}""".stripMargin
 
         assert(metrics.zOrderStats === Some(JsonUtils.fromJson[ZOrderStats](expZOrderMetrics)))
+      }
+    }
+  }
+
+  val optimizeCommands = Seq("optimize", "zorder")
+  for (cmd <- optimizeCommands) {
+    testWithDVs(s"deletion vector metrics - $cmd") {
+      withTempDir { dirName =>
+        // Create table with 100 files of 10 rows each.
+        val numFiles = 100
+        val path = dirName.getAbsolutePath
+        spark.range(0, 1000, step = 1, numPartitions = numFiles)
+          .write.format("delta").save(path)
+        val tableName = s"delta.`$path`"
+        val deltaTable = DeltaTable.forPath(spark, path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        var allFiles = deltaLog.unsafeVolatileSnapshot.allFiles.collect().toSeq
+        // Delete two rows each from 5 files to create Deletion Vectors.
+        val numFilesWithDVs = 5
+        val numDeletedRows = numFilesWithDVs * 2
+        allFiles.take(numFilesWithDVs).foreach(
+          file => removeRowsFromFile(deltaLog, file, Seq(1, 5)))
+
+        allFiles = deltaLog.unsafeVolatileSnapshot.allFiles.collect().toSeq
+        assert(allFiles.size === numFiles)
+        assert(allFiles.filter(_.deletionVector != null).size === numFilesWithDVs)
+
+        val metrics: Seq[OptimizeMetrics] = cmd match {
+          case "optimize" =>
+            spark.sql(s"OPTIMIZE $tableName")
+              .select("metrics.*").as[OptimizeMetrics].collect().toSeq
+          case "zorder" =>
+            spark.sql(s"OPTIMIZE $tableName ZORDER BY (id)")
+              .select("metrics.*").as[OptimizeMetrics].collect().toSeq
+          case unknown => throw new IllegalArgumentException(s"Unknown command: $unknown")
+        }
+
+        // Check DV metrics in the result.
+        assert(metrics.length === 1)
+        val dvStats = metrics.head.deletionVectorStats
+        assert(dvStats.get.numDeletionVectorsRemoved === numFilesWithDVs)
+        assert(dvStats.get.numDeletionVectorRowsRemoved === numDeletedRows)
+
+        // Check DV metrics in the Delta history.
+        val opMetrics = deltaTable.history.select("operationMetrics")
+          .take(1)
+          .head
+          .getMap(0)
+          .asInstanceOf[Map[String, String]]
+        val dvMetrics = opMetrics.keys.filter(_.contains("DeletionVector"))
+        assert(dvMetrics === Set("numDeletionVectorsRemoved"))
+        assert(opMetrics("numDeletionVectorsRemoved") === numFilesWithDVs.toString)
       }
     }
   }

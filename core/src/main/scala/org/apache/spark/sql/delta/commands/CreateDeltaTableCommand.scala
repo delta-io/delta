@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -45,6 +44,7 @@ import org.apache.spark.sql.types.StructType
  * @param query The query to commit into the Delta table if it exist. This can come from
  *                - CTAS
  *                - saveAsTable
+ * @param protocol This is used to create a table with specific protocol version
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -53,8 +53,10 @@ case class CreateDeltaTableCommand(
     query: Option[LogicalPlan],
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
-    override val output: Seq[Attribute] = Nil)
+    override val output: Seq[Attribute] = Nil,
+    protocol: Option[Protocol] = None)
   extends LeafRunnableCommand
+  with DeltaCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -142,7 +144,7 @@ case class CreateDeltaTableCommand(
         // we are creating a table as part of a RunnableCommand
         query.get match {
           case deltaWriter: WriteIntoDelta =>
-              if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+              if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
                 val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
                 txn.commit(actions, op)
               }
@@ -159,7 +161,7 @@ case class CreateDeltaTableCommand(
               partitionColumns = table.partitionColumnNames,
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data)
-            if (!deltaWriter.writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
               val (actions, op) = doDeltaWrite(deltaWriter, other.schema.asNullable)
               txn.commit(actions, op)
             }
@@ -184,7 +186,9 @@ case class CreateDeltaTableCommand(
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
-
+            protocol.foreach { protocol =>
+              txn.updateProtocol(protocol)
+            }
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)
           } else {
@@ -383,7 +387,7 @@ case class CreateDeltaTableCommand(
       table: CatalogTable,
       snapshot: Snapshot,
       txn: OptimisticTransaction): Unit = {
-    val cleaned = cleanupTableDefinition(table, snapshot)
+    val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
@@ -406,7 +410,8 @@ case class CreateDeltaTableCommand(
   }
 
   /** Clean up the information we pass on to store in the catalog. */
-  private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
+  private def cleanupTableDefinition(spark: SparkSession, table: CatalogTable, snapshot: Snapshot)
+      : CatalogTable = {
     // These actually have no effect on the usability of Delta, but feature flagging legacy
     // behavior for now
     val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {

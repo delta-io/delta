@@ -163,6 +163,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val ignoreDeletes = options.get(IGNORE_DELETES_OPTION).exists(toBoolean(_, IGNORE_DELETES_OPTION))
 
+  val skipChangeCommits = options.get(SKIP_CHANGE_COMMITS_OPTION)
+    .exists(toBoolean(_, SKIP_CHANGE_COMMITS_OPTION))
+
   val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
     .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
 
@@ -199,6 +202,10 @@ trait DeltaReadOptions extends DeltaOptionParser {
   }
 
   provideOneStartingOption()
+
+  val schemaTrackingLocation = options.get(SCHEMA_TRACKING_LOCATION)
+
+  val sourceTrackingId = options.get(STREAMING_SOURCE_TRACKING_ID)
 }
 
 
@@ -239,6 +246,7 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
+  val SKIP_CHANGE_COMMITS_OPTION = "skipChangeCommits"
   val FAIL_ON_DATA_LOSS_OPTION = "failOnDataLoss"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
   val DATA_CHANGE_OPTION = "dataChange"
@@ -258,6 +266,19 @@ object DeltaOptions extends DeltaLogging {
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
+
+  /**
+   * An option to allow column mapping enabled tables to conduct schema evolution during streaming
+   */
+  val SCHEMA_TRACKING_LOCATION = "schemaTrackingLocation"
+  /**
+   * An option to instruct DeltaSource to pick a customized subdirectory for schema log in case of
+   * rare conflicts such as when a stream needs to do a self-union of two Delta sources from the
+   * same table.
+   * The final schema log location will be $parent/_schema_log_${tahoeId}_${sourceTrackingId}.
+   */
+  val STREAMING_SOURCE_TRACKING_ID = "streamingSourceTrackingId"
+
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -285,6 +306,8 @@ object DeltaOptions extends DeltaLogging {
     MAX_RECORDS_PER_FILE,
     TXN_APP_ID,
     TXN_VERSION,
+    SCHEMA_TRACKING_LOCATION,
+    STREAMING_SOURCE_TRACKING_ID,
     "queryName",
     "checkpointLocation",
     "path",

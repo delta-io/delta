@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -236,7 +236,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(Seq(TestLegacyReaderWriterFeature))
-            .withFeatures(oldProtocolVersion.implicitlyEnabledFeatures))
+            .withFeatures(oldProtocolVersion.implicitlySupportedFeatures))
         val newProtocolVersion = deltaLog.snapshot.protocol
         assert(
           newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
@@ -259,6 +259,33 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         }
       }
     }
+
+  test("RESTORE doesn't account for session defaults") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+      withTempDir { dir =>
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        spark
+          .range(start = 10, end = 20)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val oldProtocol = log.update().protocol
+        assert(oldProtocol === Protocol(1, 1))
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
+          TableFeatureProtocolUtils.defaultPropertyKey(TestWriterFeature) -> "enabled") {
+          restoreTableToVersion(dir.getAbsolutePath, 0, isMetastoreTable = false)
+        }
+        val newProtocol = log.update().protocol
+        assert(newProtocol === oldProtocol)
+      }
+    }
+  }
 
   test("restore operation metrics in Delta table history") {
     withSQLConf(

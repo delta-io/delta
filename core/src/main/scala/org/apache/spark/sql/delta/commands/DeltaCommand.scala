@@ -21,12 +21,12 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
@@ -37,8 +37,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 /**
  * Helper trait for all delta commands.
@@ -144,7 +146,7 @@ trait DeltaCommand extends DeltaLogging {
       partitionSchema = txn.metadata.partitionSchema,
       dataSchema = txn.metadata.schema,
       bucketSpec = None,
-      deltaLog.fileFormat(txn.metadata),
+      deltaLog.fileFormat(txn.protocol, txn.metadata),
       txn.metadata.format.options)(spark)
   }
 
@@ -263,6 +265,109 @@ trait DeltaCommand extends DeltaLogging {
         DeltaTableIdentifier(path, tableIdentifier))
     }
     deltaLog
+  }
+
+  /**
+   * Send the driver-side metrics.
+   *
+   * This is needed to make the SQL metrics visible in the Spark UI.
+   * All metrics are default initialized with 0 so that's what we're
+   * reporting in case we skip an already executed action.
+   */
+  protected def sendDriverMetrics(spark: SparkSession, metrics: Map[String, SQLMetric]): Unit = {
+    val executionId = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(spark.sparkContext, executionId, metrics.values.toSeq)
+  }
+
+  /**
+   * Returns true if there is information in the spark session that indicates that this write
+   * has already been successfully written.
+   */
+  protected def hasBeenExecuted(txn: OptimisticTransaction, sparkSession: SparkSession,
+    options: Option[DeltaOptions] = None): Boolean = {
+    val (txnVersionOpt, txnAppIdOpt, isFromSessionConf) = getTxnVersionAndAppId(
+      sparkSession, options)
+    // only enter if both txnVersion and txnAppId are set
+    for (version <- txnVersionOpt; appId <- txnAppIdOpt) {
+      val currentVersion = txn.txnVersion(appId)
+      if (currentVersion >= version) {
+        logInfo(s"Already completed batch $version in application $appId. This will be skipped.")
+        if (isFromSessionConf && sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED)) {
+          // if we got txnAppId and txnVersion from the session config, we reset the
+          // version here, after skipping the current transaction, as a safety measure to
+          // prevent data loss if the user forgets to manually reset txnVersion
+          sparkSession.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_IDEMPOTENT_DML_TXN_VERSION)
+        }
+        return true
+      }
+    }
+    false
+  }
+
+  /**
+   * Returns SetTransaction if a valid app ID and version are present. Otherwise returns
+   * an empty list.
+   */
+  protected def createSetTransaction(
+    sparkSession: SparkSession,
+    deltaLog: DeltaLog,
+    options: Option[DeltaOptions] = None): Option[SetTransaction] = {
+    val (txnVersionOpt, txnAppIdOpt, isFromSessionConf) = getTxnVersionAndAppId(
+      sparkSession, options)
+    // only enter if both txnVersion and txnAppId are set
+    for (version <- txnVersionOpt; appId <- txnAppIdOpt) {
+      if (isFromSessionConf && sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED)) {
+        // if we got txnAppID and txnVersion from the session config, we reset the
+        // version here as a safety measure to prevent data loss if the user forgets
+        // to manually reset txnVersion
+        sparkSession.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_IDEMPOTENT_DML_TXN_VERSION)
+      }
+      return Some(SetTransaction(appId, version, Some(deltaLog.clock.getTimeMillis())))
+    }
+    None
+  }
+
+  /**
+   * Helper method to retrieve the current txn version and app ID. These are either
+   * retrieved from user-provided write options or from session configurations.
+   */
+  private def getTxnVersionAndAppId(
+    sparkSession: SparkSession,
+    options: Option[DeltaOptions]): (Option[Long], Option[String], Boolean) = {
+    var txnVersion: Option[Long] = None
+    var txnAppId: Option[String] = None
+    for (o <- options) {
+      txnVersion = o.txnVersion
+      txnAppId = o.txnAppId
+    }
+
+    var numOptions = txnVersion.size + txnAppId.size
+    // numOptions can only be 0 or 2, as enforced by
+    // DeltaWriteOptionsImpl.validateIdempotentWriteOptions so this
+    // assert should never be triggered
+    assert(numOptions == 0 || numOptions == 2, s"Only one of txnVersion and txnAppId " +
+      s"has been set via dataframe writer options: txnVersion = $txnVersion txnAppId = $txnAppId")
+    var fromSessionConf = false
+    if (numOptions == 0) {
+      txnVersion = sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_IDEMPOTENT_DML_TXN_VERSION)
+      // don't need to check for valid conversion to Long here as that
+      // is already enforced at set time
+      txnAppId = sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_IDEMPOTENT_DML_TXN_APP_ID)
+      // check that both session configs are set
+      numOptions = txnVersion.size + txnAppId.size
+      if (numOptions != 0 && numOptions != 2) {
+        throw DeltaErrors.invalidIdempotentWritesOptionsException(
+          "Both spark.databricks.delta.write.txnAppId and " +
+            "spark.databricks.delta.write.txnVersion must be specified for " +
+            "idempotent Delta writes")
+      }
+      fromSessionConf = true
+    }
+    (txnVersion, txnAppId, fromSessionConf)
   }
 
 }

@@ -22,6 +22,8 @@ import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -40,6 +42,7 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 trait OptimizeCompactionSuiteBase extends QueryTest
   with SharedSparkSession
+  with DeletionVectorsTestUtils
   with DeltaColumnMappingTestUtils {
 
   import testImplicits._
@@ -151,6 +154,73 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         spark.read.format("delta").load(path).select("value").as[Long],
         (1L to 6L): _*)
     }
+  }
+
+  test(
+    s"optimize command with DVs") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+        // Create 10 files each with 1000 records
+        spark.range(start = 0, end = 10000, step = 1, numPartitions = 10)
+          .toDF("id")
+          .withColumn(colName = "extra", lit("just a random text to fill up the space....."))
+          .write.format("delta").mode("append").save(path) // v0
+
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val filesV0 = deltaLog.unsafeVolatileSnapshot.allFiles.collect()
+        assert(filesV0.size == 10)
+
+        // Default `optimize.maxDeletedRowsRatio` is 0.05.
+        // Delete slightly more than threshold ration in two files, less in one of the file
+        val file0 = filesV0(1)
+        val file1 = filesV0(4)
+        val file2 = filesV0(8)
+        deleteRows(deltaLog, file0, approxPhyRows = 1000, ratioOfRowsToDelete = 0.06d) // v1
+        deleteRows(deltaLog, file1, approxPhyRows = 1000, ratioOfRowsToDelete = 0.06d) // v2
+        deleteRows(deltaLog, file2, approxPhyRows = 1000, ratioOfRowsToDelete = 0.01d) // v3
+
+        // Add a one small file, so that the file selection is based on both the file size and
+        // deleted rows ratio
+        spark.range(start = 1, end = 2, step = 1, numPartitions = 1)
+            .toDF("id").withColumn(colName = "extra", lit(""))
+          .write.format("delta").mode("append").save(path) // v4
+        val smallFiles = addedFiles(deltaLog.getChanges(startVersion = 4).next()._2)
+        assert(smallFiles.size == 1)
+
+        // Save the data before optimize for comparing it later with optimize
+        val data = spark.read.format("delta").load(path)
+
+        // Set a low value for minFileSize so that the criteria for file selection is based on DVs
+        // and not based on the file size.
+        val targetSmallSize = smallFiles(0).size +  10 // A number just higher than the `smallFile`
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> targetSmallSize.toString) {
+          executeOptimizePath(path) // v5
+        }
+        val changes = deltaLog.getChanges(startVersion = 5).next()._2
+
+        // We expect the two files containing more than the threshold rows to be compacted.
+        var expectedRemoveFiles = Set(file0.path, file1.path)
+        // Expect the small file also to be compacted always
+        expectedRemoveFiles += smallFiles(0).path
+
+        assert(removedFiles(changes).map(_.path).toSet === expectedRemoveFiles)
+
+        assert(addedFiles(changes).size == 1) // Expect one new file added
+
+        // Verify the final data after optimization hasn't changed.
+        checkAnswer(spark.read.format("delta").load(path), data)
+      }
+    }
+  }
+
+  private def removedFiles(actions: Seq[Action]): Seq[RemoveFile] = {
+    actions.filter(_.isInstanceOf[RemoveFile]).map(_.asInstanceOf[RemoveFile])
+  }
+
+  private def addedFiles(actions: Seq[Action]): Seq[AddFile] = {
+    actions.filter(_.isInstanceOf[AddFile]).map(_.asInstanceOf[AddFile])
   }
 
   def appendRowsToDeltaTable(

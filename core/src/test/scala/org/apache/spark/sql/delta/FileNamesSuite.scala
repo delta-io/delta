@@ -45,8 +45,8 @@ class FileNamesSuite extends SparkFunSuite {
     assert(checkpointVersion(new Path("/a/999.checkpoint.0000000090.0000000099.parquet")) == 999)
   }
 
-  test("checkpointPrefix") {
-    assert(checkpointPrefix(new Path("/a"), 1234) == new Path("/a/00000000000000001234.checkpoint"))
+  test("listingPrefix") {
+    assert(listingPrefix(new Path("/a"), 1234) == new Path("/a/00000000000000001234."))
   }
 
   test("checkpointFileWithParts") {

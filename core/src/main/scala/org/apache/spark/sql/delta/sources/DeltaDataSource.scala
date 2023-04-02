@@ -88,8 +88,15 @@ class DeltaDataSource
       throw DeltaErrors.timeTravelNotSupportedException
     }
 
-    val snapshot = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)._2
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema)
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
+    val readSchema = {
+      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+        // Use `getSchemaAtLogInit` so it's always consistent between analysis and execution phase
+        .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+        .getOrElse(snapshot.schema)
+    }
+
+    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -113,12 +120,24 @@ class DeltaDataSource
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
+    val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
-    if (snapshot.schema.isEmpty) {
+    val schemaLogOpt =
+      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+    val readSchema = schemaLogOpt
+      .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+      .getOrElse(snapshot.schema)
+
+    if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
-    val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    DeltaSource(sqlContext.sparkSession, deltaLog, options, snapshot)
+    DeltaSource(
+      sqlContext.sparkSession,
+      deltaLog,
+      options,
+      snapshot,
+      schemaLog = schemaLogOpt
+    )
   }
 
   override def createSink(
@@ -215,6 +234,21 @@ class DeltaDataSource
     DeltaSourceUtils.ALT_NAME
   }
 
+  /**
+   * Create a schema log for Delta streaming source if possible
+   */
+  private def getSchemaLogForDeltaSource(
+      spark: SparkSession,
+      sourceSnapshot: Snapshot,
+      parameters: Map[String, String]): Option[DeltaSourceSchemaLog] = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+      .map { schemaTrackingLocation =>
+        DeltaSourceSchemaLog.create(
+          spark, schemaTrackingLocation, sourceSnapshot,
+          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)))
+      }
+  }
 
 }
 

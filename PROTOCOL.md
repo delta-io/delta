@@ -332,16 +332,16 @@ For example, streaming queries that are tailing the transaction log can use this
 
 The schema of the `add` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-path| String | A relative path to a data file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path.
-partitionValues| Map[String, String] | A map from partition column to value for this logical file. See also [Partition Value Serialization](#Partition-Value-Serialization)
-size| Long | The size of this data file in bytes
-modificationTime | Long | The time this logical file was created, as milliseconds since the epoch
-dataChange | Boolean | When `false` the logical file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version
-stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file
-tags | Map[String, String] | Map containing metadata about this logical file
-deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+path| String | A relative path to a data file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
+partitionValues| Map[String, String] | A map from partition column to value for this logical file. See also [Partition Value Serialization](#Partition-Value-Serialization) | required
+size| Long | The size of this data file in bytes | required
+modificationTime | Long | The time this logical file was created, as milliseconds since the epoch | required
+dataChange | Boolean | When `false` the logical file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version | required
+stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
+tags | Map[String, String] | Map containing metadata about this logical file | optional
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 
 The following is an example `add` action:
 ```json
@@ -359,16 +359,16 @@ The following is an example `add` action:
 
 The schema of the `remove` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path.
-deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch
-dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
-extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
-partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
-size| Long | The size of this data file in bytes
-tags | Map[String, String] | Map containing metadata about this file
-deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
+deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
+dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
+size| Long | The size of this data file in bytes | optional
+tags | Map[String, String] | Map containing metadata about this file | optional
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 
 The following is an example `remove` action.
 ```json
@@ -647,6 +647,14 @@ When enabled:
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
+# Timestamp without timezone (TimestampNTZ)
+This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
+The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
+
+Enablement:
+ - To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+
 ## Deletion Vector Descriptor Schema
 
 The schema of the `DeletionVectorDescriptor` struct is as follows:
@@ -706,6 +714,9 @@ The row indexes encoded in this DV are: 3, 4, 7, 11, 18, 29.
 
 ## Reader Requirements for Deletion Vectors
 If a snapshot contains logical files with records that are invalidated by a DV, then these records *must not* be returned in the output.
+
+## Writer Requirement for Deletion Vectors
+When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -883,14 +894,16 @@ Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - W
 ## Valid Feature Names in Table Features
 
 Feature | Name | Readers or Writers?
--|-|-|-
+-|-|-
 [Append-only Tables](#append-only-tables) | `appendOnly` | Writers only
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
 [Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+[Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
+[Timestamp without Timezone](#timestamp-ntz) | `timestampNTZ` | Readers and writers
 
 ## Deletion Vector Format
 
@@ -953,9 +966,10 @@ The following global statistic is currently supported:
 
 Name | Description
 -|-
-numRecords | The number of records in this file.
+numRecords | The number of records in this data file.
 tightBounds | Whether per-column statistics are currently **tight** or **wide** (see below).
 
+For any logical file where `deletionVector` is not `null`, the `numRecords` statistic *must* be present and accurate. That is, it must equal the number of records in the data file, not the valid records in the logical file.
 In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping.
 
 Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
@@ -1000,9 +1014,13 @@ Type | Serialization Format
 string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
-timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` For example: `1970-01-01 00:00:00`
+timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
+timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
+
+Note: A `timestamp` value in a partition value doesn't store the time zone due to historical reasons.
+It means its behavior looks similar to `timestamp without time zone` when it is used in a partition column.
 
 ## Schema Serialization Format
 
@@ -1024,7 +1042,10 @@ decimal| signed decimal number with fixed precision (maximum number of digits) a
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
-timestamp| Microsecond precision timestamp without a timezone.
+timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
+timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+
+See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
 Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
 

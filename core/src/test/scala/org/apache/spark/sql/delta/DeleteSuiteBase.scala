@@ -421,8 +421,7 @@ abstract class DeleteSuiteBase extends QueryTest
       withTable("deltaTable") {
         data.write.format("delta").saveAsTable("deltaTable")
 
-        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
-          s".*Invalid expressions: \\[$function.*"
+        val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
         var catchException = true
 

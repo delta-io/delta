@@ -26,28 +26,40 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.apache.iceberg.{PartitionField, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
+import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
 
-import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 // scalastyle:on import.ordering.noEmptyLine
 
-trait ConvertIcebergToDeltaUtils extends SharedSparkSession
-  with DeltaSQLCommandTest {
+class IcebergCompatibleDeltaTestSparkSession(sparkConf: SparkConf)
+    extends TestSparkSession(sparkConf) {
+  override val extensions: SparkSessionExtensions = {
+    val extensions = new SparkSessionExtensions
+    new DeltaSparkSessionExtension().apply(extensions)
+    new IcebergSparkSessionExtensions().apply(extensions)
+    extensions
+  }
+}
+
+trait ConvertIcebergToDeltaUtils extends SharedSparkSession {
 
   protected var warehousePath: File = null
   protected lazy val table: String = "local.db.table"
@@ -91,6 +103,13 @@ trait ConvertIcebergToDeltaUtils extends SharedSparkSession
     }
   }
 
+  override protected def createSparkSession: TestSparkSession = {
+    SparkSession.cleanupAnyExistingSession()
+    val session = new IcebergCompatibleDeltaTestSparkSession(sparkConf)
+    session.conf.set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
+    session
+  }
+
   protected override def sparkConf = super.sparkConf
     .set(
       "spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
@@ -114,6 +133,8 @@ trait ConvertIcebergToDeltaSuiteBase
   extends QueryTest
   with ConvertIcebergToDeltaUtils
   with StatsUtils {
+
+  import testImplicits._
 
   protected def convert(tableIdentifier: String, partitioning: Option[String] = None,
       collectStats: Boolean = true): Unit
@@ -784,6 +805,103 @@ trait ConvertIcebergToDeltaSuiteBase
     }
   }
 
+  test("mor table without deletion files") {
+    withTable(table) {
+      spark.sql(
+        s"""CREATE TABLE $table (id bigint, data string)
+           |USING iceberg
+           |TBLPROPERTIES (
+           |  "format-version" = "2",
+           |  "write.delete.mode" = "merge-on-read"
+           |)
+           |""".stripMargin)
+      spark.sql(s"INSERT INTO $table VALUES (1, 'a')")
+      spark.sql(s"INSERT INTO $table VALUES (2, 'b')")
+      spark.sql(s"DELETE FROM $table WHERE id = 1")
+      // The two rows above should've been in separate files, and DELETE will remove all rows from
+      // one file completely, in this case, we could still convert the table as Spark scan will
+      // ignore the completely deleted file.
+      convert(s"iceberg.`$tablePath`")
+      checkAnswer(
+        spark.read.format("delta").load(tablePath),
+        Row(2, "b") :: Nil
+      )
+    }
+  }
+
+  test("block convert: mor table with deletion files") {
+    def setupBulkMorTable(): Unit = {
+      spark.sql(
+        s"""CREATE TABLE $table (id bigint, data string)
+           |USING iceberg
+           |TBLPROPERTIES (
+           |  "format-version" = "2",
+           |  "write.delete.mode" = "merge-on-read",
+           |  "write.update.mode" = "merge-on-read",
+           |  "write.merge.mode" = "merge-on-read"
+           |)
+           |""".stripMargin)
+      // Now we need to write a considerable amount of data in a dataframe fashion so Iceberg can
+      // combine multiple records in one Parquet file.
+      (0 until 100).map(i => (i.toLong, s"name_$i")).toDF("id", "data")
+        .write.format("iceberg").mode("append").saveAsTable(table)
+    }
+
+    def assertConversionFailed(): Unit = {
+      // By default, conversion should fail because it is unsafe.
+      val e = intercept[UnsupportedOperationException] {
+        convert(s"iceberg.`$tablePath`")
+      }
+      assert(e.getMessage.contains("merge-on-read"))
+    }
+
+    // --- DELETE
+    withTable(table) {
+      setupBulkMorTable()
+      // This should touch part of one Parquet file
+      spark.sql(s"DELETE FROM $table WHERE id = 1")
+      // By default, conversion should fail because it is unsafe.
+      assertConversionFailed()
+      // Force escape should work
+      withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE.key -> "true") {
+        convert(s"iceberg.`$tablePath`")
+        // ... but with data duplication
+        checkAnswer(
+          spark.read.format("delta").load(tablePath),
+          (0 until 100).map(i => Row(i.toLong, s"name_$i"))
+        )
+      }
+    }
+
+    // --- UPDATE
+    withTable(table) {
+      setupBulkMorTable()
+      // This should touch part of one Parquet file
+      spark.sql(s"UPDATE $table SET id = id * 2 WHERE id = 1")
+      // By default, conversion should fail because it is unsafe.
+      assertConversionFailed()
+    }
+
+    // --- MERGE
+    withTable(table) {
+      setupBulkMorTable()
+      (0 until 100).filter(_ % 2 == 0)
+        .toDF("id")
+        .createOrReplaceTempView("tempdata")
+
+      // This should touch part of one Parquet file
+      spark.sql(
+        s"""
+           |MERGE INTO $table t
+           |USING tempdata s
+           |ON t.id = s.id
+           |WHEN MATCHED THEN UPDATE SET t.data = "some_other"
+           |""".stripMargin)
+      // By default, conversion should fail because it is unsafe.
+      assertConversionFailed()
+    }
+  }
+
   test("block convert: binary type partition columns") {
     withTable(table) {
       spark.sql(
@@ -870,9 +988,7 @@ class ConvertIcebergToDeltaSQLSuite extends ConvertIcebergToDeltaSuiteBase {
   }
 }
 
-class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
-  with ConvertIcebergToDeltaUtils
-{
+class ConvertIcebergToDeltaPartitioningSuite extends QueryTest with ConvertIcebergToDeltaUtils {
 
   import testImplicits._
 
@@ -1345,10 +1461,18 @@ class ConvertIcebergToDeltaPartitioningSuite extends QueryTest
       val filterExpr = if (filter == "") "" else s"where $filter"
       if (policy == "EXCEPTION" && filterExpr != "" &&
         partitionSchemaDDL != "ts_year int" && partitionSchemaDDL != "ts_day date") {
-        val msg = intercept[SparkException] {
+        var thrownError = false
+        val msg = try {
           spark.sql(s"select * from delta.`$deltaPath` $filterExpr").collect()
-        }.getMessage
-        assert(msg.contains("spark.sql.legacy.timeParserPolicy"))
+        } catch {
+          case e: Throwable if e.isInstanceOf[org.apache.spark.SparkThrowable] &&
+            e.getMessage.contains("spark.sql.legacy.timeParserPolicy") =>
+            // SparkThrowable includes both SparkException and SparkUpgradeException which DBR
+            // and Photon throws respectively.
+            thrownError = true
+          case other => throw other
+        }
+        assert(thrownError, s"Error message $msg is incorrect.")
       } else {
         // check results of iceberg == delta
         checkAnswer(

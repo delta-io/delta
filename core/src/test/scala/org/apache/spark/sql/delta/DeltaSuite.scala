@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.{expr, lit, map_values, struct}
+import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -1595,14 +1595,11 @@ class DeltaSuite extends QueryTest
         Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
       val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
-
-      val filesToDelete = inputFiles.take(4)
-      filesToDelete.foreach { f =>
-        val deleted = tryDeleteNonRecursive(
-          tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
-          new Path(tempDirPath, f))
-        assert(deleted)
-      }
+      val fileToDelete = inputFiles.head
+      val pathToDelete = new Path(tempDirPath, fileToDelete)
+      val deleted = tryDeleteNonRecursive(
+        tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()), pathToDelete)
+      assert(deleted)
 
       val thrown = intercept[SparkException] {
         data.toDF().collect()
@@ -2261,6 +2258,514 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("idempotent write: idempotent DataFrame insert") {
+    withTempDir { tableDir =>
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "insertTest")
+
+      io.delta.tables.DeltaTable.createOrReplace(spark)
+        .addColumn("col1", "INT")
+        .addColumn("col2", "INT")
+        .location(tableDir.getCanonicalPath)
+        .execute()
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tableDir.getCanonicalPath)
+
+      def runInsert(data: (Int, Int)): Unit = {
+        Seq(data).toDF("col1", "col2")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tableDir.getCanonicalPath)
+      }
+
+      def assertTable(numRows: Int): Unit = {
+        val count = deltaTable.toDF.count()
+        assert(count == numRows)
+      }
+
+      // run insert (1,1), table should have 1 row (1,1)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runInsert((1, 1))
+      assertTable(1)
+      // run insert (2,2), table should have 2 rows (1,1),(2,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runInsert((2, 2))
+      assertTable(2)
+      // retry update 2, table should have 2 rows (1,1),(2,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runInsert((2, 2))
+      assertTable(2)
+      // run insert (3,3), table should have 3 rows (1,1),(2,2),(3,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runInsert((3, 3))
+      assertTable(3)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent SQL insert") {
+    withTempDir { tableDir =>
+      val tableName = "myInsertTable"
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "insertTestSQL")
+
+      spark.sql(s"CREATE TABLE $tableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        tableDir.getCanonicalPath + "'")
+
+      def runInsert(data: (Int, Int)): Unit = {
+        spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (${data._1}, ${data._2})")
+      }
+
+      def assertTable(numRows: Int): Unit = {
+        val count = spark.sql(s"SELECT * FROM $tableName").count()
+        assert(count == numRows)
+      }
+
+      // run insert (1,1), table should have 1 row (1,1)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runInsert((1, 1))
+      assertTable(1)
+      // run insert (2,2), table should have 2 rows (1,1),(2,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runInsert((2, 2))
+      assertTable(2)
+      // retry update 2, table should have 2 rows (1,1),(2,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runInsert((2, 2))
+      assertTable(2)
+      // run insert (3,3), table should have 3 rows (1,1),(2,2),(3,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runInsert((3, 3))
+      assertTable(3)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent DeltaTable merge") {
+    withTempDir { tableDir =>
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "mergeTest")
+
+      io.delta.tables.DeltaTable.createOrReplace(spark)
+        .addColumn("col1", "INT")
+        .addColumn("col2", "INT")
+        .location(tableDir.getCanonicalPath)
+        .execute()
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tableDir.getCanonicalPath)
+
+      def runMerge(data: (Int, Int)): Unit = {
+        val df = Seq(data).toDF("col1", "col2")
+        deltaTable.as("t")
+          .merge(
+            df.as("s"),
+            "t.col1 = s.col1")
+          .whenMatched.updateExpr(Map("t.col2" -> "t.col2 + s.col2"))
+          .whenNotMatched().insertAll()
+          .execute()
+      }
+
+      def assertTable(col2Val: Int, numRows: Int): Unit = {
+        val res1 = deltaTable.toDF.select("col2").where("col1 = 1").collect()
+        assert(res1.length == numRows)
+        assert(res1(0).getInt(0) == col2Val)
+      }
+
+      // merge (1,0) into empty table, table should have 1 row (1,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runMerge((1, 0))
+      assertTable(0, 1)
+      // merge (1,2) into table, table should have 1 row (1,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runMerge((1, 2))
+      assertTable(2, 1)
+      // retry merge 2, table should have 1 row (1,2)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runMerge((1, 2))
+      assertTable(2, 1)
+      // merge (1,3) into table, table should have 1 row (1,5)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runMerge((1, 3))
+      assertTable(5, 1)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent SQL merge") {
+    def withTempDirs(f: (File, File) => Unit): Unit = {
+      withTempDir { file1 =>
+        withTempDir { file2 =>
+          f(file1, file2)
+        }
+      }
+    }
+
+    withTempDirs { (tableDir, updateTableDir) =>
+      val targetTableName = "myMergeTable"
+      val sourceTableName = "updates"
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "mergeTestSQL")
+
+      spark.sql(s"CREATE TABLE $targetTableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        tableDir.getCanonicalPath + "'")
+      spark.sql(s"CREATE TABLE $sourceTableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        updateTableDir.getCanonicalPath + "'")
+
+      def runMerge(data: (Int, Int), txnVersion: Int): Unit = {
+        val df = Seq(data).toDF("col1", "col2")
+        spark.conf.set("spark.databricks.delta.write.txnVersion", s"$txnVersion")
+        df.write.format("delta").mode("overwrite").save(updateTableDir.getCanonicalPath)
+        spark.conf.set("spark.databricks.delta.write.txnVersion", s"$txnVersion")
+        spark.sql(s"""
+                     |MERGE INTO $targetTableName AS t USING $sourceTableName AS s
+                     | ON t.col1 = s.col1
+                     | WHEN MATCHED THEN UPDATE SET t.col2 = t.col2 + s.col2
+                     | WHEN NOT MATCHED THEN INSERT (col1, col2) VALUES (col1, col2)
+                     |""".stripMargin)
+      }
+
+      def assertTable(col2Val: Int, numRows: Int): Unit = {
+        val res1 = spark.sql(s"SELECT col2 FROM $targetTableName WHERE col1 = 1").collect()
+        assert(res1.length == numRows)
+        assert(res1(0).getInt(0) == col2Val)
+      }
+
+      // merge (1,0) into empty table, table should have 1 row (1,0)
+      runMerge((1, 0), 1)
+      assertTable(0, 1)
+      // merge (1,2) into table, table should have 1 row (1,2)
+      runMerge((1, 2), 2)
+      assertTable(2, 1)
+      // retry merge 2, table should have 1 row (1,2)
+      runMerge((1, 2), 2)
+      assertTable( 2, 1)
+      // merge (1,3) into table, table should have 1 row (1,5)
+      runMerge((1, 3), 3)
+      assertTable(5, 1)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent DeltaTable update") {
+    withTempDir { tableDir =>
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "updateTest")
+
+      io.delta.tables.DeltaTable.createOrReplace(spark)
+        .addColumn("col1", "INT")
+        .addColumn("col2", "INT")
+        .location(tableDir.getCanonicalPath)
+        .execute()
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tableDir.getCanonicalPath)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      Seq((1, 0)).toDF("col1", "col2")
+        .write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      def runUpdate(data: (Int, Int)): Unit = {
+        deltaTable.update(
+          condition = expr(s"col1 == ${data._1}"),
+          set = Map("col2" -> expr(s"col2 + ${data._2}"))
+        )
+      }
+
+      def assertTable(col2Val: Int, numRows: Int): Unit = {
+        val res1 = deltaTable.toDF.select("col2").where("col1 = 1").collect()
+        assert(res1.length == numRows)
+        assert(res1(0).getInt(0) == col2Val)
+      }
+
+      // run update (1,1), table should have 1 row (1,1)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runUpdate((1, 1))
+      assertTable(1, 1)
+      // run update (1,2), table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runUpdate((1, 2))
+      assertTable(3, 1)
+      // retry update 2, table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runUpdate((1, 2))
+      assertTable(3, 1)
+      // retry update 1, table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runUpdate((1, 1))
+      assertTable(3, 1)
+      // run update (1,3) into table, table should have 1 row (1,6)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runUpdate((1, 3))
+      assertTable(6, 1)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent SQL update") {
+    withTempDir { tableDir =>
+      val tableName = "myUpdateTable"
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "updateTestSQL")
+
+      spark.sql(s"CREATE TABLE $tableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        tableDir.getCanonicalPath + "'")
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (1, 0)")
+
+      def runUpdate(data: (Int, Int)): Unit = {
+        spark.sql(s"""
+                     |UPDATE $tableName SET
+                     | col2 = col2 + ${data._2} WHERE col1 = ${data._1}
+              """.stripMargin)
+      }
+
+      def assertTable(col2Val: Int, numRows: Int): Unit = {
+        val res1 = spark.sql(s"SELECT col2 FROM $tableName WHERE col1 = 1").collect()
+        assert(res1.length == numRows)
+        assert(res1(0).getInt(0) == col2Val)
+      }
+
+      // run update (1,1), table should have 1 row (1,1)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runUpdate((1, 1))
+      assertTable(1, 1)
+      // run update (1,2), table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runUpdate((1, 2))
+      assertTable(3, 1)
+      // retry update 2, table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      runUpdate((1, 2))
+      assertTable(3, 1)
+      // retry update 1, table should have 1 row (1,3)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runUpdate((1, 1))
+      assertTable(3, 1)
+      // run update (1,3) into table, table should have 1 row (1,6)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runUpdate((1, 3))
+      assertTable(6, 1)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent DeltaTable delete") {
+    withTempDir { tableDir =>
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "deleteTest")
+
+      io.delta.tables.DeltaTable.createOrReplace(spark)
+        .addColumn("col1", "INT")
+        .addColumn("col2", "INT")
+        .location(tableDir.getCanonicalPath)
+        .execute()
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tableDir.getCanonicalPath)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      Seq((1, 0), (2, 0), (3, 0), (4, 0)).toDF("col1", "col2")
+        .write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      def runDelete(toDelete: Int): Unit = {
+        deltaTable.delete(s"col1 = $toDelete")
+      }
+
+      def assertTable(numRows: Int): Unit = {
+        val rows = deltaTable.toDF.count()
+        assert(rows == numRows)
+      }
+
+      // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runDelete(1)
+      assertTable(3)
+      // add (1,0) back to table
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      Seq((1, 0)).toDF("col1", "col2")
+        .write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+      assertTable(4)
+      // retry delete 1, table should have 4 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runDelete(1)
+      assertTable(4)
+      // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runDelete(1)
+      assertTable(3)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: idempotent SQL delete") {
+    withTempDir { tableDir =>
+      val tableName = "myDeleteTable"
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "deleteTestSQL")
+
+      spark.sql(s"CREATE TABLE $tableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        tableDir.getCanonicalPath + "'")
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (1, 0), (2, 0), (3, 0), (4, 0)")
+
+      def runDelete(toDelete: Int): Unit = {
+        spark.sql(s"DELETE FROM $tableName WHERE col1 = $toDelete")
+      }
+
+      def assertTable(numRows: Long): Unit = {
+        val res1 = spark.sql(s"SELECT COUNT(*) FROM $tableName").collect()
+        assert(res1.length == 1)
+        assert(res1(0).getLong(0) == numRows)
+      }
+
+      // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runDelete(1)
+      assertTable(3)
+      // add (1,0) back to table
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (1, 0)")
+      assertTable(4)
+      // retry delete (1), table should have 4 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+      runDelete(1)
+      assertTable(4)
+      // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      runDelete(1)
+      assertTable(3)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
+  test("idempotent write: valid txnVersion") {
+    spark.conf.set("spark.databricks.delta.write.txnAppId", "deleteTestSQL")
+    val e = intercept[IllegalArgumentException] {
+      spark.sessionState.conf.setConfString(
+        "spark.databricks.delta.write.txnVersion", "someVersion")
+    }
+    assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
+      "long, but was someVersion")
+
+    // clean up
+    spark.conf.unset("spark.databricks.delta.write.txnAppId")
+    spark.conf.unset("spark.databricks.delta.write.txnVersion")
+  }
+
+  Seq("REPLACE", "CREATE OR REPLACE").foreach { command =>
+    test(s"Idempotent $command command") {
+      withTempDir { tableDir =>
+        val tableName = "myIdempotentReplaceTable"
+        withTable(tableName) {
+          spark.conf.set("spark.databricks.delta.write.txnAppId", "replaceTestSQL")
+          spark.sql(s"CREATE TABLE $tableName(c1 INT, c2 INT, c3 INT)" +
+            s"USING DELTA LOCATION '" + tableDir.getCanonicalPath + "'")
+
+          def runReplace(data: (Int, Int, Int)): Unit = {
+            spark.sql(s"$command table $tableName USING DELTA " +
+              s"as SELECT ${data._1} as c1, ${data._2} as c2, ${data._3} as c3")
+          }
+
+          def assertTable(numRows: Int, commitVersion: Int, data: (Int, Int, Int)): Unit = {
+            val count = spark.sql(s"SELECT * FROM $tableName").count()
+            assert(count == numRows)
+            val snapshot = DeltaLog.forTable(spark, tableDir.getCanonicalPath).update()
+            assert(snapshot.version == commitVersion)
+            val tableContent = spark.sql(s"SELECT * FROM $tableName").collect().head
+            assert(tableContent.getInt(0) == data._1)
+            assert(tableContent.getInt(1) == data._2)
+            assert(tableContent.getInt(2) == data._3)
+          }
+
+          // run replace (1,1,1) with version 1, table should have 1 row (1,1,1).
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+          runReplace((1, 1, 1))
+          assertTable(1, 1, (1, 1, 1))
+          // run replace (2,2,2) with version 2, table should have 1 row (2,2,2)
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+          runReplace((2, 2, 2))
+          assertTable(1, 2, (2, 2, 2))
+          // retry replace (3,3,3) with version 2, table should have 1 row (2,2,2).
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "2")
+          runReplace((3, 3, 3))
+          assertTable(1, 2, (2, 2, 2))
+          // run replace (4,4,4) with version 3, table should have 1 row (4,4,4).
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+          runReplace((4, 4, 4))
+          assertTable(1, 3, (4, 4, 4))
+          // run replace (5,5,5) with version 3, table should have 1 row (4,4,4).
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+          runReplace((5, 5, 5))
+          assertTable(1, 3, (4, 4, 4))
+          // clean up
+          spark.conf.unset("spark.databricks.delta.write.txnAppId")
+          spark.conf.unset("spark.databricks.delta.write.txnVersion")
+        }
+      }
+    }
+  }
+
+  test("idempotent write: auto reset txnVersion") {
+    withTempDir { tableDir =>
+      val tableName = "myAutoResetTable"
+      spark.conf.set("spark.databricks.delta.write.txnAppId", "autoReset")
+      spark.sql(s"CREATE TABLE $tableName (col1 INT, col2 INT) USING DELTA LOCATION '" +
+        tableDir.getCanonicalPath + "'")
+
+      // this write is done with txn version 0
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (1, 0)")
+      // this write should be skipped as the version is not reset so it will be applied
+      // with the same version
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
+      assert(spark.sql(s"SELECT * FROM $tableName").count() == 1)
+
+      // now enable auto reset
+      spark.conf.set("spark.databricks.delta.write.txnVersion.autoReset.enabled", "true")
+
+      // this write should be skipped as it is using the same txnVersion as the first write
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
+      // this should throw an exception as the txn version is automatically reset
+      val e1 = intercept[IllegalArgumentException] {
+        spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
+      }
+      assert(e1.getMessage == "Invalid options for idempotent Dataframe writes: " +
+        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
+        "must be specified for idempotent Delta writes")
+      // this write should succeed as it's using a newer version than the latest
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
+      spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
+      // this should throw an exception as the txn version is automatically reset
+      val e2 = intercept[IllegalArgumentException] {
+        spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
+      }
+      assert(e2.getMessage == "Invalid options for idempotent Dataframe writes: " +
+        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
+        "must be specified for idempotent Delta writes")
+
+      val res = spark.sql(s"SELECT col1 FROM $tableName")
+        .orderBy(asc("col1"))
+        .collect()
+      assert(res.length == 2)
+      assert(res(0).getInt(0) == 1)
+      assert(res(1).getInt(0) == 2)
+
+      // clean up
+      spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
+  }
+
   def idempotentWrite(
       mode: String,
       appId: String,
@@ -2537,6 +3042,19 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
         checkDatasetUnorderly(data.select("part2", "part1", "value").as[(String, String, Int)],
           ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
       }
+    }
+  }
+
+  test("replaceWhere dataframe V2 API with less than predicate") {
+    withTempDir { dir =>
+      val insertedDF = spark.range(10).toDF()
+
+      insertedDF.write.format("delta").save(dir.toString)
+
+      val otherDF = spark.range(start = 0, end = 4).toDF()
+      otherDF.writeTo(s"delta.`${dir.toString}`").overwrite(col("id") < 6)
+      checkAnswer(spark.read.load(dir.toString),
+        insertedDF.filter(col("id") >= 6).union(otherDF))
     }
   }
 }

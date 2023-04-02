@@ -1081,6 +1081,42 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
 
   testOptimizablePartitionExpression(
     "eventTime TIMESTAMP",
+    "day STRING",
+    Map("day" -> "DATE_FORMAT(eventTime, 'yyyy-MM-dd')"),
+    expectedPartitionExpr = DateFormatPartitionExpr("day", "yyyy-MM-dd"),
+    auxiliaryTestName = Option(" from timestamp"),
+    filterTestCases = Seq(
+      "eventTime < '2021-06-28 18:00:00'" ->
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+      "eventTime <= '2021-06-28 18:00:00'" ->
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+      "eventTime = '2021-06-28 18:00:00'" ->
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') = unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') = unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+      "eventTime > '2021-06-28 18:00:00'" ->
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+      "eventTime >= '2021-06-28 18:00:00'" ->
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
+          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+      "eventTime is null" -> Seq("(day IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "eventTime TIMESTAMP",
     "hour STRING",
     Map("hour" -> "(DATE_FORMAT(eventTime, 'yyyy-MM-dd-HH'))"),
     expectedPartitionExpr = DateFormatPartitionExpr("hour", "yyyy-MM-dd-HH"),

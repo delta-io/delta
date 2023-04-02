@@ -17,7 +17,7 @@
 import java.nio.file.Files
 import TestParallelization._
 
-val sparkVersion = "3.3.1"
+val sparkVersion = "3.3.2"
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
@@ -100,6 +100,9 @@ lazy val core = (project in file("core"))
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
+
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+    Test / envVars += ("DELTA_TESTING", "1"),
 
     // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
     createTargetClassesDir := {
@@ -204,9 +207,12 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     releaseSettings,
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.1.0" % "provided")
           .cross(CrossVersion.binary)
-      }
+      },
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1"
     )
   )
 
@@ -396,6 +402,16 @@ lazy val releaseSettings = Seq(
   Test / publishArtifact := false,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
+  pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+
+  // TODO: This isn't working yet ...
+  sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
+  credentials += Credentials(
+    "Sonatype Nexus Repository Manager",
+    "oss.sonatype.org",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ),
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
@@ -463,6 +479,23 @@ releaseProcess := Seq[ReleaseStep](
   commitReleaseVersion,
   tagRelease,
   releaseStepCommandAndRemaining("+publishSigned"),
+  // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
+  // manually.
+  //
+  // Do NOT use `sonatypePromote` - it will promote the closed staging repository (i.e. sync to
+  //                                Maven central)
+  //
+  // See https://github.com/xerial/sbt-sonatype#publishing-your-artifact.
+  //
+  // - sonatypePrepare: Drop the existing staging repositories (if exist) and create a new staging
+  //                    repository using sonatypeSessionName as a unique key
+  // - sonatypeBundleUpload: Upload your local staging folder contents to a remote Sonatype
+  //                         repository
+  // - sonatypeClose: closes your staging repository at Sonatype. This step verifies Maven central
+  //                  sync requirement, GPG-signature, javadoc and source code presence, pom.xml
+  //                  settings, etc
+  // TODO: this isn't working yet
+  // releaseStepCommand("sonatypePrepare; sonatypeBundleUpload; sonatypeClose"),
   setNextVersion,
   commitNextVersion
 )

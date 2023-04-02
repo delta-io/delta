@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
 import org.apache.iceberg.spark.SparkSchemaUtil
 import org.apache.iceberg.types.Type.TypeID
+import org.apache.iceberg.types.Types
 
 import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, StringType, StructField}
 
@@ -95,7 +96,7 @@ object IcebergPartitionUtil {
         //  - MONTH: yyyy-MM
         //  - DAY: yyyy-MM-dd
         //  - HOUR: yyyy-MM-dd-HH
-        ts.toHumanString(partValue.asInstanceOf[Int])
+        ts.toHumanString(Types.TimestampType.withoutZone(), partValue.asInstanceOf[Int])
       case dt: Dates =>
         // Matches all transform on Date input type: YEAR, MONTH, DAY
         // We directly use Iceberg's toHumanString(), which takes a date type source column and
@@ -103,7 +104,7 @@ object IcebergPartitionUtil {
         //  - YEAR: yyyy
         //  - MONTH: yyyy-MM
         //  - DAY: yyyy-MM-dd
-        dt.toHumanString(partValue.asInstanceOf[Int])
+        dt.toHumanString(Types.DateType.get(), partValue.asInstanceOf[Int])
       case _: Truncate[_] =>
         // Truncate transform
         // While Iceberg Truncate transform supports multiple input types, our converter

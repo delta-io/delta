@@ -93,7 +93,6 @@ trait DocsPath {
     "createExternalTableWithoutSchemaException",
     "createManagedTableWithoutSchemaException",
     "multipleSourceRowMatchingTargetRowInMergeException",
-    "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
@@ -161,19 +160,6 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNKNOWN_PRIVILEGE",
       messageParameters = Array(privilege)
     )
-  }
-
-  /**
-   * File not found hint for Delta, replacing the normal one which is inapplicable.
-   *
-   * Note that we must pass in the docAddress as a string, because the config is not available on
-   * executors where this method is called.
-   */
-  def deltaFileNotFoundHint(faqPath: String, path: String): String = {
-    recordDeltaEvent(null, "delta.error.fileNotFound", data = path)
-    "A file referenced in the transaction log cannot be found. This occurs when data has been " +
-      "manually deleted from the file system rather than using the table `DELETE` statement. " +
-      s"For more information, see $faqPath"
   }
 
   def columnNotFound(path: Seq[String], schema: StructType): Throwable = {
@@ -1650,13 +1636,6 @@ trait DeltaErrorsBase
         s"$numActions", s"$totalCommitAttemptTime"))
   }
 
-  def generatedColumnsNonDeltaFormatError(): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_INVALID_GENERATED_COLUMN_FORMAT",
-      messageParameters = Array.empty
-    )
-  }
-
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
@@ -1731,6 +1710,20 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DATA_TYPES",
       messageParameters = Array(prettyMessage, DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key)
+    )
+  }
+
+  def schemaContainsTimestampNTZType(
+      schema: StructType,
+      requiredProtocol: Protocol,
+      currentProtocol: Protocol): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ",
+      messageParameters = Array(
+        s"${formatSchema(schema)}",
+        s"$requiredProtocol",
+        s"$currentProtocol"
+      )
     )
   }
 
@@ -1880,6 +1873,21 @@ trait DeltaErrorsBase
     ColumnMappingException(
       s"Found duplicated physical name `$physicalName` in column mapping mode `${mode.name}` \n\t" +
       s"schema: \n ${schema.prettyJson}", mode
+    )
+  }
+
+  def maxColumnIdNotSet: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET",
+      messageParameters = Array(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+    )
+  }
+
+  def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
+      messageParameters = Array(
+        DeltaConfigs.COLUMN_MAPPING_MAX_ID.key, tableMax.toString, fieldMax.toString)
     )
   }
 
@@ -2558,7 +2566,7 @@ trait DeltaErrorsBase
 
   def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_STREAM_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
+      errorClass = "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
       Array(DeltaSQLConf
         .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key),
       Some(cause))
@@ -2624,6 +2632,49 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def failToDeserializeSchemaLog(location: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_DESERIALIZE_FAILED",
+      messageParameters = Array(location)
+    )
+  }
+
+  def failToParseSchemaLog: Throwable = {
+    new DeltaRuntimeException(errorClass = "DELTA_STREAMING_SCHEMA_LOG_PARSE_SCHEMA_FAILED")
+  }
+
+  def sourcesWithConflictingSchemaTrackingLocation(
+      schemaTrackingLocatiob: String,
+      tableOrPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT",
+      messageParameters = Array(schemaTrackingLocatiob, tableOrPath))
+  }
+
+  def incompatibleSchemaLogPartitionSchema(
+      persistedPartitionSchema: StructType,
+      tablePartitionSchema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_PARTITION_SCHEMA",
+      messageParameters = Array(persistedPartitionSchema.json, tablePartitionSchema.json))
+  }
+
+  def incompatibleSchemaLogDeltaTable(
+      persistedTableId: String,
+      tableId: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID",
+      messageParameters = Array(persistedTableId, tableId))
+  }
+
+  def schemaTrackingLocationNotUnderCheckpointLocation(
+      schemaTrackingLocation: String,
+      checkpointLocation: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT",
+      messageParameters = Array(schemaTrackingLocation, checkpointLocation))
+  }
+
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(
       errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
@@ -2637,11 +2688,45 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def deletionVectorInvalidRowIndex(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
   def deletionVectorChecksumMismatch(): Throwable = {
     new DeltaChecksumException(
       errorClass = "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH",
       messageParameters = Array.empty,
       pos = 0)
+  }
+
+  def addFileWithDVsMissingNumRecordsException: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")
+
+  def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS",
+      messageParameters = Array(version.toString))
+  }
+
+  def generateNotSupportedWithDeletionVectors(): Throwable =
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+
+  def addingDeletionVectorsDisallowedException(): Throwable =
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_ADDING_DELETION_VECTORS_DISALLOWED")
+
+  def unsupportedExpression(
+    causedBy: String,
+    expType: DataType,
+    supportedTypes: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION",
+      messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
+    )
   }
 }
 
@@ -2920,6 +3005,49 @@ class DeltaNoSuchTableException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+}
+
+class DeltaCommandUnsupportedWithDeletionVectorsException(
+  errorClass: String,
+  messageParameters: Array[String] = Array.empty)
+  extends UnsupportedOperationException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+sealed trait DeltaTablePropertyValidationFailedSubClass {
+  def tag: String
+  /** Can be overridden in case subclasses need the table name as well. */
+  def messageParameters(table: String): Array[String] = Array(table)
+}
+
+final object DeltaTablePropertyValidationFailedSubClass {
+  final case object PersistentDeletionVectorsWithIncrementalManifestGeneration
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "PERSISTENT_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+  }
+  final case object ExistingDeletionVectorsWithIncrementalManifestGeneration
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "EXISTING_DELETION_VECTORS_WITH_INCREMENTAL_MANIFEST_GENERATION"
+    /** This subclass needs the table parameters in two places. */
+    override def messageParameters(table: String): Array[String] = Array(table, table)
+  }
+  final case object PersistentDeletionVectorsInNonParquetTable
+    extends DeltaTablePropertyValidationFailedSubClass {
+    override val tag = "PERSISTENT_DELETION_VECTORS_IN_NON_PARQUET_TABLE"
+  }
+}
+
+class DeltaTablePropertyValidationFailedException(
+    table: String,
+    subClass: DeltaTablePropertyValidationFailedSubClass)
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
+    messageParameters = subClass.messageParameters(table)))
+    with DeltaThrowable {
+  override def getErrorClass: String =
+    "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
 }
 
 /** Errors thrown around column mapping. */

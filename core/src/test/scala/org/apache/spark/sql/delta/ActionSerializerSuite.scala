@@ -226,6 +226,117 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
 
+  private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.onDiskWithRelativePath(
+      id = UUID.randomUUID(),
+      randomPrefix = "a1",
+      sizeInBytes = 10,
+      cardinality = 2,
+      offset = Some(10))
+
+  private def deletionVectorWithAbsolutePath: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.onDiskWithAbsolutePath(
+      path = "/test.dv",
+      sizeInBytes = 10,
+      cardinality = 2,
+      offset = Some(10))
+
+  private def deletionVectorInline: DeletionVectorDescriptor =
+    DeletionVectorDescriptor.inlineInLog(Array(1, 2, 3, 4), 1)
+
+  roundTripCompare("Add with deletion vector - relative path",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorWithRelativePath))
+  roundTripCompare("Add with deletion vector - absolute path",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath))
+  roundTripCompare("Add with deletion vector - inline",
+    AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      tags = Map.empty,
+      deletionVector = deletionVectorInline))
+
+  roundTripCompare("Remove with deletion vector - relative path",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorWithRelativePath))
+  roundTripCompare("Remove with deletion vector - absolute path",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath))
+  roundTripCompare("Remove with deletion vector - inline",
+    RemoveFile(
+      path = "test",
+      deletionTimestamp = Some(1L),
+      extendedFileMetadata = Some(true),
+      partitionValues = Map.empty,
+      dataChange = true,
+      size = Some(1L),
+      tags = Map.empty,
+      deletionVector = deletionVectorInline))
+
+  // These make sure we don't accidentally serialise something we didn't mean to.
+  testActionSerDe(
+    name = "AddFile (with deletion vector) - json serialization/deserialization",
+    action = AddFile(
+      path = "test",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      stats = """{"numRecords":3}""",
+      tags = Map.empty,
+      deletionVector = deletionVectorWithAbsolutePath),
+    expectedJson =
+      """
+        |{"add":{
+        |"path":"test",
+        |"partitionValues":{},
+        |"size":1,
+        |"modificationTime":1,
+        |"dataChange":true,
+        |"stats":"{\"numRecords\":3}",
+        |"tags":{},
+        |"deletionVector":{
+        |"storageType":"p",
+        |"pathOrInlineDv":"/test.dv",
+        |"offset":10,
+        |"sizeInBytes":10,
+        |"cardinality":2}}
+        |}""".stripMargin.replaceAll("\n", ""),
+    extraSettings = Seq(
+      // Skip the table property check, so this write doesn't fail.
+      DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED.key -> "false")
+  )
+
 
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",
@@ -377,8 +488,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         val settings = Seq(
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
-          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
@@ -394,8 +504,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             FileNames.deltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
-          assert(committedActions.size == 1)
-          val serializedJson = committedActions.head
+          assert(committedActions.size == 2)
+          val serializedJson = committedActions.last
           assert(serializedJson === expectedJson)
           val asObject = Action.fromJson(serializedJson)
           assert(action === asObject)

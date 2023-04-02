@@ -312,6 +312,113 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  test("version from timestamp - before the first version") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 4000)
+      modifyDeltaTimestamp(deltaLog, 1, 8000)
+      modifyDeltaTimestamp(deltaLog, 2, 12000)
+
+      val ts0 = dateFormat.format(new Date(1000))
+      val ts1 = dateFormat.format(new Date(3000))
+      intercept[AnalysisException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getMessage.contains("before the earliest version")
+    }
+  }
+
+  test("version from timestamp - between two valid versions") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(1000))
+      val ts1 = dateFormat.format(new Date(3000))
+      val readDf = cdcRead(
+        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, tempDir),
+        readDf,
+        spark.range(0)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  test("version from timestamp - one version in between") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(3000))
+      val ts1 = dateFormat.format(new Date(5000))
+      val readDf = cdcRead(
+        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, tempDir),
+        readDf,
+        spark.range(10, 20)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  test("version from timestamp - end before start") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(3000))
+      val ts1 = dateFormat.format(new Date(1000))
+      intercept[DeltaIllegalArgumentException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+    }
+  }
+
+  test("version from timestamp - end before start with one version in between") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(5000))
+      val ts1 = dateFormat.format(new Date(3000))
+      intercept[DeltaIllegalArgumentException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+    }
+  }
+
   test("start version and end version are the same") {
     val tblName = "tbl"
     withTable(tblName) {

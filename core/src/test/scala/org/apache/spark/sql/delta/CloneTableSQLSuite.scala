@@ -206,7 +206,8 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
 class CloneTableSQLIdColumnMappingSuite
   extends CloneTableSQLSuite
     with CloneTableColumnMappingSuiteBase
-    with DeltaColumnMappingEnableIdMode
+    with DeltaColumnMappingEnableIdMode {
+}
 
 class CloneTableSQLNameColumnMappingSuite
   extends CloneTableSQLSuite

@@ -38,6 +38,9 @@ case class OptimizeStats(
     var endTimeMs: Long = 0,
     var totalClusterParallelism: Long = 0,
     var totalScheduledTasks: Long = 0,
+    var deletionVectorStats: Option[DeletionVectorStats] = None,
+    var numTableColumns: Long = 0,
+    var numTableColumnsWithStats: Long = 0,
     var autoCompactParallelismStats: AutoCompactParallelismStats = AutoCompactParallelismStats()) {
 
   def toOptimizeMetrics: OptimizeMetrics = {
@@ -58,6 +61,9 @@ case class OptimizeStats(
       endTimeMs = endTimeMs,
       totalClusterParallelism = totalClusterParallelism,
       totalScheduledTasks = totalScheduledTasks,
+      deletionVectorStats = deletionVectorStats,
+      numTableColumns = numTableColumns,
+      numTableColumnsWithStats = numTableColumnsWithStats,
       autoCompactParallelismStats = autoCompactParallelismStats.toMetrics)
   }
 }
@@ -202,8 +208,10 @@ object FileSizeStatsWithHistogram {
  * @param endTimeMs The end time of Optimize command.
  * @param totalClusterParallelism The total number of parallelism of this cluster.
  * @param totalScheduledTasks The total number of optimize task scheduled.
- * @param parallelismMetrics The metrics of cluster and session parallelism used by optimize
- *                           command.
+ * @param autoCompactParallelismStats The metrics of cluster and session parallelism.
+ * @param deletionVectorStats Statistics related with Deletion Vectors.
+ * @param numTableColumns Number of columns in the table.
+ * @param numTableColumnsWithStats Number of table columns to collect data skipping stats.
  */
 case class OptimizeMetrics(
     numFilesAdded: Long,
@@ -224,7 +232,10 @@ case class OptimizeMetrics(
     endTimeMs: Long = 0,
     totalClusterParallelism: Long = 0,
     totalScheduledTasks: Long = 0,
-    autoCompactParallelismStats: Option[ParallelismMetrics] = None
+    autoCompactParallelismStats: Option[ParallelismMetrics] = None,
+    deletionVectorStats: Option[DeletionVectorStats] = None,
+    numTableColumns: Long = 0,
+    numTableColumnsWithStats: Long = 0
   )
 
 /**
@@ -253,3 +264,12 @@ case class ParallelismMetrics(
      minClusterActiveParallelism: Option[Long] = None,
      maxSessionActiveParallelism: Option[Long] = None,
      minSessionActiveParallelism: Option[Long] = None)
+
+/**
+ * Accumulator for statistics related with Deletion Vectors.
+ * Note that this case class contains mutable variables and cannot be used in places where immutable
+ * case classes can be used (e.g. map/set keys).
+ */
+case class DeletionVectorStats(
+  var numDeletionVectorsRemoved: Long = 0,
+  var numDeletionVectorRowsRemoved: Long = 0)
