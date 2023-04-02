@@ -199,14 +199,14 @@ class DeltaTableSuite extends QueryTest with SharedSparkSession with DeltaSQLCom
 }
 
 class DeltaTableHadoopOptionsSuite
-    extends QueryTest
+  extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
   import testImplicits._
 
   private def readDeltaUserMetadataByPath(path: String): DataFrame = {
-    io.delta.tables.DeltaTable.forPath(spark, path).history().select("userMetadata")
+    io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions).history().select("userMetadata")
   }
 
   protected override def sparkConf =
@@ -230,13 +230,13 @@ class DeltaTableHadoopOptionsSuite
   // Ensure any new API from [[DeltaTable]] has to verify it can work with custom file system
   // options.
   private val publicMethods =
-    scala.reflect.runtime.universe
-      .typeTag[io.delta.tables.DeltaTable]
-      .tpe
-      .decls
-      .filter(_.isPublic)
-      .map(_.name.toString)
-      .toSet
+  scala.reflect.runtime.universe
+    .typeTag[io.delta.tables.DeltaTable]
+    .tpe
+    .decls
+    .filter(_.isPublic)
+    .map(_.name.toString)
+    .toSet
 
   private val ignoreMethods = Seq()
 
@@ -403,9 +403,9 @@ class DeltaTableHadoopOptionsSuite
     withTempDir { dir =>
       val path = fakeFileSystemPath(dir)
       val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
-      df.write.format("delta").save(path)
+      df.write.options(fakeFileSystemOptions).format("delta").save(path)
 
-      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val table = io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
 
       table.updateExpr(Map("key" -> "100"), Some("test user metadata"))
 
@@ -417,9 +417,9 @@ class DeltaTableHadoopOptionsSuite
     withTempDir { dir =>
       val path = fakeFileSystemPath(dir)
       val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
-      df.write.format("delta").save(path)
+      df.write.options(fakeFileSystemOptions).format("delta").save(path)
 
-      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val table = io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
 
       table.update(Map("key" -> functions.expr("100")), Some("test user metadata"))
 
@@ -445,7 +445,7 @@ class DeltaTableHadoopOptionsSuite
         .execute()
 
       checkAnswer(readDeltaUserMetadataByPath(path),
-        Row(null) :: Row(null) :: Row("test user metadata") :: Nil)
+        Row(null) :: Row("test user metadata") :: Nil)
     }
   }
 
