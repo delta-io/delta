@@ -26,7 +26,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
@@ -35,12 +35,13 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -170,12 +171,41 @@ object Protocol {
   /**
    * Picks the protocol version for a new table given the Delta table metadata. The result
    * satisfies all active features in the metadata and protocol-related configs in table
-   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
-   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   * properties, i.e., configs with keys [[MIN_READER_VERSION_PROP]], [[MIN_WRITER_VERSION_PROP]],
+   * and [[FEATURE_PROP_PREFIX]]. This method will also consider protocol-related configs: default
+   * reader version, default writer version, and features enabled by
+   * [[DEFAULT_FEATURE_PROP_PREFIX]].
    */
   def forNewTable(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
-    val (readerVersion, writerVersion, enabledFeatures) = minProtocolComponentsForNewTable(
-        spark, metadataOpt)
+    // `minProtocolComponentsFromMetadata` does not consider sessions defaults,
+    // so we must copy sessions defaults to table metadata.
+    val conf = spark.sessionState.conf
+    val ignoreProtocolDefaults = DeltaConfigs.ignoreProtocolDefaultsIsSet(
+      sqlConfs = conf,
+      tableConf = metadataOpt.map(_.configuration).getOrElse(Map.empty))
+    val defaultGlobalConf = if (ignoreProtocolDefaults) {
+      Map(MIN_READER_VERSION_PROP -> 1.toString, MIN_WRITER_VERSION_PROP -> 1.toString)
+    } else {
+      Map(
+        MIN_READER_VERSION_PROP ->
+          conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).toString,
+        MIN_WRITER_VERSION_PROP ->
+          conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).toString)
+    }
+    val overrideGlobalConf = DeltaConfigs
+      .mergeGlobalConfigs(
+        sqlConfs = spark.sessionState.conf,
+        tableConf = Map.empty,
+        ignoreProtocolConfsOpt = Some(ignoreProtocolDefaults))
+      // We care only about protocol related stuff
+      .filter { case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k) }
+    var metadata = metadataOpt.getOrElse(Metadata())
+    // Priority: user-provided > override of session defaults > session defaults
+    metadata = metadata.copy(configuration =
+      defaultGlobalConf ++ overrideGlobalConf ++ metadata.configuration)
+
+    val (readerVersion, writerVersion, enabledFeatures) =
+      minProtocolComponentsFromMetadata(spark, metadata)
     Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
   }
 
@@ -202,72 +232,69 @@ object Protocol {
   /**
    * Given the Delta table metadata, returns the minimum required reader and writer version that
    * satisfies all enabled features in the metadata and protocol-related configs in table
-   * properties or session defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]],
-   * [[MIN_WRITER_VERSION_PROP]], [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   * properties, i.e., configs with keys [[MIN_READER_VERSION_PROP]], [[MIN_WRITER_VERSION_PROP]],
+   * and [[FEATURE_PROP_PREFIX]].
    *
    * This function returns the protocol versions and features individually instead of a
    * [[Protocol]], so the caller can identify the features that caused the protocol version. For
    * example, if the return values are (2, 5, columnMapping), the caller can safely ignore all
    * other features required by the protocol with a reader and writer version of 2 and 5.
+   *
+   * Note that this method does not consider protocol versions and features configured in session
+   * defaults. To make them effective, copy them to `metadata` using
+   * [[DeltaConfigs.mergeGlobalConfigs]].
    */
-  def minProtocolComponentsForNewTable(
-      spark: SparkSession, metadataOpt: Option[Metadata]): (Int, Int, Set[TableFeature]) = {
-    val sessionConf = spark.sessionState.conf
-    val tableConf = metadataOpt.map(_.configuration).getOrElse(Map.empty[String, String])
-
+  def minProtocolComponentsFromMetadata(
+      spark: SparkSession,
+      metadata: Metadata): (Int, Int, Set[TableFeature]) = {
+    val tableConf = metadata.configuration
     // There might be features enabled by the table properties aka
-    // `CREATE TABLE ... TBLPROPERTIES ...` or by session defaults.
-    val tablePropEnabledFeatures =
-      getEnabledFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
-    val sessionEnabledFeatures =
-      getEnabledFeaturesFromConfigs(sessionConf.getAllConfs, DEFAULT_FEATURE_PROP_PREFIX)
-    val featuresFromMetadata =
-      metadataOpt.map(extractAutomaticallyEnabledFeatures(spark, _)).getOrElse(Set[TableFeature]())
-    val allEnabledFeatures =
-      tablePropEnabledFeatures ++ sessionEnabledFeatures ++ featuresFromMetadata
+    // `CREATE TABLE ... TBLPROPERTIES ...`.
+    val tablePropEnabledFeatures = getSupportedFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
+    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+    val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
-    // Determine the min reader and writer version required by features in table properties,
-    // session defaults or metadata. If all features are legacy, we start from (0, 0). If any
-    // feature is native and reader-writer, we start from (3, 7). Otherwise we start from (0, 7)
-    // because there must exist a native writer-only feature.
-    val initialProtocol = if (allEnabledFeatures.forall(_.isLegacyFeature)) {
-      Protocol(0, 0)
-    } else if (allEnabledFeatures.exists(f =>
-        !f.isLegacyFeature && f.isReaderWriterFeature)) {
-      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    } else {
-      Protocol(0, TABLE_FEATURES_MIN_WRITER_VERSION)
+    // Determine the min reader and writer version required by features in table properties or
+    // metadata.
+    // If any table property is specified:
+    //   we start from (3, 7) or (0, 7) depending on the existence of any writer-only feature.
+    // If there's no table property:
+    //   if no feature is enabled or all features are legacy, we start from (0, 0);
+    //   if any feature is native and is reader-writer, we start from (3, 7);
+    //   otherwise we start from (0, 7) because there must exist a native writer-only feature.
+    var (readerVersionFromFeatures, writerVersionFromFeatures) = {
+      if (tablePropEnabledFeatures.exists(_.isReaderWriterFeature)) {
+        (TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else if (tablePropEnabledFeatures.nonEmpty) {
+        (0, TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else if (metaEnabledFeatures.forall(_.isLegacyFeature)) { // also true for empty set
+        (0, 0)
+      } else if (metaEnabledFeatures.exists(f => !f.isLegacyFeature && f.isReaderWriterFeature)) {
+        (TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else {
+        (0, TABLE_FEATURES_MIN_WRITER_VERSION)
+      }
     }
-    val minProtocolFromFeatures = initialProtocol.merge(
-      allEnabledFeatures.map(_.minProtocolVersion).toSeq: _*)
+    allEnabledFeatures.foreach { feature =>
+      readerVersionFromFeatures = math.max(readerVersionFromFeatures, feature.minReaderVersion)
+      writerVersionFromFeatures = math.max(writerVersionFromFeatures, feature.minWriterVersion)
+    }
 
-    // If the protocol version is provided in table properties, they will take priority over
-    // versions in `minProtocolFromFeatures`.
-    val readerVersionFromTableConfOpt = tableConf
-      .get(MIN_READER_VERSION_PROP)
-      .map(getVersion(MIN_READER_VERSION_PROP, _))
-    val writerVersionFromTableConfOpt = tableConf
-      .get(MIN_WRITER_VERSION_PROP)
-      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
+    // Protocol version provided in table properties can upgrade the protocol, but only when they
+    // are higher than which required by the enabled features.
+    val readerVersionFromTableConfOpt =
+      tableConf.get(MIN_READER_VERSION_PROP).map(getVersion(MIN_READER_VERSION_PROP, _))
+    val writerVersionFromTableConfOpt =
+      tableConf.get(MIN_WRITER_VERSION_PROP).map(getVersion(MIN_WRITER_VERSION_PROP, _))
 
     // Decide the final protocol version:
-    // 1. Get the version defined as properties: table property takes precedence over
-    //   session defaults
-    // 2. Get the max of these two:
-    //   a. version defined as properties
+    //   a. 1, aka the lowest version possible
     //   b. version required by manually enabled features and metadata features
-    val finalReaderVersion = {
-      val minReaderVersionFromNumbers: Int = readerVersionFromTableConfOpt.getOrElse(
-        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
-      minReaderVersionFromNumbers // 2a
-        .max(minProtocolFromFeatures.minReaderVersion) // 2b
-    }
-    val finalWriterVersion = {
-      val minWriterVersionFromNumbers: Int = writerVersionFromTableConfOpt.getOrElse(
-        sessionConf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
-      minWriterVersionFromNumbers // 2a
-        .max(minProtocolFromFeatures.minWriterVersion) // 2b
-    }
+    //   c. version defined as table properties
+    val finalReaderVersion =
+      Seq(1, readerVersionFromFeatures, readerVersionFromTableConfOpt.getOrElse(0)).max
+    val finalWriterVersion =
+      Seq(1, writerVersionFromFeatures, writerVersionFromTableConfOpt.getOrElse(0)).max
 
     (finalReaderVersion, finalWriterVersion, allEnabledFeatures)
   }
@@ -276,14 +303,14 @@ object Protocol {
    * Given the Delta table metadata, returns the minimum required reader and writer version
    * that satisfies all enabled table features in the metadata plus all enabled features as a set.
    *
-   * This function returns the protocol versions and features individually instead of
-   * a [[Protocol]] so the caller can identify the features that caused the protocol version. For
+   * This function returns the protocol versions and features individually instead of a
+   * [[Protocol]], so the caller can identify the features that caused the protocol version. For
    * example, if the return values are (2, 5, columnMapping), the caller can safely ignore all
    * other features required by the protocol with a reader and writer version of 2 and 5.
    *
    * This method does not process protocol-related configs in table properties or session
    * defaults, i.e., configs with keys [[MIN_READER_VERSION_PROP]], [[MIN_WRITER_VERSION_PROP]],
-   * [[FEATURE_PROP_PREFIX]], and [[DEFAULT_FEATURE_PROP_PREFIX]].
+   * and [[FEATURE_PROP_PREFIX]].
    */
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession, metadata: Metadata): (Int, Int, Set[TableFeature]) = {
@@ -324,6 +351,10 @@ object Protocol {
       !metadata.configuration.keys.exists(_.startsWith(FEATURE_PROP_PREFIX)),
       "Should not have " +
         s"table features (starts with '$FEATURE_PROP_PREFIX') as part of table properties")
+    assert(
+      !metadata.configuration.contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key),
+      "Should not have the table property " +
+        s"${DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key} stored in table metadata")
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
 
@@ -339,6 +370,46 @@ object Protocol {
     }
   }
 
+  /**
+   * Verify that the table properties satisfy legality constraints. Throw an exception if not.
+   */
+  def assertTablePropertyConstraintsSatisfied(
+      spark: SparkSession,
+      metadata: Metadata,
+      snapshot: Snapshot): Unit = {
+    import DeltaTablePropertyValidationFailedSubClass._
+
+    val tableName = if (metadata.name != null) metadata.name else metadata.id
+
+    val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    val dvsEnabled = {
+      val lowerCaseKey = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key.toLowerCase(Locale.ROOT)
+      configs.get(lowerCaseKey).exists(_.toBoolean)
+    }
+    if (dvsEnabled && metadata.format.provider != "parquet") {
+      // DVs only work with parquet-based delta tables.
+      throw new DeltaTablePropertyValidationFailedException(
+        table = tableName,
+        subClass = PersistentDeletionVectorsInNonParquetTable)
+    }
+    val manifestGenerationEnabled = {
+      val lowerCaseKey = DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key.toLowerCase(Locale.ROOT)
+      configs.get(lowerCaseKey).exists(_.toBoolean)
+    }
+    if (dvsEnabled && manifestGenerationEnabled) {
+      throw new DeltaTablePropertyValidationFailedException(
+        table = tableName,
+        subClass = PersistentDeletionVectorsWithIncrementalManifestGeneration)
+    }
+    if (manifestGenerationEnabled) {
+      // Only allow enabling this, if there are no DVs present.
+      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+        throw new DeltaTablePropertyValidationFailedException(
+          table = tableName,
+          subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
+      }
+    }
+  }
 }
 
 /**
@@ -374,12 +445,16 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
+
+  def toPath: Path = new Path(pathAsUri)
 }
 
 /**
  * Adds a new file to the table. When multiple [[AddFile]] file actions
  * are seen with the same `path` only the metadata from the last one is
  * kept.
+ *
+ * [[path]] is URL-encoded.
  */
 case class AddFile(
     override val path: String,
@@ -389,7 +464,8 @@ case class AddFile(
     modificationTime: Long,
     override val dataChange: Boolean,
     stats: String = null,
-    override val tags: Map[String, String] = null
+    override val tags: Map[String, String] = null,
+    deletionVector: DeletionVectorDescriptor = null
 ) extends FileAction {
   require(path.nonEmpty)
 
@@ -405,11 +481,52 @@ case class AddFile(
     // scalastyle:off
     val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
+      deletionVector = deletionVector
     )
+    removedFile.numLogicalRecords = numLogicalRecords
+    removedFile.estLogicalFileSize = estLogicalFileSize
     // scalastyle:on
     removedFile
   }
+
+  /**
+   * Logically remove rows by associating a `deletionVector` with the file.
+   * @param deletionVector: The descriptor of the DV that marks rows as deleted.
+   * @param dataChange: When false, the actions are marked as no-data-change actions.
+   */
+  def removeRows(
+        deletionVector: DeletionVectorDescriptor,
+        dataChange: Boolean = true): (AddFile, RemoveFile) = {
+    // Verify DV does not contain any invalid row indexes. Note, maxRowIndex is optional
+    // and not all commands may set it when updating DVs.
+    (numPhysicalRecords, deletionVector.maxRowIndex) match {
+      case (Some(numPhysicalRecords), Some(maxRowIndex))
+        if (maxRowIndex + 1 > numPhysicalRecords) =>
+          throw DeltaErrors.deletionVectorInvalidRowIndex()
+      case _ => // Nothing to check.
+    }
+    // We make sure maxRowIndex is not stored in the log.
+    val dvDescriptorWithoutMaxRowIndex = deletionVector.maxRowIndex match {
+      case Some(_) => deletionVector.copy(maxRowIndex = None)
+      case _ => deletionVector
+    }
+    val withUpdatedDV =
+      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    val addFile = withUpdatedDV
+    val removeFile = this.removeWithTimestamp(dataChange = dataChange)
+    (addFile, removeFile)
+  }
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * The unique id differentiates DVs, even if there are multiple in the same file
+   * or the DV is stored inline.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
@@ -437,6 +554,15 @@ case class AddFile(
       numLogicalRecords: Option[Long]
   )
 
+  /**
+   * Before serializing make sure deletionVector.maxRowIndex is not defined.
+   * This is only a transient property and it is not intended to be stored in the log.
+   */
+  override def json: String = {
+    if (deletionVector != null) assert(!deletionVector.maxRowIndex.isDefined)
+    super.json
+  }
+
   @JsonIgnore
   @transient
   private lazy val parsedStatsFields: Option[ParsedStatsFields] = {
@@ -447,6 +573,7 @@ case class AddFile(
 
       val numLogicalRecords = if (node.has("numRecords")) {
         Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+          .map(_ - numDeletedRecords)
       } else None
 
       Some(ParsedStatsFields(
@@ -460,6 +587,28 @@ case class AddFile(
   override lazy val numLogicalRecords: Option[Long] =
     parsedStatsFields.flatMap(_.numLogicalRecords)
 
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
+
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  def estLogicalFileSize: Option[Long] = logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
+
+  /** Returns the ratio of the logical number of records to the total number of records. */
+  @JsonIgnore
+  def logicalToPhysicalRecordsRatio: Option[Double] = {
+    numLogicalRecords.map(numLogicalRecords =>
+      numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords).toDouble)
+  }
+
+  /** Returns the ratio of number of deleted records to the total number of records. */
+  @JsonIgnore
+  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
 }
 
 object AddFile {
@@ -526,7 +675,8 @@ case class RemoveFile(
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
-    override val tags: Map[String, String] = null
+    override val tags: Map[String, String] = null,
+    deletionVector: DeletionVectorDescriptor = null
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -537,6 +687,26 @@ case class RemoveFile(
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
 
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  var estLogicalFileSize: Option[Long] = None
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * The unique id differentiates DVs, even if there are multiple in the same file
+   * or the DV is stored inline.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.

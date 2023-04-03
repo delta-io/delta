@@ -19,12 +19,14 @@ package org.apache.spark.sql.delta.perf
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SaveMode}
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -318,5 +320,22 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     assertResult(optimizationEnabledQueryPlan) {
       optimizationDisabledQueryPlan
     }
+  }
+
+  // scalastyle:off println
+  test(".collect() and .show() both use this optimization") {
+    val collectPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+      spark.sql(s"SELECT COUNT(*) FROM $testTableName").collect()
+    }
+    val collectResultData = collectPlans.collect { case x: LocalRelation => x.data }
+    assert(collectResultData.size === 1)
+    assert(collectResultData.head.head.getLong(0) === totalRows)
+
+    val showPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+      spark.sql(s"SELECT COUNT(*) FROM $testTableName").show()
+    }
+    val showResultData = showPlans.collect { case x: LocalRelation => x.data }
+    assert(showResultData.size === 1)
+    assert(showResultData.head.head.getString(0).toLong === totalRows)
   }
 }

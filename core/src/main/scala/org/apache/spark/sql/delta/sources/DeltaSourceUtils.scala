@@ -77,7 +77,7 @@ object DeltaSourceUtils {
       expressions.GreaterThanOrEqual(
         UnresolvedAttribute(attribute), expressions.Literal.create(value))
     case sources.LessThan(attribute, value) =>
-      expressions.LessThanOrEqual(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+      expressions.LessThan(UnresolvedAttribute(attribute), expressions.Literal.create(value))
     case sources.LessThanOrEqual(attribute, value) =>
       expressions.LessThanOrEqual(UnresolvedAttribute(attribute), expressions.Literal.create(value))
     case sources.In(attribute, values) =>

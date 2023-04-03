@@ -16,10 +16,23 @@
 
 package org.apache.spark.sql.delta.sources
 
+
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.streaming.{ReadLimit, ReadMaxFiles}
+import org.apache.spark.sql.internal.SQLConf
 
 /** A read limit that admits a soft-max of `maxBytes` per micro-batch. */
 case class ReadMaxBytes(maxBytes: Long) extends ReadLimit
 
-/** A read limit that admits the given soft-max of `bytes` or max `files`. */
-case class CompositeLimit(bytes: ReadMaxBytes, files: ReadMaxFiles) extends ReadLimit
+/**
+ * A read limit that admits the given soft-max of `bytes` or max `maxFiles`, once `minFiles`
+ * has been reached. Prior to that anything is admitted.
+ */
+case class CompositeLimit(
+  bytes: ReadMaxBytes,
+  maxFiles: ReadMaxFiles,
+  minFiles: ReadMinFiles = ReadMinFiles(-1)) extends ReadLimit
+
+
+/** A read limit that admits a min of `minFiles` per micro-batch. */
+case class ReadMinFiles(minFiles: Int) extends ReadLimit

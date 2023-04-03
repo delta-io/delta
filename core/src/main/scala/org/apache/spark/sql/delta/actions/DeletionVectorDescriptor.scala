@@ -65,7 +65,13 @@ case class DeletionVectorDescriptor(
     /** Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding). */
     sizeInBytes: Int,
     /** Number of rows the DV logically removes from the file. */
-    cardinality: Long) {
+    cardinality: Long,
+    /**
+     * Transient property that is used to validate DV correctness.
+     * It is not stored in the log.
+     */
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    maxRowIndex: Option[Long] = None) {
 
   import DeletionVectorDescriptor._
 
@@ -186,26 +192,30 @@ object DeletionVectorDescriptor {
       randomPrefix: String = "",
       sizeInBytes: Int,
       cardinality: Long,
-      offset: Option[Int] = None): DeletionVectorDescriptor =
+      offset: Option[Int] = None,
+      maxRowIndex: Option[Long] = None): DeletionVectorDescriptor =
     DeletionVectorDescriptor(
       storageType = UUID_DV_MARKER,
       pathOrInlineDv = encodeUUID(id, randomPrefix),
       offset = offset,
       sizeInBytes = sizeInBytes,
-      cardinality = cardinality)
+      cardinality = cardinality,
+      maxRowIndex = maxRowIndex)
 
   /** Utility method to create an on-disk [[DeletionVectorDescriptor]] */
   def onDiskWithAbsolutePath(
       path: String,
       sizeInBytes: Int,
       cardinality: Long,
-      offset: Option[Int] = None): DeletionVectorDescriptor =
+      offset: Option[Int] = None,
+      maxRowIndex: Option[Long] = None): DeletionVectorDescriptor =
     DeletionVectorDescriptor(
       storageType = PATH_DV_MARKER,
       pathOrInlineDv = path,
       offset = offset,
       sizeInBytes = sizeInBytes,
-      cardinality = cardinality)
+      cardinality = cardinality,
+      maxRowIndex = maxRowIndex)
 
   /** Utility method to create an inline [[DeletionVectorDescriptor]] */
   def inlineInLog(
@@ -250,5 +260,5 @@ object DeletionVectorDescriptor {
     s"$randomPrefix$uuidData"
   }
 
-  private def encodeData(bytes: Array[Byte]): String = Codec.Base85Codec.encodeBytes(bytes)
+  def encodeData(bytes: Array[Byte]): String = Codec.Base85Codec.encodeBytes(bytes)
 }

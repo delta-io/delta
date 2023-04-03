@@ -113,5 +113,10 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
+
+    DeltaTableValueFunctions.supportedFnNames.foreach { fnName =>
+      extensions.injectTableFunction(
+        DeltaTableValueFunctions.getTableValueFunctionInjection(fnName))
+    }
   }
 }

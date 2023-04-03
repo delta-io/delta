@@ -26,6 +26,6 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.9.2")
 
 addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
-addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "2.3")
+addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.0")

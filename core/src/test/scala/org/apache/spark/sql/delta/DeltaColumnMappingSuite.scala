@@ -546,7 +546,7 @@ class DeltaColumnMappingSuite extends QueryTest
         val m1 = deltaLog.update().metadata
 
         // column mapping not enabled -> not blocked at all
-        assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m1, m0))
+        assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m1, m0))
 
         // upgrade to name mode
         alterTableWithProps(s"delta.`$tablePath`", Map(
@@ -570,7 +570,7 @@ class DeltaColumnMappingSuite extends QueryTest
         val m1 = deltaLog.update().metadata
 
         // add column shouldn't block
-        assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m1, m0))
+        assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m1, m0))
 
         (m0, m1)
       }
@@ -585,30 +585,30 @@ class DeltaColumnMappingSuite extends QueryTest
       // schema: <id, name, score>
       val m2 = deltaLog.update().metadata
 
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m2, m1))
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m2, m0))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m2, m1))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m2, m0))
 
       // rename column
       sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN score TO age")
       // schema: <id, name, age>
       val m3 = deltaLog.update().metadata
 
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m3, m2))
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m3, m1))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m3, m2))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m3, m1))
       // But IS read compatible with the initial schema, because the added column should not
       // be blocked by this column mapping check.
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m3, m0))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m3, m0))
 
       // drop a column
       sql(s"ALTER TABLE delta.`$tablePath` DROP COLUMN age")
       // schema: <id, name>
       val m4 = deltaLog.update().metadata
 
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m4, m3))
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m4, m2))
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m4, m1))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m4, m3))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m4, m2))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m4, m1))
       // but IS read compatible with the initial schema, because the added column is dropped
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m4, m0))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m4, m0))
 
       // add back the same column
       sql(s"ALTER TABLE delta.`$tablePath` ADD COLUMN (score long)")
@@ -617,15 +617,15 @@ class DeltaColumnMappingSuite extends QueryTest
 
       // It IS read compatible with the previous schema, because the added column should not
       // blocked by this column mapping check.
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m5, m4))
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m5, m3))
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m5, m2))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m4))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m3))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m2))
       // But Since the new added column has a different physical name as all previous columns,
       // even it has the same logical name as say, m1.schema, we will still block
-      assert(!DeltaColumnMapping.hasColumnMappingSchemaChange(m5, m1))
+      assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m1))
       // But it IS read compatible with the initial schema, because the added column should not
       // be blocked by this column mapping check.
-      assert(DeltaColumnMapping.hasColumnMappingSchemaChange(m5, m0))
+      assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m0))
     }
   }
 
@@ -712,6 +712,43 @@ class DeltaColumnMappingSuite extends QueryTest
         mode = Some("none"))
 
       checkSchema("t1", schema, ignorePhysicalName = false)
+    }
+  }
+
+  testColumnMapping("update column mapped table invalid max id property is blocked") { mode =>
+    withTable("t1") {
+      createTableWithSQLAPI(
+        "t1",
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+        withColumnIds = true
+      )
+
+      val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+      // Get rid of max column id prop
+      assert {
+        intercept[DeltaAnalysisException] {
+          log.withNewTransaction { txn =>
+            val existingMetadata = log.update().metadata
+            txn.commit(existingMetadata.copy(configuration =
+              existingMetadata.configuration - DeltaConfigs.COLUMN_MAPPING_MAX_ID.key) :: Nil,
+              DeltaOperations.ManualUpdate)
+          }
+        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
+      }
+      // Use an invalid max column id prop
+      assert {
+        intercept[DeltaAnalysisException] {
+          log.withNewTransaction { txn =>
+            val existingMetadata = log.update().metadata
+            txn.commit(existingMetadata.copy(configuration =
+              existingMetadata.configuration ++ Map(
+                // '1' is less than the current max
+                DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "1"
+              )) :: Nil,
+              DeltaOperations.ManualUpdate)
+          }
+        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
+      }
     }
   }
 
@@ -1593,7 +1630,11 @@ class DeltaColumnMappingSuite extends QueryTest
               .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, newId)
               .build())
           val newSchema = StructType(Seq(updated) ++ currentSchema.filter(_.name != field.name))
-          txn.commit(currentMetadata.copy(schemaString = newSchema.json) :: Nil, ManualUpdate)
+          txn.commit(currentMetadata.copy(
+            schemaString = newSchema.json,
+            configuration = currentMetadata.configuration ++
+              // Just a big id to bypass the check
+              Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "10000")) :: Nil, ManualUpdate)
         }
       }
 

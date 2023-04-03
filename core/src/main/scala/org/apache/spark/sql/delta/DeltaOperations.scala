@@ -523,7 +523,9 @@ private[delta] object DeltaOperationMetrics {
     "numCopiedRows", // number of rows copied in the process of deleting files
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    "numRemovedBytes", // number of bytes removed
+    "numAddedBytes" // number of bytes added
   )
 
   val WRITE_REPLACE_WHERE = Set(
@@ -533,7 +535,8 @@ private[delta] object DeltaOperationMetrics {
     "numRemovedFiles", // number of files removed
     "numAddedChangeFiles", // number of CDC files
     "numDeletedRows", // number of rows removed
-    "numCopiedRows" // number of rows copied in the process of deleting files
+    "numCopiedRows", // number of rows copied in the process of deleting files
+    "numRemovedBytes" // number of bytes removed
   )
 
   val WRITE_REPLACE_WHERE_PARTITIONS = Set(
@@ -544,7 +547,8 @@ private[delta] object DeltaOperationMetrics {
     "numRemovedFiles", // number of files removed
     // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
     "numCopiedRows", // number of rows copied
-    "numDeletedRows" // number of rows deleted
+    "numDeletedRows", // number of rows deleted
+    "numRemovedBytes" // number of bytes removed
   )
 
   /**
@@ -561,7 +565,9 @@ private[delta] object DeltaOperationMetrics {
     // Records below only exist when DELTA_DML_METRICS_FROM_METADATA is enabled
     "numCopiedRows", // number of rows copied
     "numDeletedRows", // number of rows deleted
-    "numAddedFiles" // number of files added
+    "numAddedFiles", // number of files added
+    "numRemovedBytes", // number of bytes removed
+    "numAddedBytes" // number of bytes added
   )
 
 

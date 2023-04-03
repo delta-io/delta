@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
@@ -63,11 +63,19 @@ import org.apache.spark.util._
  * Internally, this class implements an optimistic concurrency control
  * algorithm to handle multiple readers or writers. Any single read
  * is guaranteed to see a consistent snapshot of the table.
+ *
+ * @param logPath Path of the Delta log JSONs.
+ * @param dataPath Path of the data files.
+ * @param options Filesystem options filtered from `allOptions`.
+ * @param allOptions All options provided by the user, for example via `df.write.option()`. This
+ *                   includes but not limited to filesystem and table properties.
+ * @param clock Clock to be used when starting a new transaction.
  */
 class DeltaLog private(
     val logPath: Path,
     val dataPath: Path,
     val options: Map[String, String],
+    val allOptions: Map[String, String],
     val clock: Clock
   ) extends Checkpoints
   with MetadataCleanup
@@ -266,12 +274,12 @@ class DeltaLog private(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val hadoopConf = newDeltaHadoopConf()
-    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf).filter(isDeltaFile)
+    val deltasWithVersion = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
+      .flatMap(DeltaFile.unapply(_))
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltas.map { status =>
+    deltasWithVersion.map { case (status, version) =>
       val p = status.getPath
-      val version = deltaVersion(p)
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
@@ -287,12 +295,12 @@ class DeltaLog private(
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
-      .filter(isDeltaFile)
+    val deltasWithVersion = store
+      .listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
+      .flatMap(DeltaFile.unapply(_))
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltas.map { status =>
-      val version = deltaVersion(status)
+    deltasWithVersion.map { case (status, version) =>
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
@@ -448,29 +456,49 @@ class DeltaLog private(
   /**
    * Returns a [[org.apache.spark.sql.DataFrame]] containing the new files within the specified
    * version range.
+   *
+   * It can optionally take a customReadSchema which consists of the actual read schema to read
+   * the files. This is used to support non-additive Delta Source streaming schema evolution.
+   * The customReadSchema requires that its partitionSchema for the Delta table does not change from
+   * the snapshot's partitionSchema.
    */
   def createDataFrame(
       snapshot: Snapshot,
       addFiles: Seq[AddFile],
       isStreaming: Boolean = false,
-      actionTypeOpt: Option[String] = None): DataFrame = {
+      actionTypeOpt: Option[String] = None,
+      customReadSchema: Option[PersistedSchema] = None
+  ): DataFrame = {
     val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
+    // It's ok to not pass down the partitionSchema to TahoeBatchFileIndex. Schema evolution will
+    // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
+    // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
 
     val hadoopOptions = snapshot.metadata.format.options ++ options
+    val partitionSchema = snapshot.metadata.partitionSchema
+    var metadata = snapshot.metadata
+
+    require(customReadSchema.forall(_.partitionSchema == partitionSchema),
+      "Cannot specify a custom read schema with different partition schema than the Delta table")
+
+    // Replace schema inside snapshot metadata so that later `fileFormat()` can generate the correct
+    // DeltaParquetFormat with the correct schema to references, the customReadSchema should also
+    // contain the correct column mapping metadata if needed after being loaded from schema log.
+    customReadSchema.map(_.dataSchema).foreach { readSchema =>
+      metadata = snapshot.metadata.copy(schemaString = readSchema.json)
+    }
 
     val relation = HadoopFsRelation(
       fileIndex,
-      partitionSchema =
-        DeltaColumnMapping.dropColumnMappingMetadata(snapshot.metadata.partitionSchema),
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(partitionSchema),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`.
-      dataSchema =
-        DeltaColumnMapping.dropColumnMappingMetadata(
-          ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.metadata.schema)),
+      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        ColumnWithDefaultExprUtils.removeDefaultExpressions(metadata.schema)),
       bucketSpec = None,
-      snapshot.deltaLog.fileFormat(snapshot.metadata),
+      fileFormat(snapshot.protocol, metadata),
       hadoopOptions)(spark)
 
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
@@ -519,7 +547,7 @@ class DeltaLog private(
         ColumnWithDefaultExprUtils.removeDefaultExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
-      fileFormat(snapshotToUse.metadata),
+      fileFormat(snapshotToUse.protocol, snapshotToUse.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
       // store any file system options since they may contain credentials. Hence, it will never
       // conflict with `DeltaLog.options`.
@@ -781,6 +809,7 @@ object DeltaLog extends DeltaLogging {
             logPath = path,
             dataPath = path.getParent,
             options = fileSystemOptions,
+            allOptions = options,
             clock = clock
           )
         }
@@ -898,7 +927,8 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters.map(_.transformUp {
+    partitionFilters
+      .map(_.transformUp {
       case a: Attribute =>
         // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
         // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
@@ -954,7 +984,9 @@ object DeltaLog extends DeltaLogging {
     }
 
     override def apply(path: String): String = {
+      // scalastyle:off pathfromuri
       val hadoopPath = new Path(new URI(path))
+      // scalastyle:on pathfromuri
       if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
         fs.makeQualified(hadoopPath).toUri.toString
       } else {

@@ -75,7 +75,8 @@ case class DescribeDeltaHistoryCommand(
           case Some(id) if id.table.nonEmpty =>
             new Path(metadata.location)
           case _ =>
-            if (metadata.tableType == CatalogTableType.VIEW) {
+            val isView = metadata.tableType == CatalogTableType.VIEW
+            if (isView) {
               throw DeltaErrors.describeViewHistory
             }
             throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")

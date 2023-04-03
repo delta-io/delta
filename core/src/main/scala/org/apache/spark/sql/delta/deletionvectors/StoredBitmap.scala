@@ -16,11 +16,41 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
+import java.io.{IOException, ObjectInputStream}
+
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.util.Utils
+
+/**
+ * Interface for bitmaps that are stored as Deletion Vectors.
+ */
+trait StoredBitmap {
+  /**
+   * Read the bitmap into memory.
+   * Use `dvStore` if this variant is in cloud storage, otherwise just deserialize.
+   */
+  def load(dvStore: DeletionVectorStore): RoaringBitmapArray
+
+  /**
+   * The serialized size of the stored bitmap in bytes.
+   * Can be used for planning memory management without a round-trip to cloud storage.
+   */
+  def size: Int
+
+  /**
+   * The number of entries in the bitmap.
+   */
+  def cardinality: Long
+
+  /**
+   * Returns a unique identifier for this bitmap (Deletion Vector serialized as a JSON object).
+   */
+  def getUniqueId: String
+}
 
 /**
  * Bitmap for a Deletion Vector, implemented as a thin wrapper around a Deletion Vector
@@ -28,18 +58,13 @@ import org.apache.hadoop.fs.Path
  * vectors, `tableDataPath` must be set to the data path of the Delta table, which is where
  * deletion vectors are stored.
  */
-case class StoredBitmap(
+case class DeletionVectorStoredBitmap(
     dvDescriptor: DeletionVectorDescriptor,
-    tableDataPath: Option[Path] = None) {
+    tableDataPath: Option[Path] = None) extends StoredBitmap {
   require(tableDataPath.isDefined || !dvDescriptor.isOnDisk,
     "Table path is required for on-disk deletion vectors")
 
-  /**
-   * Load this bitmap into memory.
-   *
-   * Use `dvStore` if this variant is in cloud storage, otherwise just deserialize.
-   */
-  def load(dvStore: DeletionVectorStore): RoaringBitmapArray = {
+  override def load(dvStore: DeletionVectorStore): RoaringBitmapArray = {
     if (isEmpty) {
       new RoaringBitmapArray()
     } else if (isInline) {
@@ -50,20 +75,11 @@ case class StoredBitmap(
     }
   }
 
-  /**
-   * The serialized size of the stored bitmap in bytes.
-   *
-   * Can be used for planning memory management without a round-trip to cloud storage.
-   */
-  def size: Int = dvDescriptor.sizeInBytes
+  override def size: Int = dvDescriptor.sizeInBytes
 
-  /**
-   * Number of entries in the bitmap.
-   */
-  def cardinality: Long = dvDescriptor.cardinality
+  override def cardinality: Long = dvDescriptor.cardinality
 
-  /** Returns a unique identifier for this bitmap (Deletion Vector serialized as a JSON object. */
-  def getUniqueId(): String = JsonUtils.toJson(dvDescriptor)
+  override lazy val getUniqueId: String = JsonUtils.toJson(dvDescriptor)
 
   private def isEmpty: Boolean = dvDescriptor.isEmpty
 
@@ -72,26 +88,26 @@ case class StoredBitmap(
   private def isOnDisk: Boolean = dvDescriptor.isOnDisk
 
   /** The absolute path for on-disk deletion vectors. */
-  private lazy val onDiskPath: Option[Path] = tableDataPath.map(dvDescriptor.absolutePath(_))
+  private lazy val onDiskPath: Option[Path] = tableDataPath.map(dvDescriptor.absolutePath)
 }
 
 object StoredBitmap {
   /** The stored bitmap of an empty deletion vector. */
-  final val EMPTY = new StoredBitmap(DeletionVectorDescriptor.EMPTY, None)
+  final val EMPTY = DeletionVectorStoredBitmap(DeletionVectorDescriptor.EMPTY, None)
 
 
   /** Factory for inline deletion vectors. */
   def inline(dvDescriptor: DeletionVectorDescriptor): StoredBitmap = {
     require(dvDescriptor.isInline)
-    new StoredBitmap(dvDescriptor, None)
+    DeletionVectorStoredBitmap(dvDescriptor, None)
   }
 
   /** Factory for deletion vectors. */
   def create(dvDescriptor: DeletionVectorDescriptor, tablePath: Path): StoredBitmap = {
     if (dvDescriptor.isOnDisk) {
-      new StoredBitmap(dvDescriptor, Some(tablePath))
+      DeletionVectorStoredBitmap(dvDescriptor, Some(tablePath))
     } else {
-      new StoredBitmap(dvDescriptor, None)
+      DeletionVectorStoredBitmap(dvDescriptor, None)
     }
   }
 }

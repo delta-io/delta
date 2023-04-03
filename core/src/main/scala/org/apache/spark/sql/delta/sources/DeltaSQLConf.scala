@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
@@ -37,12 +38,6 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("When true, we will try to resolve patterns as `@v123` in identifiers as time " +
         "travel nodes.")
-      .booleanConf
-      .createWithDefault(true)
-
-  val DELTA_COMMIT_INFO_ENABLED =
-    buildConf("commitInfo.enabled")
-      .doc("Whether to log commit information into the Delta log.")
       .booleanConf
       .createWithDefault(true)
 
@@ -81,7 +76,7 @@ trait DeltaSQLConfBase {
 
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
-      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo.")
       .stringConf
       .createOptional
 
@@ -297,7 +292,6 @@ trait DeltaSQLConfBase {
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
-        " 'spark.databricks.delta.commitInfo.enabled' should be enabled when using this config." +
         " Users should only set this config to 'true' when the underlying file system safely" +
         " supports concurrent writes.")
       .booleanConf
@@ -809,6 +803,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
+    buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
+      .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
+        "deletion files. This could cause data duplication and is strongly not recommended.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -899,7 +901,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-
   val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT =
     buildConf("streaming.unsafeReadOnIncompatibleSchemaChangesDuringStreamStart.enabled")
       .doc(
@@ -907,6 +908,15 @@ trait DeltaSQLConfBase {
           |when starting a streaming query. The config is added to allow legacy problematic queries
           |disabling the check to keep running if users accept the potential risks of incompatible
           |schema reading.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION =
+    buildConf("streaming.allowSchemaLocationOutsideCheckpointLocation")
+      .doc(
+        "When enabled, Delta streaming can set a schema location outside of the " +
+        "query's checkpoint location. This is not recommended.")
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -920,7 +930,6 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
-
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
@@ -954,6 +963,16 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID =
+    buildConf("columnMapping.checkMaxColumnId")
+      .doc(
+        s"""If enabled, check if delta.columnMapping.maxColumnId is correctly assigned at each
+           |Delta transaction commit.
+           |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
@@ -1046,6 +1065,115 @@ trait DeltaSQLConfBase {
        | downgrades may also make the history unreadable.""".stripMargin)
     .booleanConf
     .createWithDefault(false)
+
+  //////////////////
+  // Idempotent DML
+  //////////////////
+
+  val DELTA_IDEMPOTENT_DML_TXN_APP_ID =
+    buildConf("write.txnAppId")
+      .internal()
+      .doc("""
+             |The application ID under which this write will be committed.
+             | If specified, spark.databricks.delta.write.txnVersion also needs to
+             | be set.
+             |""".stripMargin)
+      .stringConf
+      .createOptional
+
+  val DELTA_IDEMPOTENT_DML_TXN_VERSION =
+    buildConf("write.txnVersion")
+      .internal()
+      .doc("""
+             |The user-defined version under which this write will be committed.
+             | If specified, spark.databricks.delta.write.txnAppId also needs to
+             | be set. To ensure idempotency, txnVersions across different writes
+             | need to be monotonically increasing.
+             |""".stripMargin)
+      .longConf
+      .createOptional
+
+  val DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED =
+    buildConf("write.txnVersion.autoReset.enabled")
+      .internal()
+      .doc("""
+             |If true, will automatically reset spark.databricks.delta.write.txnVersion
+             |after every write. This is false by default.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO =
+    buildConf("optimize.maxDeletedRowsRatio")
+      .internal()
+      .doc("Files with a ratio of deleted rows to the total rows larger than this threshold " +
+        "will be rewritten by the OPTIMIZE command.")
+      .doubleConf
+      .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
+      .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
+      .createWithDefault(0.05d)
+
+  val DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED =
+    buildConf("tablePropertyConstraintsCheck.enabled")
+      .internal()
+      .doc(
+        """Check that all table-properties satisfy validity constraints.
+          |Only change this for testing!""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES =
+    buildConf("deletionVectors.updates.blocking.enabled")
+        .internal()
+        .doc(
+          """Enable blocking updates on tables with Deletion Vectors
+            |Only change this for testing!""".stripMargin)
+        .booleanConf
+        .createWithDefault(true)
+
+  val DELTA_DUPLICATE_ACTION_CHECK_ENABLED =
+    buildConf("duplicateActionCheck.enabled")
+      .internal()
+      .doc("""
+             |Verify only one action is specified for each file path in one commit.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELETE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("delete.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in the Delete command.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELETION_VECTOR_PACKING_TARGET_SIZE =
+    buildConf("deletionVectors.packing.targetSize")
+      .internal()
+      .doc("Controls the target file deletion vector file size when packing multiple" +
+        "deletion vectors in a single file.")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(2L * 1024L * 1024L)
+
+  val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
+    buildConf("deletionVectors.disableTightBoundOnFileCreationForDevOnly")
+      .internal()
+      .doc("""Controls whether we generate a tightBounds column in statistics on file creation.
+             |The tightBounds column annotates whether the statistics of the file are tight or wide.
+             |This flag is only used for testing purposes.
+                """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
+    buildConf("deletionVectors.skipCommitCheck")
+      .internal()
+      .doc(
+        """Check the table-property and verify that deletion vectors may be added
+          |to this table.
+          |Only change this for testing!""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

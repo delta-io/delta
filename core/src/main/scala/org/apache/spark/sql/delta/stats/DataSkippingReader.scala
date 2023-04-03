@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
+import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.Path
 
@@ -38,7 +39,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -63,7 +64,7 @@ case class NumRecords(numPhysicalRecords: java.lang.Long, numLogicalRecords: jav
  * Represents a stats column (MIN, MAX, etc) for a given (nested) user table column name. Used to
  * keep track of which stats columns a data skipping query depends on.
  *
- * The `statType` is any value accepted by `getStatsColumnOpt()` (see trait `UsesMetadataFields`);
+ * The `statType` is any value accepted by `getStatsColumnOpt()` (see object `DeltaStatistics`);
  * `pathToColumn` is the nested name of the user column whose stats are to be accessed.
  */
 private [stats] case class StatsColumn(
@@ -168,6 +169,7 @@ private[delta] object DataSkippingReader {
   val trueLiteral: Column = col(TrueLiteral)
   val falseLiteral: Column = col(FalseLiteral)
   val nullStringLiteral: Column = col(new Literal(null, StringType))
+  val nullBooleanLiteral: Column = col(new Literal(null, BooleanType))
   val oneMillisecondLiteralExpr: Literal = {
     val oneMillisecond = new CalendarInterval(0, 0, 1000 /* micros */)
     new Literal(oneMillisecond, CalendarIntervalType)
@@ -175,6 +177,7 @@ private[delta] object DataSkippingReader {
 
   val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
     Option(ExpressionEncoder[Boolean]()),
+    Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()))
 }
@@ -196,10 +199,10 @@ trait DataSkippingReaderBase
   def path: Path
   def version: Long
   def metadata: Metadata
-  private[delta] def sizeInBytesOpt: Option[Long]
+  private[delta] def sizeInBytesIfKnown: Option[Long]
   def deltaLog: DeltaLog
   def schema: StructType
-  private[delta] def numOfFilesOpt: Option[Long]
+  private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
@@ -221,10 +224,23 @@ trait DataSkippingReaderBase
    * Returns a parsed and cached representation of files with statistics.
    *
    *
-   * @return cached [[DataFrame]]
+   * @return [[DataFrame]]
    */
   final def withStats: DataFrame = {
     withStatsInternal
+  }
+
+  /**
+   * Constructs a [[DataSkippingPredicate]] for isNotNull predicates.
+   */
+   protected def constructNotNullFilter(
+      statsProvider: StatsProvider,
+      pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
+    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn)
+    val numRecordsCol = StatsColumn(NUM_RECORDS)
+    statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
+      (nullCount, numRecords) => nullCount < numRecords
+    }
   }
 
   /**
@@ -444,20 +460,19 @@ trait DataSkippingReaderBase
         constructDataFilters(And(Not(e1), Not(e2)))
 
       // Match any file whose null count is larger than zero.
+      // Note DVs might result in a redundant read of a file.
+      // However, they cannot lead to a correctness issue.
       case IsNull(SkippingEligibleColumn(a, _)) =>
         statsProvider.getPredicateWithStatType(a, NULL_COUNT) { nullCount =>
-          nullCount > Literal(0)
+          nullCount > Literal(0L)
         }
       case Not(IsNull(e)) =>
         constructDataFilters(IsNotNull(e))
 
       // Match any file whose null count is less than the row count.
       case IsNotNull(SkippingEligibleColumn(a, _)) =>
-        val nullCountCol = StatsColumn(NULL_COUNT, a)
-        val numRecordsCol = StatsColumn(NUM_RECORDS)
-        statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
-          (nullCount, numRecords) => nullCount < numRecords
-        }
+        constructNotNullFilter(statsProvider, a)
+
       case Not(IsNotNull(e)) =>
         constructDataFilters(IsNull(e))
 
@@ -577,7 +592,7 @@ trait DataSkippingReaderBase
    * Returns an expression to access the given statistics for a specific column, or None if that
    * stats column does not exist.
    *
-   * @param statType One of the fields declared by trait `UsesMetadataFields`
+   * @param statType One of the fields declared by object `DeltaStatistics`
    * @param pathToColumn The components of the nested column name to get stats for.
    */
   final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
@@ -683,12 +698,12 @@ trait DataSkippingReaderBase
         case _ =>
           Seq(stat)
       }}.map{stat => stat match {
+        // A usable MIN or MAX stat must be non-NULL, unless the column is provably all-NULL
+        //
+        // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
+        // separate NULL checks we emit for those columns will force the overall validation
+        // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
         case StatsColumn(MIN, _) | StatsColumn(MAX, _) =>
-          // A usable MIN or MAX stat must be non-NULL, unless the column is provably all-NULL
-          //
-          // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
-          // separate NULL checks we emit for those columns will force the overall validation
-          // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
           getStatsColumnOrNullLiteral(stat).isNotNull ||
             (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
               getStatsColumnOrNullLiteral(NUM_RECORDS))
@@ -704,10 +719,10 @@ trait DataSkippingReaderBase
   private def buildSizeCollectorFilter(): (ArrayAccumulator, Column => Column) = {
     val bytesCompressed = col("size")
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
+    val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0L))
+    val logicalRows = rows - dvCardinality as "logicalRows"
 
-    val accumulator = new ArrayAccumulator(
-      3
-    )
+    val accumulator = new ArrayAccumulator(4)
 
     spark.sparkContext.register(accumulator)
 
@@ -715,11 +730,14 @@ trait DataSkippingReaderBase
     // `sizeCollectorInputEncoders` value.
     val collector = (include: Boolean,
                      bytesCompressed: java.lang.Long,
+                     logicalRows: java.lang.Long,
                      rows: java.lang.Long) => {
       if (include) {
         accumulator.add((0, bytesCompressed)) /* count bytes of AddFiles */
         accumulator.add((1, Option(rows).map(_.toLong).getOrElse(-1L))) /* count rows in AddFiles */
         accumulator.add((2, 1)) /* count number of AddFiles */
+        accumulator.add((3, Option(logicalRows)
+          .map(_.toLong).getOrElse(-1L))) /* count logical rows in AddFiles */
       }
       include
     }
@@ -729,7 +747,7 @@ trait DataSkippingReaderBase
       inputEncoders = sizeCollectorInputEncoders,
       deterministic = false)
 
-    (accumulator, collectorUdf(_: Column, bytesCompressed, rows))
+    (accumulator, collectorUdf(_: Column, bytesCompressed, logicalRows, rows))
   }
 
   override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
@@ -841,6 +859,9 @@ trait DataSkippingReaderBase
   /**
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
+   * Note, the statistics column that is added when keepNumRecords = true should NOT
+   * take into account DVs. Consumers of this method might commit the file. The semantics
+   * of the statistics need to be consistent across all files.
    */
   override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
     val startTime = System.currentTimeMillis()
@@ -848,9 +869,9 @@ trait DataSkippingReaderBase
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
         val dataSize = DataSize(
-          bytesCompressed = sizeInBytesOpt,
+          bytesCompressed = sizeInBytesIfKnown,
           rows = None,
-          files = numOfFilesOpt)
+          files = numOfFilesIfKnown)
         return DeltaScan(
           version = version,
           files = getAllFiles(keepNumRecords),
@@ -886,7 +907,7 @@ trait DataSkippingReaderBase
       DeltaScan(
         version = version,
         files = files,
-        total = DataSize(sizeInBytesOpt, None, numOfFilesOpt),
+        total = DataSize(sizeInBytesIfKnown, None, numOfFilesIfKnown),
         partition = scanSize,
         scanned = scanSize)(
         scannedSnapshot = snapshotToScan,
@@ -951,9 +972,9 @@ trait DataSkippingReaderBase
       val scan = pruneFilesByLimit(withStats, limit)
 
       val totalDataSize = new DataSize(
-        sizeInBytesOpt,
+        sizeInBytesIfKnown,
         None,
-        numOfFilesOpt
+        numOfFilesIfKnown
       )
 
       val scannedDataSize = new DataSize(
@@ -992,15 +1013,17 @@ trait DataSkippingReaderBase
       }
 
       val totalDataSize = new DataSize(
-        sizeInBytesOpt,
+        sizeInBytesIfKnown,
         None,
-        numOfFilesOpt
+        numOfFilesIfKnown,
+        None
       )
 
       val scannedDataSize = new DataSize(
         scan.byteSize,
         scan.numPhysicalRecords,
-        Some(scan.files.size)
+        Some(scan.files.size),
+        scan.numLogicalRecords
       )
 
       DeltaScan(
@@ -1039,7 +1062,8 @@ trait DataSkippingReaderBase
     "Delta", "DataSkippingReaderEdge.getFilesAndNumRecords") {
     import org.apache.spark.sql.delta.implicits._
 
-    val numLogicalRecords = col("stats.numRecords")
+    val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0L))
+    val numLogicalRecords = col("stats.numRecords") - dvCardinality
 
     val result = df.withColumn("numPhysicalRecords", col("stats.numRecords")) // Physical
       .withColumn("numLogicalRecords", numLogicalRecords) // Logical
@@ -1066,7 +1090,7 @@ trait DataSkippingReaderBase
     df.as[AddFile].collect()
   }
 
-  protected def pruneFilesByLimit(df: DataFrame, limit: Long): ScanAfterLimit = {
+  protected[delta] def pruneFilesByLimit(df: DataFrame, limit: Long): ScanAfterLimit = {
     val withNumRecords = {
       getFilesAndNumRecords(df)
     }

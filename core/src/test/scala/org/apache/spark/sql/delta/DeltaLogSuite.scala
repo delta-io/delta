@@ -455,7 +455,7 @@ class DeltaLogSuite extends QueryTest
       // Now let's delete the last version
       deltaLog.store
         .listFrom(
-          FileNames.checksumFile(deltaLog.logPath, deltaLog.snapshot.version),
+          FileNames.listingPrefix(deltaLog.logPath, deltaLog.snapshot.version),
           deltaLog.newDeltaHadoopConf())
         .foreach(f => fs.delete(f.getPath, false))
 
@@ -469,7 +469,7 @@ class DeltaLogSuite extends QueryTest
       // version 1, but since we can't find anything, we should start listing from version 0
       deltaLog.store
         .listFrom(
-          FileNames.checkpointFileSingular(deltaLog.logPath, 1),
+          FileNames.listingPrefix(deltaLog.logPath, 1),
           deltaLog.newDeltaHadoopConf())
         .foreach(f => fs.delete(f.getPath, false))
 

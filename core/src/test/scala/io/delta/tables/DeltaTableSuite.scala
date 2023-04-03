@@ -22,8 +22,8 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, FakeFileSystem}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -242,6 +242,7 @@ class DeltaTableHadoopOptionsSuite
   private val ignoreMethods = Seq()
 
   private val testedMethods = Seq(
+    "addFeatureSupport",
     "as",
     "alias",
     "delete",
@@ -605,6 +606,41 @@ class DeltaTableHadoopOptionsSuite
 
       val expectedProtocol = Protocol(1, 2)
       assert(log.snapshot.protocol === expectedProtocol)
+    }
+  }
+
+  test(
+    "addFeatureSupport - with filesystem options.") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val fsOptions = fakeFileSystemOptions
+
+      // create a table with a default Protocol.
+      val testSchema = spark.range(1).schema
+      val log = DeltaLog.forTable(spark, path, fsOptions)
+      log.ensureLogDirectoryExist()
+      log.store.write(
+        FileNames.deltaFile(log.logPath, 0),
+        Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+      log.update()
+
+      // update the protocol to support a writer feature.
+      val table = DeltaTable.forPath(spark, path, fsOptions)
+      table.addFeatureSupport(TestWriterFeature.name)
+      assert(log.update().protocol === Protocol(1, 7)
+        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
+      table.addFeatureSupport(TestReaderWriterFeature.name)
+      assert(
+        log.update().protocol === Protocol(3, 7)
+          .merge(Protocol(1, 2))
+          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
+
+      // update the protocol again with invalid feature name.
+      assert(intercept[DeltaTableFeatureException] {
+        table.addFeatureSupport("__invalid_feature__")
+      }.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG")
     }
   }
 

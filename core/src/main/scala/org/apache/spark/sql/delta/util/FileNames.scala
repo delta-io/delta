@@ -21,9 +21,13 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 /** Helper for creating file names for specific commits / checkpoints. */
 object FileNames {
 
-  val deltaFilePattern = "\\d+\\.json".r.pattern
-  val checksumFilePattern = "\\d+\\.crc".r.pattern
-  val checkpointFilePattern = "\\d+\\.checkpoint(\\.\\d+\\.\\d+)?\\.parquet".r.pattern
+  val deltaFileRegex = raw"(\d+)\.json".r
+  val checksumFileRegex = raw"(\d+)\.crc".r
+  val checkpointFileRegex = raw"(\d+)\.checkpoint(\.(\d+)\.(\d+))?\.parquet".r
+
+  val deltaFilePattern = deltaFileRegex.pattern
+  val checksumFilePattern = checksumFileRegex.pattern
+  val checkpointFilePattern = checkpointFileRegex.pattern
 
   /** Returns the delta (json format) path for a given delta file. */
   def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
@@ -43,13 +47,12 @@ object FileNames {
   def checksumVersion(file: FileStatus): Long = checksumVersion(file.getPath)
 
   /**
-   * Returns the prefix of all checkpoint files for the given version.
+   * Returns the prefix of all delta log files for the given version.
    *
    * Intended for use with listFrom to get all files from this version onwards. The returned Path
    * will not exist as a file.
    */
-  def checkpointPrefix(path: Path, version: Long): Path =
-    new Path(path, f"$version%020d.checkpoint")
+  def listingPrefix(path: Path, version: Long): Path = new Path(path, f"$version%020d.")
 
   /**
    * Returns the path for a singular checkpoint up to the given version.
@@ -112,4 +115,30 @@ object FileNames {
     }
   }
   def getFileVersion(file: FileStatus): Long = getFileVersion(file.getPath)
+
+  object DeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long)] =
+      unapply(f.getPath).map { case (_, version) => (f, version) }
+    def unapply(path: Path): Option[(Path, Long)] = {
+      deltaFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+    }
+  }
+  object ChecksumFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long)] =
+      unapply(f.getPath).map { case (_, version) => (f, version) }
+    def unapply(path: Path): Option[(Path, Long)] =
+      checksumFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+  }
+  object CheckpointFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long)] =
+      unapply(f.getPath).map { case (_, version) => (f, version) }
+    def unapply(path: Path): Option[(Path, Long)] = {
+      checkpointFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+    }
+  }
+
+  object FileType extends Enumeration {
+    val DELTA, CHECKPOINT, CHECKSUM, OTHER = Value
+  }
+
 }

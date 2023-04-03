@@ -114,6 +114,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       require(snapshot.version >= 0, "No state defined for this table. Is this really " +
         "a Delta table? Refusing to garbage collect.")
 
+      DeletionVectorUtils.assertDeletionVectorsNotReadable(
+        spark, snapshot.metadata, snapshot.protocol)
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
@@ -231,8 +234,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         val timeTakenToIdentifyEligibleFiles =
           System.currentTimeMillis() - startTimeToIdentifyEligibleFiles
 
+        val numFiles = diffFiles.count()
         if (dryRun) {
-          val numFiles = diffFiles.count()
           val stats = DeltaVacuumStats(
             isDryRun = true,
             specifiedRetentionMillis = retentionMillis,
@@ -282,6 +285,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
         logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
 
+
         spark.createDataset(Seq(basePath)).toDF("path")
       } finally {
         allFilesAndDirs.unpersist()
@@ -315,11 +319,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     try {
       val rawResolvedUri: URI = logStore.resolvePathOnPhysicalStorage(path, hadoopConf).toUri
       val scheme = rawResolvedUri.getScheme
-      if (supportedFsForLogging.contains(scheme)) {
-        true
-      } else {
-        false
-      }
+      supportedFsForLogging.contains(scheme)
     } catch {
       case _: UnsupportedOperationException =>
         logWarning("Vacuum event logging" +
@@ -460,7 +460,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     }
   }
 
+  // scalastyle:off pathfromuri
   protected def stringToPath(path: String): Path = new Path(new URI(path))
+  // scalastyle:on pathfromuri
 
   protected def pathToString(path: Path): String = path.toUri.toString
 

@@ -29,9 +29,8 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct}
 import org.apache.spark.sql.types.LongType
@@ -83,6 +82,10 @@ case class UpdateCommand(
       val deltaLog = tahoeFileIndex.deltaLog
       deltaLog.withNewTransaction { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
+        if (hasBeenExecuted(txn, sparkSession)) {
+          sendDriverMetrics(sparkSession, metrics)
+          return Seq.empty
+        }
         performUpdate(sparkSession, deltaLog, txn)
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
@@ -214,11 +217,10 @@ case class UpdateCommand(
         metrics("numTouchedRows").value - metrics("numUpdatedRows").value)
     }
     txn.registerSQLMetrics(sparkSession, metrics)
-    txn.commitIfNeeded(totalActions, DeltaOperations.Update(condition.map(_.toString)))
-    // This is needed to make the SQL metrics visible in the Spark UI
-    val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-    SQLMetrics.postDriverMetricUpdates(
-      sparkSession.sparkContext, executionId, metrics.values.toSeq)
+
+    val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
+    txn.commitIfNeeded(finalActions, DeltaOperations.Update(condition.map(_.toString)))
+    sendDriverMetrics(sparkSession, metrics)
 
     recordDeltaEvent(
       deltaLog,

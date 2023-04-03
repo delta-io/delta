@@ -19,27 +19,32 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
+// scalastyle:on import.ordering.noEmptyLine
 
 class DeltaGenerateSymlinkManifestSuite
   extends DeltaGenerateSymlinkManifestSuiteBase
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeletionVectorsTestUtils
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -483,6 +488,169 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       generateSymlinkManifest(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 2)
     }
+  }
+
+  test("block manifest generation with persistent DVs") {
+    withDeletionVectorsEnabled() {
+      val rowsToBeRemoved = Seq(1L, 42L, 43L)
+
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        // Write in 2 files.
+        spark.range(end = 50L).toDF("id").coalesce(1)
+          .write.format("delta").mode("overwrite").save(tablePath)
+        spark.range(start = 50L, end = 100L).toDF("id").coalesce(1)
+          .write.format("delta").mode("append").save(tablePath)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        assert(deltaLog.snapshot.allFiles.count() === 2L)
+
+        // Step 1: Make sure generation works on DV enabled tables without a DV in the snapshot.
+        // Delete an entire file, which can't produce DVs.
+        spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE id BETWEEN 0 and 49""")
+        val remainingFiles = deltaLog.snapshot.allFiles.collect()
+        assert(remainingFiles.size === 1L)
+        assert(remainingFiles(0).deletionVector === null)
+        // Should work fine, since the snapshot doesn't contain DVs.
+        spark.sql(s"""GENERATE symlink_format_manifest FOR TABLE delta.`$tablePath`""")
+
+        // Step 2: Make sure generation fails if there are DVs in the snapshot.
+
+        // This is needed to make the manual commit work correctly, since we are not actually
+        // running a command that produces metrics.
+        withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+          val txn = deltaLog.startTransaction()
+          assert(txn.snapshot.allFiles.count() === 1)
+          val file = txn.snapshot.allFiles.collect().head
+          val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
+          txn.commit(actions, Delete(predicate = Seq.empty))
+        }
+        val e = intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
+          spark.sql(s"""GENERATE symlink_format_manifest FOR TABLE delta.`$tablePath`""")
+        }
+        checkErrorHelper(
+          exception = e,
+          errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+      }
+    }
+  }
+
+  private def setEnabledIncrementalManifest(tablePath: String, enabled: Boolean): Unit = {
+    spark.sql(s"ALTER TABLE delta.`$tablePath` " +
+      s"SET TBLPROPERTIES('${DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key}'='$enabled')")
+  }
+
+  test("block incremental manifest generation with persistent DVs") {
+    import DeltaTablePropertyValidationFailedSubClass._
+
+    def expectConstraintViolation(subClass: DeltaTablePropertyValidationFailedSubClass)
+        (thunk: => Unit): Unit = {
+      val e = intercept[DeltaTablePropertyValidationFailedException] {
+        thunk
+      }
+      checkErrorHelper(
+        exception = e,
+        errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
+      )
+    }
+
+    withDeletionVectorsEnabled() {
+      val rowsToBeRemoved = Seq(1L, 42L, 43L)
+
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        spark.range(end = 100L).toDF("id").coalesce(1)
+          .write.format("delta").mode("overwrite").save(tablePath)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+        // Make sure both properties can't be enabled together.
+        enableDeletionVectorsInTable(new Path(tablePath), enable = true)
+        expectConstraintViolation(
+            subClass = PersistentDeletionVectorsWithIncrementalManifestGeneration) {
+          setEnabledIncrementalManifest(tablePath, enabled = true)
+        }
+        // Or in the other order.
+        enableDeletionVectorsInTable(new Path(tablePath), enable = false)
+        setEnabledIncrementalManifest(tablePath, enabled = true)
+        expectConstraintViolation(
+            subClass = PersistentDeletionVectorsWithIncrementalManifestGeneration)  {
+          enableDeletionVectorsInTable(new Path(tablePath), enable = true)
+        }
+        setEnabledIncrementalManifest(tablePath, enabled = false)
+        // Or both at once.
+        expectConstraintViolation(
+            subClass = PersistentDeletionVectorsWithIncrementalManifestGeneration)  {
+          spark.sql(s"ALTER TABLE delta.`$tablePath` " +
+            s"SET TBLPROPERTIES('${DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key}'='true'," +
+            s" '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+        }
+
+        // If DVs were allowed at some point and are still present in the table,
+        // enabling incremental manifest generation must still fail.
+        enableDeletionVectorsInTable(new Path(tablePath), enable = true)
+        withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+          val txn = deltaLog.startTransaction()
+          assert(txn.snapshot.allFiles.count() === 1)
+          val file = txn.snapshot.allFiles.collect().head
+          val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
+          txn.commit(actions, Delete(predicate = Seq.empty))
+        }
+        assert(getFilesWithDeletionVectors(deltaLog).nonEmpty)
+        enableDeletionVectorsInTable(new Path(tablePath), enable = false)
+        expectConstraintViolation(
+            subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)  {
+          setEnabledIncrementalManifest(tablePath, enabled = true)
+        }
+        // Run optimize to delete the DVs and rewrite the data files
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.00001") {
+          spark.sql(s"OPTIMIZE delta.`$tablePath`")
+        }
+        assert(getFilesWithDeletionVectors(deltaLog).isEmpty)
+        // Now it should work.
+        setEnabledIncrementalManifest(tablePath, enabled = true)
+
+        // As a last fallback, in case some other writer put the table into an illegal state,
+        // we still need to fail the manifest generation if there are DVs.
+        // Reset table.
+        setEnabledIncrementalManifest(tablePath, enabled = false)
+        enableDeletionVectorsInTable(new Path(tablePath), enable = false)
+        spark.range(end = 100L).toDF("id").coalesce(1)
+          .write.format("delta").mode("overwrite").save(tablePath)
+        // Add DVs
+        enableDeletionVectorsInTable(new Path(tablePath), enable = true)
+        withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+          val txn = deltaLog.startTransaction()
+          assert(txn.snapshot.allFiles.count() === 1)
+          val file = txn.snapshot.allFiles.collect().head
+          val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
+          txn.commit(actions, Delete(predicate = Seq.empty))
+        }
+        // Force enable manifest generation.
+        withSQLConf(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED.key -> "false") {
+          setEnabledIncrementalManifest(tablePath, enabled = true)
+        }
+        val e2 = intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
+          spark.range(10).write.format("delta").mode("append").save(tablePath)
+        }
+        checkErrorHelper(
+          exception = e2,
+          errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+        // This is fine, since the new snapshot won't contain DVs.
+        spark.range(10).write.format("delta").mode("overwrite").save(tablePath)
+
+        // Make sure we can get the table back into a consistent state, as well
+        setEnabledIncrementalManifest(tablePath, enabled = false)
+        // No more exception.
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+    }
+  }
+
+  private def checkErrorHelper(
+      exception: SparkThrowable,
+      errorClass: String
+  ): Unit = {
+    assert(exception.getErrorClass === errorClass,
+      s"Expected errorClass $errorClass, but got $exception")
   }
 
   Seq(true, false).foreach { useIncremental =>

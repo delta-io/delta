@@ -18,7 +18,16 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.Closeable
 
-trait ClosableIterator[T] extends Iterator[T] with Closeable
+trait ClosableIterator[T] extends Iterator[T] with Closeable {
+  /** Calls f(this) and always closes the iterator afterwards. */
+  def processAndClose[R](f: Iterator[T] => R): R = {
+    try {
+      f(this)
+    } finally {
+      close()
+    }
+  }
+}
 
 object ClosableIterator {
   /**

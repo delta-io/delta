@@ -179,7 +179,9 @@ abstract class LogStoreSuiteBase extends QueryTest
   protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
     test("should pick up fs impl conf from session Hadoop configuration") {
       withTempDir { tempDir =>
+        // scalastyle:off pathfromuri
         val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
+        // scalastyle:on pathfromuri
 
         // Make sure it will fail without FakeFileSystem
         val e = intercept[IOException] {
@@ -285,7 +287,9 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
       "fs.fake.impl.disable.cache" -> "true") {
       val tempDir = Utils.createTempDir()
+      // scalastyle:off pathfromuri
       val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
+      // scalastyle:on pathfromuri
       val e = intercept[IOException] {
         createLogStore(spark)
           .write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)

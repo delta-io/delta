@@ -59,6 +59,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   with SupportsPathIdentifier
   with DeltaLogging {
 
+
   val spark = SparkSession.active
 
   /**
@@ -81,7 +82,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       allTableProperties: util.Map[String, String],
       writeOptions: Map[String, String],
       sourceQuery: Option[DataFrame],
-      operation: TableCreationModes.CreationMode): Table = recordFrameProfile(
+      operation: TableCreationModes.CreationMode
+    ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
@@ -139,7 +141,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
       properties = tableProperties,
-      comment = commentOpt)
+      comment = commentOpt
+    )
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
 
@@ -243,80 +246,106 @@ class DeltaCatalog extends DelegatingCatalogExtension
       .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
   }
 
+  private def createCatalogTable(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]
+  ): Table = {
+      super.createTable(ident, schema, partitions, properties)
+  }
+
+
   override def createTable(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): Table = recordFrameProfile(
-        "DeltaCatalog", "createTable") {
-    if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-      createDeltaTable(
-        ident,
-        schema,
-        partitions,
-        properties,
-        Map.empty,
-        sourceQuery = None,
-        TableCreationModes.Create)
-    } else {
-      super.createTable(ident, schema, partitions, properties)
+      properties: util.Map[String, String]) : Table =
+    recordFrameProfile("DeltaCatalog", "createTable") {
+      if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        createDeltaTable(
+          ident,
+          schema,
+          partitions,
+          properties,
+          Map.empty,
+          sourceQuery = None,
+          TableCreationModes.Create
+        )
+      } else {
+        createCatalogTable(ident, schema, partitions, properties
+        )
+      }
     }
-  }
 
   override def stageReplace(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
-        "DeltaCatalog", "stageReplace") {
-    if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-      new StagedDeltaTableV2(
-        ident, schema, partitions, properties, TableCreationModes.Replace)
-    } else {
-        super.dropTable(ident)
-        BestEffortStagedTable(
+      properties: util.Map[String, String]): StagedTable =
+    recordFrameProfile("DeltaCatalog", "stageReplace") {
+      if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        new StagedDeltaTableV2(
           ident,
-          super.createTable(ident, schema, partitions, properties),
-          this)
+          schema,
+          partitions,
+          properties,
+          TableCreationModes.Replace
+        )
+      } else {
+        super.dropTable(ident)
+        val table = createCatalogTable(ident, schema, partitions, properties
+        )
+        BestEffortStagedTable(ident, table, this)
+      }
     }
-  }
 
   override def stageCreateOrReplace(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
-        "DeltaCatalog", "stageCreateOrReplace") {
-    if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-      new StagedDeltaTableV2(
-        ident, schema, partitions, properties, TableCreationModes.CreateOrReplace)
-    } else {
-        try super.dropTable(ident) catch {
+      properties: util.Map[String, String]): StagedTable =
+    recordFrameProfile("DeltaCatalog", "stageCreateOrReplace") {
+      if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        new StagedDeltaTableV2(
+          ident,
+          schema,
+          partitions,
+          properties,
+          TableCreationModes.CreateOrReplace
+        )
+      } else {
+        try super.dropTable(ident)
+        catch {
           case _: NoSuchDatabaseException => // this is fine
           case _: NoSuchTableException => // this is fine
         }
-        BestEffortStagedTable(
-          ident,
-          super.createTable(ident, schema, partitions, properties),
-          this)
+        val table = createCatalogTable(ident, schema, partitions, properties
+        )
+        BestEffortStagedTable(ident, table, this)
+      }
     }
-  }
 
   override def stageCreate(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String]): StagedTable = recordFrameProfile(
-        "DeltaCatalog", "stageCreate") {
-    if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-      new StagedDeltaTableV2(ident, schema, partitions, properties, TableCreationModes.Create)
-    } else {
-        BestEffortStagedTable(
+      properties: util.Map[String, String]): StagedTable =
+    recordFrameProfile("DeltaCatalog", "stageCreate") {
+      if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        new StagedDeltaTableV2(
           ident,
-          super.createTable(ident, schema, partitions, properties),
-          this)
+          schema,
+          partitions,
+          properties,
+          TableCreationModes.Create
+        )
+      } else {
+        val table = createCatalogTable(ident, schema, partitions, properties
+        )
+        BestEffortStagedTable(ident, table, this)
+      }
     }
-  }
 
   // Copy of V2SessionCatalog.convertTransforms, which is private.
   private def convertTransforms(partitions: Seq[Transform]): (Seq[String], Option[BucketSpec]) = {
@@ -339,7 +368,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
-  private def verifyTableAndSolidify(
+  def verifyTableAndSolidify(
       tableDesc: CatalogTable,
       query: Option[LogicalPlan]): CatalogTable = {
 
@@ -368,7 +397,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Checks if a table already exists for the provided identifier. */
-  private def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
@@ -397,7 +426,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       override val schema: StructType,
       val partitions: Array[Transform],
       override val properties: util.Map[String, String],
-      operation: TableCreationModes.CreationMode) extends StagedTable with SupportsWrite {
+      operation: TableCreationModes.CreationMode
+    ) extends StagedTable with SupportsWrite {
 
     private var asSelectQuery: Option[DataFrame] = None
     private var writeOptions: Map[String, String] = Map.empty
@@ -441,7 +471,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         props,
         writeOptions,
         asSelectQuery,
-        operation)
+        operation
+      )
     }
 
     override def name(): String = ident.name()
@@ -473,11 +504,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
       "DeltaCatalog", "alterTable") {
-    val table = loadTable(ident) match {
-      case deltaTable: DeltaTableV2 => deltaTable
-      case _ => return super.alterTable(ident, changes: _*)
-    }
-
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.
@@ -486,6 +512,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
     }
+    val table = loadTable(ident) match {
+      case deltaTable: DeltaTableV2 => deltaTable
+      case _ => return super.alterTable(ident, changes: _*)
+    }
 
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
     var syncIdentity = false
@@ -493,8 +523,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     grouped.foreach {
       case (t, newColumns) if t == classOf[AddColumn] =>
+        val tableToUpdate = table
         AlterTableAddColumnsDeltaCommand(
-          table,
+          tableToUpdate,
           newColumns.asInstanceOf[Seq[AddColumn]].map { col =>
             // Convert V2 `AddColumn` to V1 `QualifiedColType` as `AlterTableAddColumnsDeltaCommand`
             // is a V1 command.
@@ -506,7 +537,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
               col.dataType(),
               col.isNullable,
               Option(col.comment()),
-              Option(col.position()).map(UnresolvedFieldPosition))
+              Option(col.position()).map(UnresolvedFieldPosition)
+            )
           }).run(spark)
 
       case (t, deleteColumns) if t == classOf[DeleteColumn] =>

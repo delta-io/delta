@@ -186,6 +186,9 @@ final class RoaringBitmapArray extends Equals {
   /** Returns the number of distinct integers added to the bitmap (e.g., number of bits set). */
   def cardinality: Long = bitmaps.foldLeft(0L)((sum, bitmap) => sum + bitmap.getLongCardinality)
 
+  /** Tests whether the bitmap is empty. */
+  def isEmpty: Boolean = bitmaps.forall(_.isEmpty)
+
   /**
    * Use a run-length encoding where it is more space efficient.
    *
@@ -195,6 +198,19 @@ final class RoaringBitmapArray extends Equals {
     var changeApplied = false
     for (bitmap <- bitmaps) {
       changeApplied |= bitmap.runOptimize()
+    }
+    changeApplied
+  }
+
+  /**
+   * Remove run-length encoding even when it is more space efficient.
+   *
+   * @return `true` if a change was applied
+   */
+  def removeRunCompression(): Boolean = {
+    var changeApplied = false
+    for (bitmap <- bitmaps) {
+      changeApplied |= bitmap.removeRunCompression()
     }
     changeApplied
   }
@@ -226,6 +242,23 @@ final class RoaringBitmapArray extends Equals {
     val newBitmap = new RoaringBitmapArray()
     newBitmap.merge(this)
     newBitmap
+  }
+
+  /**
+   * In-place bitwise AND (this & that) operation.
+   *
+   * The current bitmap is modified.
+   */
+  def and(that: RoaringBitmapArray): Unit = {
+    for (index <- 0 until this.bitmaps.length) {
+      val thisBitmap = this.bitmaps(index)
+      if (index < that.bitmaps.length) {
+        val thatBitmap = that.bitmaps(index)
+        thisBitmap.and(thatBitmap)
+      } else {
+        thisBitmap.clear()
+      }
+    }
   }
 
   /**
@@ -317,7 +350,7 @@ final class RoaringBitmapArray extends Equals {
    * @param length Maximum number of values to consume.
    * @param rrc Code to be executed for each present or absent value.
    */
-  def forAllInRange(start: Long, length: Int, rrc: RelativeRangeConsumer): Unit = {
+  def forAllInRange(start: Long, length: Int, consumer: RelativeRangeConsumer): Unit = {
     // This one is complicated and deserves its own PR,
     // when we actually want to enable it.
     throw new UnsupportedOperationException
@@ -351,6 +384,26 @@ final class RoaringBitmapArray extends Equals {
 
   def mkString(start: String = "", sep: String = "", end: String = ""): String =
     toArray.mkString(start, sep, end)
+
+  def first: Option[Long] = {
+    for ((bitmap, high) <- bitmaps.zipWithIndex) {
+      if (!bitmap.isEmpty) {
+        val low = bitmap.first()
+        return Some(composeFromHighLowBytes(high, low))
+      }
+    }
+    None
+  }
+
+  def last: Option[Long] = {
+    for ((bitmap, high) <- bitmaps.zipWithIndex.reverse) {
+      if (!bitmap.isEmpty) {
+        val low = bitmap.last()
+        return Some(composeFromHighLowBytes(high, low))
+      }
+    }
+    None
+  }
 
   /**
    * Utility method to extend the array of [[RoaringBitmap]] to given length, keeping
@@ -406,7 +459,8 @@ final class RoaringBitmapArray extends Equals {
 object RoaringBitmapArray {
 
   /** The largest value a [[RoaringBitmapArray]] can possibly represent. */
-  final val MAX_REPRESENTABLE_VALUE = composeFromHighLowBytes(Int.MaxValue - 1, Int.MinValue)
+  final val MAX_REPRESENTABLE_VALUE: Long = composeFromHighLowBytes(Int.MaxValue - 1, Int.MinValue)
+  final val MAX_BITMAP_CARDINALITY: Long = 1L << 32
 
   /** Create a new [[RoaringBitmapArray]] with the given `values`. */
   def apply(values: Long*): RoaringBitmapArray = {

@@ -29,10 +29,11 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
+import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 trait DeltaAlterTableTestBase
@@ -743,7 +744,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long AFTER unknown)")
       }
-      assert(ex.getMessage.contains("Couldn't find"))
+      assert(
+        ex.getMessage.contains("Couldn't find") || ex.getMessage.contains("No such struct field"))
     }
   }
 
@@ -769,7 +771,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long AFTER V1)")
         }
-        assert(ex.getMessage.contains("Couldn't find"))
+        assert(
+          ex.getMessage.contains("Couldn't find") || ex.getMessage.contains("No such struct field"))
       }
     }
   }
@@ -1368,6 +1371,42 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       }
     }
   }
+
+  test("CHANGE COLUMN: allow to change change column from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, c CHAR(4)) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN c TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === StringType)
+    }
+  }
+
+  private def checkColType(f: StructField, dt: DataType): Unit = {
+    assert(f.dataType == CharVarcharUtils.replaceCharVarcharWithString(dt))
+    assert(CharVarcharUtils.getRawType(f.metadata).contains(dt))
+  }
+
+  test("CHANGE COLUMN: allow to change column from char(x) to varchar(y) type x <= y") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, c CHAR(4)) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN c TYPE VARCHAR(4)")
+      checkColType(spark.table("t").schema(1), VarcharType(4))
+    }
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, c CHAR(4)) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN c TYPE VARCHAR(5)")
+      checkColType(spark.table("t").schema(1), VarcharType(5))
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change column from varchar(x) to varchar(y) type x <= y") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, c VARCHAR(4)) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN c TYPE VARCHAR(4)")
+      checkColType(spark.table("t").schema(1), VarcharType(4))
+      sql("ALTER TABLE t CHANGE COLUMN c TYPE VARCHAR(5)")
+      checkColType(spark.table("t").schema(1), VarcharType(5))
+    }
+  }
 }
 
 trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
@@ -1615,7 +1654,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
           sql(s"alter table $identifier set location '$path'")
         }
         assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
-        assert(e.getSqlState == "42000")
+        assert(e.getSqlState == "42613")
         assert(e.getMessage == "Cannot change the location of a path based table.")
       }
     }

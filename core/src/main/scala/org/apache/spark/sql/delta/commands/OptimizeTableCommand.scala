@@ -25,7 +25,7 @@ import scala.collection.parallel.immutable.ParVector
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -171,11 +171,12 @@ class OptimizeExecutor(
       require(minFileSize > 0, "minFileSize must be > 0")
       require(maxFileSize > 0, "maxFileSize must be > 0")
 
-      val candidateFiles = txn.filterFiles(partitionPredicate)
+      val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      // select all files in case of multi-dimensional clustering
-      val filesToProcess = candidateFiles.filter(_.size < minFileSize || isMultiDimClustering)
+      val maxDeletedRowsRatio = sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
+      val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
@@ -188,9 +189,10 @@ class OptimizeExecutor(
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
+      val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
         val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql), zOrderByColumns)
-        val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles)
+        val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
         commitAndRetry(txn, operation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
@@ -218,6 +220,16 @@ class OptimizeExecutor(
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
       optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
+      val numTableColumns = txn.snapshot.metadata.schema.size
+      optimizeStats.numTableColumns = numTableColumns
+      optimizeStats.numTableColumnsWithStats =
+        DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(txn.snapshot.metadata)
+          .min(numTableColumns)
+      if (removedDVs.size > 0) {
+        optimizeStats.deletionVectorStats = Some(DeletionVectorStats(
+          numDeletionVectorsRemoved = removedDVs.size,
+          numDeletionVectorRowsRemoved = removedDVs.map(_.cardinality).sum))
+      }
 
       if (isMultiDimClustering) {
         val inputFileStats =
@@ -234,6 +246,29 @@ class OptimizeExecutor(
 
       return Seq(Row(txn.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
+  }
+
+  /**
+   * Helper method to prune the list of selected files based on fileSize and ratio of
+   * deleted rows according to the deletion vector in [[AddFile]].
+   */
+  private def pruneCandidateFileList(
+      minFileSize: Long, maxDeletedRowsRatio: Double, files: Seq[AddFile]): Seq[AddFile] = {
+
+    // Select all files in case of multi-dimensional clustering
+    if (isMultiDimClustering) return files
+
+    def shouldCompactBecauseOfDeletedRows(file: AddFile): Boolean = {
+      // Always compact files with DVs but without numRecords stats.
+      // This may be overly aggressive, but it fixes the problem in the long-term,
+      // as the compacted files will have stats.
+      (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
+          file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
+    }
+
+    // Select files that are small or have too many deleted rows
+    files.filter(
+      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile))
   }
 
   /**
@@ -276,10 +311,11 @@ class OptimizeExecutor(
           bins += currentBin.toVector
         }
 
-        bins.map(b => (partition, b))
-          // select bins that have at least two files or in case of multi-dim clustering
-          // select all bins
-          .filter(_._2.size > 1 || isMultiDimClustering)
+        bins.filter { bin =>
+          bin.size > 1 || // bin has more than one file or
+          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          isMultiDimClustering // multi-clustering
+        }.map(b => (partition, b))
     }
   }
 
@@ -370,7 +406,8 @@ class OptimizeExecutor(
   private def createMetrics(
       sparkContext: SparkContext,
       addedFiles: Seq[AddFile],
-      removedFiles: Seq[RemoveFile]): Map[String, SQLMetric] = {
+      removedFiles: Seq[RemoveFile],
+      removedDVs: Seq[DeletionVectorDescriptor]): Map[String, SQLMetric] = {
 
     def setAndReturnMetric(description: String, value: Long) = {
       val metric = createMetric(sparkContext, description)
@@ -392,6 +429,25 @@ class OptimizeExecutor(
       totalSize
     }
 
+    val (deletionVectorRowsRemoved, deletionVectorBytesRemoved) =
+      removedDVs.map(dv => (dv.cardinality, dv.sizeInBytes.toLong))
+        .reduceLeftOption((dv1, dv2) => (dv1._1 + dv2._1, dv1._2 + dv2._2))
+        .getOrElse((0L, 0L))
+
+    val dvMetrics: Map[String, SQLMetric] = Map(
+      "numDeletionVectorsRemoved" ->
+        setAndReturnMetric(
+          "total number of deletion vectors removed",
+          removedDVs.size),
+      "numDeletionVectorRowsRemoved" ->
+        setAndReturnMetric(
+          "total number of deletion vector rows removed",
+          deletionVectorRowsRemoved),
+      "numDeletionVectorBytesRemoved" ->
+        setAndReturnMetric(
+          "total number of bytes of removed deletion vectors",
+          deletionVectorBytesRemoved))
+
     val sizeStats = FileSizeStatsWithHistogram.create(addedFiles.map(_.size).sorted)
     Map[String, SQLMetric](
       "minFileSize" -> setAndReturnMetric("minimum file size", sizeStats.get.min),
@@ -403,6 +459,7 @@ class OptimizeExecutor(
       "numRemovedFiles" -> setAndReturnMetric("total number of files removed.", removedFiles.size),
       "numAddedBytes" -> setAndReturnMetric("total number of bytes added", totalSize(addedFiles)),
       "numRemovedBytes" ->
-        setAndReturnMetric("total number of bytes removed", totalSize(removedFiles)))
+        setAndReturnMetric("total number of bytes removed", totalSize(removedFiles))
+    ) ++ dvMetrics
   }
 }

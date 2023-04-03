@@ -30,6 +30,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
@@ -75,6 +76,90 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
+
+  Seq(("ordinal", ""), ("name", "(id, col2, col)")).foreach { case (testName, values) =>
+    test(s"INSERT OVERWRITE schema evolution works for array struct types - $testName") {
+      val sourceSchema = "id INT, col2 STRING, col ARRAY<STRUCT<f1: STRING, f2: STRING, f3: DATE>>"
+      val sourceRecord = "1, '2022-11-01', array(struct('s1', 's2', DATE'2022-11-01'))"
+      val targetSchema = "id INT, col2 DATE, col ARRAY<STRUCT<f1: STRING, f2: STRING>>"
+      val targetRecord = "1, DATE'2022-11-02', array(struct('t1', 't2'))"
+
+      runInsertOverwrite(sourceSchema, sourceRecord, targetSchema, targetRecord) {
+        (sourceTable, targetTable) =>
+          sql(s"INSERT OVERWRITE $targetTable $values SELECT * FROM $sourceTable")
+
+          // make sure table is still writeable
+          sql(s"""INSERT INTO $targetTable VALUES (2, DATE'2022-11-02',
+               | array(struct('s3', 's4', DATE'2022-11-02')))""".stripMargin)
+          sql(s"""INSERT INTO $targetTable VALUES (3, DATE'2022-11-03',
+               |array(struct('s5', 's6', NULL)))""".stripMargin)
+          val df = spark.sql(
+            """SELECT 1 as id, DATE'2022-11-01' as col2,
+              | array(struct('s1', 's2', DATE'2022-11-01')) as col UNION
+              | SELECT 2 as id, DATE'2022-11-02' as col2,
+              | array(struct('s3', 's4', DATE'2022-11-02')) as col UNION
+              | SELECT 3 as id, DATE'2022-11-03' as col2,
+              | array(struct('s5', 's6', NULL)) as col""".stripMargin)
+          verifyTable(targetTable, df)
+      }
+    }
+  }
+
+  Seq(("ordinal", ""), ("name", "(id, col2, col)")).foreach { case (testName, values) =>
+    test(s"INSERT OVERWRITE schema evolution works for array nested types - $testName") {
+      val sourceSchema = "id INT, col2 STRING, " +
+        "col ARRAY<STRUCT<f1: INT, f2: STRUCT<f21: STRING, f22: DATE>, f3: STRUCT<f31: STRING>>>"
+      val sourceRecord = "1, '2022-11-01', " +
+        "array(struct(1, struct('s1', DATE'2022-11-01'), struct('s1')))"
+      val targetSchema = "id INT, col2 DATE, col ARRAY<STRUCT<f1: INT, f2: STRUCT<f21: STRING>>>"
+      val targetRecord = "2, DATE'2022-11-02', array(struct(2, struct('s2')))"
+
+      runInsertOverwrite(sourceSchema, sourceRecord, targetSchema, targetRecord) {
+        (sourceTable, targetTable) =>
+          sql(s"INSERT OVERWRITE $targetTable $values SELECT * FROM $sourceTable")
+
+          // make sure table is still writeable
+          sql(s"""INSERT INTO $targetTable VALUES (2, DATE'2022-11-02',
+               | array(struct(2, struct('s2', DATE'2022-11-02'), struct('s2'))))""".stripMargin)
+          sql(s"""INSERT INTO $targetTable VALUES (3, DATE'2022-11-03',
+               | array(struct(3, struct('s3', NULL), struct(NULL))))""".stripMargin)
+          val df = spark.sql(
+            """SELECT 1 as id, DATE'2022-11-01' as col2,
+              | array(struct(1, struct('s1', DATE'2022-11-01'), struct('s1'))) as col UNION
+              | SELECT 2 as id, DATE'2022-11-02' as col2,
+              | array(struct(2, struct('s2', DATE'2022-11-02'), struct('s2'))) as col UNION
+              | SELECT 3 as id, DATE'2022-11-03' as col2,
+              | array(struct(3, struct('s3', NULL), struct(NULL))) as col
+              |""".stripMargin)
+          verifyTable(targetTable, df)
+      }
+    }
+  }
+
+  def runInsertOverwrite(
+      sourceSchema: String,
+      sourceRecord: String,
+      targetSchema: String,
+      targetRecord: String)(
+      runAndVerify: (String, String) => Unit): Unit = {
+    val sourceTable = "source"
+    val targetTable = "target"
+    withTable(sourceTable) {
+      withTable(targetTable) {
+        withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+          // prepare source table
+          sql(s"""CREATE TABLE $sourceTable ($sourceSchema)
+                 | USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $sourceTable VALUES ($sourceRecord)")
+          // prepare target table
+          sql(s"""CREATE TABLE $targetTable ($targetSchema)
+                 | USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $targetTable VALUES ($targetRecord)")
+          runAndVerify(sourceTable, targetTable)
+        }
+      }
+    }
+  }
 }
 
 class DeltaInsertIntoSQLByPathSuite
@@ -298,6 +383,15 @@ abstract class DeltaInsertIntoTests(
     verifyTable(t1, df)
   }
 
+  test("insertInto: append cast automatically") {
+    val t1 = "tbl"
+    sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format")
+    val df = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    doInsert(t1, df)
+    verifyTable(t1, df)
+  }
+
+
   test("insertInto: append partitioned table") {
     val t1 = "tbl"
     withTable(t1) {
@@ -349,16 +443,45 @@ abstract class DeltaInsertIntoTests(
     }
   }
 
+  test("insertInto: overwrite cast automatically") {
+    val t1 = "tbl"
+    sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format")
+    val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    val df2 = Seq((4L, "d"), (5L, "e"), (6L, "f")).toDF("id", "data")
+    val df2c = Seq((4, "d"), (5, "e"), (6, "f")).toDF("id", "data")
+    doInsert(t1, df)
+    doInsert(t1, df2c, SaveMode.Overwrite)
+    verifyTable(t1, df2)
+  }
+
   test("insertInto: fails when missing a column") {
     val t1 = "tbl"
     sql(s"CREATE TABLE $t1 (id bigint, data string, missing string) USING $v2Format")
-    val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
-    val exc = intercept[AnalysisException] {
-      doInsert(t1, df)
+    val df1 = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    // mismatched datatype
+    val df2 = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    for (df <- Seq(df1, df2)) {
+      val exc = intercept[AnalysisException] {
+        doInsert(t1, df)
+      }
+      verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
+      assert(exc.getMessage.contains("not enough data columns"))
     }
+  }
 
-    verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
-    assert(exc.getMessage.contains("not enough data columns"))
+  test("insertInto: overwrite fails when missing a column") {
+    val t1 = "tbl"
+    sql(s"CREATE TABLE $t1 (id bigint, data string, missing string) USING $v2Format")
+    val df1 = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    // mismatched datatype
+    val df2 = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    for (df <- Seq(df1, df2)) {
+      val exc = intercept[AnalysisException] {
+        doInsert(t1, df, SaveMode.Overwrite)
+      }
+      verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
+      assert(exc.getMessage.contains("not enough data columns"))
+    }
   }
 
   // This behavior is specific to Delta
@@ -601,6 +724,37 @@ abstract class DeltaInsertIntoTests(
 
       val df = Seq((1L, "a"), (2L, "b"), (3L, "c"), (4L, "keep")).toDF("id", "data")
       verifyTable(t1, df)
+    }
+  }
+
+  dynamicOverwriteTest(
+    "insertInto: overwrite partitioned table in dynamic mode automatic casting") {
+    val t1 = "tbl"
+    withTable(t1) {
+      sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format PARTITIONED BY (id)")
+      val init = Seq((2L, "dummy"), (4L, "keep")).toDF("id", "data")
+      doInsert(t1, init)
+
+      val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+      val dfc = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+      doInsert(t1, df, SaveMode.Overwrite)
+
+      verifyTable(t1, df.union(sql("SELECT 4L, 'keep'")))
+    }
+  }
+
+  dynamicOverwriteTest("insertInto: overwrite fails when missing a column in dynamic mode") {
+    val t1 = "tbl"
+    sql(s"CREATE TABLE $t1 (id bigint, data string, missing string) USING $v2Format")
+    val df1 = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+    // mismatched datatype
+    val df2 = Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "data")
+    for (df <- Seq(df1, df2)) {
+      val exc = intercept[AnalysisException] {
+        doInsert(t1, df, SaveMode.Overwrite)
+      }
+      verifyTable(t1, Seq.empty[(Long, String, String)].toDF("id", "data", "missing"))
+      assert(exc.getMessage.contains("not enough data columns"))
     }
   }
 

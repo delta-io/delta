@@ -58,6 +58,7 @@ object DeltaFileOperations extends DeltaLogging {
    * @return Absolute path without escaped chars that is directly readable by Hadoop APIs.
    */
   def absolutePath(basePath: String, child: String): Path = {
+    // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
     if (p.isAbsolute) {
       p
@@ -71,6 +72,7 @@ object DeltaFileOperations extends DeltaLogging {
         merged
       }
     }
+    // scalastyle:on pathfromuri
   }
 
   /**

@@ -681,7 +681,40 @@ class DeltaDataFrameWriterV2Suite
       verifyNotImplicitCasting {
         Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
       }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
+      }
     }
+  }
+
+  test("append or overwrite mode allows missing columns") {
+    val table = "allow_missing_columns"
+    withTable(table) {
+      spark.sql(
+        s"CREATE TABLE $table(col1 int, col2 int, col3 int) USING delta PARTITIONED BY (col3)")
+
+      // append
+      Seq((0, 10)).toDF("col1", "col3").writeTo(table).append()
+      checkAnswer(
+        spark.table(table),
+        Seq(Row(0, null, 10))
+      )
+
+      // overwrite by expression
+      Seq((1, 11)).toDF("col1", "col3").writeTo(table).overwrite($"col3" === 11)
+      checkAnswer(
+        spark.table(table),
+        Seq(Row(0, null, 10), Row(1, null, 11))
+      )
+
+      // dynamic partition overwrite
+      Seq((2, 10)).toDF("col1", "col3").writeTo(table).overwritePartitions()
+      checkAnswer(
+        spark.table(table),
+        Seq(Row(2, null, 10), Row(1, null, 11))
+      )
+    }
+
   }
 }
 

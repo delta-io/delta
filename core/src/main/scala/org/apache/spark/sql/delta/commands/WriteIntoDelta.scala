@@ -88,9 +88,10 @@ case class WriteIntoDelta(
   override protected val canOverwriteSchema: Boolean =
     options.canOverwriteSchema && isOverwriteOperation && options.replaceWhere.isEmpty
 
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
-      if (writeHasBeenExecuted(txn, sparkSession, Some(options))) {
+      if (hasBeenExecuted(txn, sparkSession, Some(options))) {
         return Seq.empty
       }
 
@@ -100,21 +101,6 @@ case class WriteIntoDelta(
       txn.commit(actions, operation)
     }
     Seq.empty
-  }
-
-  /**
-   * Determines whether this delta write command has been executed by comparing the current
-   * transaction version with the transaction version of the options of this write command.
-   * If the current transaction version is greater or equal to the transaction version of this
-   * write command, then this command has been executed and can be skipped.
-   */
-  def writeHasBeenExecuted(
-      txn: OptimisticTransaction,
-      sparkSession: SparkSession,
-      options: Option[DeltaOptions]): Boolean = {
-    // If this batch has already been executed within this query, then return.
-    var skipExecution = hasBeenExecuted(txn)
-    skipExecution
   }
 
   // TODO: replace the method below with `CharVarcharUtils.replaceCharWithVarchar`, when 3.3 is out.
@@ -356,7 +342,7 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, deletedFiles)
       case _ =>
-        val newFiles = txn.writeFiles(data, Some(options))
+        val newFiles = writeFiles(txn, data, options)
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
@@ -380,8 +366,7 @@ case class WriteIntoDelta(
     } else {
       newFiles ++ deletedFiles
     }
-    var setTxns = createSetTransaction()
-    setTxns.toSeq ++ fileActions
+    createSetTransaction(sparkSession, deltaLog, Some(options)).toSeq ++ fileActions
   }
 
   private def extractConstraints(
@@ -404,6 +389,13 @@ case class WriteIntoDelta(
     }
   }
 
+  private def writeFiles(
+      txn: OptimisticTransaction,
+      data: DataFrame,
+      options: DeltaOptions): Seq[FileAction] = {
+    txn.writeFiles(data, Some(options))
+  }
+
   private def removeFiles(
       spark: SparkSession,
       txn: OptimisticTransaction,
@@ -415,37 +407,5 @@ case class WriteIntoDelta(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
-  }
-
-  /**
-   * Returns true if there is information in the spark session that indicates that this write, which
-   * is part of a streaming query and a batch, has already been successfully written.
-   */
-  private def hasBeenExecuted(txn: OptimisticTransaction): Boolean = {
-    val txnVersion = options.txnVersion
-    val txnAppId = options.txnAppId
-    for (v <- txnVersion; a <- txnAppId) {
-      val currentVersion = txn.txnVersion(a)
-      if (currentVersion >= v) {
-        logInfo(s"Transaction write of version $v for application id $a " +
-          s"has already been committed in Delta table id ${txn.deltaLog.tableId}. " +
-          s"Skipping this write.")
-        return true
-      }
-    }
-    false
-  }
-
-  /**
-   * Returns SetTransaction if a valid app ID and version are present. Otherwise returns
-   * an empty list.
-   */
-  private def createSetTransaction(): Option[SetTransaction] = {
-    val txnVersion = options.txnVersion
-    val txnAppId = options.txnAppId
-    for (v <- txnVersion; a <- txnAppId) {
-      return Some(SetTransaction(a, v, Some(deltaLog.clock.getTimeMillis())))
-    }
-    None
   }
 }

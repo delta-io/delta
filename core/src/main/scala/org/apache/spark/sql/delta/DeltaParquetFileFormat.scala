@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta
 
+import java.net.URI
+
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
-import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata}
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.DeletedRowsMarkingFilter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -33,7 +35,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.{ByteType, StructField, StructType}
+import org.apache.spark.sql.types.{ByteType, LongType, StructField, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -44,17 +46,20 @@ import org.apache.spark.util.SerializableConfiguration
  *    whether the row is deleted or not according to the deletion vector. Consumers
  *    of this scan can use the column values to filter out the deleted rows.
  */
-class DeltaParquetFileFormat(
+case class DeltaParquetFileFormat(
+    protocol: Protocol,
     metadata: Metadata,
-    val isSplittable: Boolean = true,
-    val disablePushDowns: Boolean = false,
-    val tablePath: Option[String] = None,
-    val broadcastDvMap: Option[Broadcast[Map[String, DeletionVectorDescriptor]]] = None,
-    val broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
+    isSplittable: Boolean = true,
+    disablePushDowns: Boolean = false,
+    tablePath: Option[String] = None,
+    broadcastDvMap: Option[Broadcast[Map[URI, DeletionVectorDescriptor]]] = None,
+    broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
-  require(!(broadcastHadoopConf.isDefined ^ broadcastDvMap.isDefined ^ tablePath.isDefined ^
-    !isSplittable ^ disablePushDowns))
+  if (hasDeletionVectorMap) {
+    require(tablePath.isDefined && !isSplittable && disablePushDowns,
+      "Wrong arguments for Delta table scan with deletion vectors")
+  }
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
@@ -114,29 +119,42 @@ class DeltaParquetFileFormat(
         options,
         hadoopConf)
 
-    if (!hasDeletionVectorMap()) {
-      return parquetDataReader
+    val schemaWithIndices = requiredSchema.fields.zipWithIndex
+    def findColumn(name: String): Option[ColumnMetadata] = {
+      val results = schemaWithIndices.filter(_._1.name == name)
+      if (results.length > 1) {
+        throw new IllegalArgumentException(
+          s"There are more than one column with name=`$name` requested in the reader output")
+      }
+      results.headOption.map(e => ColumnMetadata(e._2, e._1))
+    }
+    val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
+    val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
+
+    if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
+      return parquetDataReader // no additional metadata is needed.
+    } else {
+      // verify the file splitting and filter pushdown are disabled. The new additional
+      // metadata columns cannot be generated with file splitting and filter pushdowns
+      require(!isSplittable, "Cannot generate row index related metadata with file splitting")
+      require(disablePushDowns, "Cannot generate row index related metadata with filter pushdown")
     }
 
-    val isRowDeletedColumnTypeIdx = requiredSchema.fields.zipWithIndex
-      .find(_._1.name == IS_ROW_DELETED_COLUMN_NAME)
-
-    if (isRowDeletedColumnTypeIdx.isEmpty) {
-      throw new IllegalArgumentException(
-        s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
+    if (hasDeletionVectorMap && isRowDeletedColumn.isEmpty) {
+        throw new IllegalArgumentException(
+          s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
     }
 
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
-
     (partitionedFile: PartitionedFile) => {
       val rowIteratorFromParquet = parquetDataReader(partitionedFile)
       val iterToReturn =
-        iteratorWithIsRowDeletedColumnPopulated(
+        iteratorWithAdditionalMetadataColumns(
           partitionedFile,
           rowIteratorFromParquet,
-          isRowDeletedColumnTypeIdx.get._1,
-          isRowDeletedColumnTypeIdx.get._2,
-          useOffHeapBuffers)
+          isRowDeletedColumn,
+          useOffHeapBuffers = useOffHeapBuffers,
+          rowIndexColumn = rowIndexColumn)
       iterToReturn.asInstanceOf[Iterator[InternalRow]]
     }
   }
@@ -147,68 +165,83 @@ class DeltaParquetFileFormat(
 
   def copyWithDVInfo(
       tablePath: String,
-      broadcastDvMap: Broadcast[Map[String, DeletionVectorDescriptor]],
+      broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptor]],
       broadcastHadoopConf: Broadcast[SerializableConfiguration]): DeltaParquetFileFormat = {
-    new DeltaParquetFileFormat(
-      metadata,
+    this.copy(
       isSplittable = false,
       disablePushDowns = true,
       tablePath = Some(tablePath),
-      Some(broadcastDvMap),
-      Some(broadcastHadoopConf))
+      broadcastDvMap = Some(broadcastDvMap),
+      broadcastHadoopConf = Some(broadcastHadoopConf))
   }
 
   /**
-   * Modifies the data read from underlying Parquet reader by populating the row deleted status from
-   * deletion vector corresponding to this file in the [[IS_ROW_DELETED_COLUMN_NAME]] column.
+   * Modifies the data read from underlying Parquet reader by populating one or both of the
+   * following metadata columns.
+   *   - [[IS_ROW_DELETED_COLUMN_NAME]] - row deleted status from deletion vector corresponding
+   *   to this file
+   *   - [[ROW_INDEX_COLUMN_NAME]] - index of the row within the file.
    */
-  private def iteratorWithIsRowDeletedColumnPopulated(
+  private def iteratorWithAdditionalMetadataColumns(
       partitionedFile: PartitionedFile,
       iterator: Iterator[Object],
-      isRowDeletedColumnType: StructField,
-      isRowDeletedColumnIdx: Int,
+      isRowDeletedColumn: Option[ColumnMetadata],
+      rowIndexColumn: Option[ColumnMetadata],
       useOffHeapBuffers: Boolean): Iterator[Object] = {
-    val filePath = partitionedFile.filePath
-    val absolutePath = new Path(filePath).toString
+    val pathUri = new URI(partitionedFile.filePath)
 
-    // Fetch the DV descriptor from the broadcast map and create a row index filter
-    val dvDescriptor = broadcastDvMap.get.value.get(absolutePath)
-    val rowIndexFilter = DeletedRowsMarkingFilter.createInstance(
-      dvDescriptor.getOrElse(DeletionVectorDescriptor.EMPTY),
-      broadcastHadoopConf.get.value.value,
-      tablePath.map(new Path(_))
-    )
+    val rowIndexFilter = isRowDeletedColumn.map { col =>
+      // Fetch the DV descriptor from the broadcast map and create a row index filter
+      val dvDescriptor = broadcastDvMap.get.value.get(pathUri)
+      DeletedRowsMarkingFilter.createInstance(
+        dvDescriptor.getOrElse(DeletionVectorDescriptor.EMPTY),
+        broadcastHadoopConf.get.value.value,
+        tablePath.map(new Path(_)))
+    }
+
+    val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
 
     // Unfortunately there is no way to verify the Parquet index is starting from 0.
     // We disable the splits, so the assumption is ParquetFileFormat respects that
     var rowIndex: Long = 0
 
-    val newIter = iterator.map { row =>
-      val newRow = row match {
+    // Used only when non-column row batches are received from the Parquet reader
+    val tempVector = new OnHeapColumnVector(1, ByteType)
+
+    iterator.map { row =>
+      row match {
         case batch: ColumnarBatch => // When vectorized Parquet reader is enabled
           val size = batch.numRows()
-          // Create a new vector for the `is row deleted` column. We can't use the one from Parquet
-          // reader as it set the [[WritableColumnVector.isAllNulls]] to true and it can't be reset
-          // with using any public APIs. In this new vector, fill the values using the row index
-          // filter and replace the vector corresponding to `is row deleted` column in ColumnBatch
-          val newBatch = trySafely(newVector(useOffHeapBuffers, size, isRowDeletedColumnType)) {
-            writableVector =>
-              rowIndexFilter.materializeIntoVector(rowIndex, rowIndex + size, writableVector)
-              rowIndex += size
+          // Create vectors for all needed metadata columns.
+          // We can't use the one from Parquet reader as it set the
+          // [[WritableColumnVector.isAllNulls]] to true and it can't be reset with using any
+          // public APIs.
+          trySafely(useOffHeapBuffers, size, metadataColumns) { writableVectors =>
+            val indexVectorTuples = new ArrayBuffer[(Int, ColumnVector)]
+            var index = 0
+            isRowDeletedColumn.foreach { columnMetadata =>
+              val isRowDeletedVector = writableVectors(index)
+              rowIndexFilter.get
+                .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
+              indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
+              index += 1
+            }
 
-              val vectors = ArrayBuffer[ColumnVector]()
-              for (i <- 0 until batch.numCols()) {
-                if (i == isRowDeletedColumnIdx) {
-                  vectors += writableVector
-                  // Make sure to close the existing vector allocated in the Parquet
-                  batch.column(i).close()
-                } else {
-                  vectors += batch.column(i)
-                }
+            rowIndexColumn.foreach { columnMetadata =>
+              val rowIndexVector = writableVectors(index)
+              // populate the row index column value
+              for (i <- 0 until size) {
+                rowIndexVector.putLong(i, rowIndex + i)
               }
-              new ColumnarBatch(vectors.toArray, size)
+
+              indexVectorTuples += (columnMetadata.index -> rowIndexVector)
+              index += 1
+            }
+
+            val newBatch = replaceVectors(batch, indexVectorTuples.toSeq: _*)
+            rowIndex += size
+            newBatch
           }
-          newBatch
 
         case rest: InternalRow => // When vectorized Parquet reader is disabled
           // Temporary vector variable used to get DV values from RowIndexFilter
@@ -217,19 +250,19 @@ class DeltaParquetFileFormat(
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
           // reader and this will be temporary until Delta upgrades to Spark with Parquet
           // reader that automatically generates the row index column.
-          trySafely(new OnHeapColumnVector(1, ByteType)) { tempVector =>
-            rowIndexFilter.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
-            rest.setLong(isRowDeletedColumnIdx, tempVector.getByte(0))
-            rowIndex += 1
-            rest
+          isRowDeletedColumn.foreach { columnMetadata =>
+            rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            rest.setLong(columnMetadata.index, tempVector.getByte(0))
           }
+
+          rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
+          rowIndex += 1
+          rest
         case others =>
           throw new RuntimeException(
             s"Parquet reader returned an unknown row type: ${others.getClass.getName}")
       }
-      newRow
     }
-    newIter
   }
 }
 
@@ -240,6 +273,10 @@ object DeltaParquetFileFormat {
    */
   val IS_ROW_DELETED_COLUMN_NAME = "__delta_internal_is_row_deleted"
   val IS_ROW_DELETED_STRUCT_FIELD = StructField(IS_ROW_DELETED_COLUMN_NAME, ByteType)
+
+  /** Row index for each column */
+  val ROW_INDEX_COLUMN_NAME = "__delta_internal_row_index"
+  val ROW_INDEX_STRUCT_FILED = StructField(ROW_INDEX_COLUMN_NAME, LongType)
 
   /** Utility method to create a new writable vector */
   private def newVector(
@@ -252,14 +289,59 @@ object DeltaParquetFileFormat {
   }
 
   /** Try the operation, if the operation fails release the created resource */
-  def trySafely[R <: AutoCloseable, T](createResource: => R)(f: R => T): T = {
-    val resource = createResource
+  private def trySafely[R <: WritableColumnVector, T](
+      useOffHeapBuffers: Boolean,
+      size: Int,
+      columns: Seq[ColumnMetadata])(f: Seq[WritableColumnVector] => T): T = {
+    val resources = new ArrayBuffer[WritableColumnVector](columns.size)
     try {
-      f.apply(resource)
+      columns.foreach(col => resources.append(newVector(useOffHeapBuffers, size, col.structField)))
+      f(resources.toSeq)
     } catch {
       case NonFatal(e) =>
-        resource.close()
+        resources.foreach(closeQuietly(_))
         throw e
     }
   }
+
+  /** Utility method to quietly close an [[AutoCloseable]] */
+  private def closeQuietly(closeable: AutoCloseable): Unit = {
+    if (closeable != null) {
+      try {
+        closeable.close()
+      } catch {
+        case NonFatal(_) => // ignore
+      }
+    }
+  }
+
+  /**
+   * Helper method to replace the vectors in given [[ColumnarBatch]].
+   * New vectors and its index in the batch are given as tuples.
+   */
+  private def replaceVectors(
+      batch: ColumnarBatch,
+      indexVectorTuples: (Int, ColumnVector) *): ColumnarBatch = {
+    val vectors = ArrayBuffer[ColumnVector]()
+    for (i <- 0 until batch.numCols()) {
+      var replaced: Boolean = false
+      for (indexVectorTuple <- indexVectorTuples) {
+        val index = indexVectorTuple._1
+        val vector = indexVectorTuple._2
+        if (indexVectorTuple._1 == i) {
+          vectors += indexVectorTuple._2
+          // Make sure to close the existing vector allocated in the Parquet
+          batch.column(i).close()
+          replaced = true
+        }
+      }
+      if (!replaced) {
+        vectors += batch.column(i)
+      }
+    }
+    new ColumnarBatch(vectors.toArray, batch.numRows())
+  }
+
+  /** Helper class to encapsulate column info */
+  case class ColumnMetadata(index: Int, structField: StructField)
 }

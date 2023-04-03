@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FIN
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.Utils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -30,9 +31,8 @@ import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
-import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.types.LongType
@@ -52,8 +52,8 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "numPartitionsAddedTo" -> createMetric(sc, "number of partitions added"),
     "numPartitionsRemovedFrom" -> createMetric(sc, "number of partitions removed"),
     "numCopiedRows" -> createMetric(sc, "number of rows copied"),
-    "numBytesAdded" -> createMetric(sc, "number of bytes added"),
-    "numBytesRemoved" -> createMetric(sc, "number of bytes removed"),
+    "numAddedBytes" -> createMetric(sc, "number of bytes added"),
+    "numRemovedBytes" -> createMetric(sc, "number of bytes removed"),
     "executionTimeMs" ->
       createTimingMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" ->
@@ -112,6 +112,11 @@ case class DeleteCommand(
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
       deltaLog.withNewTransaction { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
+        if (hasBeenExecuted(txn, sparkSession)) {
+          sendDriverMetrics(sparkSession, metrics)
+          return Seq.empty
+        }
+
         val deleteActions = performDelete(sparkSession, deltaLog, txn)
         txn.commitIfNeeded(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
       }
@@ -142,9 +147,9 @@ case class DeleteCommand(
     var numAddedChangeFiles: Long = 0
     var scanTimeMs: Long = 0
     var rewriteTimeMs: Long = 0
-    var numBytesAdded: Long = 0
+    var numAddedBytes: Long = 0
     var changeFileBytes: Long = 0
-    var numBytesRemoved: Long = 0
+    var numRemovedBytes: Long = 0
     var numFilesBeforeSkipping: Long = 0
     var numBytesBeforeSkipping: Long = 0
     var numFilesAfterSkipping: Long = 0
@@ -167,7 +172,7 @@ case class DeleteCommand(
         numRemovedFiles = allFiles.size
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
         val (numBytes, numPartitions) = totalBytesAndDistinctPartitionValues(allFiles)
-        numBytesRemoved = numBytes
+        numRemovedBytes = numBytes
         numFilesBeforeSkipping = numRemovedFiles
         numBytesBeforeSkipping = numBytes
         numFilesAfterSkipping = numRemovedFiles
@@ -199,7 +204,7 @@ case class DeleteCommand(
 
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numRemovedFiles = candidateFiles.size
-          numBytesRemoved = candidateFiles.map(_.size).sum
+          numRemovedBytes = candidateFiles.map(_.size).sum
           numFilesAfterSkipping = candidateFiles.size
           val (numCandidateBytes, numCandidatePartitions) =
             totalBytesAndDistinctPartitionValues(candidateFiles)
@@ -214,7 +219,15 @@ case class DeleteCommand(
           candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
         } else {
           // Case 3: Delete the rows based on the condition.
-          val candidateFiles = txn.filterFiles(metadataPredicates ++ otherPredicates)
+
+          // Should we write the DVs to represent the deleted rows?
+          val shouldWriteDVs = shouldWritePersistentDeletionVectors(sparkSession, txn)
+
+          val candidateFiles = txn.filterFiles(
+            metadataPredicates ++ otherPredicates,
+            keepNumRecords = shouldWriteDVs)
+          // `candidateFiles` contains the files filtered using statistics and delete condition
+          // They may or may not contains any rows that need to be deleted.
 
           numFilesAfterSkipping = candidateFiles.size
           val (numCandidateBytes, numCandidatePartitions) =
@@ -228,73 +241,103 @@ case class DeleteCommand(
 
           val fileIndex = new TahoeBatchFileIndex(
             sparkSession, "delete", candidateFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
-          // Keep everything from the resolved target except a new TahoeFileIndex
-          // that only involves the affected files instead of all files.
-          val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-          val data = Dataset.ofRows(sparkSession, newTarget)
-          val deletedRowCount = metrics("numDeletedRows")
-          val deletedRowUdf = DeltaUDF.boolean { () =>
-            deletedRowCount += 1
-            true
-          }.asNondeterministic()
-          val filesToRewrite =
-            withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
-              if (candidateFiles.isEmpty) {
-                Array.empty[String]
-              } else {
-                data.filter(new Column(cond))
-                  .select(input_file_name())
-                  .filter(deletedRowUdf())
-                  .distinct()
-                  .as[String]
-                  .collect()
-              }
-            }
+          if (shouldWriteDVs) {
+            val targetDf = DeleteWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
+              sparkSession,
+              target,
+              fileIndex)
 
-          numRemovedFiles = filesToRewrite.length
-          scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
-          if (filesToRewrite.isEmpty) {
-            // Case 3.1: no row matches and no delete will be triggered
-            if (txn.metadata.partitionColumns.nonEmpty) {
-              numPartitionsRemovedFrom = Some(0)
-              numPartitionsAddedTo = Some(0)
+            // Does the target table already has DVs enabled? If so, we need to read the table
+            // with deletion vectors.
+            val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
+
+            val touchedFiles = DeleteWithDeletionVectorsHelper.findTouchedFiles(
+              sparkSession,
+              txn,
+              mustReadDeletionVectors,
+              deltaLog,
+              targetDf,
+              fileIndex,
+              cond)
+
+            if (touchedFiles.nonEmpty) {
+              DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+                sparkSession,
+                touchedFiles,
+                txn.snapshot)
+            } else {
+              Nil // Nothing to update
             }
-            Nil
           } else {
-            // Case 3.2: some files need an update to remove the deleted files
-            // Do the second pass and just read the affected files
-            val baseRelation = buildBaseRelation(
-              sparkSession, txn, "delete", deltaLog.dataPath, filesToRewrite, nameToAddFileMap)
             // Keep everything from the resolved target except a new TahoeFileIndex
             // that only involves the affected files instead of all files.
-            val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
-            val targetDF = Dataset.ofRows(sparkSession, newTarget)
-            val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
-            val rewrittenActions = rewriteFiles(txn, targetDF, filterCond, filesToRewrite.length)
-            val (changeFiles, rewrittenFiles) = rewrittenActions
-              .partition(_.isInstanceOf[AddCDCFile])
-            numAddedFiles = rewrittenFiles.size
-            val removedFiles = filesToRewrite.map(f =>
-              getTouchedFile(deltaLog.dataPath, f, nameToAddFileMap))
-            val (removedBytes, removedPartitions) =
-              totalBytesAndDistinctPartitionValues(removedFiles)
-            numBytesRemoved = removedBytes
-            val (rewrittenBytes, rewrittenPartitions) =
-              totalBytesAndDistinctPartitionValues(rewrittenFiles)
-            numBytesAdded = rewrittenBytes
-            if (txn.metadata.partitionColumns.nonEmpty) {
-              numPartitionsRemovedFrom = Some(removedPartitions)
-              numPartitionsAddedTo = Some(rewrittenPartitions)
-            }
-            numAddedChangeFiles = changeFiles.size
-            changeFileBytes = changeFiles.collect { case f: AddCDCFile => f.size }.sum
-            rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
-            numDeletedRows = Some(metrics("numDeletedRows").value)
-            numCopiedRows = Some(metrics("numTouchedRows").value - metrics("numDeletedRows").value)
+            val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
+            val data = Dataset.ofRows(sparkSession, newTarget)
+            val deletedRowCount = metrics("numDeletedRows")
+            val deletedRowUdf = DeltaUDF.boolean { () =>
+              deletedRowCount += 1
+              true
+            }.asNondeterministic()
+            val filesToRewrite =
+              withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
+                if (candidateFiles.isEmpty) {
+                  Array.empty[String]
+                } else {
+                  data.filter(new Column(cond))
+                    .select(input_file_name())
+                    .filter(deletedRowUdf())
+                    .distinct()
+                    .as[String]
+                    .collect()
+                }
+              }
 
-            val operationTimestamp = System.currentTimeMillis()
-            removeFilesFromPaths(deltaLog, nameToAddFileMap, filesToRewrite, operationTimestamp) ++
-              rewrittenActions
+            numRemovedFiles = filesToRewrite.length
+            scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
+            if (filesToRewrite.isEmpty) {
+              // Case 3.1: no row matches and no delete will be triggered
+              if (txn.metadata.partitionColumns.nonEmpty) {
+                numPartitionsRemovedFrom = Some(0)
+                numPartitionsAddedTo = Some(0)
+              }
+              Nil
+            } else {
+              // Case 3.2: some files need an update to remove the deleted files
+              // Do the second pass and just read the affected files
+              val baseRelation = buildBaseRelation(
+                sparkSession, txn, "delete", deltaLog.dataPath, filesToRewrite, nameToAddFileMap)
+              // Keep everything from the resolved target except a new TahoeFileIndex
+              // that only involves the affected files instead of all files.
+              val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
+              val targetDF = Dataset.ofRows(sparkSession, newTarget)
+              val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
+              val rewrittenActions = rewriteFiles(txn, targetDF, filterCond, filesToRewrite.length)
+              val (changeFiles, rewrittenFiles) = rewrittenActions
+                .partition(_.isInstanceOf[AddCDCFile])
+              numAddedFiles = rewrittenFiles.size
+              val removedFiles = filesToRewrite.map(f =>
+                getTouchedFile(deltaLog.dataPath, f, nameToAddFileMap))
+              val (removedBytes, removedPartitions) =
+                totalBytesAndDistinctPartitionValues(removedFiles)
+              numRemovedBytes = removedBytes
+              val (rewrittenBytes, rewrittenPartitions) =
+                totalBytesAndDistinctPartitionValues(rewrittenFiles)
+              numAddedBytes = rewrittenBytes
+              if (txn.metadata.partitionColumns.nonEmpty) {
+                numPartitionsRemovedFrom = Some(removedPartitions)
+                numPartitionsAddedTo = Some(rewrittenPartitions)
+              }
+              numAddedChangeFiles = changeFiles.size
+              changeFileBytes = changeFiles.collect { case f: AddCDCFile => f.size }.sum
+              rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+              numDeletedRows = Some(metrics("numDeletedRows").value)
+              numCopiedRows =
+                Some(metrics("numTouchedRows").value - metrics("numDeletedRows").value)
+
+              val operationTimestamp = System.currentTimeMillis()
+              removeFilesFromPaths(
+                deltaLog, nameToAddFileMap, filesToRewrite, operationTimestamp) ++ rewrittenActions
+            }
           }
         }
     }
@@ -306,8 +349,8 @@ case class DeleteCommand(
     metrics("rewriteTimeMs").set(rewriteTimeMs)
     metrics("numAddedChangeFiles").set(numAddedChangeFiles)
     metrics("changeFileBytes").set(changeFileBytes)
-    metrics("numBytesAdded").set(numBytesAdded)
-    metrics("numBytesRemoved").set(numBytesRemoved)
+    metrics("numAddedBytes").set(numAddedBytes)
+    metrics("numRemovedBytes").set(numRemovedBytes)
     metrics("numFilesBeforeSkipping").set(numFilesBeforeSkipping)
     metrics("numBytesBeforeSkipping").set(numBytesBeforeSkipping)
     metrics("numFilesAfterSkipping").set(numFilesAfterSkipping)
@@ -317,10 +360,7 @@ case class DeleteCommand(
     numPartitionsRemovedFrom.foreach(metrics("numPartitionsRemovedFrom").set)
     numCopiedRows.foreach(metrics("numCopiedRows").set)
     txn.registerSQLMetrics(sparkSession, metrics)
-    // This is needed to make the SQL metrics visible in the Spark UI
-    val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-    SQLMetrics.postDriverMetricUpdates(
-      sparkSession.sparkContext, executionId, metrics.values.toSeq)
+    sendDriverMetrics(sparkSession, metrics)
 
     recordDeltaEvent(
       deltaLog,
@@ -342,14 +382,18 @@ case class DeleteCommand(
         numPartitionsRemovedFrom,
         numCopiedRows,
         numDeletedRows,
-        numBytesAdded,
-        numBytesRemoved,
+        numAddedBytes,
+        numRemovedBytes,
         changeFileBytes = changeFileBytes,
         scanTimeMs,
         rewriteTimeMs)
     )
 
-    deleteActions
+    if (deleteActions.nonEmpty) {
+      createSetTransaction(sparkSession, deltaLog).toSeq ++ deleteActions
+    } else {
+      Seq.empty
+    }
   }
 
   /**
@@ -392,6 +436,14 @@ case class DeleteCommand(
 
       txn.writeFiles(dfToWrite)
     }
+  }
+
+  def shouldWritePersistentDeletionVectors(
+      spark: SparkSession, txn: OptimisticTransaction): Boolean = {
+    // DELETE with DVs only enabled for tests.
+    Utils.isTesting &&
+      spark.conf.get(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS) &&
+        DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
   }
 }
 

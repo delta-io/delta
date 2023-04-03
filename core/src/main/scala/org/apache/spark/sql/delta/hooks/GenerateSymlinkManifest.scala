@@ -21,6 +21,7 @@ import java.net.URI
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -78,6 +79,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   override def handleError(error: Throwable, version: Long): Unit = {
     error match {
       case e: ColumnMappingUnsupportedException => throw e
+      case e: DeltaCommandUnsupportedWithDeletionVectorsException => throw e
       case _ =>
         throw DeltaErrors.postCommitHookFailedException(this, version, name, error)
     }
@@ -178,6 +180,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       spark: SparkSession,
       deltaLog: DeltaLog): Unit = {
     val snapshot = deltaLog.update(stalenessAcceptable = false)
+    assertTableIsDVFree(spark, snapshot)
     generateFullManifestWithSnapshot(spark, deltaLog, snapshot)
   }
 
@@ -220,11 +223,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
           // unknowingly to `\` and `%` encoding between the root dir and file names generated
           // by listing.
           val relativeManifestFilePath =
-            new Path(p).toUri.getPath.stripPrefix(prefixToStrip).stripPrefix(Path.SEPARATOR)
+            new URI(p).getPath.stripPrefix(prefixToStrip).stripPrefix(Path.SEPARATOR)
           new Path(relativeManifestFilePath).getParent.toString // returns "col1=0/col2=0"
         }.filterNot(_.trim.isEmpty).toSet
       } else Set.empty[String]
-    }.map(uri => new Path(new URI(uri)).toString)
+    }
     // paths returned from inputFiles are URI encoded so we need to convert them back to string.
     // So that they can compared with newManifestPartitionRelativePaths in the next step.
 
@@ -239,6 +242,12 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       filesDeleted = manifestFilePartitionsToDelete.size,
       partitioned = partitionCols.nonEmpty)
     recordDeltaEvent(deltaLog, s"$FULL_MANIFEST_OP_TYPE.stats", data = stats)
+  }
+
+  protected def assertTableIsDVFree(spark: SparkSession, snapshot: Snapshot): Unit = {
+    if (!isTableDVFree(spark, snapshot)) {
+      throw DeltaErrors.generateNotSupportedWithDeletionVectors()
+    }
   }
 
   /**

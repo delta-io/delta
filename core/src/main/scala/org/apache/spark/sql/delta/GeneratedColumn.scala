@@ -71,7 +71,7 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureEnabled(GeneratedColumnsTableFeature)
+    protocol.isFeatureSupported(GeneratedColumnsTableFeature)
 
   /**
    * Whether the field contains the generation expression. Note: this doesn't mean the column is a
@@ -345,6 +345,9 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                     case DATE_FORMAT_YEAR_MONTH =>
                       createExpr(name)(
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
+                    case DATE_FORMAT_YEAR_MONTH_DAY =>
+                      createExpr(name)(
+                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY))
                     case DATE_FORMAT_YEAR_MONTH_DAY_HOUR =>
                       createExpr(name)(
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
@@ -539,6 +542,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   }
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"
+  private val DATE_FORMAT_YEAR_MONTH_DAY = "yyyy-MM-dd"
   private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
 }
 

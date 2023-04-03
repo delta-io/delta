@@ -91,8 +91,10 @@ trait DeletionVectorStoreUtils {
   /** The size of the stored length of a DV. */
   final val DATA_SIZE_LEN = 4
 
+  // scalastyle:off pathfromuri
   /** Convert the given String path to a Hadoop Path, handing special characters properly. */
   def stringToPath(path: String): Path = new Path(new URI(path))
+  // scalastyle:on pathfromuri
 
   /** Convert the given Hadoop path to a String Path, handing special characters properly. */
   def pathToString(path: Path): String = path.toUri.toString

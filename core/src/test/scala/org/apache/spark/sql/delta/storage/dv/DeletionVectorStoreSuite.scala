@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta.storage.dv
 
 import java.io.{DataInputStream, DataOutputStream, File}
 
-import org.apache.spark.sql.delta.DeltaChecksumException
+import org.apache.spark.sql.delta.{DeltaChecksumException, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.{CHECKSUM_LEN, DATA_SIZE_LEN}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import com.google.common.primitives.Ints
 import org.apache.hadoop.conf.Configuration
@@ -32,7 +34,8 @@ import org.apache.spark.util.Utils
 
 trait DeletionVectorStoreSuiteBase
   extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   lazy val dvStore: DeletionVectorStore =
     DeletionVectorStore.createInstance(newHadoopConf)
@@ -96,7 +99,7 @@ trait DeletionVectorStoreSuiteBase
       }
       // make sure this is our exception not ChecksumFileSystem's
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage ==
         "Could not verify deletion vector integrity, CRC checksum verification failed.")
     }
@@ -120,7 +123,7 @@ trait DeletionVectorStoreSuiteBase
         dvStore.read(dvPath.path, dvRange.offset, dvRange.length)
       }
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
-      assert(e.getSqlState == "22000")
+      assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "Deletion vector integrity check failed. Encountered a size mismatch.")
     }
   }
@@ -147,6 +150,33 @@ trait DeletionVectorStoreSuiteBase
       // Read back DVs from the file and verify
       assert(dvStore.read(dvPath.path, dvRange1.offset, dvRange1.length) === simpleBitmap)
       assert(dvStore.read(dvPath.path, dvRange2.offset, dvRange2.length) === simpleBitmap2)
+    }
+  }
+
+  test("Exception is thrown for DVDescriptors with invalid maxRowIndex") {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> true.toString) {
+      withTempDir { dir =>
+        val path = dir.toString
+        spark.range(0, 50, 1, 1).write.format("delta").save(path)
+        val targetTable = io.delta.tables.DeltaTable.forPath(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val tableName = s"delta.`$path`"
+        spark.sql(s"DELETE FROM $tableName WHERE id = 3")
+        val file = deltaLog.update().allFiles.first()
+        val dvDescriptorWithInvalidRowIndex = file.deletionVector.copy(maxRowIndex = Some(50))
+
+        val e = intercept[DeltaChecksumException] {
+          file.removeRows(
+            dvDescriptorWithInvalidRowIndex
+          )
+        }
+        assert(e.getErrorClass == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")
+        assert(e.getSqlState == "XXKDS")
+        assert(e.getMessage ==
+          "Deletion vector integrity check failed. Encountered an invalid row index.")
+      }
     }
   }
 

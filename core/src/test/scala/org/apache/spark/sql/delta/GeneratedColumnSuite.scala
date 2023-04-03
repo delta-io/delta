@@ -292,6 +292,27 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
   }
 
 
+  testTableUpdate("dpo_insert_overwrite_values_provide_all_columns") { (table, path) =>
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key ->
+      SQLConf.PartitionOverwriteMode.DYNAMIC.toString) {
+      sql(s"INSERT OVERWRITE TABLE $table VALUES" +
+        s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+    }
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+  testTableUpdate("dpo_insert_overwrite_select_provide_all_columns") { (table, path) =>
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key ->
+      SQLConf.PartitionOverwriteMode.DYNAMIC.toString) {
+      sql(s"INSERT OVERWRITE TABLE $table SELECT " +
+        s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    }
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+
   testTableUpdate("delete") { (table, path) =>
     Seq(
       Tuple5(1L, "foo", "2020-10-11 12:30:30", 100, "2020-11-12"),

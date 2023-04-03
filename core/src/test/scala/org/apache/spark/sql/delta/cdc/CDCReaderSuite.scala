@@ -79,7 +79,7 @@ class CDCReaderSuite
         FileFormatWriter.write(
           sparkSession = spark,
           plan = qe.executedPlan,
-          fileFormat = log.fileFormat(log.unsafeVolatileMetadata),
+          fileFormat = log.fileFormat(log.snapshot.protocol, log.unsafeVolatileMetadata),
           committer = committer,
           outputSpec = FileFormatWriter.OutputSpec(basePath, Map.empty, mappedOutput),
           hadoopConf = log.newDeltaHadoopConf(),
