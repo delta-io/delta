@@ -46,9 +46,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.{
-  AnalysisHelper
-}
+import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.expressions.UserDefinedFunction
@@ -929,7 +927,8 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters.map(_.transformUp {
+    partitionFilters
+      .map(_.transformUp {
       case a: Attribute =>
         // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
         // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.

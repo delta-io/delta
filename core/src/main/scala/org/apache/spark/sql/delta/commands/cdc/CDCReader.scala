@@ -149,7 +149,11 @@ object CDCReader extends CDCReaderImpl
     }
   }
 
-  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
+  case class CDCDataSpec[T <: FileAction](
+      version: Long,
+      timestamp: Timestamp,
+      actions: Seq[T],
+      commitInfo: Option[CommitInfo])
 }
 
 trait CDCReaderImpl extends DeltaLogging {
@@ -532,21 +536,33 @@ trait CDCReaderImpl extends DeltaLogging {
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
         if (cdcActions.nonEmpty && !useCoarseGrainedCDC) {
-          changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq))
+          changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq, commitInfo))
         } else {
           val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
           if (shouldSkipIndexedFile) {
             // This was introduced for a hotfix, so we're mirroring the existing logic as closely
             // as possible - it'd likely be safe to just return an empty dataframe here.
-            addFiles.append(CDCDataSpec(v, ts, Nil))
-            removeFiles.append(CDCDataSpec(v, ts, Nil))
+            addFiles.append(CDCDataSpec(v, ts, Nil, commitInfo))
+            removeFiles.append(CDCDataSpec(v, ts, Nil, commitInfo))
           } else {
             // Otherwise, we take the AddFile and RemoveFile actions with dataChange = true and
             // infer CDC from them.
             val addActions = actions.collect { case a: AddFile if a.dataChange => a }
             val removeActions = actions.collect { case r: RemoveFile if r.dataChange => r }
-            addFiles.append(CDCDataSpec(v, ts, addActions))
-            removeFiles.append(CDCDataSpec(v, ts, removeActions))
+            addFiles.append(
+              CDCDataSpec(
+                version = v,
+                timestamp = ts,
+                actions = addActions,
+                commitInfo = commitInfo)
+            )
+            removeFiles.append(
+              CDCDataSpec(
+                version = v,
+                timestamp = ts,
+                actions = removeActions,
+                commitInfo = commitInfo)
+            )
           }
         }
     }

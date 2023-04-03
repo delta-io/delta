@@ -21,14 +21,15 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.util.{DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -155,21 +156,52 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     touchedFilesWithMatchedRowIndices.filterNot(_.isUnchanged)
   }
 
-  def processUnmodifiedData(touchedFiles: Seq[TouchedFileWithDV]): Seq[FileAction] = {
+  def processUnmodifiedData(
+      spark: SparkSession,
+      touchedFiles: Seq[TouchedFileWithDV],
+      snapshot: Snapshot): Seq[FileAction] = {
     val (fullyRemovedFiles, notFullyRemovedFiles) =
       touchedFiles.partition(_.isFullyReplaced())
 
     val timestamp = System.currentTimeMillis()
     val fullyRemoved = fullyRemovedFiles.map(_.fileLogEntry.removeWithTimestamp(timestamp))
 
-    // TODO: How do get the stats for these new actions?
     val dvUpdates = notFullyRemovedFiles.map { fileWithDVInfo =>
       fileWithDVInfo.fileLogEntry.removeRows(
         deletionVector = fileWithDVInfo.newDeletionVector
       )}
+    val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
+    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
     val (filesWithDeletedRows, newFilesWithDVs) = dvUpdates.unzip
-    fullyRemoved ++ filesWithDeletedRows ++ newFilesWithDVs
+    fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
+  }
+
+  /** Fetch stats for `addFiles`. */
+  private def getActionsWithStats(
+      spark: SparkSession,
+      addFiles: Seq[AddFile],
+      snapshot: Snapshot): Seq[AddFile] = {
+    import org.apache.spark.sql.delta.implicits._
+    val statsColName = snapshot.getBaseStatsColumnName
+    val selectionCols = Seq(col("path"), col(statsColName))
+
+    // These files originate from snapshot.filesForScan which resets column statistics.
+    // Since these object don't carry stats and tags, if we were to use them as result actions of
+    // the operation directly, we'd effectively be removing all stats and tags. To resolve this
+    // we join the list of files with DVs with the log (allFiles) to retrieve statistics. This is
+    // expected to have better performance than supporting full stats retrieval
+    // in snapshot.filesForScan because it only affects a subset of the scanned files.
+    val allFiles = snapshot.withStats.select(selectionCols: _*)
+    val addFilesDf = addFiles.toDF(spark).drop("stats")
+    val addFilesWithStats = addFilesDf.join(allFiles, "path")
+
+    // Every operation that adds DVs needs to set tightBounds to false.
+    snapshot
+      .updateStatsToWideBounds(addFilesWithStats, statsColName)
+      .as[AddFile]
+      .collect()
+      .toSeq
   }
 }
 
@@ -309,7 +341,11 @@ case class DeletionVectorData(
     filePath: String,
     deletionVectorId: Option[String],
     deletedRowIndexSet: Array[Byte],
-    deletedRowIndexCount: Long)
+    deletedRowIndexCount: Long) extends Sizing {
+
+  /** The size of the bitmaps to use in [[BinPackingIterator]]. */
+  override def size: Int = deletedRowIndexSet.length
+}
 
 object DeletionVectorData {
   private lazy val _encoder = new DeltaEncoder[DeletionVectorData]
@@ -415,20 +451,22 @@ object DeletionVectorWriter extends DeltaLogging {
       hadoopConf: Configuration,
       table: Path,
       prefixLength: Int)
-      (callbackFn: (DeletionVectorMapperContext, DeletionVectorData) => DeletionVectorResult)
-    : Iterator[DeletionVectorData] => Iterator[DeletionVectorResult] = {
+      (callbackFn: (DeletionVectorMapperContext, InputT) => OutputT)
+    : Iterator[InputT] => Iterator[OutputT] = {
     val broadcastHadoopConf = sparkSession.sparkContext.broadcast(
       new SerializableConfiguration(hadoopConf))
     // hadoop.fs.Path is not Serializable, so close over the String representation instead
     val tablePathString = DeletionVectorStore.pathToString(table)
+    val packingTargetSize =
+      sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
 
     // This is the (partition) mapper function we are returning
-    (rowIterator: Iterator[DeletionVectorData]) => {
+    (rowIterator: Iterator[InputT]) => {
       val dvStore = DeletionVectorStore.createInstance(broadcastHadoopConf.value.value)
       val tablePath = DeletionVectorStore.stringToPath(tablePathString)
       val tablePathWithFS = dvStore.pathWithFileSystem(tablePath)
 
-      val storeDVFunction = (row: DeletionVectorData) => {
+      val perBinFunction: Seq[InputT] => Seq[OutputT] = (rows: Seq[InputT]) => {
         val prefix = DeltaUtils.getRandomPrefix(prefixLength)
         val (writer, fileId) = createWriter(dvStore, tablePathWithFS, prefix)
         val ctx = DeletionVectorMapperContext(
@@ -437,12 +475,14 @@ object DeletionVectorWriter extends DeltaLogging {
           tablePath,
           fileId,
           prefix)
-        SparkUtils.tryWithResource(writer) { _ =>
-          callbackFn(ctx, row)
+        val result = SparkUtils.tryWithResource(writer) { writer =>
+          rows.map(r => callbackFn(ctx, r))
         }
+        result
       }
 
-      rowIterator.map(storeDVFunction)
+      val binPackedRowIterator = new BinPackingIterator(rowIterator, packingTargetSize)
+      binPackedRowIterator.flatMap(perBinFunction)
     }
   }
 

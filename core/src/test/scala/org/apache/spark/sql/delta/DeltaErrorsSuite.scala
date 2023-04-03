@@ -2083,12 +2083,8 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_METADATA_ABSENT")
       assert(e.getSqlState == "XXKDS")
-
-      val msg =
-        s"""Couldn't find Metadata while committing the first version of the Delta table. To disable
-           |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
-           |""".stripMargin
-      assert(e.getMessage == msg)
+      assert(e.getMessage == "Couldn't find Metadata while committing the first version of the " +
+        "Delta table.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2760,7 +2756,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_CLONE_UNSUPPORTED_SOURCE")
       assert(e.getSqlState == "0AKDC")
       assert(e.getMessage == "Unsupported clone source 'table-0', whose format is CSV.\n" +
-        "The supported formats are 'delta' and 'parquet'.")
+        "The supported formats are 'delta', 'iceberg' and 'parquet'.")
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {

@@ -245,6 +245,23 @@ final class RoaringBitmapArray extends Equals {
   }
 
   /**
+   * In-place bitwise AND (this & that) operation.
+   *
+   * The current bitmap is modified.
+   */
+  def and(that: RoaringBitmapArray): Unit = {
+    for (index <- 0 until this.bitmaps.length) {
+      val thisBitmap = this.bitmaps(index)
+      if (index < that.bitmaps.length) {
+        val thatBitmap = that.bitmaps(index)
+        thisBitmap.and(thatBitmap)
+      } else {
+        thisBitmap.clear()
+      }
+    }
+  }
+
+  /**
    * In-place bitwise AND-NOT (this & ~that) operation.
    *
    * The current bitmap is modified.

@@ -27,13 +27,14 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaThreadPool
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 /**
  * Wraps the most recently updated snapshot along with the timestamp the update was started.
@@ -508,22 +509,24 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
-   * Checks if the snapshot has already been updated since the specified timestamp.
+   * Returns the snapshot, if it has been updated since the specified timestamp.
    *
    * Note that this should be used differently from isSnapshotStale. Staleness is
    * used to allow async updates if the table has been updated within the staleness
    * window, which allows for better perf in exchange for possibly using a slightly older
    * view of the table. For eg, if a table is queried multiple times in quick succession.
    *
-   * On the other hand, isSnapshotFresh is used to identify duplicate updates within a
+   * On the other hand, getSnapshotIfFresh is used to identify duplicate updates within a
    * single transaction. For eg, if a table isn't cached and the snapshot was fetched from the
    * logstore, then updating the snapshot again in the same transaction is superfluous. We can
    * use this function to detect and skip such an update.
    */
-  private def isSnapshotFresh(
+  private def getSnapshotIfFresh(
       capturedSnapshot: CapturedSnapshot,
-      checkIfUpdatedSinceTs: Option[Long]): Boolean = {
-    checkIfUpdatedSinceTs.exists(_ <= capturedSnapshot.updateTimestamp)
+      checkIfUpdatedSinceTs: Option[Long]): Option[Snapshot] = {
+    checkIfUpdatedSinceTs.collect {
+      case ts if ts <= capturedSnapshot.updateTimestamp => capturedSnapshot.snapshot
+    }
   }
 
   /**
@@ -541,31 +544,59 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(
       stalenessAcceptable: Boolean = false,
       checkIfUpdatedSinceTs: Option[Long] = None): Snapshot = {
+    val startTimeMs = System.currentTimeMillis()
     // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
+    val oldVersion = capturedSnapshot.snapshot.version
+    def sendEvent(
+      newSnapshot: Snapshot,
+      snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false
+    ): Unit = {
+      recordDeltaEvent(
+        this,
+        opType = "deltaLog.update",
+        data = Map(
+          "snapshotAlreadyUpdatedAfterRequiredTimestamp" ->
+            snapshotAlreadyUpdatedAfterRequiredTimestamp,
+          "newVersion" -> newSnapshot.version,
+          "oldVersion" -> oldVersion,
+          "timeTakenMs" -> (System.currentTimeMillis() - startTimeMs)
+        )
+      )
+    }
     // Eagerly exit if the snapshot is already new enough to satisfy the caller
-    if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
-      return capturedSnapshot.snapshot
+    getSnapshotIfFresh(capturedSnapshot, checkIfUpdatedSinceTs).foreach { snapshot =>
+      sendEvent(snapshot, snapshotAlreadyUpdatedAfterRequiredTimestamp = true)
+      return snapshot
     }
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(isAsync = false)
+          val newSnapshot = updateInternal(isAsync = false)
+          sendEvent(newSnapshot = capturedSnapshot.snapshot)
+          newSnapshot
         }
       }
     } else {
-      if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
-        val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
-        asyncUpdateTask = Future[Unit] {
-          spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
-          spark.sparkContext.setJobGroup(
-            jobGroup,
-            s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
-            interruptOnCancel = true)
-          tryUpdate(isAsync = true)
-        }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
+      // Kick off an async update, if one is not already obviously running. Intentionally racy.
+      if (Option(asyncUpdateTask).forall(_.isCompleted)) {
+        try {
+          val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
+          asyncUpdateTask = SnapshotManagement.deltaLogAsyncUpdateThreadPool.submit(spark) {
+            spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
+            spark.sparkContext.setJobGroup(
+              jobGroup,
+              s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
+              interruptOnCancel = true)
+            tryUpdate(isAsync = true)
+          }
+        } catch {
+          case NonFatal(e) if !Utils.isTesting =>
+            // Failed to schedule the future -- fail in testing, but just log it in prod.
+            recordDeltaEvent(this, "delta.snapshot.asyncUpdateFailed", data = Map("exception" -> e))
+        }
       }
       currentSnapshot.snapshot
     }
@@ -737,7 +768,7 @@ trait SnapshotManagement { self: DeltaLog =>
 object SnapshotManagement {
   protected[delta] lazy val deltaLogAsyncUpdateThreadPool = {
     val tpe = ThreadUtils.newDaemonCachedThreadPool("delta-state-update", 8)
-    ExecutionContext.fromExecutorService(tpe)
+    new DeltaThreadPool(tpe)
   }
 
   /**

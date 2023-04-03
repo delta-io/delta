@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
@@ -1130,12 +1131,39 @@ trait DeltaSQLConfBase {
         .booleanConf
         .createWithDefault(true)
 
+  val DELTA_DUPLICATE_ACTION_CHECK_ENABLED =
+    buildConf("duplicateActionCheck.enabled")
+      .internal()
+      .doc("""
+             |Verify only one action is specified for each file path in one commit.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()
       .doc("Enable persistent Deletion Vectors in the Delete command.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELETION_VECTOR_PACKING_TARGET_SIZE =
+    buildConf("deletionVectors.packing.targetSize")
+      .internal()
+      .doc("Controls the target file deletion vector file size when packing multiple" +
+        "deletion vectors in a single file.")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(2L * 1024L * 1024L)
+
+  val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
+    buildConf("deletionVectors.disableTightBoundOnFileCreationForDevOnly")
+      .internal()
+      .doc("""Controls whether we generate a tightBounds column in statistics on file creation.
+             |The tightBounds column annotates whether the statistics of the file are tight or wide.
+             |This flag is only used for testing purposes.
+                """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
     buildConf("deletionVectors.skipCommitCheck")

@@ -193,7 +193,7 @@ object DeltaTableUtils extends PredicateHelper
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
-      val deltaLogPath = new Path(currentPath, "_delta_log")
+      val deltaLogPath = safeConcatPaths(currentPath, "_delta_log")
       if (Try(fs.exists(deltaLogPath)).getOrElse(false)) {
         return Option(currentPath)
       }
@@ -396,5 +396,26 @@ object DeltaTableUtils extends PredicateHelper
 
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
+  }
+
+  /**
+   * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
+   * and a relative child path and safely handles the case where the base path represents
+   * a Uri with an empty path component (e.g. s3://my-bucket, where my-bucket would be
+   * interpreted as the Uri authority).
+   *
+   * In that case, the child path is converted to an absolute path at the root, i.e. /childPath.
+   * This prevents a "URISyntaxException: Relative path in absolute URI", which would be thrown
+   * by org.apache.hadoop.fs.Path(Path, String) because it tries to convert the base path to a Uri
+   * and then resolve the child on top of it. This is invalid for an empty base path and a
+   * relative child path according to the Uri specification, which states that if an authority
+   * is defined, the path component needs to be either empty or start with a '/'.
+   */
+  def safeConcatPaths(basePath: Path, relativeChildPath: String): Path = {
+    if (basePath.toUri.getPath.isEmpty) {
+      new Path(basePath, s"/$relativeChildPath")
+    } else {
+      new Path(basePath, relativeChildPath)
+    }
   }
 }

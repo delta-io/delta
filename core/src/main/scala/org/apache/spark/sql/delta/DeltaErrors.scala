@@ -1636,13 +1636,6 @@ trait DeltaErrorsBase
         s"$numActions", s"$totalCommitAttemptTime"))
   }
 
-  def generatedColumnsNonDeltaFormatError(): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_INVALID_GENERATED_COLUMN_FORMAT",
-      messageParameters = Array.empty
-    )
-  }
-
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
@@ -2704,6 +2697,9 @@ trait DeltaErrorsBase
       messageParameters = Array.empty,
       pos = 0)
   }
+
+  def addFileWithDVsMissingNumRecordsException: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")
 
   def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
     new DeltaAnalysisException(

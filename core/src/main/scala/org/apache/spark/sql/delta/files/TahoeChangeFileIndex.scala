@@ -42,7 +42,7 @@ class TahoeChangeFileIndex(
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     // Make some fake AddFiles to satisfy the interface.
     val addFiles = filesByVersion.flatMap {
-      case CDCDataSpec(version, ts, files) =>
+      case CDCDataSpec(version, ts, files, ci) =>
         files.map { f =>
           // We add the metadata as faked partition columns in order to attach it on a per-file
           // basis.

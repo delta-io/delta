@@ -312,6 +312,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       size = 1,
       modificationTime = 1,
       dataChange = true,
+      stats = """{"numRecords":3}""",
       tags = Map.empty,
       deletionVector = deletionVectorWithAbsolutePath),
     expectedJson =
@@ -322,6 +323,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"size":1,
         |"modificationTime":1,
         |"dataChange":true,
+        |"stats":"{\"numRecords\":3}",
         |"tags":{},
         |"deletionVector":{
         |"storageType":"p",
@@ -329,7 +331,10 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"offset":10,
         |"sizeInBytes":10,
         |"cardinality":2}}
-        |}""".stripMargin.replaceAll("\n", "")
+        |}""".stripMargin.replaceAll("\n", ""),
+    extraSettings = Seq(
+      // Skip the table property check, so this write doesn't fail.
+      DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED.key -> "false")
   )
 
 

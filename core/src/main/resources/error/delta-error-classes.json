@@ -522,6 +522,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS" : {
+    "message" : [
+      "It is invalid to commit files with deletion vectors that are missing the numRecords statistic."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
     "message" : [
       "Deletion vector integrity check failed. Encountered a size mismatch."
@@ -860,12 +866,6 @@
     ],
     "sqlState" : "XXKDS"
   },
-  "DELTA_INVALID_GENERATED_COLUMN_FORMAT" : {
-    "message" : [
-      "Generated columns are only supported by Delta"
-    ],
-    "sqlState" : "0AKDD"
-  },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [
       "A generated column cannot use a non-existent column or another generated column"
@@ -1033,9 +1033,7 @@
   },
   "DELTA_METADATA_ABSENT" : {
     "message" : [
-      "Couldn't find Metadata while committing the first version of the Delta table. To disable",
-      "this check set <deltaCommitValidationEnabled> to \"false\"",
-      ""
+      "Couldn't find Metadata while committing the first version of the Delta table."
     ],
     "sqlState" : "XXKDS"
   },

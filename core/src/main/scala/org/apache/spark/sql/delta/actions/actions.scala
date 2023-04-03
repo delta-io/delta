@@ -536,6 +536,7 @@ case class AddFile(
       deletionVector = deletionVector
     )
     removedFile.numLogicalRecords = numLogicalRecords
+    removedFile.estLogicalFileSize = estLogicalFileSize
     // scalastyle:on
     removedFile
   }
@@ -736,6 +737,10 @@ case class RemoveFile(
   /** The number of records contained inside the removed file. */
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
+
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  var estLogicalFileSize: Option[Long] = None
 
   /**
    * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
