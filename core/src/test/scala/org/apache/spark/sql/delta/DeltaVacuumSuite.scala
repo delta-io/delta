@@ -48,8 +48,10 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
-  with SharedSparkSession  with GivenWhenThen
-  with SQLTestUtils  with DeletionVectorsTestUtils
+  with SharedSparkSession
+  with GivenWhenThen
+  with SQLTestUtils
+  with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {

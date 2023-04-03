@@ -511,10 +511,10 @@ trait VacuumCommandImpl extends DeltaCommand {
 
     /** Returns the relative path of the on-disk deletion vector. */
   protected def getDeletionVectorRelativePath(
-    action: FileAction,
-    fs: FileSystem,
-    basePath: Path,
-    relativizeIgnoreError: Boolean
+      action: FileAction,
+      fs: FileSystem,
+      basePath: Path,
+      relativizeIgnoreError: Boolean
   ): Option[Path] = {
     val dv = action match {
       case a: AddFile if a.deletionVector != null =>
