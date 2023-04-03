@@ -349,6 +349,61 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("JOIN with DVs - self-join a table with DVs") {
+    val tableDf = spark.read.format("delta").load(table2Path)
+    val leftDf = tableDf.withColumn("key", col("value") % 2)
+    val rightDf = tableDf.withColumn("key", col("value") % 2 + 1)
+
+    checkAnswer(
+      leftDf.as("left").join(rightDf.as("right"), "key").drop("key"),
+      Seq(1, 3, 5, 7).flatMap(l => Seq(2, 4, 6, 8).map(r => (l, r))).toDF()
+    )
+  }
+
+  test("JOIN with DVs - non-DV table joins DV table") {
+    val tableDf = spark.read.format("delta").load(table2Path)
+    val tableDfV0 = spark.read.format("delta").option("versionAsOf", "0").load(table2Path)
+    val leftDf = tableDf.withColumn("key", col("value") % 2)
+    val rightDf = tableDfV0.withColumn("key", col("value") % 2 + 1)
+
+    // Right has two more rows 0 and 9. 0 will be left in the join result.
+    checkAnswer(
+      leftDf.as("left").join(rightDf.as("right"), "key").drop("key"),
+      Seq(1, 3, 5, 7).flatMap(l => Seq(0, 2, 4, 6, 8).map(r => (l, r))).toDF()
+    )
+  }
+
+  test("MERGE with DVs - merge into DV table") {
+    withTempDir { tempDir =>
+      val source = new File(table1Path)
+      val target = new File(tempDir, "mergeTest")
+      FileUtils.copyDirectory(new File(table2Path), target)
+
+      io.delta.tables.DeltaTable.forPath(spark, target.getAbsolutePath).as("target")
+        .merge(
+          spark.read.format("delta").load(source.getAbsolutePath).as("source"),
+          "source.value = target.value")
+        .whenMatched()
+        .updateExpr(Map("value" -> "source.value + 10000"))
+        .whenNotMatched()
+        .insertExpr(Map("value" -> "source.value"))
+        .execute()
+
+      val snapshot = DeltaLog.forTable(spark, target).update()
+      val allFiles = snapshot.allFiles.collect()
+      // target log should not contain DVs
+      assert(allFiles.forall(_.deletionVector == null))
+      assert(allFiles.forall(_.stats.contains("\"tightBounds\":true")))
+
+      // Target table should contain "table2 records + 10000" and "table1 records \ table2 records".
+      checkAnswer(
+        spark.read.format("delta").load(target.getAbsolutePath),
+        (expectedTable2DataV1.map(_ + 10000) ++
+          expectedTable1DataV4.filterNot(expectedTable2DataV1.contains)).toDF()
+      )
+    }
+  }
+
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()
     assert(optimizedPlan.contains(expected), s"Plan is missing `$expected`: $optimizedPlan")
