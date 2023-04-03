@@ -1455,6 +1455,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             TestReaderWriterMetadataAutoUpdateFeature).map(_.name).toSeq.sorted.mkString(", ")
         assert(e.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
 
+        // `getMessageParameters` is available starting from Spark 3.4.
+        // For now we have to check for substrings.
         assert(e.getMessage.contains(s" $unsupportedFeatures."))
         assert(e.getMessage.contains(s" $supportedFeatures."))
 
