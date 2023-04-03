@@ -86,11 +86,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def assertNumFiles(
-    deltaLog: DeltaLog,
-    addFiles: Int,
-    addFilesWithDVs: Int,
-    dvFiles: Int,
-    dataFiles: Int): Unit = {
+      deltaLog: DeltaLog,
+      addFiles: Int,
+      addFilesWithDVs: Int,
+      dvFiles: Int,
+      dataFiles: Int): Unit = {
     assert(deltaLog.update().allFiles.count() === addFiles)
     assert(getFilesWithDeletionVectors(deltaLog).size === addFilesWithDVs)
     assert(listDeletionVectors(deltaLog).size === dvFiles)
@@ -805,7 +805,7 @@ class DeltaVacuumSuite
     val tableName = "testTable"
     withDeletionVectorsEnabled() {
       withSQLConf(
-        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
         withTable(tableName) {
           // Create a Delta Table with 5 files of 10 rows, and delete half rows from first 4 files.
           spark.range(0, 50, step = 1, numPartitions = 5)
@@ -845,7 +845,7 @@ class DeltaVacuumSuite
     val clock = new ManualClock()
     withDeletionVectorsEnabled() {
       withSQLConf(
-        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
         withTable(tableName) {
           // Create Delta table with 5 files of 10 rows.
           spark.range(0, 50, step = 1, numPartitions = 5)
@@ -938,8 +938,8 @@ class DeltaVacuumSuite
         .withColumn("partCol", lit(0))
       val partitionBy = if (partitioned) Seq("partCol") else Seq.empty
       withSQLConf(
-        DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE.key -> "0",
-        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE.key -> "0",
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
         withDeletionVectorsEnabled() {
           withTempDeltaTable(
               targetDF,
