@@ -18,9 +18,10 @@ package org.apache.spark.sql.delta.commands.merge
 
 import java.util.UUID
 
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTable}
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -104,13 +105,18 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
         case NonFatal(ex) =>
           val isLastAttempt =
             (attempt == spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS))
-          if (!handleExceptionAndReturnTrueIfMergeShouldRetry(ex, isLastAttempt, deltaLog)) {
-            logInfo(s"Fatal error in MERGE with materialized source in attempt $attempt.")
-            throw ex
-          } else {
-            logInfo(s"Retrying MERGE with materialized source. Attempt $attempt failed.")
-            doRetry = true
-            attempt += 1
+          handleExceptionDuringAttempt(ex, isLastAttempt, deltaLog) match {
+            case RetryHandling.Retry =>
+              logInfo(s"Retrying MERGE with materialized source. Attempt $attempt failed.")
+              doRetry = true
+              attempt += 1
+            case RetryHandling.ExhaustedRetries =>
+              logError(s"Exhausted retries after $attempt attempts in MERGE with" +
+                s" materialized source. Logging latest exception.", ex)
+              throw DeltaErrors.sourceMaterializationFailedRepeatedlyInMerge
+            case RetryHandling.RethrowException =>
+              logError(s"Fatal error in MERGE with materialized source in attempt $attempt.", ex)
+              throw ex
           }
       } finally {
         // Remove source from RDD cache (noop if wasn't cached)
@@ -125,6 +131,12 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
     runResult
   }
 
+  object RetryHandling extends Enumeration {
+    type Result = Value
+
+    val Retry, RethrowException, ExhaustedRetries = Value
+  }
+
   /**
    * Handle exception that was thrown from runMerge().
    * Search for errors to log, or that can be handled by retry.
@@ -133,8 +145,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
    * @return true if the exception is handled and merge should retry
    *         false if the caller should rethrow the error
    */
-  private def handleExceptionAndReturnTrueIfMergeShouldRetry(
-      ex: Throwable, isLastAttempt: Boolean, deltaLog: DeltaLog): Boolean = ex match {
+  @tailrec
+  private def handleExceptionDuringAttempt(
+      ex: Throwable,
+      isLastAttempt: Boolean,
+      deltaLog: DeltaLog): RetryHandling.Result = ex match {
     // If Merge failed because the materialized source lost blocks from the
     // locally checkpointed RDD, we want to retry the whole operation.
     // If a checkpointed RDD block is lost, it throws
@@ -146,7 +161,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       log.warn("Materialized Merge source RDD block lost. Merge needs to be restarted. " +
         s"This was attempt number $attempt.")
       if (!isLastAttempt) {
-        true // retry
+        RetryHandling.Retry
       } else {
         // Record situations where we lost RDD materialized source blocks, despite retries.
         recordDeltaEvent(
@@ -159,7 +174,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
               materializedSourceRDD.get.getStorageLevel.toString
           )
         )
-        false
+        RetryHandling.ExhaustedRetries
       }
 
     // Record if we ran out of executor disk space.
@@ -177,15 +192,15 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
             materializedSourceRDD.get.getStorageLevel.toString
         )
       )
-      false
+      RetryHandling.RethrowException
 
     // Descend into ex.getCause.
     // The errors that we are looking for above might have been wrapped inside another exception.
     case NonFatal(ex) if ex.getCause() != null =>
-      handleExceptionAndReturnTrueIfMergeShouldRetry(ex.getCause(), isLastAttempt, deltaLog)
+      handleExceptionDuringAttempt(ex.getCause(), isLastAttempt, deltaLog)
 
     // Descended to the bottom of the causes without finding a retryable error
-    case _ => false
+    case _ => RetryHandling.RethrowException
   }
 
   /**

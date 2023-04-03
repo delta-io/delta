@@ -1103,6 +1103,9 @@ trait DeltaErrorsBase
     )
   }
 
+  def sourceMaterializationFailedRepeatedlyInMerge: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY")
+
   def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
     new UnsupportedOperationException(
       s"""Cannot perform Merge because the source dataset is not deterministic. Please refer to
