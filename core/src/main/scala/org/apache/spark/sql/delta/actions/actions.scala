@@ -378,7 +378,7 @@ object Protocol {
         .withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features
-      // must be supported by the protocol. We assert those features can actually do the the
+      // must be supported by the protocol. We assert those features can actually perform the
       // auto-update.
       assertMetadataTableFeaturesAutomaticallySupported(
         current.implicitlyAndExplicitlySupportedFeatures,
@@ -402,14 +402,10 @@ object Protocol {
   private def assertMetadataTableFeaturesAutomaticallySupported(
       currentFeatures: Set[TableFeature],
       requiredFeatures: Set[TableFeature]): Unit = {
-    val autoUpdateCapableFeatures = mutable.Set[TableFeature]()
-    val nonAutoUpdateCapableFeatures = mutable.Set[TableFeature]()
-    requiredFeatures.diff(currentFeatures).foreach {
-      case f: FeatureAutomaticallyEnabledByMetadata =>
-        if (f.automaticallyUpdateProtocolOfExistingTables) autoUpdateCapableFeatures += f
-        else nonAutoUpdateCapableFeatures += f
-      case _ => // Feature can't be enabled by metadata, ignore it.
-    }
+    val (autoUpdateCapableFeatures, nonAutoUpdateCapableFeatures) =
+      requiredFeatures.diff(currentFeatures)
+        .collect { case f: FeatureAutomaticallyEnabledByMetadata => f }
+        .partition(_.automaticallyUpdateProtocolOfExistingTables)
     if (nonAutoUpdateCapableFeatures.nonEmpty) {
       // The "current features" we give the user are which from the original protocol, plus
       // features newly supported by table properties in the current transaction, plus
