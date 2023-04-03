@@ -206,7 +206,8 @@ class DeltaTableHadoopOptionsSuite
   import testImplicits._
 
   private def readDeltaUserMetadataByPath(path: String): DataFrame = {
-    io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions).history().select("userMetadata")
+    io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
+      .history().select("userMetadata")
   }
 
   protected override def sparkConf =
