@@ -613,7 +613,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
-    val requiredProtocolOpt = Protocol.checkProtocolRequirements(spark, metadata, protocol)
+    val requiredProtocolOpt =
+      Protocol.upgradeProtocolFromMetadataForExistingTable(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
     }
