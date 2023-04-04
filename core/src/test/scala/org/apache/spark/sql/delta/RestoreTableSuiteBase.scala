@@ -89,25 +89,37 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       checkAnswer(spark.read.format("delta").load(path), df1.union(df2))
 
       // Set a custom timestamp for the commit
-      val desiredTime = "1996-01-12"
-      setTimestampToCommitFileAtVersion(deltaLog, version = 0, time = desiredTime)
+      val desiredDate = "1996-01-12"
+      setTimestampToCommitFileAtVersion(deltaLog, version = 0, date = desiredDate)
 
       // restore by timestamp to version 0
-      restoreTableToTimestamp(path, desiredTime, false)
+      restoreTableToTimestamp(path, desiredDate, false)
       checkAnswer(spark.read.format("delta").load(path), df1)
     }
   }
 
-  protected def timeStringToTimestamp(time: String): Long = {
+  protected def dateStringToTimestamp(date: String): Long = {
     val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+    format.parse(date).getTime
+  }
+
+  protected def timeStringToTimestamp(time: String): Long = {
+    val format = new java.text.SimpleDateFormat("yyyy-MM-dd hh:mm:ss Z")
     format.parse(time).getTime
   }
 
   protected def setTimestampToCommitFileAtVersion(
       deltaLog: DeltaLog,
       version: Int,
-      time: String): Unit = {
-    val timestamp = timeStringToTimestamp(time)
+      date: String): Unit = {
+    val timestamp = dateStringToTimestamp(date)
+    setTimestampToCommitFileAtVersion(deltaLog, version, timestamp)
+  }
+
+  protected def setTimestampToCommitFileAtVersion(
+      deltaLog: DeltaLog,
+      version: Int,
+      timestamp: Long): Unit = {
     val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(timestamp)
   }
