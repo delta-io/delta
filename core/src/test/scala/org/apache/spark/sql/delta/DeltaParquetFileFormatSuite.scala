@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.RowIndexFilterType
+import org.apache.spark.sql.delta.DeltaParquetFileFormat.DeletionVectorDescriptorWithFilterType
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
@@ -74,7 +76,8 @@ class DeltaParquetFileFormatSuite extends QueryTest
 
         val fs = addFilePath.getFileSystem(hadoopConf)
         val broadcastDvMap = spark.sparkContext.broadcast(
-          Map(fs.getFileStatus(addFilePath).getPath().toUri -> dv)
+          Map(fs.getFileStatus(addFilePath).getPath().toUri ->
+            DeletionVectorDescriptorWithFilterType(dv, RowIndexFilterType.IF_CONTAINED))
         )
 
         val broadcastHadoopConf = spark.sparkContext.broadcast(
