@@ -367,7 +367,7 @@ object Protocol {
   /**
    * Upgrade the current protocol to satisfy all auto-update capable features required by the table
    * metadata. An Delta error will be thrown if a non-auto-update capable feature is required by
-   * the  metadata and not in the current protocol, in such a case the user must run `ALTER TABLE`
+   * the metadata and not in the resulting protocol, in such a case the user must run `ALTER TABLE`
    * to add support for this feature beforehand using the `delta.feature.featureName` table
    * property.
    *
@@ -375,7 +375,8 @@ object Protocol {
    * to know more about "auto-update capable" features.
    *
    * Note: this method only considers metadata-enabled features. To avoid confusion, the caller
-   * must erase protocol-related table properties from the metadata before calling this method.
+   * must apply and remove protocol-related table properties from the metadata before calling this
+   * method.
    */
   def upgradeProtocolFromMetadataForExistingTable(
       spark: SparkSession,
