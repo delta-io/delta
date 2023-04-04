@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.files
 
+import java.text.SimpleDateFormat
+
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -49,9 +51,11 @@ class CdcAddFileIndex(
         files.map { f =>
           // We add the metadata as faked partition columns in order to attach it on a per-file
           // basis.
+          val tsOpt = Option(ts)
+            .map(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z").format(_)).orNull
           val newPartitionVals = f.partitionValues +
             (CDC_COMMIT_VERSION -> version.toString) +
-            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
+            (CDC_COMMIT_TIMESTAMP -> tsOpt) +
             (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_INSERT)
           f.copy(partitionValues = newPartitionVals)
         }
