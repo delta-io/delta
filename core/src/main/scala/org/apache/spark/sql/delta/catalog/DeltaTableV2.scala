@@ -162,6 +162,8 @@ case class DeltaTableV2(
     V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
   ).asJava
 
+  def tableExists: Boolean = deltaLog.tableExists
+
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(deltaLog, info.options)
@@ -174,7 +176,7 @@ case class DeltaTableV2(
   def toBaseRelation: BaseRelation = {
     // force update() if necessary in DataFrameReader.load code
     snapshot
-    if (!deltaLog.tableExists) {
+    if (!tableExists) {
       // special error handling for path based tables
       if (catalogTable.isEmpty
         && !rootPath.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(rootPath)) {
