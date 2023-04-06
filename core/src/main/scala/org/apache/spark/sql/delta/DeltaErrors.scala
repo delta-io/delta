@@ -128,6 +128,10 @@ trait DeltaErrorsBase
        |get deleted based on retention settings.
      """.stripMargin
 
+  // scalastyle:off
+  def assertionFailedError(msg: String): Throwable = new AssertionError(msg)
+  // scalastyle:on
+
   def deltaSourceIgnoreDeleteError(
       version: Long,
       removedFile: String,
@@ -1098,6 +1102,9 @@ trait DeltaErrorsBase
         "/delta-update.html#upsert-into-a-table-using-merge"))
     )
   }
+
+  def sourceMaterializationFailedRepeatedlyInMerge: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY")
 
   def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
     new UnsupportedOperationException(

@@ -1006,6 +1006,12 @@
     ],
     "sqlState" : "42806"
   },
+  "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY" : {
+    "message" : [
+      "Keeping the source of the MERGE statement materialized has failed repeatedly."
+    ],
+    "sqlState" : "25000"
+  },
   "DELTA_MERGE_MISSING_WHEN" : {
     "message" : [
       "There must be at least one WHEN clause in a MERGE statement."

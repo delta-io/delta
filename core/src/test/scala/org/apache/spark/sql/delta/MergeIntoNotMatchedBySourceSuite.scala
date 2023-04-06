@@ -474,6 +474,32 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     ),
     cdc = Seq.empty)
 
+  test(s"special character in path - not matched by source delete") {
+    val source = s"$tempDir/sou rce^"
+    val target = s"$tempDir/tar get="
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = deleteNotMatched())
+    checkAnswer(readDeltaTable(target), Seq(0, 2, 4, 6, 8).toDF("id"))
+  }
+
+  test(s"special character in path - not matched by source update") {
+    val source = s"$tempDir/sou rce@"
+    val target = s"$tempDir/tar get#"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = updateNotMatched(set = "id = t.id * 10"))
+    checkAnswer(readDeltaTable(target), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+  }
+
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and delete not matched by source")(
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),

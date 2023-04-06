@@ -52,7 +52,8 @@ abstract class MergeIntoSuiteBase
 
   override def beforeEach() {
     super.beforeEach()
-    tempDir = Utils.createTempDir()
+    // Using a space in path to provide coverage for special characters.
+    tempDir = Utils.createTempDir(namePrefix = "spark test")
   }
 
   override def afterEach() {
@@ -746,6 +747,32 @@ abstract class MergeIntoSuiteBase
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
     }.getMessage
     errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
+  }
+
+  test(s"special character in path - matched delete") {
+    val source = s"$tempDir/sou rce~"
+    val target = s"$tempDir/tar get>"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = delete())
+    checkAnswer(readDeltaTable(target), Seq(1, 3, 5, 7, 9).toDF("id"))
+  }
+
+  test(s"special character in path - matched update") {
+    val source = s"$tempDir/sou rce("
+    val target = s"$tempDir/tar get*"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = update(set = "id = t.id * 10"))
+    checkAnswer(readDeltaTable(target), Seq(0, 1, 20, 3, 40, 5, 60, 7, 80, 9).toDF("id"))
   }
 
   Seq(true, false).foreach { isPartitioned =>

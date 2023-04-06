@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import scala.collection.mutable
+import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
@@ -76,31 +77,65 @@ trait MergeIntoMaterializeSourceTests
 
 
   test("merge logs out of disk errors") {
+    val injectEx = new java.io.IOException("No space left on device")
+    testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, errorOpt) =>
+      // Compare messages instead of instances, since the equals method for these exceptions
+      // takes more into account.
+      assert(thrownEx.getCause.getMessage === injectEx.getMessage)
+      assert(errorOpt.isDefined)
+      val error = errorOpt.get
+      assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
+      assert(error.attempt == 1)
+      val storageLevel = StorageLevel.fromString(
+      spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
+      assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+    }
+  }
+
+  test("merge rethrows arbitrary errors") {
+    val injectEx = new RuntimeException("test")
+    testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, error) =>
+      // Compare messages instead of instances, since the equals method for these exceptions
+      // takes more into account.
+      assert(thrownEx.getCause.getMessage === injectEx.getMessage)
+      assert(error.isEmpty)
+    }
+  }
+
+  private def testWithCustomErrorInjected[Intercept <: Exception with AnyRef : ClassTag](
+      inject: Exception)(
+      handle: (Intercept, Option[MergeIntoMaterializeSourceError]) => Unit): Unit = {
     {
       val tblName = "target"
       withTable(tblName) {
         val targetDF = spark.range(10).toDF("id").withColumn("value", rand())
         targetDF.write.format("delta").saveAsTable(tblName)
-        spark.range(10).mapPartitions { x =>
-          throw new java.io.IOException("No space left on device")
-          x
-        }.toDF("id").withColumn("value", rand()).createOrReplaceTempView("s")
-        val events = Log4jUsageLogger.track {
-          val ex = intercept[SparkException] {
-            sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
-              s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+        spark
+          .range(10)
+          .mapPartitions { x =>
+            throw inject
+            x
           }
-        }.filter { e =>
-          e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          .toDF("id")
+          .withColumn("value", rand())
+          .createOrReplaceTempView("s")
+        // I don't know why it this cast is necessary. `Intercept` is marked as `AnyRef` so
+        // it should just let me assign `null`, but the compiler keeps rejecting it.
+        var thrownException: Intercept = null.asInstanceOf[Intercept]
+        val events = Log4jUsageLogger
+          .track {
+            thrownException = intercept[Intercept] {
+              sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+                s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+            }
+          }
+          .filter { e =>
+            e.metric == MetricDefinitions.EVENT_TAHOE.name &&
             e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
-        }
-        assert(events.length == 1)
-        val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
-        assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
-        assert(error.attempt == 1)
-        val storageLevel = StorageLevel.fromString(
-          spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
-        assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+          }
+        val error = events.headOption
+          .map(e => JsonUtils.fromJson[MergeIntoMaterializeSourceError](e.blob))
+        handle(thrownException, error)
       }
     }
   }
