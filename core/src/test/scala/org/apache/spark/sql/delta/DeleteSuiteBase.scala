@@ -32,7 +32,9 @@ import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
   with SharedSparkSession
-  with BeforeAndAfterEach  with DeltaTestUtilsForTempViews {
+  with BeforeAndAfterEach
+  with DeltaExcludedTestsHelper
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
