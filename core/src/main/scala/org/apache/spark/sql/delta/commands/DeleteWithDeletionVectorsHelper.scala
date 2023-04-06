@@ -306,7 +306,8 @@ object DeletionVectorBitmapGenerator {
       val basePath = txn.deltaLog.dataPath.toString
       val filePathToDV = candidateFiles.map { add =>
         val serializedDV = Option(add.deletionVector).map(dvd => JsonUtils.toJson(dvd))
-        FileToDvDescriptor(absolutePath(basePath, add.path).toString, serializedDV)
+        // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
+        FileToDvDescriptor(absolutePath(basePath, add.path).toUri.toString, serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
