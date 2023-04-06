@@ -75,7 +75,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
     val additionalCols = Seq(
       AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)(),
-      FileFormat.createFileMetadataCol
+      // FileFormat.createFileMetadataCol
     )
 
     val newTarget = target transformDown {
