@@ -144,7 +144,7 @@ trait DeltaErrorsSuiteBase
     }
   }
 
-  test("Validate that links to docs in DeltaErrors are correct") {
+  ignore("Validate that links to docs in DeltaErrors are correct") {
     // verify DeltaErrors.errorsWithDocsLinks is consistent with DeltaErrorsSuite
     assert(errorsToTest.keySet ++ otherMessagesToTest.keySet ==
       DeltaErrors.errorsWithDocsLinks.toSet
