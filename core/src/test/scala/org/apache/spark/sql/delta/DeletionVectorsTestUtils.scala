@@ -27,11 +27,18 @@ import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
 trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
+
+  def enableDeletionVectorsForDeletes(spark: SparkSession, enabled: Boolean = true): Unit = {
+    val enabledStr = enabled.toString
+    spark.conf
+      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, enabledStr)
+    spark.conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, enabledStr)
+  }
 
   def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
     test(testName, testTags : _*) {

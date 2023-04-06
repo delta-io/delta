@@ -97,3 +97,10 @@ class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
   }
 
 }
+
+class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectorsForDeletes(spark)
+  }
+}
