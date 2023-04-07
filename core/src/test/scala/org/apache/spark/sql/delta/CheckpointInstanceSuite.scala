@@ -24,16 +24,16 @@ import org.apache.spark.sql.test.SharedSparkSession
 class CheckpointInstanceSuite extends SparkFunSuite {
 
   test("hello") {
-    val ci1_single_1 = CheckpointInstance(1, Format.SINGLE, numParts = 1)
-    val ci1_withparts_2 = CheckpointInstance(1, Format.WITH_PARTS, numParts = 2)
+    val ci1_single_1 = CheckpointInstance(1, Format.SINGLE, numParts = None)
+    val ci1_withparts_2 = CheckpointInstance(1, Format.WITH_PARTS, numParts = Some(2))
     val ci1_sentinel = CheckpointInstance.sentinelValue(Some(1))
 
-    val ci2_single_1 = CheckpointInstance(2, Format.SINGLE, numParts = 1)
-    val ci2_withparts_4 = CheckpointInstance(2, Format.WITH_PARTS, numParts = 4)
+    val ci2_single_1 = CheckpointInstance(2, Format.SINGLE, numParts = None)
+    val ci2_withparts_4 = CheckpointInstance(2, Format.WITH_PARTS, numParts = Some(4))
     val ci2_sentinel = CheckpointInstance.sentinelValue(Some(2))
 
-    val ci3_single_1 = CheckpointInstance(3, Format.SINGLE, numParts = 1)
-    val ci3_withparts_2 = CheckpointInstance(3, Format.WITH_PARTS, numParts = 2)
+    val ci3_single_1 = CheckpointInstance(3, Format.SINGLE, numParts = None)
+    val ci3_withparts_2 = CheckpointInstance(3, Format.WITH_PARTS, numParts = Some(2))
 
     assert(ci1_single_1 < ci2_single_1) // version takes priority
     assert(ci1_single_1 < ci1_withparts_2) // parts takes priority when versions are same

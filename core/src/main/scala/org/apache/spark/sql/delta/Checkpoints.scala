@@ -269,7 +269,13 @@ object CheckpointMetaData {
 case class CheckpointInstance(
     version: Long,
     format: CheckpointMetaData.Format,
-    numParts: Int) extends Ordered[CheckpointInstance] {
+    numParts: Option[Int]) extends Ordered[CheckpointInstance] {
+
+  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
+  // For other formats, numParts must be None.
+  require((format == CheckpointMetaData.Format.WITH_PARTS) == numParts.isDefined,
+    s"numParts ($numParts) must be present for checkpoint format" +
+      s" ${CheckpointMetaData.Format.WITH_PARTS.name}")
 
   /**
    * Returns a [[CheckpointFileListProvider]] which can tell the files corresponding to this
@@ -282,7 +288,7 @@ case class CheckpointInstance(
     format match {
       case CheckpointMetaData.Format.WITH_PARTS | CheckpointMetaData.Format.SINGLE =>
         val filePaths = if (format == CheckpointMetaData.Format.WITH_PARTS) {
-          checkpointFileWithParts(logPath, version, numParts).toSet
+          checkpointFileWithParts(logPath, version, numParts.get).toSet
         } else {
           Set(checkpointFileSingular(logPath, version))
         }
@@ -319,27 +325,27 @@ object CheckpointInstance {
     // * <version>.checkpoint.<i>.<n>.parquet
     path.getName.split("\\.") match {
       case Array(v, "checkpoint", "parquet") =>
-        CheckpointInstance(v.toLong, CheckpointMetaData.Format.SINGLE, 1)
+        CheckpointInstance(v.toLong, CheckpointMetaData.Format.SINGLE, numParts = None)
       case Array(v, "checkpoint", _, n, "parquet") =>
-        CheckpointInstance(v.toLong, CheckpointMetaData.Format.WITH_PARTS, n.toInt)
+        CheckpointInstance(v.toLong, CheckpointMetaData.Format.WITH_PARTS, numParts = Some(n.toInt))
       case _ =>
         throw DeltaErrors.assertionFailedError(s"Unrecognized checkpoint path format: $path")
     }
   }
 
   def apply(version: Long): CheckpointInstance = {
-    CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, 1)
+    CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
   }
 
   def apply(metadata: CheckpointMetaData): CheckpointInstance = {
-    CheckpointInstance(metadata.version, metadata.getFormatEnum(), metadata.parts.getOrElse(1))
+    CheckpointInstance(metadata.version, metadata.getFormatEnum(), metadata.parts)
   }
 
-  val MaxValue: CheckpointInstance = sentinelValue(None)
+  val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)
 
   def sentinelValue(versionOpt: Option[Long]): CheckpointInstance = {
     val version = versionOpt.getOrElse(Long.MaxValue)
-    CheckpointInstance(version, CheckpointMetaData.Format.SENTINEL, Int.MaxValue)
+    CheckpointInstance(version, CheckpointMetaData.Format.SENTINEL, numParts = None)
   }
 }
 
@@ -472,11 +478,10 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
   protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
-    val parts = if (cv.format == CheckpointMetaData.Format.SINGLE) None else Some(cv.numParts)
     CheckpointMetaData(
       version = cv.version,
       size = -1,
-      parts = parts,
+      parts = cv.numParts,
       sizeInBytes = None,
       numOfAddFiles = None,
       checkpointSchema = None)
@@ -488,7 +493,7 @@ trait Checkpoints extends DeltaLogging {
    * @param version The checkpoint version to compare against
    */
   protected def findLastCompleteCheckpointBefore(version: Long): Option[CheckpointInstance] = {
-    val upperBound = CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, 1)
+    val upperBound = CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
     findLastCompleteCheckpointBefore(Some(upperBound))
   }
 
@@ -544,7 +549,8 @@ trait Checkpoints extends DeltaLogging {
          case CheckpointMetaData.Format.SINGLE =>
            matchingCheckpointInstances.length == 1
          case CheckpointMetaData.Format.WITH_PARTS =>
-           matchingCheckpointInstances.length == ci.numParts
+           assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
+           matchingCheckpointInstances.length == ci.numParts.get
          case CheckpointMetaData.Format.SENTINEL =>
            false
        }
