@@ -72,7 +72,6 @@ object Action {
   }
 
   lazy val logSchema = ExpressionEncoder[SingleAction].schema
-
 }
 
 /**

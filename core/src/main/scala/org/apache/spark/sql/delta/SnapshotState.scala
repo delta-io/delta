@@ -121,12 +121,13 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * Extract the SnapshotState from the provided dataframe of actions. Requires that the dataframe
    * has already been deduplicated (either through logReplay or some other method).
    */
-  protected def extractComputedState(stateDF: DataFrame): SnapshotState =
+  protected def extractComputedState(stateDF: DataFrame): SnapshotState = {
     recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
       val aggregations =
         aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
       stateDF.select(aggregations: _*).as[SnapshotState].first()
     }
+  }
 
   /**
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
