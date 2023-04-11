@@ -272,6 +272,10 @@ object DeltaOptions extends DeltaLogging {
    */
   val SCHEMA_TRACKING_LOCATION = "schemaTrackingLocation"
   /**
+   * Alias for `schemaTrackingLocation`, so users familiar with AutoLoader can migrate easily.
+   */
+  val SCHEMA_TRACKING_LOCATION_ALIAS = "schemaLocation"
+  /**
    * An option to instruct DeltaSource to pick a customized subdirectory for schema log in case of
    * rare conflicts such as when a stream needs to do a self-union of two Delta sources from the
    * same table.
@@ -307,6 +311,7 @@ object DeltaOptions extends DeltaLogging {
     TXN_APP_ID,
     TXN_VERSION,
     SCHEMA_TRACKING_LOCATION,
+    SCHEMA_TRACKING_LOCATION_ALIAS,
     STREAMING_SOURCE_TRACKING_ID,
     "queryName",
     "checkpointLocation",

@@ -856,7 +856,7 @@ class DeltaAnalysis(session: SparkSession)
             assert(options.get("path").isDefined, "Path for Delta table must be defined")
             val log = DeltaLog.forTable(session, options.get("path").get)
             val sourceIdOpt = options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
-            val schemaTrackingLocation = DeltaSourceSchemaLog.fullSchemaTrackingLocation(
+            val schemaTrackingLocation = DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
               rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&

@@ -1017,6 +1017,9 @@ object SingleAction extends Logging {
 
   lazy val nullLitForAddCDCFile: Column =
     new Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
+
+  lazy val nullLitForMetadataAction: Column =
+    new Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

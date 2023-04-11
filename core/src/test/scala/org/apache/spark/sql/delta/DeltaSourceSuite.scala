@@ -639,7 +639,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("unknown sourceVersion value") {
     // Set unknown sourceVersion as the max allowed version plus 1.
-    var unknownVersion = 2
+    val unknownVersion = 4
 
     val json =
       s"""
@@ -651,7 +651,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
          |}
       """.stripMargin
     val e = intercept[IllegalStateException] {
-      DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
+      DeltaSourceOffset(
+        UUID.randomUUID().toString,
+        SerializedOffset(json)
+      )
     }
     assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
   }
@@ -667,7 +670,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |}
       """.stripMargin
     val e = intercept[IllegalStateException] {
-      DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
+      DeltaSourceOffset(
+        UUID.randomUUID().toString,
+        SerializedOffset(json)
+      )
     }
     for (msg <- Seq("foo", "invalid")) {
       assert(e.getMessage.contains(msg))
@@ -684,7 +690,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |}
       """.stripMargin
     val e = intercept[IllegalStateException] {
-      DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
+      DeltaSourceOffset(
+        UUID.randomUUID().toString,
+        SerializedOffset(json)
+      )
     }
     for (msg <- Seq("Cannot find", "sourceVersion")) {
       assert(e.getMessage.contains(msg))
@@ -703,7 +712,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |}
       """.stripMargin
     val e = intercept[IllegalStateException] {
-      DeltaSourceOffset(UUID.randomUUID().toString, SerializedOffset(json))
+      DeltaSourceOffset(
+        UUID.randomUUID().toString,
+        SerializedOffset(json)
+      )
     }
     for (msg <- Seq("delete", "checkpoint", "restart")) {
       assert(e.getMessage.contains(msg))
@@ -1041,9 +1053,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         val lastOffset = DeltaSourceOffset(
           deltaLog.tableId,
-          SerializedOffset(stream.lastProgress.sources.head.endOffset))
+          SerializedOffset(stream.lastProgress.sources.head.endOffset)
+        )
 
-        assert(lastOffset == DeltaSourceOffset(1, deltaLog.tableId, 3, -1, false))
+        assert(lastOffset == DeltaSourceOffset(deltaLog.tableId, 3, -1, false))
       } finally {
         stream.stop()
       }
@@ -1087,9 +1100,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         val lastOffset = DeltaSourceOffset(
           deltaLog.tableId,
-          SerializedOffset(stream.lastProgress.sources.head.endOffset))
+          SerializedOffset(stream.lastProgress.sources.head.endOffset)
+        )
 
-        assert(lastOffset == DeltaSourceOffset(1, deltaLog.tableId, 3, -1, false))
+        assert(lastOffset == DeltaSourceOffset(deltaLog.tableId, 3, -1, false))
       } finally {
         stream.stop()
       }
@@ -1599,12 +1613,14 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           val id = DeltaLog.forTable(spark, path).snapshot.metadata.id
           val endOffsets = q.recentProgress
             .map(_.sources(0).endOffset)
-            .map(offsetJson => DeltaSourceOffset(id, SerializedOffset(offsetJson)))
+            .map(offsetJson => DeltaSourceOffset(
+              id,
+              SerializedOffset(offsetJson)
+            ))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(id, 1, 0, isStartingVersion = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(DeltaSourceOffset.VERSION_1, id, 2, -1,
-                isStartingVersion = false)
+              :: DeltaSourceOffset(id, 2, -1, isStartingVersion = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1912,13 +1928,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("DeltaSourceOffset.validateOffsets") {
     DeltaSourceOffset.validateOffsets(
       previousOffset = DeltaSourceOffset(
-        sourceVersion = 1,
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
         isStartingVersion = false),
       currentOffset = DeltaSourceOffset(
-        sourceVersion = 1,
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
@@ -1926,13 +1940,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     )
     DeltaSourceOffset.validateOffsets(
       previousOffset = DeltaSourceOffset(
-        sourceVersion = 1,
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
         isStartingVersion = false),
       currentOffset = DeltaSourceOffset(
-        sourceVersion = 1,
         reservoirId = "foo",
         reservoirVersion = 5,
         index = 1,
@@ -1942,13 +1954,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
           isStartingVersion = false),
         currentOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
@@ -1958,13 +1968,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
           isStartingVersion = false),
         currentOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 1,
           index = 10,
@@ -1974,13 +1982,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
           isStartingVersion = false),
         currentOffset = DeltaSourceOffset(
-          sourceVersion = 1,
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 9,
