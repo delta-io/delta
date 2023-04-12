@@ -67,9 +67,11 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
           .format("delta")
           .save(tablePath.toString)
       }
-      // Use a function instead of a value, because DeltaTable hangs on to the first snapshot it
-      // resolved for the underlying dataframe, which generally isn't the desired behaviour in
-      // tests.
+      // DeltaTable hangs on to the DataFrame it is created with for the entire object lifetime.
+      // That means subsequent `targetTable.toDF` calls will return the same snapshot.
+      // The DV tests are generally written assuming `targetTable.toDF` would return a new snapshot.
+      // So create a function here instead of a n instance, so `targetTable().toDF`
+      // will actually provide a new snapshot.
       val targetTable =
         () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
       val targetLog = DeltaLog.forTable(spark, tablePath)

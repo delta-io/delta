@@ -21,6 +21,7 @@ import scala.util.Random
 import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.actions.Metadata
 
+
 /**
  * Various utility methods used by Delta.
  */
@@ -54,4 +55,5 @@ object Utils {
   def isTesting: Boolean = {
     System.getenv("DELTA_TESTING") != null
   }
+
 }
