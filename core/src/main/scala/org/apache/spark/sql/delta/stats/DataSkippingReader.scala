@@ -720,7 +720,7 @@ trait DataSkippingReaderBase
     val bytesCompressed = col("size")
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
     val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0L))
-    val logicalRows = rows - dvCardinality as "logicalRows"
+    val logicalRows = (rows - dvCardinality).as("logicalRows")
 
     val accumulator = new ArrayAccumulator(4)
 
@@ -847,7 +847,6 @@ trait DataSkippingReaderBase
       val df = filteredFiles.withColumn("stats", statsColumn)
       convertDataFrameToAddFiles(df)
     }
-
     files.toSeq -> Seq(DataSize(totalSize), DataSize(partitionSize), DataSize(scanSize))
   }
 
