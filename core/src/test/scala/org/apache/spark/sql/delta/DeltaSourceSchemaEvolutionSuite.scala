@@ -1121,10 +1121,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       readStream(schemaLocation =
         Some(new Path(getDefaultCheckpoint, "_schema_log1").toString),
         startingVersion = Some(v5))
-        .join(
+        .unionByName(
           readStream(schemaLocation =
             Some(new Path(getDefaultCheckpoint, "_schema_log2").toString),
-            startingVersion = Some(v5)), "a")
+            startingVersion = Some(v5)), allowMissingColumns = true)
 
     // Both schema log initialized
     def schemaLog1: DeltaSourceSchemaTrackingLog = DeltaSourceSchemaTrackingLog.create(
@@ -1162,8 +1162,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       // The data prior to schema change is served
-      // [a, b, b]
-      CheckAnswer(("4", "4", "4")),
+      // Two rows in schema [a, b]
+      CheckAnswer(("4", "4"), ("4", "4")),
       ExpectSchemaEvolutionException
     )
 
@@ -1181,9 +1181,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     testStream(df)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailable(),
-      // Joined data is served
-      // [a, c, c]
-      CheckAnswer((5 until 10).map(_.toString).map(i => (i, i, i)): _*)
+      // Unioned data is served
+      // 10 rows in schema [a, c]
+      CheckAnswer((5 until 10).map(_.toString).flatMap(i => Seq((i, i), (i, i))): _*)
     )
   }
 
