@@ -611,16 +611,20 @@ trait ConvertIcebergToDeltaSuiteBase
       }
 
       // Should not be able to write nulls to not null data column
-      var ex = intercept[AnalysisException] {
+      var ex = intercept[Exception] {
         spark.sql(s"INSERT INTO $table VALUES (4, 'd', null)")
       }
-      assert(ex.getMessage.contains("""Cannot write nullable values to non-null column 'name'"""))
+      assert(ex.getMessage.contains("Null value appeared in non-nullable field") ||
+        // TODO: remove it after OSS 3.4 release.
+        ex.getMessage.contains("""Cannot write nullable values to non-null column 'name'"""))
 
       // Should not be able to write nulls to not null partition column
-      ex = intercept[AnalysisException] {
+      ex = intercept[Exception] {
         spark.sql(s"INSERT INTO $table VALUES (null, 'e', 'e')")
       }
-      assert(ex.getMessage.contains("""Cannot write nullable values to non-null column 'id'"""))
+      assert(ex.getMessage.contains("Null value appeared in non-nullable field") ||
+        // TODO: remove it after OSS 3.4 release.
+        ex.getMessage.contains("""Cannot write nullable values to non-null column 'id'"""))
 
       // Should be able to write nulls to nullable column
       spark.sql(s"INSERT INTO $table VALUES (5, null, 'e')")
