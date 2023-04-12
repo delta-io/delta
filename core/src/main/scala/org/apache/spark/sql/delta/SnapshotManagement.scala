@@ -140,7 +140,45 @@ trait SnapshotManagement { self: DeltaLog =>
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
     val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
-    getLogSegmentForVersion(startCheckpoint, versionToLoad, newFiles, checkpointMetadataHint)
+    getLogSegmentForVersion(
+      startCheckpoint,
+      versionToLoad,
+      newFiles,
+      checkpointMetadataHint = checkpointMetadataHint)
+  }
+
+  /**
+   * Helper method to validate that selected deltas are contiguous from checkpoint version till
+   * the required `versionToLoad`.
+   * @param selectedDeltas - deltas selected for snapshot creation.
+   * @param checkpointVersion - checkpoint version selected for snapshot creation. Should be `-1` if
+   *                            no checkpoint is selected.
+   * @param versionToLoad - version for which we want to create the Snapshot.
+   */
+  private def validateDeltaVersions(
+      selectedDeltas: Array[FileStatus],
+      checkpointVersion: Long,
+      versionToLoad: Option[Long]): Unit = {
+    // checkpointVersion should be passed as -1 if no checkpoint is needed for the LogSegment.
+
+    // We may just be getting a checkpoint file.
+    selectedDeltas.headOption.foreach { headDelta =>
+      val headDeltaVersion = deltaVersion(headDelta)
+      val lastDeltaVersion = selectedDeltas.last match {
+        case DeltaFile(_, v) => v
+      }
+
+      if (headDeltaVersion != checkpointVersion + 1) {
+        throw DeltaErrors.logFileNotFoundException(
+          deltaFile(logPath, checkpointVersion + 1),
+          lastDeltaVersion,
+          unsafeVolatileMetadata) // metadata is best-effort only
+      }
+      val deltaVersions = selectedDeltas.flatMap {
+        case DeltaFile(_, v) => Seq(v)
+      }
+      verifyDeltaVersions(spark, deltaVersions, Some(checkpointVersion + 1), versionToLoad)
+    }
   }
 
   /**
@@ -209,19 +247,9 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaVersion(file) > newCheckpointVersion
       }
 
-      val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
-      // We may just be getting a checkpoint file after the filtering
-      if (deltaVersions.nonEmpty) {
-        if (deltaVersions.head != newCheckpointVersion + 1) {
-          throw DeltaErrors.logFileNotFoundException(
-            deltaFile(logPath, newCheckpointVersion + 1),
-            deltaVersions.last,
-            unsafeVolatileMetadata) // metadata is best-effort only
-        }
-        verifyDeltaVersions(spark, deltaVersions, Some(newCheckpointVersion + 1), versionToLoad)
-      }
 
-      val newVersion = deltaVersions.lastOption.getOrElse(newCheckpoint.get.version)
+      val newVersion =
+        deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
       val checkpointFileListProvider = newCheckpoint
         .map(_.getCheckpointFileListProvider(logPath, checkpoints, checkpointMetadataHint))
 
@@ -235,6 +263,8 @@ trait SnapshotManagement { self: DeltaLog =>
           s"Trying to load a non-existent version ${versionToLoad.get}")
       }
       val lastCommitTimestamp = deltas.last.getModificationTime
+
+      validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
 
       Some(LogSegment(
         logPath,
