@@ -505,7 +505,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       }.getOrElse(Seq.empty)
 
     val deletionVectorPath =
-      getDeletionVectorRelativePath(action, fs, basePath, relativizeIgnoreError).map(pathToString)
+      getDeletionVectorRelativePath(action).map(pathToString)
 
     paths ++ deletionVectorPath.toSeq
   }
@@ -514,11 +514,7 @@ trait VacuumCommandImpl extends DeltaCommand {
    * Returns the path of the on-disk deletion vector if it is stored relative to the
    * `basePath` otherwise `None`.
    */
-  protected def getDeletionVectorRelativePath(
-      action: FileAction,
-      fs: FileSystem,
-      basePath: Path,
-      relativizeIgnoreError: Boolean): Option[Path] = {
+  protected def getDeletionVectorRelativePath(action: FileAction): Option[Path] = {
     val dv = action match {
       case a: AddFile if a.deletionVector != null =>
         Some(a.deletionVector)
@@ -530,13 +526,12 @@ trait VacuumCommandImpl extends DeltaCommand {
     dv match {
       case Some(dv) if dv.isOnDisk =>
         if (dv.isRelative) {
+          // We actually want a relative path here.
           Some(dv.absolutePath(new Path(".")))
         } else {
-          Some(DeltaFileOperations.tryRelativizePath(
-            fs,
-            basePath,
-            dv.absolutePath(basePath),
-            relativizeIgnoreError))
+          assert(dv.isAbsolute)
+          // This is never going to be a path relative to `basePath` for DVs.
+          None
         }
       case None => None
     }
