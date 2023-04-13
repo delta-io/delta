@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
 
 import io.delta.standalone.{DeltaLog, Operation, Snapshot}
-import io.delta.standalone.actions.{AddFile => AddFileJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.actions.{AddFile => AddFileJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.types.{BooleanType, IntegerType, LongType, StringType, StructType}
 
@@ -676,6 +676,105 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       } finally {
         iter.close()
       }
+    }
+  }
+
+  /**
+   * Handles all the relevant cases for this optimized reverse log replay for protocol & metadata
+   * loading.
+   *
+   * Case 1: Fresh snapshot created with no previous snapshot, replaying back to 0.json
+   * Case 2: Snapshot update, but there is a checkpoint newer than the previous cached snapshot
+   * Case 3: Snapshot update, but there is a cached snapshot newer than the latest checkpoint
+   * Case 4: Same as case 3, but there is also metadata action that's newer than the cached snapshot
+   * Case 5: Same as case 3, but there are metadata and protocol actions newer than the cached
+   *         snapshot
+   */
+  test("Snapshot should read the minimal number of log files needed when loading " +
+    "protocol & metadata") {
+    withTempDir { dir =>
+      val conf = new Configuration()
+      def commit(i: Int, deltaLog: DeltaLog): Unit = {
+        val files =
+          ConversionUtils.convertAction(AddFile(i.toString, Map.empty, 1, 1, true)) :: Nil
+        deltaLog.startTransaction().commit(files.asJava, manualUpdate, engineInfo)
+      }
+
+      // V0: Add protocol and metadata
+      val writerLog = DeltaLog.forTable(conf, dir.getCanonicalPath)
+      val metadataV0 = MetadataJ
+        .builder()
+        .schema(new StructType().add("x", new IntegerType()))
+        .build()
+      val protocolV0 = new ProtocolJ(1, 2)
+      writerLog.startTransaction()
+        .commit((metadataV0 :: protocolV0 :: Nil).asJava, manualUpdate, engineInfo)
+
+      // Case 1
+      // V1-V8: The latest protocol and metadata is still in V0
+      for (i <- 1 to 8) { commit(i, writerLog) }
+      val readerLog = DeltaLog.forTable(conf, dir.getCanonicalPath)
+      val metrics1 = readerLog.snapshot().asInstanceOf[SnapshotImpl].protocolMetadataLoadMetrics
+      assert(metrics1.fileVersions.toList.sorted === (0 to 8).toList)
+
+      // Case 2
+      // V9-13: The latest protocol and metadata is now in V10 (checkpoint)
+      for (i <- 9 to 13) { commit(i, writerLog) }
+      val metrics2 = readerLog.update().asInstanceOf[SnapshotImpl].protocolMetadataLoadMetrics
+      assert(metrics2.fileVersions.toList.sorted === (10 to 13).toList)
+
+      // Case 3
+      // V14-19: The latest protocol and metadata should be saved in the current snapshot at V13
+      //         To emphasize: we should not scan all the way back to V10! We should scan to V14
+      //         and then stop, since we already know the latest protocol and metadata at V13.
+      for (i <- 14 to 19) { commit(i, writerLog) }
+      val metrics3 = readerLog.update().asInstanceOf[SnapshotImpl].protocolMetadataLoadMetrics
+      assert(metrics3.fileVersions.toList.sorted === (14 to 19).toList)
+
+      // V20-22: Again, the latest protocol and metadata is now in the checkpoint
+      for (i <- 20 to 22) { commit(i, writerLog) }
+      val metrics4 = readerLog.update().asInstanceOf[SnapshotImpl].protocolMetadataLoadMetrics
+      assert(metrics4.fileVersions.toList.sorted === (20 to 22).toList)
+
+      // Case 4
+      // V26: Now, this has the latest metadata (but not the latest protocol). The current snapshot
+      //      version is 22, so we should still read the new log files 26 -> 23
+      for (i <- 23 to 25) { commit(i, writerLog) }
+      val metadataV26 = MetadataJ
+        .builder()
+        .schema(metadataV0.getSchema.add("y", new IntegerType()))
+        .build()
+      val txn26 = writerLog.startTransaction()
+      txn26.updateMetadata(metadataV26)
+      txn26.commit(Nil.asJava, manualUpdate, engineInfo)
+      val metrics5_snapshot = readerLog.update().asInstanceOf[SnapshotImpl]
+      val metrics5 = metrics5_snapshot.protocolMetadataLoadMetrics
+      assert(metrics5.fileVersions.toList.sorted === (23 to 26).toList)
+      // Check that we actually loaded the correct metadata at V26 instead of the hint at V22
+      assert(metrics5_snapshot.getMetadata.getSchema === metadataV26.getSchema)
+
+      // Case 5
+      // V27: Just adds
+      // V28: This commit contains a new metadata AND protocol.
+      // V29: More adds
+      commit(27, writerLog)
+      val metadataV28 = MetadataJ
+        .builder()
+        .schema(metadataV26.getSchema.add("z", new IntegerType()))
+        .build()
+      // Note: same Protocol versions (1,2) as the previous protocol, due to the limited
+      //       delta-standalone protocol support.
+      val protocolV28 = new ProtocolJ(1, 2)
+      writerLog.startTransaction()
+        .commit((metadataV28 :: protocolV28 :: Nil).asJava, manualUpdate, engineInfo)
+      commit(29, writerLog)
+      // The current snapshot is still at V26. We should read V29, V28, see the newest protocol and
+      // metadata, and stop early
+      val metrics6_snapshot = readerLog.update().asInstanceOf[SnapshotImpl]
+      val metrics6 = metrics6_snapshot.protocolMetadataLoadMetrics
+      assert(metrics6.fileVersions.toList.sorted === (28 to 29).toList)
+      assert(metrics6_snapshot.getMetadata.getSchema === metadataV28.getSchema)
+      // useless asserting the protocol, since they are the same
     }
   }
 }

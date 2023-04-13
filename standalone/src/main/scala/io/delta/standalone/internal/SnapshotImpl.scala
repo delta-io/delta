@@ -17,7 +17,6 @@
 package io.delta.standalone.internal
 
 import java.net.URI
-import java.util.concurrent.{Executors, ExecutorService}
 
 import scala.collection.JavaConverters._
 import scala.collection.parallel.ExecutionContextTaskSupport
@@ -41,11 +40,29 @@ import io.delta.standalone.internal.scan.{DeltaScanImpl, FilteredDeltaScanImpl}
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils}
 
 /**
+ * Contains the protocol, metadata, and corresponding table version. The protocol and metadata
+ * will be used as the defaults in the Snapshot if no newer values are found in logs > `version`.
+ */
+case class SnapshotProtocolMetadataHint(protocol: Protocol, metadata: Metadata, version: Long)
+
+/**
+ * Visible for testing.
+ *
+ * Will contain various metrics collected while finding/loading the latest protocol and metadata
+ * for this Snapshot. This can be used to verify that the minimal log replay occurred.
+ */
+case class ProtocolMetadataLoadMetrics(fileVersions: Seq[Long])
+
+/**
  * Scala implementation of Java interface [[Snapshot]].
  *
  * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
  *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
  *                  `version = -1`.
+ * @param protocolMetadataHint The optional protocol, metadata, and table version that can be used
+ *                             to speed up loading *this* Snapshot's protocol and metadata (P&M).
+ *                             Essentially, when computing *this* Snapshot's P&M, we only need to
+ *                             look at the log files *newer* than the hint version.
  */
 private[internal] class SnapshotImpl(
     val hadoopConf: Configuration,
@@ -54,7 +71,14 @@ private[internal] class SnapshotImpl(
     val logSegment: LogSegment,
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLogImpl,
-    val timestamp: Long) extends Snapshot with Logging {
+    val timestamp: Long,
+    protocolMetadataHint: Option[SnapshotProtocolMetadataHint] = Option.empty)
+  extends Snapshot with Logging {
+
+  protocolMetadataHint.foreach { hint =>
+    require(hint.version <= version, s"Cannot use a protocolMetadataHint with a version newer " +
+      s"than that of this Snapshot. Hint version: ${hint.version}, Snapshot version: $version")
+  }
 
   import SnapshotImpl._
 
@@ -124,21 +148,70 @@ private[internal] class SnapshotImpl(
   lazy val transactions: Map[String, Long] =
     setTransactionsScala.map(t => t.appId -> t.version).toMap
 
-  // These values need to be declared lazy. In Scala, strict values (i.e. non-lazy) in superclasses
-  // (e.g. SnapshotImpl) are fully initialized before subclasses (e.g. InitialSnapshotImpl).
-  // If these were 'strict', or 'eager', vals, then `loadTableProtocolAndMetadata` would be called
-  // for all new InitialSnapshotImpl instances, causing an exception.
-  lazy val (protocolScala, metadataScala) = loadTableProtocolAndMetadata()
+  /**
+   * protocolScala, metadataScala are internals APIs.
+   * protocolMetadataLoadMetrics is visible for testing only.
+   *
+   * NOTE: These values need to be declared lazy. In Scala, strict values (i.e. non-lazy) in
+   * superclasses (e.g. SnapshotImpl) are fully initialized before subclasses
+   * (e.g. InitialSnapshotImpl). If these were 'strict', or 'eager', vals, then
+   * `loadTableProtocolAndMetadata` would be called for all new InitialSnapshotImpl instances,
+   * causing an exception.
+   */
+  lazy val (protocolScala, metadataScala, protocolMetadataLoadMetrics) =
+    loadTableProtocolAndMetadata()
 
-  private def loadTableProtocolAndMetadata(): (Protocol, Metadata) = {
+  private def loadTableProtocolAndMetadata(): (Protocol, Metadata, ProtocolMetadataLoadMetrics) = {
+    val fileVersionsScanned = scala.collection.mutable.Set[Long]()
+    def createMetrics = ProtocolMetadataLoadMetrics(fileVersionsScanned.toSeq.sorted.reverse)
+
     var protocol: Protocol = null
     var metadata: Metadata = null
+
     val iter = memoryOptimizedLogReplay.getReverseIterator
 
     try {
       // We replay logs from newest to oldest and will stop when we find the latest Protocol and
-      // Metadata.
-      iter.asScala.foreach { case (action, _) =>
+      // Metadata (P&M).
+      //
+      // If the protocolMetadataHint is defined, then we will only look at log files strictly newer
+      // (>) than the protocolMetadataHint's version. If we don't find any new P&M, then we will
+      // default to those from the protocolMetadataHint.
+      //
+      // If the protocolMetadataHint is not defined, then we must look at all log files. If no
+      // P&M is found, then we fail.
+      iter.asScala.foreach { case (action, _, actionTableVersion) =>
+
+        // We have not yet found the latest P&M. If we had found BOTH, we would have returned
+        // already. Note that we may have already found ONE of them.
+        protocolMetadataHint.foreach { hint =>
+          if (actionTableVersion == hint.version) {
+            // Furthermore, we have already looked at all the actions in all the log files strictly
+            // newer (>) than the hint version. Thus, we can short circuit early and use the P&M
+            // from the hint.
+
+            val newestProtocol = if (protocol == null) {
+              logInfo(s"Using the protocol from the protocolMetadataHint: ${hint.protocol}")
+              hint.protocol
+            } else {
+              logInfo(s"Found a newer protocol: $protocol")
+              protocol
+            }
+
+            val newestMetadata = if (metadata == null) {
+              logInfo(s"Using the metadata from the protocolMetadataHint: ${hint.metadata}")
+              hint.metadata
+            } else {
+              logInfo(s"Found a newer metadata: $metadata")
+              metadata
+            }
+
+            return (newestProtocol, newestMetadata, createMetrics)
+          }
+        }
+
+        fileVersionsScanned += actionTableVersion
+
         action match {
           case p: Protocol if null == protocol =>
             // We only need the latest protocol
@@ -146,14 +219,14 @@ private[internal] class SnapshotImpl(
 
             if (protocol != null && metadata != null) {
               // Stop since we have found the latest Protocol and metadata.
-              return (protocol, metadata)
+              return (protocol, metadata, createMetrics)
             }
           case m: Metadata if null == metadata =>
             metadata = m
 
             if (protocol != null && metadata != null) {
               // Stop since we have found the latest Protocol and metadata.
-              return (protocol, metadata)
+              return (protocol, metadata, createMetrics)
             }
           case _ => // do nothing
         }
@@ -329,6 +402,9 @@ private class InitialSnapshotImpl(
   override lazy val protocolScala: Protocol = Protocol()
 
   override lazy val metadataScala: Metadata = Metadata()
+
+  override lazy val protocolMetadataLoadMetrics: ProtocolMetadataLoadMetrics =
+    ProtocolMetadataLoadMetrics(Seq.empty)
 
   override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
 

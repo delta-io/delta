@@ -23,7 +23,7 @@ import io.delta.storage.{CloseableIterator, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import io.delta.standalone.internal.util.JsonUtils
+import io.delta.standalone.internal.util.{FileNames, JsonUtils}
 
 /**
  * Used to replay the transaction logs from the newest log file to the oldest log file, in a
@@ -36,28 +36,30 @@ private[internal] class MemoryOptimizedLogReplay(
     timeZone: TimeZone) {
 
   /**
-   * @return a [[CloseableIterator]] of tuple (Action, isLoadedFromCheckpoint) in reverse
-   *         transaction log order
+   * @return a [[CloseableIterator]] of tuple (Action, isLoadedFromCheckpoint, tableVersion) in
+   *         reverse transaction log order
    */
-  def getReverseIterator: CloseableIterator[(Action, Boolean)] =
-    new CloseableIterator[(Action, Boolean)] {
+  def getReverseIterator: CloseableIterator[(Action, Boolean, Long)] =
+    new CloseableIterator[(Action, Boolean, Long)] {
       private val reverseFilesIter: Iterator[Path] = files.sortWith(_.getName > _.getName).iterator
-      private var actionIter: Option[CloseableIterator[(Action, Boolean)]] = None
+      private var actionIter: Option[CloseableIterator[(Action, Boolean, Long)]] = None
 
       /**
        * Requires that `reverseFilesIter.hasNext` is true
        */
-      private def getNextIter: Option[CloseableIterator[(Action, Boolean)]] = {
+      private def getNextIter: Option[CloseableIterator[(Action, Boolean, Long)]] = {
         val nextFile = reverseFilesIter.next()
 
         if (nextFile.getName.endsWith(".json")) {
-          Some(new CustomJsonIterator(logStore.read(nextFile, hadoopConf)))
+          val fileVersion = FileNames.deltaVersion(nextFile)
+          Some(new CustomJsonIterator(logStore.read(nextFile, hadoopConf), fileVersion))
         } else if (nextFile.getName.endsWith(".parquet")) {
+          val fileVersion = FileNames.checkpointVersion(nextFile)
           val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
             nextFile.toString,
             ParquetReader.Options(timeZone, hadoopConf)
           )
-          Some(new CustomParquetIterator(parquetIterable))
+          Some(new CustomParquetIterator(parquetIterable, fileVersion))
         } else {
           throw new IllegalStateException(s"unexpected log file path: $nextFile")
         }
@@ -94,7 +96,7 @@ private[internal] class MemoryOptimizedLogReplay(
         actionIter.isDefined
       }
 
-      override def next(): (Action, Boolean) = {
+      override def next(): (Action, Boolean, Long) = {
         if (!hasNext()) throw new NoSuchElementException
 
         if (actionIter.isEmpty) throw new IllegalStateException("Impossible")
@@ -112,27 +114,29 @@ private[internal] class MemoryOptimizedLogReplay(
 // Helper Classes
 ///////////////////////////////////////////////////////////////////////////
 
-private class CustomJsonIterator(iter: CloseableIterator[String])
-  extends CloseableIterator[(Action, Boolean)] {
+private class CustomJsonIterator(iter: CloseableIterator[String], version: Long)
+  extends CloseableIterator[(Action, Boolean, Long)] {
 
   override def hasNext: Boolean = iter.hasNext
 
-  override def next(): (Action, Boolean) = {
-    (JsonUtils.mapper.readValue[SingleAction](iter.next()).unwrap, false)
+  override def next(): (Action, Boolean, Long) = {
+    (JsonUtils.mapper.readValue[SingleAction](iter.next()).unwrap, false, version)
   }
 
   override def close(): Unit = iter.close()
 }
 
-private class CustomParquetIterator(iterable: ParquetIterable[Parquet4sSingleActionWrapper])
-  extends CloseableIterator[(Action, Boolean)] {
+private class CustomParquetIterator(
+    iterable: ParquetIterable[Parquet4sSingleActionWrapper],
+    version: Long)
+  extends CloseableIterator[(Action, Boolean, Long)] {
 
   private val iter = iterable.iterator
 
   override def hasNext: Boolean = iter.hasNext
 
-  override def next(): (Action, Boolean) = {
-    (iter.next().unwrap.unwrap, true)
+  override def next(): (Action, Boolean, Long) = {
+    (iter.next().unwrap.unwrap, true, version)
   }
 
   override def close(): Unit = iterable.close()

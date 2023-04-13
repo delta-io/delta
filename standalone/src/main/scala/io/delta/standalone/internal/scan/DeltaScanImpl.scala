@@ -82,7 +82,7 @@ private[internal] class DeltaScanImpl(replay: MemoryOptimizedLogReplay) extends 
      */
     private def findNextValid(): Option[AddFile] = {
       while (iter.hasNext) {
-        val (action, isCheckpoint) = iter.next()
+        val (action, isCheckpoint, _) = iter.next()
 
         action match {
           case add: AddFile =>

@@ -64,13 +64,18 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
    */
   private def updateInternal(): SnapshotImpl = {
     try {
-      val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
-      if (segment != currentSnapshot.logSegment) {
-        val startingFrom = segment.checkpointVersion
+      val newSegment = getLogSegmentForVersion(
+        startCheckpoint = currentSnapshot.logSegment.checkpointVersion)
+      if (newSegment != currentSnapshot.logSegment) {
+        val startingFrom = newSegment.checkpointVersion
           .map(v => s" starting from checkpoint version $v.").getOrElse(".")
-        logInfo(s"Loading version ${segment.version}$startingFrom")
+        logInfo(s"Loading version ${newSegment.version}$startingFrom")
 
-        val newSnapshot = createSnapshot(segment, segment.lastCommitTimestamp)
+        val newSnapshot = createSnapshot(
+          newSegment,
+          newSegment.lastCommitTimestamp,
+          previousSnapshotOpt = Some(currentSnapshot) // We are updating to the newSegment!
+        )
 
         if (currentSnapshot.version > -1 &&
           currentSnapshot.metadataScala.id != newSnapshot.metadataScala.id) {
@@ -221,7 +226,11 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
         .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${logSegment.version}$startCheckpoint")
 
-      val snapshot = createSnapshot(logSegment, logSegment.lastCommitTimestamp)
+      val snapshot = createSnapshot(
+        logSegment,
+        logSegment.lastCommitTimestamp,
+        previousSnapshotOpt = None // This is the `init`. There's no previous snapshot.
+      )
 
       logInfo(s"Returning initial snapshot $snapshot")
 
@@ -240,13 +249,33 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
     val startingCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(version, None))
     val segment = getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version))
 
+    // In practice, this will always be None because all callers of this method have already called
+    // deltaLog.update() (to determine the full list of versions, to understand the full history).
+    // Thus, `snapshot.version` will always be > version. (If they were equal, we would have already
+    // returned early above).
+    val previousSnapshotOpt =
+      if (currentSnapshot.version <= version) Some(currentSnapshot) else None
+
     createSnapshot(
       segment,
-      segment.lastCommitTimestamp
+      segment.lastCommitTimestamp,
+      previousSnapshotOpt
     )
   }
 
-  private def createSnapshot(segment: LogSegment, lastCommitTimestamp: Long): SnapshotImpl = {
+  private def createSnapshot(
+      segment: LogSegment,
+      lastCommitTimestamp: Long,
+      previousSnapshotOpt: Option[SnapshotImpl]): SnapshotImpl = {
+
+    previousSnapshotOpt.foreach { previousSnapshot =>
+      assert(
+        previousSnapshot.version <= segment.version,
+        s"Trying to create a Snapshot at version ${segment.version} yet you are passing a " +
+          s"newer `previousSnapshotOpt` with version ${previousSnapshot.version}."
+      )
+    }
+
     new SnapshotImpl(
       hadoopConf,
       logPath,
@@ -254,7 +283,12 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
       segment,
       minFileRetentionTimestamp,
       this,
-      lastCommitTimestamp)
+      lastCommitTimestamp,
+      previousSnapshotOpt.map { previousSnapshot =>
+        SnapshotProtocolMetadataHint(
+          previousSnapshot.protocolScala, previousSnapshot.metadataScala, previousSnapshot.version)
+      }
+    )
   }
 
   private def verifyDeltaVersions(versions: Array[Long]): Unit = {
