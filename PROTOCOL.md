@@ -23,7 +23,7 @@
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
-    - [Increase Row ID High Watermark](#increase-row-id-high-watermark)
+    - [Increase Row ID High-Water Mark](#increase-row-id-high-watermark)
 - [Action Reconciliation](#action-reconciliation)
 - [Table Features](#table-features)
   - [Table Features for new and Existing Tables](#table-features-for-new-and-existing-tables)
@@ -544,15 +544,15 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
-### Increase Row ID High Watermark
-The Row ID high watermark tracks the largest ID that has been assigned to a row in the table.
+### Increase Row ID High-water Mark
+The Row ID high-water mark tracks the largest ID that has been assigned to a row in the table.
 
 The schema of `rowIdHighWaterMark` action is as follows:
 
-| Field Name      | Data Type | Description                                                                                                            |
-|-----------------|-----------|------------------------------------------------------------------------------------------------------------------------|
-| highWaterMark   | Long      | Highest Row ID that has been assigned to a row in the table. Equal to -1 if no rows have been inserted into the table. |
-| preservedRowIds | Boolean   | When true, the commit that wrote this high watermark preserved existing Row IDs of rewritten rows.                     |
+| Field Name      | Data Type | Description                                                                                         |
+|-----------------|-----------|-----------------------------------------------------------------------------------------------------|
+| highWaterMark   | Long      | Highest Row ID that has been assigned to a row in the table.                                        |
+| preservedRowIds | Boolean   | When true, the commit that wrote this high-water mark preserved existing Row IDs of rewritten rows. |
 
 The following is an example `rowIdHighWaterMark` action:
 ```json
@@ -805,7 +805,7 @@ When Row IDs are enabled (when the table property `delta.enableRowIds` is set to
 When Row IDs are supported (when the `writerFeatures` field of a table's `protocol` action contains `rowIds`), then:
 - Writers must assign unique fresh Row IDs to all rows that they commit, i.e. writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
   Writers must never commit duplicate Row IDs in the table in any version.
-- Writers must set the `baseRowId` field in `remove` actions to the `baseRowId` value of the last committed `add` action with the same `path`.
+- Writers must set the `baseRowId` field in `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
 - Writers must include a `rowIdHighWaterMark` action whenever they assign new fresh Row IDs, i.e. whenever they commit an `add` action for a new physical file.
   The `highWaterMark` value of the `rowIdHighWaterMark` action must always be equal to or greater than the highest fresh Row ID committed so far.
   Writers are allowed to reserve Row IDs in a first commit and assign them in following commits. In that case, each commit must include a `rowIdHighWaterMark` action even when the `highWaterMark` value is not changing.
