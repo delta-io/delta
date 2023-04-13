@@ -90,9 +90,8 @@ class DeltaDataSource
 
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
     val readSchema = {
-      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
-        // Use `getSchemaAtLogInit` so it's always consistent between analysis and execution phase
-        .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+      getSchemaTrackingLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+        .flatMap(_.getCurrentTrackedSchema.map(_.dataSchema))
         .getOrElse(snapshot.schema)
     }
 
@@ -122,10 +121,12 @@ class DeltaDataSource
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
-    val schemaLogOpt =
-      getSchemaLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
-    val readSchema = schemaLogOpt
-      .flatMap(_.getSchemaAtLogInit.map(_.dataSchema))
+
+    val schemaTrackingLogOpt =
+      getSchemaTrackingLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+
+    val readSchema = schemaTrackingLogOpt
+      .flatMap(_.getCurrentTrackedSchema.map(_.dataSchema))
       .getOrElse(snapshot.schema)
 
     if (readSchema.isEmpty) {
@@ -136,7 +137,7 @@ class DeltaDataSource
       deltaLog,
       options,
       snapshot,
-      schemaLog = schemaLogOpt
+      schemaTrackingLog = schemaTrackingLogOpt
     )
   }
 
@@ -237,14 +238,26 @@ class DeltaDataSource
   /**
    * Create a schema log for Delta streaming source if possible
    */
-  private def getSchemaLogForDeltaSource(
+  private def getSchemaTrackingLogForDeltaSource(
       spark: SparkSession,
       sourceSnapshot: Snapshot,
-      parameters: Map[String, String]): Option[DeltaSourceSchemaLog] = {
+      parameters: Map[String, String]): Option[DeltaSourceSchemaTrackingLog] = {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
     Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+      .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
       .map { schemaTrackingLocation =>
-        DeltaSourceSchemaLog.create(
+        if (!spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION)) {
+          // TODO: remove once non-additive schema evolution is released
+          throw new UnsupportedOperationException(
+            "Schema tracking location is not supported for Delta streaming source")
+        }
+        if (Option(options.get(DeltaOptions.CDC_READ_OPTION)).exists(_.toBoolean)) {
+          // TODO: remove once we support CDC streaming with schema log
+          throw new UnsupportedOperationException(
+            "Reading change data feed and streaming is not supported with schema tracking log")
+        }
+        DeltaSourceSchemaTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
           Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)))
       }

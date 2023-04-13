@@ -36,7 +36,13 @@ import org.apache.spark.sql.types.{DataType, StructType}
  * A PersistedSchema is an entry in Delta streaming source schema log, which can be used to read
  * data files during streaming.
  * @param tableId Delta table id
- * @param deltaCommitVersion Delta commit version in which this schema change happened
+ * @param deltaCommitVersion Delta commit version in which this schema is captured. It does not
+ *                           necessarily have to be the commit when there's a schema change.
+ *                           But the invariant is: Delta table/snapshot must have it's schema as
+ *                           `dataSchemaJson` at version `deltaCommitVersion`.
+ *                           In streaming's context, when the stream restarts, the next batch it
+ *                           should read will refer to Delta commit versions >= `deltaCommitVersion`
+ *                           so schema should be readily compatible with that version.
  * @param dataSchemaJson Full schema json
  * @param partitionSchemaJson Partition schema json
  */
@@ -90,14 +96,14 @@ object PersistedSchema {
 }
 
 /**
- * The [[DeltaSourceSchemaLog]] tracks the schema changes for a particular Delta streaming source in
- * a particular stream, it is used to save and lookup the correct schema during streaming from a
- * Delta table.
+ * Tracks the schema changes for a particular Delta streaming source in a particular stream,
+ * it is utilized to save and lookup the correct schema during streaming from a Delta table.
  * This schema log is NOT meant to be shared across different Delta streaming source instances.
+ *
  * @param rootSchemaLocation Schema log location
  * @param sourceSnapshot Delta source snapshot for the Delta streaming source
  */
-class DeltaSourceSchemaLog private(
+class DeltaSourceSchemaTrackingLog private(
     sparkSession: SparkSession,
     rootSchemaLocation: String,
     sourceSnapshot: Snapshot)
@@ -115,6 +121,7 @@ class DeltaSourceSchemaLog private(
   // Next schema version to write, this should be updated after each schema evolution.
   // This allow HDFSMetadataLog to best detect concurrent schema log updates.
   protected var nextVersionToWrite: Long = schemaCommitVersionAtLogInit.map(_ + 1).getOrElse(0L)
+  protected var currentTrackedSchema: Option[PersistedSchema] = schemaAtLogInit
 
   override protected def deserialize(in: InputStream): PersistedSchema = {
     // Called inside a try-finally where the underlying stream is closed in the caller
@@ -138,7 +145,7 @@ class DeltaSourceSchemaLog private(
   }
 
   /**
-   * Globally latest schema log entry. Mostly used for debugging / testing.
+   * Globally latest schema log entry.
    */
   protected[delta] def getLatestSchema: Option[PersistedSchema] = getLatest().map(_._2)
 
@@ -146,7 +153,7 @@ class DeltaSourceSchemaLog private(
    * The initial schema loaded when this schema log is created. This is typically used as the
    * read schema for Delta streaming source.
    */
-  def getSchemaAtLogInit: Option[PersistedSchema] = schemaAtLogInit
+  def getCurrentTrackedSchema: Option[PersistedSchema] = currentTrackedSchema
 
   def evolveSchema(newSchema: PersistedSchema): Unit = {
     // Write to schema log
@@ -156,12 +163,13 @@ class DeltaSourceSchemaLog private(
       throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         rootSchemaLocation, sourceSnapshot.deltaLog.dataPath.toString)
     }
+    currentTrackedSchema = Some(newSchema)
     nextVersionToWrite += 1
   }
 
 }
 
-object DeltaSourceSchemaLog {
+object DeltaSourceSchemaTrackingLog {
 
   def fullSchemaTrackingLocation(
       rootSchemaTrackingLocation: String,
@@ -180,9 +188,9 @@ object DeltaSourceSchemaLog {
       sparkSession: SparkSession,
       rootSchemaLocation: String,
       sourceSnapshot: Snapshot,
-      sourceTrackingId: Option[String] = None): DeltaSourceSchemaLog = {
+      sourceTrackingId: Option[String] = None): DeltaSourceSchemaTrackingLog = {
     val schemaTrackingLocation = fullSchemaTrackingLocation(
       rootSchemaLocation, sourceSnapshot.deltaLog.tableId, sourceTrackingId)
-    new DeltaSourceSchemaLog(sparkSession, schemaTrackingLocation, sourceSnapshot)
+    new DeltaSourceSchemaTrackingLog(sparkSession, schemaTrackingLocation, sourceSnapshot)
   }
 }

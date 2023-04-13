@@ -2552,16 +2552,18 @@ trait DeltaErrorsBase
     )
   }
 
-  def blockStreamingReadsOnColumnMappingEnabledTable(
+  def blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+      spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
-      isCdfRead: Boolean,
       detectedDuringStreaming: Boolean): Throwable = {
-    new DeltaColumnMappingUnsupportedSchemaIncompatibleException(
-      if (isCdfRead) "Streaming read of Change Data Feed (CDF)" else "Streaming read",
+    val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION)
+    new DeltaStreamingColumnMappingSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key,
+      "",
+      enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString
       ))
@@ -2633,6 +2635,24 @@ trait DeltaErrorsBase
         generateDocsLink(
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
+  }
+
+  def streamingSchemaEvolutionException(newSchema: StructType): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_SCHEMA_EVOLUTION",
+      messageParameters = Array(formatSchema(newSchema)))
+  }
+
+  def streamingSchemaLogInitFailedIncompatibleSchemaException(
+      startVersion: Long,
+      endVersion: Long): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_SCHEMA",
+      messageParameters = Array(
+        startVersion.toString, endVersion.toString,
+        DeltaSQLConf.
+          DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START.key)
+    )
   }
 
   def failToDeserializeSchemaLog(location: String): Throwable = {
@@ -3076,18 +3096,20 @@ class DeltaChecksumException(
  * To make compatible with existing behavior for those who accidentally has already used this
  * operation, user should always be able to use `escapeConfigName` to fall back at own risk.
  */
-class DeltaColumnMappingUnsupportedSchemaIncompatibleException(
-    val opName: String,
+class DeltaStreamingColumnMappingSchemaIncompatibleException(
     val readSchema: StructType,
     val incompatibleSchema: StructType,
-    val escapeConfigName: String,
+    val docLink: String,
+    val enableNonAdditiveSchemaEvolution: Boolean = false,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
-    errorClass = "DELTA_BLOCK_COLUMN_MAPPING_SCHEMA_INCOMPATIBLE_OPERATION",
+    errorClass = if (enableNonAdditiveSchemaEvolution) {
+      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"
+    } else {
+      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"
+    },
     messageParameters = Array(
-      opName,
       readSchema.json,
       incompatibleSchema.json,
-      opName,
-      escapeConfigName)
+      docLink)
   )
