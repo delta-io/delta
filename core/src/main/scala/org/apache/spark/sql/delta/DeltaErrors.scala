@@ -1720,20 +1720,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def schemaContainsTimestampNTZType(
-      schema: StructType,
-      requiredProtocol: Protocol,
-      currentProtocol: Protocol): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ",
-      messageParameters = Array(
-        s"${formatSchema(schema)}",
-        s"$requiredProtocol",
-        s"$currentProtocol"
-      )
-    )
-  }
-
   def tableAlreadyExists(table: CatalogTable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ALREADY_EXISTS",
@@ -2173,6 +2159,16 @@ trait DeltaErrorsBase
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH",
       messageParameters = Array(features.mkString(", ")))
+  }
+
+  def tableFeaturesRequireManualEnablementException(
+      unsupportedFeatures: Iterable[TableFeature],
+      supportedFeatures: Iterable[TableFeature]): Throwable = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+      messageParameters = Array(
+        unsupportedFeatures.map(_.name).toSeq.sorted.mkString(", "),
+        supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
   def concurrentAppendException(

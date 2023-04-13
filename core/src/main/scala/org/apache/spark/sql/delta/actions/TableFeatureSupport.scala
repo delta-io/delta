@@ -195,6 +195,12 @@ trait TableFeatureSupport { this: Protocol =>
     }
   }
 
+  @JsonIgnore
+  lazy val implicitlyAndExplicitlySupportedFeatures: Set[TableFeature] = {
+    readerAndWriterFeatureNames.flatMap(TableFeature.featureNameToFeature) ++
+      implicitlySupportedFeatures
+  }
+
   /**
    * Determine whether this protocol can be safely upgraded to a new protocol `to`. This means:
    *   - this protocol has reader protocol version less than or equals to `to`.
@@ -309,18 +315,15 @@ object TableFeatureProtocolUtils {
   }
 
   /**
-   * Get a set of [[TableFeature]]s representing supported features set in a `config` map (table
-   * properties or Spark session configs).
+   * Get a set of [[TableFeature]]s representing supported features set in a table properties map.
    */
-  def getSupportedFeaturesFromConfigs(
-      configs: Map[String, String],
-      propertyPrefix: String): Set[TableFeature] = {
-    val featureConfigs = configs.filterKeys(_.startsWith(propertyPrefix))
+  def getSupportedFeaturesFromTableConfigs(configs: Map[String, String]): Set[TableFeature] = {
+    val featureConfigs = configs.filterKeys(_.startsWith(FEATURE_PROP_PREFIX))
     val unsupportedFeatureConfigs = mutable.Set.empty[String]
     val collectedFeatures = featureConfigs.flatMap { case (key, value) =>
       // Feature name is lower cased in table properties but not in Spark session configs.
       // Feature status is not lower cased in any case.
-      val name = key.stripPrefix(propertyPrefix).toLowerCase(Locale.ROOT)
+      val name = key.stripPrefix(FEATURE_PROP_PREFIX).toLowerCase(Locale.ROOT)
       val status = value.toLowerCase(Locale.ROOT)
       if (status != FEATURE_PROP_SUPPORTED && status != FEATURE_PROP_ENABLED) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(name, status)

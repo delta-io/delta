@@ -33,7 +33,7 @@ object DeltaTestImplicits {
       if (txn.readVersion == -1) {
         val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
         val metadata = metadataOpt.getOrElse(actions.collectFirst { case m: Metadata => m }.get)
-        val needsProtocolUpdate = Protocol.checkProtocolRequirements(
+        val needsProtocolUpdate = Protocol.upgradeProtocolFromMetadataForExistingTable(
           SparkSession.active, metadata, txn.protocol)
         if (needsProtocolUpdate.isDefined) {
           // if the metadata triggers a protocol upgrade, commit without an explicit protocol
