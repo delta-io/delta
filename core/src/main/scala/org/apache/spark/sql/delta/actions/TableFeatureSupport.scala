@@ -22,18 +22,14 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import com.fasterxml.jackson.annotation.JsonIgnore
-import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.module.scala.JsonScalaEnumeration
-
-import org.apache.spark.util.Utils
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
  *
  * Protocol reader version 3 and writer version 7 start to support reader and writer table
- * features. In such a case, features can be <b>explicitly enabled</b> by a protocol's reader
+ * features. In such a case, features can be <b>explicitly supported</b> by a protocol's reader
  * and/or writer features sets by adding its name. When read or write a table, clients MUST
- * respect all enabled features.
+ * respect all supported features.
  *
  * See also the document of [[TableFeature]] for feature-specific terminologies.
  */
@@ -48,15 +44,15 @@ trait TableFeatureSupport { this: Protocol =>
     TableFeatureProtocolUtils.supportsWriterFeatures(minWriterVersion)
 
   /**
-   * Get a new Protocol object that has `feature` enabled. Writer-only features will be enabled by
-   * `writerFeatures` field, and reader-writer features will be enabled by `readerFeatures` and
+   * Get a new Protocol object that has `feature` supported. Writer-only features will be added to
+   * `writerFeatures` field, and reader-writer features will be added to `readerFeatures` and
    * `writerFeatures` fields.
    *
-   * If `feature` is already implicitly enabled in the current protocol's legacy reader or writer
-   * protocol version, the new protocol will not modify the original protocol version,
-   * i.e., the feature will not be explicitly enabled by the protocol's `readerFeatures` or
-   * `writerFeatures`. This is to avoid unnecessary protocol upgrade to enable a feature that it
-   * already supports.
+   * If `feature` is already implicitly supported in the current protocol's legacy reader or
+   * writer protocol version, the new protocol will not modify the original protocol version,
+   * i.e., the feature will not be explicitly added to the protocol's `readerFeatures` or
+   * `writerFeatures`. This is to avoid unnecessary protocol upgrade for feature that it already
+   * supports.
    */
   def withFeature(feature: TableFeature): Protocol = {
     def shouldAddRead: Boolean = {
@@ -95,7 +91,7 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * Get a new Protocol object with multiple features enabled.
+   * Get a new Protocol object with multiple features supported.
    *
    * See the documentation of [[withFeature]] for more information.
    */
@@ -181,14 +177,14 @@ trait TableFeatureSupport { this: Protocol =>
   lazy val readerAndWriterFeatureNames: Set[String] = readerFeatureNames ++ writerFeatureNames
 
   /**
-   * Get all features that are implicitly enabled by this protocol, for example, `Protocol(1,2)`
-   * implicitly enables `appendOnly` and `invariants`. When this protocol is capable of requiring
-   * writer features, no feature can be implicitly enabled.
+   * Get all features that are implicitly supported by this protocol, for example, `Protocol(1,2)`
+   * implicitly supports `appendOnly` and `invariants`. When this protocol is capable of requiring
+   * writer features, no feature can be implicitly supported.
    */
   @JsonIgnore
-  lazy val implicitlyEnabledFeatures: Set[TableFeature] = {
+  lazy val implicitlySupportedFeatures: Set[TableFeature] = {
     if (supportsReaderFeatures && supportsWriterFeatures) {
-      // this protocol uses both reader and writer features, no feature can be implicitly enabled
+      // this protocol uses both reader and writer features, no feature can be implicitly supported
       Set()
     } else {
       TableFeature.allSupportedFeaturesMap.values
@@ -203,29 +199,27 @@ trait TableFeatureSupport { this: Protocol =>
    * Determine whether this protocol can be safely upgraded to a new protocol `to`. This means:
    *   - this protocol has reader protocol version less than or equals to `to`.
    *   - this protocol has writer protocol version less than or equals to `to`.
-   *   - all features enabled in this protocol are enabled in `to`.
+   *   - all features supported by this protocol are supported by `to`.
    *
    * Examples regarding feature status:
-   *   - from `[{appendOnly, enabled}]` to `[{appendOnly, enabled}]` => allowed
-   *   - from `[{appendOnly, enabled}, {changeDataFeed, enabled}]` to `[{appendOnly, enabled}]` =>
-   *     not allowed
-   *   - from `[{appendOnly, enabled}]` to `[{appendOnly, enabled}, {changeDataFeed, enabled}]` =>
-   *     allowed
+   *   - from `[appendOnly]` to `[appendOnly]` => allowed
+   *   - from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed
+   *   - from `[appendOnly]` to `[appendOnly, changeDataFeed]` => allowed
    */
   def canUpgradeTo(to: Protocol): Boolean = {
     if (to.minReaderVersion < this.minReaderVersion) return false
     if (to.minWriterVersion < this.minWriterVersion) return false
 
     val thisFeatures =
-      this.readerAndWriterFeatureNames ++ this.implicitlyEnabledFeatures.map(_.name)
-    val toFeatures = to.readerAndWriterFeatureNames ++ to.implicitlyEnabledFeatures.map(_.name)
-    // all features enabled in `this` are enabled in `to`
+      this.readerAndWriterFeatureNames ++ this.implicitlySupportedFeatures.map(_.name)
+    val toFeatures = to.readerAndWriterFeatureNames ++ to.implicitlySupportedFeatures.map(_.name)
+    // all features supported by `this` are supported by `to`
     thisFeatures.subsetOf(toFeatures)
   }
 
   /**
    * Merge this protocol with multiple `protocols` to have the highest reader and writer versions
-   * plus all explicitly and implicitly enabled features.
+   * plus all explicitly and implicitly supported features.
    */
   def merge(others: Protocol*): Protocol = {
     val protocols = this +: others
@@ -233,7 +227,7 @@ trait TableFeatureSupport { this: Protocol =>
     val mergedWriterVersion = protocols.map(_.minWriterVersion).max
     val mergedReaderFeatures = protocols.flatMap(_.readerFeatureNames)
     val mergedWriterFeatures = protocols.flatMap(_.writerFeatureNames)
-    val mergedImplicitFeatures = protocols.flatMap(_.implicitlyEnabledFeatures)
+    val mergedImplicitFeatures = protocols.flatMap(_.implicitlySupportedFeatures)
 
     val mergedProtocol = Protocol(mergedReaderVersion, mergedWriterVersion)
       .withReaderFeatures(mergedReaderFeatures)
@@ -247,13 +241,13 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * Check if a `feature` is enabled in this protocol. This means either (a) the protocol does not
-   * support table features and implicitly supports the feature, or (b) the protocol supports
+   * Check if a `feature` is supported by this protocol. This means either (a) the protocol does
+   * not support table features and implicitly supports the feature, or (b) the protocol supports
    * table features and references the feature.
    */
-  def isFeatureEnabled(feature: TableFeature): Boolean = {
+  def isFeatureSupported(feature: TableFeature): Boolean = {
     // legacy feature + legacy protocol
-    (feature.isLegacyFeature && this.implicitlyEnabledFeatures.contains(feature)) ||
+    (feature.isLegacyFeature && this.implicitlySupportedFeatures.contains(feature)) ||
       // new protocol
       readerAndWriterFeatureNames.contains(feature.name)
   }
@@ -267,8 +261,16 @@ object TableFeatureProtocolUtils {
   /** Prop prefix in Spark sessions configs. */
   val DEFAULT_FEATURE_PROP_PREFIX = "spark.databricks.delta.properties.defaults.feature."
 
-  /** The string constant "enabled" for uses in table properties. */
+  /**
+   * The string constant "enabled" for uses in table properties.
+   * @deprecated
+   *   This value is deprecated to avoid confusion with features that are actually enabled by
+   *   table metadata. Use [[FEATURE_PROP_SUPPORTED]] instead.
+   */
   val FEATURE_PROP_ENABLED = "enabled"
+
+  /** The string constant "supported" for uses in table properties. */
+  val FEATURE_PROP_SUPPORTED = "supported"
 
   /** Min reader version that supports reader features. */
   val TABLE_FEATURES_MIN_READER_VERSION = 3
@@ -277,12 +279,18 @@ object TableFeatureProtocolUtils {
   val TABLE_FEATURES_MIN_WRITER_VERSION = 7
 
   /** Get the table property config key for the `feature`. */
-  def propertyKey(feature: TableFeature): String =
-    s"$FEATURE_PROP_PREFIX${feature.name}"
+  def propertyKey(feature: TableFeature): String = propertyKey(feature.name)
+
+  /** Get the table property config key for the `featureName`. */
+  def propertyKey(featureName: String): String =
+    s"$FEATURE_PROP_PREFIX$featureName"
 
   /** Get the session default config key for the `feature`. */
-  def defaultPropertyKey(feature: TableFeature): String =
-    s"$DEFAULT_FEATURE_PROP_PREFIX${feature.name}"
+  def defaultPropertyKey(feature: TableFeature): String = defaultPropertyKey(feature.name)
+
+  /** Get the session default config key for the `featureName`. */
+  def defaultPropertyKey(featureName: String): String =
+    s"$DEFAULT_FEATURE_PROP_PREFIX$featureName"
 
   /**
    * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
@@ -301,10 +309,10 @@ object TableFeatureProtocolUtils {
   }
 
   /**
-   * Get a set of [[TableFeature]]s representing enabled features set in a `config` map (table
+   * Get a set of [[TableFeature]]s representing supported features set in a `config` map (table
    * properties or Spark session configs).
    */
-  def getEnabledFeaturesFromConfigs(
+  def getSupportedFeaturesFromConfigs(
       configs: Map[String, String],
       propertyPrefix: String): Set[TableFeature] = {
     val featureConfigs = configs.filterKeys(_.startsWith(propertyPrefix))
@@ -314,7 +322,7 @@ object TableFeatureProtocolUtils {
       // Feature status is not lower cased in any case.
       val name = key.stripPrefix(propertyPrefix).toLowerCase(Locale.ROOT)
       val status = value.toLowerCase(Locale.ROOT)
-      if (status != FEATURE_PROP_ENABLED) {
+      if (status != FEATURE_PROP_SUPPORTED && status != FEATURE_PROP_ENABLED) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(name, status)
       }
       val featureOpt = TableFeature.featureNameToFeature(name)
@@ -322,20 +330,22 @@ object TableFeatureProtocolUtils {
         unsupportedFeatureConfigs += key
       }
       featureOpt
-    }
+    }.toSet
     if (unsupportedFeatureConfigs.nonEmpty) {
       throw DeltaErrors.unsupportedTableFeatureConfigsException(unsupportedFeatureConfigs)
     }
-    collectedFeatures.toSet
+    collectedFeatures
   }
 
   /**
    * Checks if the the given table property key is a Table Protocol property, i.e.,
-   * `delta.minReaderVersion`, `delta.minWriterVersion`, or anything starts with `delta.feature.`
+   * `delta.minReaderVersion`, `delta.minWriterVersion`, ``delta.ignoreProtocolDefaults``, or
+   * anything that starts with `delta.feature.`
    */
   def isTableProtocolProperty(key: String): Boolean = {
     key == Protocol.MIN_READER_VERSION_PROP ||
     key == Protocol.MIN_WRITER_VERSION_PROP ||
+    key == DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key ||
     key.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
   }
 }

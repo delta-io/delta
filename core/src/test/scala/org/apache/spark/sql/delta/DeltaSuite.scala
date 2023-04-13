@@ -2964,6 +2964,26 @@ class DeltaSuite extends QueryTest
     }
   }
 
+
+  test("parsing table name and alias using test helper") {
+    import DeltaTestUtils.parseTableAndAlias
+    // Parse table name from path and optional alias.
+    assert(parseTableAndAlias("delta.`store_sales`") === "delta.`store_sales`" -> None)
+    assert(parseTableAndAlias("delta.`store sales`") === "delta.`store sales`" -> None)
+    assert(parseTableAndAlias("delta.`store_sales` s") === "delta.`store_sales`" -> Some("s"))
+    assert(parseTableAndAlias("delta.`store sales` as s") === "delta.`store sales`" -> Some("s"))
+    assert(parseTableAndAlias("delta.`store%sales` AS s") === "delta.`store%sales`" -> Some("s"))
+
+    // Parse table name and optional alias.
+    assert(parseTableAndAlias("store_sales") === "store_sales" -> None)
+    assert(parseTableAndAlias("store sales") === "store" -> Some("sales"))
+    assert(parseTableAndAlias("store_sales s") === "store_sales" -> Some("s"))
+    assert(parseTableAndAlias("'store sales' as s") === "'store sales'" -> Some("s"))
+    assert(parseTableAndAlias("'store%sales' AS s") === "'store%sales'" -> Some("s"))
+
+    // Not properly supported: ambiguous without special handling for escaping.
+    assert(parseTableAndAlias("'store sales'") === "'store" -> Some("sales'"))
+  }
 }
 
 

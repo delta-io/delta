@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.actions.Protocol.minProtocolComponentsForNewTable
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -248,7 +247,7 @@ abstract class CloneTableBase(
     val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
-      minProtocolComponentsForNewTable(spark, Some(metadataWithOverrides))
+      Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)
 
     // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
     // time travel.
@@ -309,6 +308,7 @@ abstract class CloneTableBase(
         SOURCE_FORMAT -> sourceTable.format,
         SOURCE_PATH -> qualifiedSource,
         TARGET -> qualifiedTarget,
+        PARTITION_BY -> sourceTable.metadata.partitionColumns,
         IS_REPLACE_DELTA -> isReplaceDelta) ++
         sourceTable.snapshot.map(s => SOURCE_VERSION -> s.version)
       recordDeltaEvent(destinationTable, s"delta.${opName.toLowerCase()}", data = cloneLogData)
@@ -328,6 +328,7 @@ object CloneTableBase extends Logging {
   val SOURCE_VERSION = "sourceVersion"
   val TARGET = "target"
   val IS_REPLACE_DELTA = "isReplaceDelta"
+  val PARTITION_BY = "partitionBy"
 
   /** Utility method returns the total size of all files in the given iterator */
   private def totalDataSize(fileList: java.util.Iterator[AddFile]): Long = {

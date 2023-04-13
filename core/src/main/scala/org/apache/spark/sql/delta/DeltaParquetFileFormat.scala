@@ -22,7 +22,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
-import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata}
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.DeletedRowsMarkingFilter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -47,6 +47,7 @@ import org.apache.spark.util.SerializableConfiguration
  *    of this scan can use the column values to filter out the deleted rows.
  */
 case class DeltaParquetFileFormat(
+    protocol: Protocol,
     metadata: Metadata,
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
@@ -187,8 +188,7 @@ case class DeltaParquetFileFormat(
       isRowDeletedColumn: Option[ColumnMetadata],
       rowIndexColumn: Option[ColumnMetadata],
       useOffHeapBuffers: Boolean): Iterator[Object] = {
-    val filePath = partitionedFile.filePath
-    val pathUri = new Path(filePath).toUri
+    val pathUri = new URI(partitionedFile.filePath)
 
     val rowIndexFilter = isRowDeletedColumn.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter

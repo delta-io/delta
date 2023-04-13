@@ -71,7 +71,7 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureEnabled(GeneratedColumnsTableFeature)
+    protocol.isFeatureSupported(GeneratedColumnsTableFeature)
 
   /**
    * Whether the field contains the generation expression. Note: this doesn't mean the column is a

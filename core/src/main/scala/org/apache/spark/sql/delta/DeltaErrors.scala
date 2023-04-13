@@ -128,6 +128,10 @@ trait DeltaErrorsBase
        |get deleted based on retention settings.
      """.stripMargin
 
+  // scalastyle:off
+  def assertionFailedError(msg: String): Throwable = new AssertionError(msg)
+  // scalastyle:on
+
   def deltaSourceIgnoreDeleteError(
       version: Long,
       removedFile: String,
@@ -1099,6 +1103,9 @@ trait DeltaErrorsBase
     )
   }
 
+  def sourceMaterializationFailedRepeatedlyInMerge: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY")
+
   def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
     new UnsupportedOperationException(
       s"""Cannot perform Merge because the source dataset is not deterministic. Please refer to
@@ -1636,13 +1643,6 @@ trait DeltaErrorsBase
         s"$numActions", s"$totalCommitAttemptTime"))
   }
 
-  def generatedColumnsNonDeltaFormatError(): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_INVALID_GENERATED_COLUMN_FORMAT",
-      messageParameters = Array.empty
-    )
-  }
-
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
@@ -1717,6 +1717,20 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DATA_TYPES",
       messageParameters = Array(prettyMessage, DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key)
+    )
+  }
+
+  def schemaContainsTimestampNTZType(
+      schema: StructType,
+      requiredProtocol: Protocol,
+      currentProtocol: Protocol): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ",
+      messageParameters = Array(
+        s"${formatSchema(schema)}",
+        s"$requiredProtocol",
+        s"$currentProtocol"
+      )
     )
   }
 
@@ -1866,6 +1880,21 @@ trait DeltaErrorsBase
     ColumnMappingException(
       s"Found duplicated physical name `$physicalName` in column mapping mode `${mode.name}` \n\t" +
       s"schema: \n ${schema.prettyJson}", mode
+    )
+  }
+
+  def maxColumnIdNotSet: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET",
+      messageParameters = Array(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+    )
+  }
+
+  def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
+      messageParameters = Array(
+        DeltaConfigs.COLUMN_MAPPING_MAX_ID.key, tableMax.toString, fieldMax.toString)
     )
   }
 
@@ -2610,6 +2639,48 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def failToDeserializeSchemaLog(location: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_DESERIALIZE_FAILED",
+      messageParameters = Array(location)
+    )
+  }
+
+  def failToParseSchemaLog: Throwable = {
+    new DeltaRuntimeException(errorClass = "DELTA_STREAMING_SCHEMA_LOG_PARSE_SCHEMA_FAILED")
+  }
+
+  def sourcesWithConflictingSchemaTrackingLocation(
+      schemaTrackingLocatiob: String,
+      tableOrPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT",
+      messageParameters = Array(schemaTrackingLocatiob, tableOrPath))
+  }
+
+  def incompatibleSchemaLogPartitionSchema(
+      persistedPartitionSchema: StructType,
+      tablePartitionSchema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_PARTITION_SCHEMA",
+      messageParameters = Array(persistedPartitionSchema.json, tablePartitionSchema.json))
+  }
+
+  def incompatibleSchemaLogDeltaTable(
+      persistedTableId: String,
+      tableId: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID",
+      messageParameters = Array(persistedTableId, tableId))
+  }
+
+  def schemaTrackingLocationNotUnderCheckpointLocation(
+      schemaTrackingLocation: String,
+      checkpointLocation: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT",
+      messageParameters = Array(schemaTrackingLocation, checkpointLocation))
+  }
 
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(
@@ -2624,6 +2695,13 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def deletionVectorInvalidRowIndex(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
   def deletionVectorChecksumMismatch(): Throwable = {
     new DeltaChecksumException(
       errorClass = "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH",
@@ -2631,9 +2709,32 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def addFileWithDVsMissingNumRecordsException: Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")
+
+  def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS",
+      messageParameters = Array(version.toString))
+  }
+
   def generateNotSupportedWithDeletionVectors(): Throwable =
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+
+  def addingDeletionVectorsDisallowedException(): Throwable =
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_ADDING_DELETION_VECTORS_DISALLOWED")
+
+  def unsupportedExpression(
+    causedBy: String,
+    expType: DataType,
+    supportedTypes: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION",
+      messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

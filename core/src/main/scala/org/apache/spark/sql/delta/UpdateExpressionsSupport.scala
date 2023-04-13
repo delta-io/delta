@@ -115,7 +115,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 )
             }
           case (from: StructType, to: StructType)
-              if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
+            if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.
             if (from.exists { f => !to.exists(_.name.equalsIgnoreCase(f.name))}) {
               throw DeltaErrors.updateSchemaMismatchExpression(from, to)

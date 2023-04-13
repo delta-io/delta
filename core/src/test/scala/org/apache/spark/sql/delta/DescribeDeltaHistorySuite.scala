@@ -58,9 +58,7 @@ trait DescribeDeltaHistorySuiteBase
 
   protected def testWithFlag(name: String, tags: Tag*)(f: => Unit): Unit = {
     test(name, tags: _*) {
-      withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
         f
-      }
     }
   }
 
@@ -217,7 +215,6 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   testWithTempView("describe history fails on temp views") { isSQLTempView =>
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
       withTable("t1") {
         Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
         val viewName = "v"
@@ -229,7 +226,6 @@ trait DescribeDeltaHistorySuiteBase
         assert(e.getMessage.contains("not found") ||
           e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
       }
-    }
   }
 
   testWithFlag("operations - create table") {
@@ -496,14 +492,10 @@ trait DescribeDeltaHistorySuiteBase
 
   testWithFlag("old and new writers") {
     val tempDir = Utils.createTempDir().toString
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
-      Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
-    }
+    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
 
-    checkLastOperation(tempDir, Seq(null, null))
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
-      Seq(1, 2, 3).toDF().write.format("delta").mode("append").save(tempDir.toString)
-    }
+    checkLastOperation(tempDir, Seq("WRITE", "ErrorIfExists"))
+    Seq(1, 2, 3).toDF().write.format("delta").mode("append").save(tempDir.toString)
 
     assert(spark.sql(s"DESCRIBE HISTORY delta.`$tempDir`").count() === 2)
     checkLastOperation(tempDir, Seq("WRITE", "Append"))
@@ -512,17 +504,14 @@ trait DescribeDeltaHistorySuiteBase
   testWithFlag("order history by version") {
     val tempDir = Utils.createTempDir().toString
 
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
-      Seq(0).toDF().write.format("delta").save(tempDir)
-      Seq(1).toDF().write.format("delta").mode("overwrite").save(tempDir)
-    }
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
-      Seq(2).toDF().write.format("delta").mode("append").save(tempDir)
-      Seq(3).toDF().write.format("delta").mode("overwrite").save(tempDir)
-    }
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
-      Seq(4).toDF().write.format("delta").mode("overwrite").save(tempDir)
-    }
+    Seq(0).toDF().write.format("delta").save(tempDir)
+    Seq(1).toDF().write.format("delta").mode("overwrite").save(tempDir)
+
+    Seq(2).toDF().write.format("delta").mode("append").save(tempDir)
+    Seq(3).toDF().write.format("delta").mode("overwrite").save(tempDir)
+
+    Seq(4).toDF().write.format("delta").mode("overwrite").save(tempDir)
+
 
     val ans = io.delta.tables.DeltaTable.forPath(spark, tempDir)
       .history().as[DeltaHistory].collect()
@@ -535,27 +524,23 @@ trait DescribeDeltaHistorySuiteBase
   test("read version") {
     val tempDir = Utils.createTempDir().toString
 
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
-      Seq(0).toDF().write.format("delta").save(tempDir) // readVersion = None as first commit
-      Seq(1).toDF().write.format("delta").mode("overwrite").save(tempDir) // readVersion = Some(0)
-    }
+    Seq(0).toDF().write.format("delta").save(tempDir) // readVersion = None as first commit
+    Seq(1).toDF().write.format("delta").mode("overwrite").save(tempDir) // readVersion = Some(0)
 
     val log = DeltaLog.forTable(spark, tempDir)
     val txn = log.startTransaction()   // should read snapshot version 1
 
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
-      Seq(2).toDF().write.format("delta").mode("append").save(tempDir)  // readVersion = Some(0)
-      Seq(3).toDF().write.format("delta").mode("append").save(tempDir)  // readVersion = Some(2)
-    }
+
+    Seq(2).toDF().write.format("delta").mode("append").save(tempDir)  // readVersion = Some(1)
+    Seq(3).toDF().write.format("delta").mode("append").save(tempDir)  // readVersion = Some(2)
+
 
     txn.commit(Seq.empty, DeltaOperations.Truncate())  // readVersion = Some(1)
 
-    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
-      Seq(5).toDF().write.format("delta").mode("append").save(tempDir)   // readVersion = None
-    }
+    Seq(5).toDF().write.format("delta").mode("append").save(tempDir)   // readVersion = Some(4)
     val ans = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[DeltaHistory].collect()
     assert(ans.map(x => x.version.get -> x.readVersion) ===
-      Seq(5 -> None, 4 -> Some(1), 3 -> Some(2), 2 -> Some(1), 1 -> Some(0), 0 -> None))
+      Seq(5 -> Some(4), 4 -> Some(1), 3 -> Some(2), 2 -> Some(1), 1 -> Some(0), 0 -> None))
   }
 
   testWithFlag("evolvability test") {

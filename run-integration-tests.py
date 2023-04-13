@@ -196,6 +196,41 @@ def run_s3_log_store_util_integration_tests():
         raise
 
 
+def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, use_local):
+    print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
+    clear_artifact_cache()
+    if use_local:
+        run_cmd(["build/sbt", "publishM2"])
+
+    test_dir = path.join(root_dir, path.join("delta-iceberg", "integration_tests"))
+
+    # Add more Iceberg tests here if needed ...
+    test_files_names = ["iceberg_converter.py"]
+    test_files = [path.join(test_dir, f) for f in test_files_names]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    package = ','.join([
+        "io.delta:delta-core_2.12:" + version,
+        "io.delta:delta-iceberg_2.12:" + version,
+        "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
+
+    repo = ""
+
+    for test_file in test_files:
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", package,
+                   "--repositories", repo, test_file]
+            print("\nRunning Iceberg tests in %s\n=============" % test_file)
+            print("Command: %s" % " ".join(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed Iceberg tests in %s" % (test_file))
+            raise
+
+
 def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
     clear_artifact_cache()
@@ -371,6 +406,22 @@ if __name__ == "__main__":
         default=None,
         nargs="+",
         help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
+    parser.add_argument(
+        "--run-iceberg-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the Iceberg integration tests (and only them)")
+    parser.add_argument(
+        "--iceberg-spark-version",
+        required=False,
+        default="3.3",
+        help="Spark version for the Iceberg library")
+    parser.add_argument(
+        "--iceberg-lib-version",
+        required=False,
+        default="1.0.0",
+        help="Iceberg Spark Runtime library version")
 
     args = parser.parse_args()
 
@@ -387,6 +438,12 @@ if __name__ == "__main__":
     run_python = not args.scala_only and not args.pip_only
     run_scala = not args.python_only and not args.pip_only
     run_pip = not args.python_only and not args.scala_only and not args.no_pip
+
+    if args.run_iceberg_integration_tests:
+        run_iceberg_integration_tests(
+            root_dir, args.version,
+            args.iceberg_spark_version, args.iceberg_lib_version, args.use_local)
+        quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,

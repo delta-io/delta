@@ -81,6 +81,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
           new SerializableConfiguration(hadoopConf))
 
         val deltaParquetFormat = new DeltaParquetFileFormat(
+          deltaLog.snapshot.protocol,
           metadata,
           isSplittable = false,
           disablePushDowns = true,

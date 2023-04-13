@@ -88,6 +88,7 @@ case class WriteIntoDelta(
   override protected val canOverwriteSchema: Boolean =
     options.canOverwriteSchema && isOverwriteOperation && options.replaceWhere.isEmpty
 
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
       if (hasBeenExecuted(txn, sparkSession, Some(options))) {
@@ -341,7 +342,7 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, deletedFiles)
       case _ =>
-        val newFiles = txn.writeFiles(data, Some(options))
+        val newFiles = writeFiles(txn, data, options)
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
@@ -386,6 +387,13 @@ case class WriteIntoDelta(
         }
       }
     }
+  }
+
+  private def writeFiles(
+      txn: OptimisticTransaction,
+      data: DataFrame,
+      options: DeltaOptions): Seq[FileAction] = {
+    txn.writeFiles(data, Some(options))
   }
 
   private def removeFiles(

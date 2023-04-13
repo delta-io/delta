@@ -48,7 +48,7 @@ case class TableDetail(
     properties: Map[String, String],
     minReaderVersion: java.lang.Integer,
     minWriterVersion: java.lang.Integer,
-    enabledTableFeatures: Seq[String]
+    tableFeatures: Seq[String]
     )
 
 object TableDetail {
@@ -115,7 +115,8 @@ case class DescribeDeltaDetailCommand(
           // This should be a catalog table.
           try {
             val metadata = spark.sessionState.catalog.getTableMetadata(i)
-            if (metadata.tableType == CatalogTableType.VIEW) {
+            val isView = metadata.tableType == CatalogTableType.VIEW
+            if (isView) {
               throw DeltaErrors.viewInDescribeDetailException(i)
             }
             new Path(metadata.location) -> Some(metadata)
@@ -151,7 +152,7 @@ case class DescribeDeltaDetailCommand(
         properties = table.properties,
         minReaderVersion = null,
         minWriterVersion = null,
-        enabledTableFeatures = null
+        tableFeatures = null
       ))
   }
 
@@ -171,7 +172,7 @@ case class DescribeDeltaDetailCommand(
         properties = Map.empty,
         minReaderVersion = null,
         minWriterVersion = null,
-        enabledTableFeatures = null))
+        tableFeatures = null))
   }
 
   private def describeDeltaTable(
@@ -182,7 +183,9 @@ case class DescribeDeltaDetailCommand(
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
-    val featureNames = snapshot.protocol.readerAndWriterFeatureNames.toSeq.sorted
+    val featureNames = (
+      snapshot.protocol.implicitlySupportedFeatures.map(_.name) ++
+        snapshot.protocol.readerAndWriterFeatureNames).toSeq.sorted
     toRows(
       TableDetail(
         format = "delta",
@@ -198,7 +201,7 @@ case class DescribeDeltaDetailCommand(
         properties = snapshot.metadata.configuration,
         minReaderVersion = snapshot.protocol.minReaderVersion,
         minWriterVersion = snapshot.protocol.minWriterVersion,
-        enabledTableFeatures = featureNames
+        tableFeatures = featureNames
       ))
   }
 }

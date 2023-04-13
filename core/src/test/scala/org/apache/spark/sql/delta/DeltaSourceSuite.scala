@@ -37,6 +37,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.{StringType, StructType}
@@ -1646,7 +1647,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       assert(e.getCause.isInstanceOf[UnsupportedOperationException])
       assert(e.getCause.getMessage.contains(
         "This is currently not supported. If you'd like to ignore updates, set the option " +
-          "'ignoreChanges' to 'true'."))
+          "'skipChangeCommits' to 'true'."))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
@@ -2188,6 +2189,51 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
                 _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))))
         )
       }
+    }
+  }
+
+  test("skip change commits") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      val df = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION, value = true)
+        .load(inputDir.getCanonicalPath)
+
+      testStream(df)(
+        // Add data to source table
+        AddToReservoir(inputDir, Seq("keep1", "update1", "drop1").toDF()),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "update1", "drop1"),
+
+        // Update and delete rows
+        UpdateReservoir(
+          inputDir,
+          Map("value" ->  when($"value" === "update1", "updated1").otherwise($"value"))
+        ),
+        DeleteFromReservoir(inputDir, $"value" === "drop1"),
+        CheckAnswer("keep1", "update1", "drop1"),
+
+        // Merge data into source table
+        MergeIntoReservoir(
+          inputDir,
+          dfToMerge = Seq("keep1", "keep2", "keep3").toDF().as("merge1"),
+          mergeCondition = $"table.value" === $"merge1.value",
+          Map.empty
+        ),
+        MergeIntoReservoir(
+          inputDir,
+          dfToMerge = Seq("updated1", "keep4", "keep5").toDF().as("merge2"),
+          mergeCondition = $"table.value" === $"merge2.value",
+          Map("table.value" ->  when($"table.value" === "updated1", "newlyUpdated1")
+            .otherwise($"table.value"))
+        ),
+        CheckAnswer(
+          "keep1", "update1", "drop1", "keep2", "keep3"
+        )
+      )
     }
   }
 }

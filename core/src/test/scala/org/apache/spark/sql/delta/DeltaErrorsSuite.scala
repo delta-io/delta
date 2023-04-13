@@ -1474,6 +1474,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "'someExp' cannot be used in a generated column")
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedExpression("Merge", DataTypes.DateType, Seq("Integer", "Long"))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_EXPRESSION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Unsupported expression type(DateType) for Merge. " +
+        "The supported types are [Integer,Long].")
+    }
+    {
       val expr = "someExp"
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsUDF(expr.expr)
@@ -2074,12 +2083,8 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_METADATA_ABSENT")
       assert(e.getSqlState == "XXKDS")
-
-      val msg =
-        s"""Couldn't find Metadata while committing the first version of the Delta table. To disable
-           |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
-           |""".stripMargin
-      assert(e.getMessage == msg)
+      assert(e.getMessage == "Couldn't find Metadata while committing the first version of the " +
+        "Delta table.")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2583,7 +2588,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage ==
         "Detected a data update (for example removedFile) in the source table at version " +
           "10. This is currently not supported. If you'd like to ignore updates, set the " +
-          "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
+          "option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, " +
           "please restart this query with a fresh checkpoint directory. The source table can be " +
           "found at path tablePath.")
     }
@@ -2751,7 +2756,7 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_CLONE_UNSUPPORTED_SOURCE")
       assert(e.getSqlState == "0AKDC")
       assert(e.getMessage == "Unsupported clone source 'table-0', whose format is CSV.\n" +
-        "The supported formats are 'delta' and 'parquet'.")
+        "The supported formats are 'delta', 'iceberg' and 'parquet'.")
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
@@ -2777,6 +2782,33 @@ trait DeltaErrorsSuiteBase
            |Two paths were provided as the CLONE target so it is ambiguous which to use. An external
            |location for CLONE was provided at external-location at the same time as the path
            |`table1`.""".stripMargin)
+    }
+    {
+      val e = intercept[AnalysisException] {
+        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+          spark, fnName = "dummy", args = Seq.empty)
+      }
+      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+      assert(e.getMessage.contains(
+        "not enough args, dummy requires at least 2 arguments and at most 3 arguments."))
+    }
+    {
+      val e = intercept[AnalysisException] {
+        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+          spark, fnName = "dummy", args = Seq("1".expr, "2".expr, "3".expr, "4".expr, "5".expr))
+      }
+      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+      assert(e.getMessage.contains(
+        "too many args, dummy requires at least 2 arguments and at most 3 arguments."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidTableValueFunction("invalid1")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_TABLE_VALUE_FUNCTION")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage ==
+        "Function invalid1 is an unsupported table valued function for CDC reads.")
     }
   }
 }

@@ -17,7 +17,7 @@
 import java.nio.file.Files
 import TestParallelization._
 
-val sparkVersion = "3.3.1"
+val sparkVersion = "3.3.2"
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
@@ -100,6 +100,9 @@ lazy val core = (project in file("core"))
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
+
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+    Test / envVars += ("DELTA_TESTING", "1"),
 
     // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
     createTargetClassesDir := {
@@ -204,7 +207,7 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     releaseSettings,
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.0.0" % "provided")
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.1.0" % "provided")
           .cross(CrossVersion.binary)
       },
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error

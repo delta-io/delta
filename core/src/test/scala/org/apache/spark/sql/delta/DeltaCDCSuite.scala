@@ -23,6 +23,7 @@ import java.util.Date
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
@@ -312,6 +313,113 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  test("version from timestamp - before the first version") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 4000)
+      modifyDeltaTimestamp(deltaLog, 1, 8000)
+      modifyDeltaTimestamp(deltaLog, 2, 12000)
+
+      val ts0 = dateFormat.format(new Date(1000))
+      val ts1 = dateFormat.format(new Date(3000))
+      intercept[AnalysisException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getMessage.contains("before the earliest version")
+    }
+  }
+
+  test("version from timestamp - between two valid versions") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(1000))
+      val ts1 = dateFormat.format(new Date(3000))
+      val readDf = cdcRead(
+        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, tempDir),
+        readDf,
+        spark.range(0)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  test("version from timestamp - one version in between") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(3000))
+      val ts1 = dateFormat.format(new Date(5000))
+      val readDf = cdcRead(
+        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, tempDir),
+        readDf,
+        spark.range(10, 20)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  test("version from timestamp - end before start") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(3000))
+      val ts1 = dateFormat.format(new Date(1000))
+      intercept[DeltaIllegalArgumentException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+    }
+  }
+
+  test("version from timestamp - end before start with one version in between") {
+    withTempDir { tempDir =>
+      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyDeltaTimestamp(deltaLog, 1, 4000)
+      modifyDeltaTimestamp(deltaLog, 2, 8000)
+
+      val ts0 = dateFormat.format(new Date(5000))
+      val ts1 = dateFormat.format(new Date(3000))
+      intercept[DeltaIllegalArgumentException] {
+        cdcRead(
+          new TablePath(tempDir.getAbsolutePath),
+          StartingTimestamp(ts0),
+          EndingTimestamp(ts1))
+          .collect()
+      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+    }
+  }
+
   test("start version and end version are the same") {
     val tblName = "tbl"
     withTable(tblName) {
@@ -321,6 +429,46 @@ abstract class DeltaCDCSuiteBase
         new TableName(tblName), StartingVersion("0"), EndingVersion("0"))
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier("tbl")),
+        readDf,
+        spark.range(10)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  for (readWithVersionNumber <- BOOLEAN_DOMAIN)
+  test(s"CDC read respects timezone and DST - readWithVersionNumber=$readWithVersionNumber") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      createTblWithThreeVersions(tblName = Some(tblName))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+
+      // Set commit time during Daylight savings time change.
+      val restoreDate = "2022-11-06 01:42:44"
+      val format = new java.text.SimpleDateFormat("yyyy-MM-dd hh:mm:ss Z")
+      val timestamp = format.parse(s"$restoreDate -0800").getTime
+      modifyDeltaTimestamp(deltaLog, 0, timestamp)
+
+      // Verify DST is respected.
+      val e = intercept[Exception] {
+        cdcRead(new TableName(tblName),
+          StartingTimestamp(s"$restoreDate -0700"),
+          EndingTimestamp(s"$restoreDate -0700"))
+      }
+      assert(e.getMessage.contains("is before the earliest version available"))
+
+      val readDf = if (readWithVersionNumber) {
+        cdcRead(new TableName(tblName), StartingVersion("0"), EndingVersion("0"))
+      } else {
+        cdcRead(
+          new TableName(tblName),
+          StartingTimestamp(s"$restoreDate -0800"),
+          EndingTimestamp(s"$restoreDate -0800"))
+      }
+
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, TableIdentifier(tblName)),
         readDf,
         spark.range(10)
           .withColumn("_change_type", lit("insert"))

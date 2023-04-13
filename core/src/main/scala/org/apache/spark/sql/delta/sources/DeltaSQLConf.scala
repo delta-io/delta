@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
@@ -37,12 +38,6 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("When true, we will try to resolve patterns as `@v123` in identifiers as time " +
         "travel nodes.")
-      .booleanConf
-      .createWithDefault(true)
-
-  val DELTA_COMMIT_INFO_ENABLED =
-    buildConf("commitInfo.enabled")
-      .doc("Whether to log commit information into the Delta log.")
       .booleanConf
       .createWithDefault(true)
 
@@ -81,7 +76,7 @@ trait DeltaSQLConfBase {
 
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
-      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo.")
       .stringConf
       .createOptional
 
@@ -297,7 +292,6 @@ trait DeltaSQLConfBase {
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
-        " 'spark.databricks.delta.commitInfo.enabled' should be enabled when using this config." +
         " Users should only set this config to 'true' when the underlying file system safely" +
         " supports concurrent writes.")
       .booleanConf
@@ -918,6 +912,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION =
+    buildConf("streaming.allowSchemaLocationOutsideCheckpointLocation")
+      .doc(
+        "When enabled, Delta streaming can set a schema location outside of the " +
+        "query's checkpoint location. This is not recommended.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
     buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
       .doc(
@@ -960,6 +963,16 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID =
+    buildConf("columnMapping.checkMaxColumnId")
+      .doc(
+        s"""If enabled, check if delta.columnMapping.maxColumnId is correctly assigned at each
+           |Delta transaction commit.
+           |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
@@ -1118,10 +1131,47 @@ trait DeltaSQLConfBase {
         .booleanConf
         .createWithDefault(true)
 
+  val DELTA_DUPLICATE_ACTION_CHECK_ENABLED =
+    buildConf("duplicateActionCheck.enabled")
+      .internal()
+      .doc("""
+             |Verify only one action is specified for each file path in one commit.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()
       .doc("Enable persistent Deletion Vectors in the Delete command.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELETION_VECTOR_PACKING_TARGET_SIZE =
+    buildConf("deletionVectors.packing.targetSize")
+      .internal()
+      .doc("Controls the target file deletion vector file size when packing multiple" +
+        "deletion vectors in a single file.")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(2L * 1024L * 1024L)
+
+  val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
+    buildConf("deletionVectors.disableTightBoundOnFileCreationForDevOnly")
+      .internal()
+      .doc("""Controls whether we generate a tightBounds column in statistics on file creation.
+             |The tightBounds column annotates whether the statistics of the file are tight or wide.
+             |This flag is only used for testing purposes.
+                """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
+    buildConf("deletionVectors.skipCommitCheck")
+      .internal()
+      .doc(
+        """Check the table-property and verify that deletion vectors may be added
+          |to this table.
+          |Only change this for testing!""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 }

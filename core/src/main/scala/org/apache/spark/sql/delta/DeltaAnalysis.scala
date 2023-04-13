@@ -23,6 +23,7 @@ import scala.util.{Failure, Success, Try}
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
@@ -48,14 +49,17 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -80,6 +84,101 @@ class DeltaAnalysis(session: SparkSession)
         a
       }
 
+
+    /**
+     * Handling create table like when a delta target (provider)
+     * is provided explicitly or when the source table is a delta table
+     */
+    case EligibleCreateTableLikeCommand(ctl, src) =>
+      val deltaTableIdentifier = DeltaTableIdentifier(session, ctl.targetTable)
+
+      // Check if table is given by path
+      val isTableByPath = DeltaTableIdentifier.isDeltaPath(session, ctl.targetTable)
+
+      // Check if targetTable is given by path
+      val targetTableIdentifier =
+        if (isTableByPath) {
+          TableIdentifier(deltaTableIdentifier.toString)
+        } else {
+          ctl.targetTable
+        }
+
+      val newStorage =
+        if (ctl.fileFormat.inputFormat.isDefined) {
+          ctl.fileFormat
+        } else if (isTableByPath) {
+          src.storage.copy(locationUri =
+            Some(deltaTableIdentifier.get.getPath(session).toUri))
+        } else {
+          src.storage.copy(locationUri = ctl.fileFormat.locationUri)
+        }
+
+      // If the location is specified or target table is given
+      // by path, we create an external table.
+      // Otherwise create a managed table.
+      val tblType =
+        if (newStorage.locationUri.isEmpty && !isTableByPath) {
+          CatalogTableType.MANAGED
+        } else {
+          CatalogTableType.EXTERNAL
+        }
+
+      val catalogTableTarget =
+        // If source table is Delta format
+        if (src.provider.exists(_.toLowerCase() == "delta")) {
+          val deltaLogSrc = DeltaTableV2(session, new Path(src.location))
+
+          // maxColumnId field cannot be set externally. If column-mapping is
+          // used on the source delta table, then maxColumnId would be set for the sourceTable
+          // and needs to be removed from the targetTable's configuration
+          // maxColumnId will be set in the targetTable's configuration internally after
+          val config =
+            deltaLogSrc.snapshot.metadata.configuration.-("delta.columnMapping.maxColumnId")
+
+          new CatalogTable(
+            identifier = targetTableIdentifier,
+            tableType = tblType,
+            storage = newStorage,
+            schema = deltaLogSrc.snapshot.metadata.schema,
+            properties = config,
+            partitionColumnNames = deltaLogSrc.snapshot.metadata.partitionColumns,
+            provider = Some("delta"),
+            comment = Option(deltaLogSrc.snapshot.metadata.description)
+          )
+        } else { // Source table is not delta format
+            new CatalogTable(
+              identifier = targetTableIdentifier,
+              tableType = tblType,
+              storage = newStorage,
+              schema = src.schema,
+              properties = src.properties,
+              partitionColumnNames = src.partitionColumnNames,
+              provider = Some("delta"),
+              comment = src.comment
+            )
+        }
+      val saveMode =
+        if (ctl.ifNotExists) {
+          SaveMode.Ignore
+        } else {
+          SaveMode.ErrorIfExists
+        }
+
+      val protocol =
+        if (src.provider == Some("delta")) {
+          Some(DeltaTableV2(session, new Path(src.location)).snapshot.protocol)
+        } else {
+          None
+        }
+      val newDeltaCatalog = new DeltaCatalog()
+      CreateDeltaTableCommand(
+        table = newDeltaCatalog.verifyTableAndSolidify(catalogTableTarget, None),
+        existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier),
+        mode = saveMode,
+        query = None,
+        output = ctl.output,
+        protocol = protocol,
+        tableByPath = isTableByPath)
 
     // INSERT OVERWRITE by ordinal and df.insertInto()
     case o @ OverwriteDelta(r, d) if !o.isByName &&
@@ -113,6 +212,15 @@ class DeltaAnalysis(session: SparkSession)
       Filter(
         index.partitionFilters.reduce(And),
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
+
+    // SQL CDC table value functions "table_changes" and "table_changes_by_path"
+    case t: DeltaTableValueFunction if t.functionArgs.forall(_.resolved)
+    =>
+      DeltaTableValueFunctions.resolveChangesTableValueFunctions(
+        session,
+        t.fnName,
+        t.functionArgs
+      )
 
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
@@ -167,9 +275,22 @@ class DeltaAnalysis(session: SparkSession)
             HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
           val tableIdent = catalogTable.map(_.identifier)
             .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
+          val provider = if (catalogTable.isDefined) {
+            catalogTable.get.provider.getOrElse("Unknown")
+          } else {
+            "parquet"
+          }
+          // Only plain Parquet sources are eligible for CLONE, extensions like 'deltaSharing' are
+          // NOT supported.
+          if (!provider.equalsIgnoreCase("parquet")) {
+            throw DeltaErrors.cloneFromUnsupportedSource(
+              tableIdent.unquotedString,
+              provider)
+          }
+
           resolveCloneCommand(
             cloneStatement.target,
-            new CloneParquetSource(tableIdent, catalogTable, session), cloneStatement)
+            CloneParquetSource(tableIdent, catalogTable, session), cloneStatement)
 
         case HiveTableRelation(catalogTable, _, _, _, _) =>
           if (!ConvertToDeltaCommand.isHiveStyleParquetTable(catalogTable)) {
@@ -179,7 +300,7 @@ class DeltaAnalysis(session: SparkSession)
           }
           resolveCloneCommand(
             cloneStatement.target,
-            new CloneParquetSource(catalogTable.identifier, Some(catalogTable), session),
+            CloneParquetSource(catalogTable.identifier, Some(catalogTable), session),
             cloneStatement)
 
         case v: View =>
@@ -318,6 +439,10 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
+    case streamWrite: WriteToStream =>
+      verifyDeltaSourceSchemaLocation(
+        streamWrite.inputQuery, streamWrite.resolvedCheckpointLocation)
+      streamWrite
 
   }
 
@@ -710,6 +835,73 @@ class DeltaAnalysis(session: SparkSession)
     DeltaViewHelper.stripTempViewForMerge(plan, conf)
   }
 
+  /**
+   * Verify the input plan for a SINGLE streaming query with the following:
+   * 1. Schema location must be under checkpoint location, if not lifted by flag
+   * 2. No two duplicating delta source can share the same schema location
+   */
+  private def verifyDeltaSourceSchemaLocation(
+      inputQuery: LogicalPlan,
+      checkpointLocation: String): Unit = {
+    // Maps StreamingRelation to schema location, similar to how MicroBatchExecution converts
+    // StreamingRelation to StreamingExecutionRelation.
+    val schemaLocationMap = mutable.Map[StreamingRelation, String]()
+    val allowSchemaLocationOutsideOfCheckpoint = session.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION)
+    inputQuery.foreach {
+      case streamingRelation @ StreamingRelation(dataSourceV1, sourceName, _)
+        if DeltaSourceUtils.isDeltaDataSourceName(sourceName) =>
+          val options = CaseInsensitiveMap(dataSourceV1.options)
+          options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION).foreach { rootSchemaTrackingLocation =>
+            assert(options.get("path").isDefined, "Path for Delta table must be defined")
+            val log = DeltaLog.forTable(session, options.get("path").get)
+            val sourceIdOpt = options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
+            val schemaTrackingLocation = DeltaSourceSchemaLog.fullSchemaTrackingLocation(
+              rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
+            // Make sure schema location is under checkpoint
+            if (!allowSchemaLocationOutsideOfCheckpoint &&
+              !(schemaTrackingLocation.stripSuffix("/") + "/")
+                .startsWith(checkpointLocation.stripSuffix("/") + "/")) {
+              throw DeltaErrors.schemaTrackingLocationNotUnderCheckpointLocation(
+                schemaTrackingLocation, checkpointLocation)
+            }
+            // Save schema location for this streaming relation
+            schemaLocationMap.put(streamingRelation, schemaTrackingLocation.stripSuffix("/"))
+          }
+      case _ =>
+    }
+    // Now verify all schema locations are distinct
+    val conflictSchemaOpt = schemaLocationMap
+      .keys
+      .groupBy { rel => schemaLocationMap(rel) }
+      .find(_._2.size > 1)
+    conflictSchemaOpt.foreach { case (schemaLocation, relations) =>
+      val ds = relations.head.dataSource
+      // Pick one source that has conflict to make it more actionable for the user
+      val oneTableWithConflict = ds.catalogTable
+        .map(_.identifier.toString)
+        .getOrElse {
+          // `path` must exist
+          CaseInsensitiveMap(ds.options).get("path").get
+        }
+      throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
+        schemaLocation, oneTableWithConflict)
+    }
+  }
+
+  object EligibleCreateTableLikeCommand {
+    def unapply(arg: LogicalPlan): Option[(CreateTableLikeCommand, CatalogTable)] = arg match {
+      case c: CreateTableLikeCommand =>
+        val src = session.sessionState.catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
+        if (src.provider.contains("delta") || c.provider.exists(_.toLowerCase() == "delta")) {
+          Some(c, src)
+        } else {
+          None
+        }
+      case _ =>
+        None
+    }
+  }
 }
 
 /** Matchers for dealing with a Delta table. */

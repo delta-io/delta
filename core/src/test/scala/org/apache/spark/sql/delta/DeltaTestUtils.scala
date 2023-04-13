@@ -177,6 +177,32 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       optimized: LogicalPlan,
       sparkPlan: SparkPlan,
       executedPlan: SparkPlan)
+
+  /**
+   * Extracts the table name and alias (if any) from the given string. Correctly handles whitespaces
+   * in table name but doesn't support whitespaces in alias.
+   */
+  def parseTableAndAlias(table: String): (String, Option[String]) = {
+    // Matches 'delta.`path` AS alias' (case insensitive).
+    val deltaPathWithAsAlias = raw"(?i)(delta\.`.+`)(?: AS) (\S+)".r
+    // Matches 'delta.`path` alias'.
+    val deltaPathWithAlias = raw"(delta\.`.+`) (\S+)".r
+    // Matches 'delta.`path`'.
+    val deltaPath = raw"(delta\.`.+`)".r
+    // Matches 'tableName AS alias' (case insensitive).
+    val tableNameWithAsAlias = raw"(?i)(.+)(?: AS) (\S+)".r
+    // Matches 'tableName alias'.
+    val tableNameWithAlias = raw"(.+) (.+)".r
+
+    table match {
+      case deltaPathWithAsAlias(tableName, alias) => tableName -> Some(alias)
+      case deltaPathWithAlias(tableName, alias) => tableName -> Some(alias)
+      case deltaPath(tableName) => tableName -> None
+      case tableNameWithAsAlias(tableName, alias) => tableName -> Some(alias)
+      case tableNameWithAlias(tableName, alias) => tableName -> Some(alias)
+      case tableName => tableName -> None
+    }
+  }
 }
 
 trait DeltaTestUtilsForTempViews

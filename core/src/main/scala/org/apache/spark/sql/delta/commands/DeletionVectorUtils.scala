@@ -19,11 +19,12 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileIndex
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.util.Utils
 
 trait DeletionVectorUtils {
 
@@ -64,7 +65,7 @@ trait DeletionVectorUtils {
       metadata = newMetadata.getOrElse(snapshot.metadata))
 
   def deletionVectorsWritable(protocol: Protocol, metadata: Metadata): Boolean =
-    protocol.isFeatureEnabled(DeletionVectorsTableFeature) &&
+    protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
       DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
 
   def deletionVectorsReadable(
@@ -79,8 +80,45 @@ trait DeletionVectorUtils {
   def deletionVectorsReadable(
       protocol: Protocol,
       metadata: Metadata): Boolean = {
-    protocol.isFeatureEnabled(DeletionVectorsTableFeature) &&
+    protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
       metadata.format.provider == "parquet" // DVs are only supported on parquet tables.
+  }
+
+  /**
+   * Utility method that checks the table has no Deletion Vectors enabled. Deletion vectors
+   * are supported in read-only mode for now. Any updates to tables with deletion vectors
+   * feature are disabled until we add support.
+   */
+  def assertDeletionVectorsNotReadable(
+      spark: SparkSession, metadata: Metadata, protocol: Protocol): Unit = {
+    val disable =
+      Utils.isTesting && // We are in testing and enabled blocking updates on DV tables
+          spark.conf.get(DeltaSQLConf.DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES)
+    if (!disable && deletionVectorsReadable(protocol, metadata)) {
+      throw new UnsupportedOperationException(
+        "Updates to tables with Deletion Vectors feature enabled are not supported in " +
+          "this version of Delta Lake.")
+    }
+  }
+
+  /**
+   * Utility method that checks the table metadata has no deletion vectors enabled. Deletion vectors
+   * are supported in read-only mode for now. Any updates to metadata to enable deletion vectors are
+   * blocked until we add support.
+   */
+  def assertDeletionVectorsNotEnabled(
+    spark: SparkSession, metadata: Metadata, protocol: Protocol): Unit = {
+    val disable =
+      Utils.isTesting && // We are in testing and enabled blocking updates on DV tables
+        spark.conf.get(DeltaSQLConf.DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES)
+    if (!disable &&
+      (protocol.isFeatureSupported(DeletionVectorsTableFeature) ||
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
+      )
+    ) {
+      throw new UnsupportedOperationException(
+        "Enabling Deletion Vectors on the table is not supported in this version of Delta Lake.")
+    }
   }
 }
 

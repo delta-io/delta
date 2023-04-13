@@ -156,13 +156,11 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     }
   }
 
-  for (statsCollectionEnabled <- BOOLEAN_DOMAIN)
   test(
-    s"optimize command with DVs when statsCollectionEnabled=$statsCollectionEnabled") {
+    s"optimize command with DVs") {
     withTempDir { tempDir =>
       val path = tempDir.getAbsolutePath
       withSQLConf(
-        DeltaSQLConf.DELTA_COLLECT_STATS.key -> statsCollectionEnabled.toString,
         DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
         // Create 10 files each with 1000 records
         spark.range(start = 0, end = 10000, step = 1, numPartitions = 10)
@@ -202,11 +200,8 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         }
         val changes = deltaLog.getChanges(startVersion = 5).next()._2
 
-        // When the stats are enabled, we expect the two files containing more than the
-        // threshold rows to be compacted. When stats are disabled, we expect all files with DVs
-        // compacted
+        // We expect the two files containing more than the threshold rows to be compacted.
         var expectedRemoveFiles = Set(file0.path, file1.path)
-        if (!statsCollectionEnabled) expectedRemoveFiles += file2.path
         // Expect the small file also to be compacted always
         expectedRemoveFiles += smallFiles(0).path
 

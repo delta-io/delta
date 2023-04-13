@@ -397,7 +397,10 @@ trait DeltaTableCreationTests
         val ex = intercept[AnalysisException] {
           createTableUsingDF
         }
-        assert(ex.getMessage.contains("invalid character(s)"))
+        assert(
+          ex.getMessage.contains("[INVALID_COLUMN_NAME_AS_PATH]") ||
+            ex.getMessage.contains("invalid character(s)")
+        )
         assert(!tableLoc.exists())
       } else {
         // column mapping modes support creating table with arbitrary col names
@@ -411,7 +414,10 @@ trait DeltaTableCreationTests
         val ex2 = intercept[AnalysisException] {
           createTableUsingSQL
         }
-        assert(ex2.getMessage.contains("invalid character(s)"))
+        assert(
+          ex2.getMessage.contains("[INVALID_COLUMN_NAME_AS_PATH]") ||
+            ex2.getMessage.contains("invalid character(s)")
+        )
         assert(!tableLoc.exists())
       } else {
         // column mapping modes support creating table with arbitrary col names
@@ -1702,8 +1708,6 @@ class DeltaTableCreationSuite
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     loadTable(tableName).properties().asScala.toMap
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
-      .filterKeys(k =>
-        k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
       .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
   }

@@ -19,13 +19,15 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaUDF}
+import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaLog, DeltaUDF}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics._
+import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -88,13 +90,15 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  *  |    |    |    |    |-- c: long (nullable = true)
  *  }}}
  */
-trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
+trait StatisticsCollection extends DeltaLogging {
   protected def spark: SparkSession
   def tableDataSchema: StructType
   def dataSchema: StructType
   val numIndexedCols: Int
 
   protected def protocol: Protocol
+
+  lazy val deletionVectorsSupported = protocol.isFeatureSupported(DeletionVectorsTableFeature)
 
   private lazy val explodedDataSchemaNames: Seq[String] =
     SchemaMergingUtils.explodeNestedFieldNames(dataSchema)
@@ -111,6 +115,85 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     }
   }
 
+  /**
+   * Traverses the [[statisticsSchema]] for the provided [[statisticsColumn]]
+   * and applies [[function]] to leaves.
+   *
+   * Note, for values that are outside the domain of the partial function we keep the original
+   * column. If the caller wants to drop the column needs to explicitly return None.
+   */
+  def applyFuncToStatisticsColumn(
+      statisticsSchema: StructType,
+      statisticsColumn: Column)(
+      function: PartialFunction[(Column, StructField), Option[Column]]): Seq[Column] = {
+    statisticsSchema.flatMap {
+      case StructField(name, s: StructType, _, _) =>
+        val column = statisticsColumn.getItem(name)
+        applyFuncToStatisticsColumn(s, column)(function) match {
+          case colSeq if colSeq.nonEmpty => Some(struct(colSeq: _*) as name)
+          case _ => None
+        }
+
+      case structField@StructField(name, _, _, _) =>
+        val column = statisticsColumn.getItem(name)
+        function.lift(column, structField).getOrElse(Some(column)).map(_.as(name))
+    }
+  }
+
+  /**
+   * Sets the TIGHT_BOUNDS column to false and converts the logical nullCount
+   * to a tri-state nullCount. The nullCount states are the following:
+   *    1) For "all-nulls" columns we set the physical nullCount which is equal to the
+   *       physical numRecords.
+   *    2) "no-nulls" columns remain unchanged, i.e. zero nullCount is the same for both
+   *       physical and logical representations.
+   *    3) For "some-nulls" columns, we leave the existing value. In files with wide bounds,
+   *       the nullCount in SOME_NULLs columns is considered unknown and it is not taken
+   *       into account by data skipping and OptimizeMetadataOnlyDeltaQuery.
+   *
+   * The file's state can transition back to tight when statistics are recomputed. In that case,
+   * TIGHT_BOUNDS is set back to true and nullCount back to the logical value.
+   *
+   * Note, this function gets as input parsed statistics and returns a json document
+   * similarly to allFiles. To further match the behavior of allFiles we always return
+   * a column named `stats` instead of statsColName.
+   *
+   * @param withStats A dataFrame of actions with parsed statistics.
+   * @param statsColName The name of the parsed statistics column.
+   */
+  def updateStatsToWideBounds(withStats: DataFrame, statsColName: String): DataFrame = {
+    val dvCardinalityCol = coalesce(col("deletionVector.cardinality"), lit(0))
+    val physicalNumRecordsCol = col(s"$statsColName.$NUM_RECORDS")
+    val logicalNumRecordsCol = physicalNumRecordsCol - dvCardinalityCol
+    val nullCountCol = col(s"$statsColName.$NULL_COUNT")
+    val tightBoundsCol = col(s"$statsColName.$TIGHT_BOUNDS")
+
+    // Use the schema of the existing stats column. We only want to modify the existing
+    // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
+    // the physical column names, not the logical names.
+    val nullCountSchema = withStats.schema
+      .apply(statsColName).dataType.asInstanceOf[StructType]
+      .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
+
+    // When bounds are tight and we are about to transition to wide, store the physical null count
+    // for ALL_NULLs columns.
+    val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
+      case (c, _) =>
+        val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
+        Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
+    }
+
+    val allStatCols = ALL_STAT_FIELDS.map {
+      case f if f == TIGHT_BOUNDS => lit(false).as(TIGHT_BOUNDS)
+      case f if f == NULL_COUNT => struct(nullCountColSeq: _*).as(NULL_COUNT)
+      case f => col(s"${statsColName}.${f}")
+    }
+
+    // This may be very expensive because it is rewriting JSON.
+    withStats
+      .withColumn("stats", when(col(statsColName).isNotNull, to_json(struct(allStatCols: _*))))
+      .drop(col(CheckpointV2.STATS_COL_NAME)) // Note: does not always exist.
+  }
 
   /**
    * Returns a struct column that can be used to collect statistics for the current
@@ -123,6 +206,12 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
+    // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
+    val tightBoundsColOpt =
+      Option.when(deletionVectorsSupported &&
+          !spark.sessionState.conf.getConf(DeltaSQLConf.TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED)) {
+        lit(true).as(TIGHT_BOUNDS)
+      }
 
     val statCols = Seq(
       count(new Column("*")) as NUM_RECORDS,
@@ -149,7 +238,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       collectStats(NULL_COUNT, statCollectionSchema) {
         case (c, _, true) => sum(when(c.isNull, 1).otherwise(0))
         case (_, _, false) => count(new Column("*"))
-      })
+      }) ++ tightBoundsColOpt
 
     struct(statCols: _*).as('stats)
   }
@@ -189,12 +278,15 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
 
     val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionSchema)
     val nullCountSchemaOpt = getNullCountSchema(statCollectionSchema)
+    val tightBoundsFieldOpt =
+      Option.when(deletionVectorsSupported)(TIGHT_BOUNDS -> BooleanType)
 
     val fields =
       Array(NUM_RECORDS -> LongType) ++
       minMaxStatsSchemaOpt.map(MIN -> _) ++
       minMaxStatsSchemaOpt.map(MAX -> _) ++
-      nullCountSchemaOpt.map(NULL_COUNT -> _)
+      nullCountSchemaOpt.map(NULL_COUNT -> _) ++
+      tightBoundsFieldOpt
 
     StructType(fields.map {
       case (name, dataType) => StructField(name, dataType)

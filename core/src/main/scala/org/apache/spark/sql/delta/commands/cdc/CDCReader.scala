@@ -22,6 +22,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -148,7 +149,11 @@ object CDCReader extends CDCReaderImpl
     }
   }
 
-  case class CDCDataSpec[T <: FileAction](version: Long, timestamp: Timestamp, actions: Seq[T])
+  case class CDCDataSpec[T <: FileAction](
+      version: Long,
+      timestamp: Timestamp,
+      actions: Seq[T],
+      commitInfo: Option[CommitInfo])
 }
 
 trait CDCReaderImpl extends DeltaLogging {
@@ -156,42 +161,33 @@ trait CDCReaderImpl extends DeltaLogging {
   import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
   /**
-   * Given timestamp or version this method returns the corresponding version for that timestamp
-   * or the version itself.
+   * Given timestamp or version, this method returns the corresponding version for that timestamp
+   * or the version itself, as well as how the return version is obtained: by `version` or
+   * `timestamp`.
    */
-  def getVersionForCDC(
+  private def getVersionForCDC(
       spark: SparkSession,
       deltaLog: DeltaLog,
       conf: SQLConf,
       options: CaseInsensitiveStringMap,
       versionKey: String,
-      timestampKey: String): Option[Long] = {
+      timestampKey: String): Option[ResolvedCDFVersion] = {
     if (options.containsKey(versionKey)) {
-      Some(options.get(versionKey).toLong)
+      Some(ResolvedCDFVersion(options.get(versionKey).toLong, timestamp = None))
     } else if (options.containsKey(timestampKey)) {
       val ts = options.get(timestampKey)
       val spec = DeltaTimeTravelSpec(Some(Literal(ts)), None, Some("cdcReader"))
+      val timestamp = spec.getTimestamp(spark.sessionState.conf)
       val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
-      if (timestampKey == DeltaDataSource.CDC_START_TIMESTAMP_KEY) {
+      val resolvedVersion = if (timestampKey == DeltaDataSource.CDC_START_TIMESTAMP_KEY) {
         // For the starting timestamp we need to find a version after the provided timestamp
         // we can use the same semantics as streaming.
-        val resolvedVersion = DeltaSource.getStartingVersionFromTimestamp(
-          spark,
-          deltaLog,
-          spec.getTimestamp(spark.sessionState.conf),
-          allowOutOfRange
-        )
-        Some(resolvedVersion)
+        DeltaSource.getStartingVersionFromTimestamp(spark, deltaLog, timestamp, allowOutOfRange)
       } else {
         // For ending timestamp the version should be before the provided timestamp.
-        val resolvedVersion = DeltaTableUtils.resolveTimeTravelVersion(
-          conf,
-          deltaLog,
-          spec,
-          allowOutOfRange
-        )
-        Some(resolvedVersion._1)
+        DeltaTableUtils.resolveTimeTravelVersion(conf, deltaLog, spec, allowOutOfRange)._1
       }
+      Some(ResolvedCDFVersion(resolvedVersion, Some(timestamp)))
     } else {
       None
     }
@@ -240,10 +236,7 @@ trait CDCReaderImpl extends DeltaLogging {
       conf,
       options,
       DeltaDataSource.CDC_START_VERSION_KEY,
-      DeltaDataSource.CDC_START_TIMESTAMP_KEY
-    )
-
-    if (startingVersion.isEmpty) {
+      DeltaDataSource.CDC_START_TIMESTAMP_KEY).getOrElse {
       throw DeltaErrors.noStartVersionForCDC()
     }
 
@@ -259,29 +252,30 @@ trait CDCReaderImpl extends DeltaLogging {
           s"cannot be used with time travel options.")
     }
 
+    def emptyCDFRelation() = {
+      new DeltaCDFRelation(
+        SnapshotWithSchemaMode(snapshotToUse, schemaMode),
+        spark.sqlContext,
+        startingVersion = None,
+        endingVersion = None) {
+        override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] =
+          sqlContext.sparkSession.sparkContext.emptyRDD[Row]
+      }
+    }
+
     // add a version check here that is cheap instead of after trying to list a large version
     // that doesn't exist
-    if (startingVersion.get > snapshotToUse.version) {
+    if (startingVersion.version > snapshotToUse.version) {
       val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
       // LS-129: return an empty relation if start version passed in is beyond latest commit version
       if (allowOutOfRange) {
-        return new DeltaCDFRelation(
-          SnapshotWithSchemaMode(snapshotToUse, schemaMode),
-          spark.sqlContext,
-          None,
-          None) {
-          override def buildScan(
-              requiredColumns: Array[String],
-              filters: Array[Filter]): RDD[Row] = {
-            sqlContext.sparkSession.sparkContext.emptyRDD[Row]
-          }
-        }
+        return emptyCDFRelation()
       }
       throw DeltaErrors.startVersionAfterLatestVersion(
-        startingVersion.get, snapshotToUse.version)
+        startingVersion.version, snapshotToUse.version)
     }
 
-    val endingVersion = getVersionForCDC(
+    val endingVersionOpt = getVersionForCDC(
       spark,
       snapshotToUse.deltaLog,
       conf,
@@ -290,17 +284,42 @@ trait CDCReaderImpl extends DeltaLogging {
       DeltaDataSource.CDC_END_TIMESTAMP_KEY
     )
 
-    if (endingVersion.exists(_ < startingVersion.get)) {
-      throw DeltaErrors.endBeforeStartVersionInCDC(startingVersion.get, endingVersion.get)
+    // Given two timestamps, there is a case when both of them lay closely between two versions:
+    // version:          4                                                 5
+    //          ---------|-------------------------------------------------|--------
+    //                           ^ start timestamp        ^ end timestamp
+    // In this case the starting version will be 5 and ending version will be 4. We must not
+    // throw `endBeforeStartVersionInCDC` but return empty result.
+    endingVersionOpt.foreach { endingVersion =>
+      if (startingVersion.resolvedByTimestamp && endingVersion.resolvedByTimestamp) {
+        // The next `if` is true when end is less than start but no commit is in between.
+        // We need to capture such a case and throw early.
+        if (startingVersion.timestamp.get.after(endingVersion.timestamp.get)) {
+          throw DeltaErrors.endBeforeStartVersionInCDC(
+            startingVersion.version,
+            endingVersion.version)
+        }
+        if (endingVersion.version == startingVersion.version - 1) {
+          return emptyCDFRelation()
+        }
+      }
     }
 
-    logInfo(s"startingVersion: $startingVersion, endingVersion: $endingVersion")
+    if (endingVersionOpt.exists(_.version < startingVersion.version)) {
+      throw DeltaErrors.endBeforeStartVersionInCDC(
+        startingVersion.version,
+        endingVersionOpt.get.version)
+    }
+
+    logInfo(
+      s"startingVersion: ${startingVersion.version}, " +
+        s"endingVersion: ${endingVersionOpt.map(_.version)}")
 
     DeltaCDFRelation(
       SnapshotWithSchemaMode(snapshotToUse, schemaMode),
       spark.sqlContext,
-      startingVersion,
-      endingVersion)
+      Some(startingVersion.version),
+      endingVersionOpt.map(_.version))
   }
 
   /**
@@ -384,6 +403,10 @@ trait CDCReaderImpl extends DeltaLogging {
     val startVersionSnapshot = deltaLog.getSnapshotAt(start)
     if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
+    }
+
+    if (DeletionVectorUtils.deletionVectorsReadable(startVersionSnapshot)) {
+      throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(start)
     }
 
     // Check schema read-compatibility
@@ -513,21 +536,33 @@ trait CDCReaderImpl extends DeltaLogging {
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
         if (cdcActions.nonEmpty && !useCoarseGrainedCDC) {
-          changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq))
+          changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq, commitInfo))
         } else {
           val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
           if (shouldSkipIndexedFile) {
             // This was introduced for a hotfix, so we're mirroring the existing logic as closely
             // as possible - it'd likely be safe to just return an empty dataframe here.
-            addFiles.append(CDCDataSpec(v, ts, Nil))
-            removeFiles.append(CDCDataSpec(v, ts, Nil))
+            addFiles.append(CDCDataSpec(v, ts, Nil, commitInfo))
+            removeFiles.append(CDCDataSpec(v, ts, Nil, commitInfo))
           } else {
             // Otherwise, we take the AddFile and RemoveFile actions with dataChange = true and
             // infer CDC from them.
             val addActions = actions.collect { case a: AddFile if a.dataChange => a }
             val removeActions = actions.collect { case r: RemoveFile if r.dataChange => r }
-            addFiles.append(CDCDataSpec(v, ts, addActions))
-            removeFiles.append(CDCDataSpec(v, ts, removeActions))
+            addFiles.append(
+              CDCDataSpec(
+                version = v,
+                timestamp = ts,
+                actions = addActions,
+                commitInfo = commitInfo)
+            )
+            removeFiles.append(
+              CDCDataSpec(
+                version = v,
+                timestamp = ts,
+                actions = removeActions,
+                commitInfo = commitInfo)
+            )
           }
         }
     }
@@ -549,6 +584,7 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeChangeFileIndex(
           spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, readSchemaSnapshot),
+        readSchemaSnapshot.protocol,
         readSchemaSnapshot.metadata,
         isStreaming))
     }
@@ -582,6 +618,7 @@ trait CDCReaderImpl extends DeltaLogging {
       dfs.append(scanIndex(
         spark,
         new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        snapshot.protocol,
         snapshot.metadata,
         isStreaming))
     }
@@ -590,6 +627,7 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeRemoveFileIndex(
           spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
+        snapshot.protocol,
         snapshot.metadata,
         isStreaming))
     }
@@ -666,6 +704,7 @@ trait CDCReaderImpl extends DeltaLogging {
   protected def scanIndex(
       spark: SparkSession,
       index: TahoeFileIndex,
+      protocol: Protocol,
       metadata: Metadata,
       isStreaming: Boolean = false): DataFrame = {
     val relation = HadoopFsRelation(
@@ -673,7 +712,7 @@ trait CDCReaderImpl extends DeltaLogging {
       index.partitionSchema,
       cdcReadSchema(metadata.schema),
       bucketSpec = None,
-      new DeltaParquetFileFormat(metadata),
+      new DeltaParquetFileFormat(protocol, metadata),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
     Dataset.ofRows(spark, plan)
@@ -716,4 +755,15 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param numBytes the total size of the AddFile + RemoveFile + AddCDCFiles that are in the df
    */
   case class CDCVersionDiffInfo(fileChangeDf: DataFrame, numFiles: Long, numBytes: Long)
+
+  /**
+   * Represents a Delta log version, and how the version is determined.
+   * @param version the determined version.
+   * @param timestamp the commit timestamp of the determined version. Will be filled when the
+   *                  version is determined by timestamp.
+   */
+  private case class ResolvedCDFVersion(version: Long, timestamp: Option[Timestamp]) {
+    /** Whether this version is resolved by timestamp. */
+    def resolvedByTimestamp: Boolean = timestamp.isDefined
+  }
 }

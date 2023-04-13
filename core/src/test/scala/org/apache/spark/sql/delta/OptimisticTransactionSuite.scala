@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.types.{IntegerType, StructType}
@@ -410,6 +411,8 @@ class OptimisticTransactionSuite
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+      sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+        s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
       val testTxn = log.startTransaction()
       val testTxnStartTs = System.currentTimeMillis()
       for (_ <- 1 to 11) {
@@ -418,17 +421,17 @@ class OptimisticTransactionSuite
       val testTxnEndTs = System.currentTimeMillis()
 
       // preCommitLogSegment should not get updated until a commit is triggered
-      assert(testTxn.preCommitLogSegment.version == 0)
+      assert(testTxn.preCommitLogSegment.version == 1)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
-      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == None)
 
       testTxn.commit(Seq.empty, ManualUpdate)
 
       // preCommitLogSegment should get updated to the version right before the txn commits
-      assert(testTxn.preCommitLogSegment.version == 11)
+      assert(testTxn.preCommitLogSegment.version == 12)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
-      assert(testTxn.preCommitLogSegment.deltas.size == 1)
+      assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
     }
   }
@@ -581,6 +584,61 @@ class OptimisticTransactionSuite
       }
       assert(e.getMessage.contains(
         "assertion failed: Cannot change the protocol more than once in a transaction."))
+    }
+  }
+
+  test("DVs cannot be added to files without numRecords stat") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, removeFile) = addDVToFileInTable(path, firstFile)
+      val addFileWithDVWithoutStats = addFileWithDV.copy(stats = null)
+      testRuntimeErrorOnCommit(Seq(addFileWithDVWithoutStats, removeFile), deltaLog) { e =>
+        val expErrorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS"
+        assert(e.getErrorClass == expErrorClass)
+        assert(e.getSqlState == "2D521")
+      }
+    }
+  }
+
+  test("commitInfo tags") {
+    withTempDir { tableDir =>
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val schema = new StructType().add("id", "long")
+
+      def checkLastCommitTags(expectedTags: Option[Map[String, String]]): Unit = {
+        val ci = deltaLog.getChanges(deltaLog.update().version).map(_._2).flatten.collectFirst {
+          case ci: CommitInfo => ci
+        }.head
+        assert(ci.tags === expectedTags)
+      }
+
+      val metadata = Metadata(schemaString = schema.json)
+      // Check empty tags
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate, tags = Map.empty)
+      }
+      checkLastCommitTags(expectedTags = None)
+
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(addA :: Nil, DeltaOperations.Write(SaveMode.Append), tags = Map.empty)
+      }
+      checkLastCommitTags(expectedTags = None)
+
+      // Check non-empty tags
+      val tags1 = Map("testTag1" -> "testValue1")
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate, tags = tags1)
+      }
+      checkLastCommitTags(expectedTags = Some(tags1))
+
+      val tags2 = Map("testTag1" -> "testValue1", "testTag2" -> "testValue2")
+      deltaLog.withNewTransaction { txn =>
+        txn.commit(addB :: Nil, DeltaOperations.Write(SaveMode.Append), tags = tags2)
+      }
+      checkLastCommitTags(expectedTags = Some(tags2))
     }
   }
 }

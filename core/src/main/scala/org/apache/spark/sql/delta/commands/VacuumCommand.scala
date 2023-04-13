@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
@@ -113,6 +113,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       require(snapshot.version >= 0, "No state defined for this table. Is this really " +
         "a Delta table? Refusing to garbage collect.")
+
+      DeletionVectorUtils.assertDeletionVectorsNotReadable(
+        spark, snapshot.metadata, snapshot.protocol)
 
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
@@ -316,11 +319,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     try {
       val rawResolvedUri: URI = logStore.resolvePathOnPhysicalStorage(path, hadoopConf).toUri
       val scheme = rawResolvedUri.getScheme
-      if (supportedFsForLogging.contains(scheme)) {
-        true
-      } else {
-        false
-      }
+      supportedFsForLogging.contains(scheme)
     } catch {
       case _: UnsupportedOperationException =>
         logWarning("Vacuum event logging" +
@@ -461,7 +460,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     }
   }
 
+  // scalastyle:off pathfromuri
   protected def stringToPath(path: String): Path = new Path(new URI(path))
+  // scalastyle:on pathfromuri
 
   protected def pathToString(path: Path): String = path.toUri.toString
 
@@ -497,9 +498,48 @@ trait VacuumCommandImpl extends DeltaCommand {
       basePath: Path,
       relativizeIgnoreError: Boolean,
       isBloomFiltered: Boolean): Seq[String] = {
-    getActionRelativePath(action, fs, basePath, relativizeIgnoreError).map { relativePath =>
-      Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
-    }.getOrElse(Seq.empty)
+    val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
+      .map {
+        relativePath =>
+        Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
+      }.getOrElse(Seq.empty)
+
+    val deletionVectorPath =
+      getDeletionVectorRelativePath(action, fs, basePath, relativizeIgnoreError).map(pathToString)
+
+    paths ++ deletionVectorPath.toSeq
+  }
+
+  /**
+   * Returns the path of the on-disk deletion vector if it is stored relative to the
+   * `basePath` otherwise `None`.
+   */
+  protected def getDeletionVectorRelativePath(
+      action: FileAction,
+      fs: FileSystem,
+      basePath: Path,
+      relativizeIgnoreError: Boolean): Option[Path] = {
+    val dv = action match {
+      case a: AddFile if a.deletionVector != null =>
+        Some(a.deletionVector)
+      case r: RemoveFile if r.deletionVector != null =>
+        Some(r.deletionVector)
+      case _ => None
+    }
+
+    dv match {
+      case Some(dv) if dv.isOnDisk =>
+        if (dv.isRelative) {
+          Some(dv.absolutePath(new Path(".")))
+        } else {
+          Some(DeltaFileOperations.tryRelativizePath(
+            fs,
+            basePath,
+            dv.absolutePath(basePath),
+            relativizeIgnoreError))
+        }
+      case None => None
+    }
   }
 }
 

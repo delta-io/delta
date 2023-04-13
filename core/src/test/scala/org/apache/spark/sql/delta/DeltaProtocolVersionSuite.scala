@@ -21,6 +21,7 @@ import java.io.File
 import java.util.Locale
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -55,6 +56,81 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       log.newDeltaHadoopConf())
     log.update()
     log
+  }
+
+  test("protocol for empty folder") {
+    def testEmptyFolder(
+        readerVersion: Int,
+        writerVersion: Int,
+        features: Iterable[TableFeature] = Seq.empty,
+        sqlConfs: Iterable[(String, String)] = Seq.empty,
+        expectedProtocol: Protocol): Unit = {
+      withTempDir { path =>
+        val configs = Seq(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> readerVersion.toString,
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> writerVersion.toString) ++
+          features.map(defaultPropertyKey(_) -> FEATURE_PROP_ENABLED) ++
+          sqlConfs
+        withSQLConf(configs: _*) {
+          val log = DeltaLog.forTable(spark, path)
+          assert(log.update().protocol === expectedProtocol)
+        }
+      }
+    }
+
+    testEmptyFolder(1, 1, expectedProtocol = Protocol(1, 1))
+    testEmptyFolder(1, 2, expectedProtocol = Protocol(1, 2))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      sqlConfs = Seq((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")),
+      expectedProtocol = Protocol(1, 1).merge(ChangeDataFeedTableFeature.minProtocolVersion))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      features = Seq(TestLegacyReaderWriterFeature),
+      expectedProtocol =
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(TestLegacyReaderWriterFeature))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      features = Seq(TestWriterFeature),
+      expectedProtocol = Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestWriterFeature))
+    testEmptyFolder(
+      readerVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      writerVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+      features = Seq(TestLegacyReaderWriterFeature),
+      expectedProtocol =
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(TestLegacyReaderWriterFeature))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      features = Seq(TestWriterFeature),
+      sqlConfs = Seq((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")),
+      expectedProtocol = Protocol(
+        1,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestWriterFeature, ChangeDataFeedTableFeature)))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      features = Seq(TestLegacyReaderWriterFeature),
+      sqlConfs = Seq((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")),
+      expectedProtocol = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestLegacyReaderWriterFeature, ChangeDataFeedTableFeature)))
+    testEmptyFolder(
+      readerVersion = 1,
+      writerVersion = 1,
+      features = Seq(TestWriterFeature, TestLegacyReaderWriterFeature),
+      expectedProtocol = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestWriterFeature, TestLegacyReaderWriterFeature)))
   }
 
   test("upgrade to current version") {
@@ -342,6 +418,105 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  private case class SessionAndTableConfs(name: String, session: Seq[String], table: Seq[String])
+
+  for (confs <- Seq(
+      SessionAndTableConfs(
+        "session",
+        session = Seq(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey),
+        table = Seq.empty[String]),
+      SessionAndTableConfs(
+        "table",
+        session = Seq.empty[String],
+        table = Seq(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))))
+    test(s"CREATE TABLE can ignore protocol defaults, configured in ${confs.name}") {
+      withTempDir { path =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+          defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED) {
+          withSQLConf(confs.session.map(_ -> "true"): _*) {
+            spark
+              .range(10)
+              .write
+              .format("delta")
+              .options(confs.table.map(_ -> "true").toMap)
+              .save(path.getCanonicalPath)
+          }
+        }
+
+        val snapshot = DeltaLog.forTable(spark, path).update()
+        assert(snapshot.protocol === Protocol(1, 1))
+        assert(
+          !snapshot.metadata.configuration
+            .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+      }
+    }
+
+  for (ignoreProtocolDefaults <- BOOLEAN_DOMAIN)
+    for (op <- Seq(
+        "ALTER TABLE",
+        "SHALLOW CLONE",
+        "RESTORE")) {
+      test(s"$op always ignore protocol defaults (flag = $ignoreProtocolDefaults)"
+      ) {
+        withTempDir { path =>
+          val expectedProtocol = if (ignoreProtocolDefaults) {
+            Protocol(1, 1)
+          } else {
+            Protocol(
+              spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION),
+              spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+          }
+
+          val cPath = path.getCanonicalPath
+          spark
+            .range(10)
+            .write
+            .format("delta")
+            .option(
+              DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key,
+              ignoreProtocolDefaults.toString)
+            .save(cPath)
+          val snapshot = DeltaLog.forTable(spark, path).update()
+          assert(snapshot.protocol === expectedProtocol)
+          assert(
+            !snapshot.metadata.configuration
+              .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+
+          withSQLConf(
+            DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+            DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+            defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED) {
+            val snapshotAfter = op match {
+              case "ALTER TABLE" =>
+                sql(s"ALTER TABLE delta.`$cPath` ALTER COLUMN id COMMENT 'hallo'")
+                DeltaLog.forTable(spark, path).update()
+              case "SHALLOW CLONE" =>
+                var s: Snapshot = null
+                withTempDir { cloned =>
+                  sql(
+                    s"CREATE TABLE delta.`${cloned.getCanonicalPath}` " +
+                      s"SHALLOW CLONE delta.`$cPath`")
+                  s = DeltaLog.forTable(spark, cloned).update()
+                }
+                s
+              case "RESTORE" =>
+                sql(s"INSERT INTO delta.`$cPath` VALUES (99)") // version 2
+                sql(s"RESTORE TABLE delta.`$cPath` TO VERSION AS OF 1")
+                DeltaLog.forTable(spark, path).update()
+              case _ =>
+                throw new RuntimeException("OP is invalid. Add a match!")
+            }
+            assert(snapshotAfter.protocol === expectedProtocol)
+            assert(
+              !snapshotAfter.metadata.configuration
+                .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+          }
+        }
+      }
+    }
+
   test("concurrent upgrade") {
     withTempDir { path =>
       val newProtocol = Protocol()
@@ -452,14 +627,14 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, dir)
         assert(
           deltaLog.snapshot.protocol.minReaderVersion ===
-            TestLegacyReaderWriterFeature.minReaderVersion,
-          "reader protocol version should not support table features because we use " +
-            "only a legacy reader-writer feature.")
+            TABLE_FEATURES_MIN_READER_VERSION,
+          "reader protocol version should support table features because we used the " +
+            "'delta.feature.' config.")
         assert(
           deltaLog.snapshot.protocol.minWriterVersion ===
             TABLE_FEATURES_MIN_WRITER_VERSION,
-          "writer protocol version must support table features because a native feature" +
-            "is enabled.")
+          "reader protocol version should support table features because we used the " +
+            "'delta.feature.' config.")
         assert(
           deltaLog.snapshot.protocol.readerAndWriterFeatureNames === Set(
             AppendOnlyTableFeature,
@@ -582,11 +757,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
           "Should've picked up the protocol from the configuration")
 
-        // Cannot downgrade without special flag.
+        // Will not downgrade without special flag.
         withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
-          assertThrows[ProtocolDowngradeException] {
-            sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          }
+          sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
+          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+            "Should not pick up the protocol from the configuration")
         }
 
         // Replace with the old writer again
@@ -695,7 +870,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("table creation with legacy reader-writer features as table property") {
+  test(
+    "table creation with legacy reader-writer features as table property") {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
       sql(
@@ -703,12 +879,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "TBLPROPERTIES (DeLtA.fEaTurE.testLEGACYReaderWritER='eNAbled')")
 
       assert(
-        deltaLog.snapshot.protocol.minReaderVersion ===
-          TestLegacyReaderWriterFeature.minReaderVersion)
-      assert(
-        deltaLog.snapshot.protocol.minWriterVersion ===
-          TestLegacyReaderWriterFeature.minWriterVersion)
-      assertPropertiesAndShowTblProperties(deltaLog)
+        deltaLog.snapshot.protocol === Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature))
     }
   }
 
@@ -782,16 +955,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           s"TBLPROPERTIES (" +
           s"  delta.minWriterVersion='$TABLE_FEATURES_MIN_WRITER_VERSION'," +
-          s"  delta.feature.testLegacyReaderWriter='enabled'" +
+          s"  delta.feature.testLegacyWriter='enabled'" +
           s")")
 
       assert(
         deltaLog.snapshot.protocol === Protocol(
-          minReaderVersion = 2,
+          minReaderVersion = 1,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
           readerFeatures = None,
-          writerFeatures =
-            Some(Set(TestLegacyReaderWriterFeature.name))))
+          writerFeatures = Some(Set(TestLegacyWriterFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
   }
@@ -869,7 +1041,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       name: String,
       props: Map[String, String],
       expectedExceptionMessage: Option[String] = None,
-      finalProtocolContainsFeatures: Boolean = false): Unit = {
+      expectedFinalProtocol: Option[Protocol] = None): Unit = {
     test(s"create table - $name") {
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir)
@@ -886,7 +1058,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
               s"TBLPROPERTIES ($propString)")
         }
-        assertPropertiesAndShowTblProperties(log, finalProtocolContainsFeatures)
+        expectedFinalProtocol match {
+          case Some(p) => assert(log.update().protocol === p)
+          case None => // Do nothing
+        }
       }
     }
   }
@@ -894,24 +1069,35 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   testCreateTable(
     "legacy protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
-    None)
+    expectedFinalProtocol = Some(Protocol(1, 2)))
 
   testCreateTable(
     "legacy protocol, legacy feature, feature property",
     Map(s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
+
+  testCreateTable(
+    "legacy protocol, legacy writer feature, feature property",
+    Map(s"delta.feature.${TestLegacyWriterFeature.name}" -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyWriterFeature)))
 
   testCreateTable(
     "legacy protocol, native feature, metadata",
     Map(TestReaderWriterMetadataFeature.TABLE_PROP_KEY -> "true"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testCreateTable(
     "legacy protocol, native feature, feature property",
     Map(s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testCreateTable(
     "legacy protocol with supported version props, legacy feature, feature property",
@@ -921,7 +1107,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_WRITER_VERSION.key ->
         TestLegacyReaderWriterFeature.minWriterVersion.toString,
       s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
 
   testCreateTable(
     "legacy protocol with table feature version props, legacy feature, feature property",
@@ -929,8 +1117,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
 
   testCreateTable(
     "legacy protocol with supported version props, native feature, feature property",
@@ -938,8 +1127,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testCreateTable(
     "table features protocol, legacy feature, metadata",
@@ -947,8 +1137,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       "delta.appendOnly" -> "true"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(AppendOnlyTableFeature)))
 
   testCreateTable(
     "table features protocol, legacy feature, feature property",
@@ -956,8 +1147,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
 
   testCreateTable(
     "table features protocol, native feature, metadata",
@@ -965,8 +1157,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       TestReaderWriterMetadataFeature.TABLE_PROP_KEY -> "true"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testCreateTable(
     "table features protocol, native feature, feature property",
@@ -974,14 +1167,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   def testAlterTable(
       name: String,
       props: Map[String, String],
       expectedExceptionMessage: Option[String] = None,
-      finalProtocolContainsFeatures: Boolean = false,
+      expectedFinalProtocol: Option[Protocol] = None,
       tableProtocol: Protocol = Protocol(1, 1)): Unit = {
     test(s"alter table - $name") {
       withTempDir { dir =>
@@ -995,7 +1189,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         } else {
           sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
         }
-        assertPropertiesAndShowTblProperties(log, finalProtocolContainsFeatures)
+        expectedFinalProtocol match {
+          case Some(p) => assert(log.update().protocol === p)
+          case None => // Do nothing
+        }
       }
     }
   }
@@ -1003,23 +1200,37 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   testAlterTable(
     "legacy protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
-    None)
+    expectedFinalProtocol = Some(Protocol(1, 2)))
 
   testAlterTable(
     "legacy protocol, legacy feature, feature property",
     Map(s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    Some("it requires a higher reader protocol version"))
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
+
+  testAlterTable(
+    "legacy protocol, legacy writer feature, feature property",
+    Map(s"delta.feature.${TestLegacyWriterFeature.name}" -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyWriterFeature)
+        .merge(Protocol(1, 2))),
+    tableProtocol = Protocol(1, 2))
 
   testAlterTable(
     "legacy protocol, native feature, metadata",
     Map(TestReaderWriterMetadataFeature.TABLE_PROP_KEY -> "true"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testAlterTable(
     "legacy protocol, native feature, feature property",
     Map(s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    Some("it requires a higher reader protocol version"))
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testAlterTable(
     "legacy protocol with supported version props, legacy feature, feature property",
@@ -1029,7 +1240,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_WRITER_VERSION.key ->
         TestLegacyReaderWriterFeature.minWriterVersion.toString,
       s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .merge(TestLegacyReaderWriterFeature.minProtocolVersion)))
 
   testAlterTable(
     "legacy protocol with table feature version props, legacy feature, feature property",
@@ -1037,8 +1250,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)))
 
   testAlterTable(
     "legacy protocol with supported version props, native feature, feature property",
@@ -1046,40 +1260,53 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
       s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true)
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)))
 
   testAlterTable(
     "table features protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
-    None,
-    finalProtocolContainsFeatures = true,
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(AppendOnlyTableFeature)),
     tableProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION))
 
   testAlterTable(
     "table features protocol, legacy feature, feature property",
     Map(s"delta.feature.${TestLegacyReaderWriterFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true,
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)),
     tableProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION))
 
   testAlterTable(
     "table features protocol, native feature, metadata",
     Map(TestReaderWriterMetadataFeature.TABLE_PROP_KEY -> "true"),
-    None,
-    finalProtocolContainsFeatures = true,
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)),
     tableProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION))
 
   testAlterTable(
     "table features protocol, native feature, feature property",
     Map(s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
-    None,
-    finalProtocolContainsFeatures = true,
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature)),
     tableProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION))
+
+  testAlterTable(
+    "feature property merges the old protocol",
+    Map(s"delta.feature.${TestReaderWriterMetadataFeature.name}" -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataFeature).merge(Protocol(1, 2))),
+    tableProtocol = Protocol(1, 2))
 
   test("table creation with protocol as table property - property wins over conf") {
     withTempDir { dir =>
@@ -1230,18 +1457,47 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("feature can be explicitly listed during alter table") {
+  test("legacy feature can be listed during alter table with silent protocol upgrade") {
+    withTempDir { path =>
+      val log = createTableWithProtocol(Protocol(1, 1), path)
+      spark.sql(s"""
+                   |ALTER TABLE delta.`${log.dataPath.toString}` SET TBLPROPERTIES (
+                   |  'delta.feature.testLegacyReaderWriter' = 'enabled'
+                   |)""".stripMargin)
+      assert(
+        log.snapshot.protocol === Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature))
+    }
+  }
+
+  test("legacy feature can be explicitly listed during alter table") {
     withTempDir { path =>
       val log = createTableWithProtocol(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION), path)
       spark.sql(s"""
                    |ALTER TABLE delta.`${log.dataPath.toString}` SET TBLPROPERTIES (
                    |  'delta.feature.testLegacyReaderWriter' = 'enabled'
                    |)""".stripMargin)
-      assert(log.snapshot.protocol.minReaderVersion === 2)
-      assert(!log.snapshot.protocol.readerFeatures.isDefined)
+      assert(log.snapshot.protocol === Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION,
+        readerFeatures = Some(Set(TestLegacyReaderWriterFeature.name)),
+        writerFeatures = Some(Set(TestLegacyReaderWriterFeature.name))))
+    }
+  }
+
+  test("native feature can be explicitly listed during alter table with silent protocol upgrade") {
+    withTempDir { path =>
+      val log = createTableWithProtocol(Protocol(1, 2), path)
+      spark.sql(s"""
+                   |ALTER TABLE delta.`${log.dataPath.toString}` SET TBLPROPERTIES (
+                   |  'delta.feature.testReaderWriter' = 'enabled'
+                   |)""".stripMargin)
       assert(
-        log.snapshot.protocol.writerFeatures === Some(
-          Set(TestLegacyReaderWriterFeature.name)))
+        log.snapshot.protocol ===
+          TestReaderWriterFeature.minProtocolVersion
+            .withFeature(TestReaderWriterFeature)
+            .merge(Protocol(1, 2)))
     }
   }
 
@@ -1264,6 +1520,115 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       assert(e.getMessage.contains("enabled in metadata but not listed in protocol"))
       assert(e.getMessage.contains(": changeDataFeed."))
+    }
+  }
+
+  test("table feature status") {
+    withTempDir { path =>
+      withSQLConf(
+        defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED,
+        defaultPropertyKey(GeneratedColumnsTableFeature) -> FEATURE_PROP_ENABLED) {
+        spark.range(10).write.format("delta").save(path.getCanonicalPath)
+        val log = DeltaLog.forTable(spark, path)
+        val protocol = log.update().protocol
+
+        assert(protocol.isFeatureSupported(ChangeDataFeedTableFeature))
+        assert(protocol.isFeatureSupported(GeneratedColumnsTableFeature))
+      }
+    }
+  }
+
+  private def replaceTableAs(path: File): Unit = {
+    val p = path.getCanonicalPath
+    sql(s"REPLACE TABLE delta.`$p` USING delta AS (SELECT * FROM delta.`$p`)")
+  }
+
+  test("REPLACE AS updates protocol when defaults are higher") {
+    withTempDir { path =>
+      spark
+        .range(10)
+        .write
+        .format("delta")
+        .option(DeltaConfigs.MIN_READER_VERSION.key, 1)
+        .option(DeltaConfigs.MIN_WRITER_VERSION.key, 2)
+        .mode("append")
+        .save(path.getCanonicalPath)
+      val log = DeltaLog.forTable(spark, path)
+      assert(log.update().protocol === Protocol(1, 2))
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "6") {
+        replaceTableAs(path)
+      }
+      assert(log.update().protocol === Protocol(2, 6))
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+        TableFeatureProtocolUtils.defaultPropertyKey(TestReaderWriterFeature) -> "enabled") {
+        replaceTableAs(path)
+      }
+      assert(
+        log.update().protocol ===
+          Protocol(2, 6).merge(Protocol(3, 7)).withFeature(TestReaderWriterFeature))
+    }
+  }
+
+  for (p <- Seq(Protocol(2, 6), Protocol(3, 7).withFeature(TestReaderWriterFeature)))
+    test(s"REPLACE AS keeps protocol when defaults are lower ($p)") {
+      withTempDir { path =>
+        spark
+          .range(10)
+          .write
+          .format("delta")
+          .option(DeltaConfigs.MIN_READER_VERSION.key, p.minReaderVersion)
+          .option(DeltaConfigs.MIN_WRITER_VERSION.key, p.minWriterVersion)
+          .options(
+            p.readerAndWriterFeatureNames
+              .flatMap(TableFeature.featureNameToFeature)
+              .map(f => TableFeatureProtocolUtils.propertyKey(f) -> "enabled")
+              .toMap)
+          .mode("append")
+          .save(path.getCanonicalPath)
+        val log = DeltaLog.forTable(spark, path)
+        assert(log.update().protocol === p)
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2") {
+          replaceTableAs(path)
+        }
+        assert(log.update().protocol === p)
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
+          TableFeatureProtocolUtils.defaultPropertyKey(TestReaderWriterFeature) -> "enabled") {
+          replaceTableAs(path)
+        }
+        assert(
+          log.update().protocol === p.merge(
+            TestReaderWriterFeature.minProtocolVersion.withFeature(TestReaderWriterFeature)))
+      }
+    }
+
+  test("REPLACE AS can ignore protocol defaults") {
+    withTempDir { path =>
+      withSQLConf(
+          DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey -> "true") {
+        spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      }
+      val log = DeltaLog.forTable(spark, path)
+      assert(log.update().protocol === Protocol(1, 1))
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
+          defaultPropertyKey(ChangeDataFeedTableFeature) -> FEATURE_PROP_SUPPORTED,
+          DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.defaultTablePropertyKey -> "true") {
+        replaceTableAs(path)
+      }
+      assert(log.update().protocol === Protocol(1, 1))
+      assert(
+        !log.update().metadata.configuration
+          .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
     }
   }
 
@@ -1294,7 +1659,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val name = row.getAs[String]("key").substring(FEATURE_PROP_PREFIX.length)
       val status = row.getAs[String]("value")
       assert(TableFeature.featureNameToFeature(name).isDefined)
-      assert(status == FEATURE_PROP_ENABLED)
+      assert(status == FEATURE_PROP_SUPPORTED)
     }
   }
 }

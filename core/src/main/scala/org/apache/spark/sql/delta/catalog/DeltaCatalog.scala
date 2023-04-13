@@ -59,6 +59,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   with SupportsPathIdentifier
   with DeltaLogging {
 
+
   val spark = SparkSession.active
 
   /**
@@ -254,6 +255,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       super.createTable(ident, schema, partitions, properties)
   }
 
+
   override def createTable(
       ident: Identifier,
       schema: StructType,
@@ -366,7 +368,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
-  private def verifyTableAndSolidify(
+  def verifyTableAndSolidify(
       tableDesc: CatalogTable,
       query: Option[LogicalPlan]): CatalogTable = {
 
@@ -395,7 +397,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Checks if a table already exists for the provided identifier. */
-  private def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
@@ -502,11 +504,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
       "DeltaCatalog", "alterTable") {
-    val table = loadTable(ident) match {
-      case deltaTable: DeltaTableV2 => deltaTable
-      case _ => return super.alterTable(ident, changes: _*)
-    }
-
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.
@@ -515,6 +512,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
     }
+    val table = loadTable(ident) match {
+      case deltaTable: DeltaTableV2 => deltaTable
+      case _ => return super.alterTable(ident, changes: _*)
+    }
 
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
     var syncIdentity = false
@@ -522,8 +523,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     grouped.foreach {
       case (t, newColumns) if t == classOf[AddColumn] =>
+        val tableToUpdate = table
         AlterTableAddColumnsDeltaCommand(
-          table,
+          tableToUpdate,
           newColumns.asInstanceOf[Seq[AddColumn]].map { col =>
             // Convert V2 `AddColumn` to V1 `QualifiedColType` as `AlterTableAddColumnsDeltaCommand`
             // is a V1 command.

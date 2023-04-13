@@ -19,9 +19,9 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.io.FileNotFoundException
 
-
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -240,13 +240,27 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 
   test("delta table: describe detail shows table features") {
     withTable("t1") {
-      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2"
+      ) {
+        Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+      }
       val p = DeltaLog.forTable(spark, TableIdentifier("t1")).snapshot.protocol
-      val features = p.readerAndWriterFeatureNames ++ p.implicitlyEnabledFeatures.map(_.name)
+
+      checkResult(
+        sql(s"DESCRIBE DETAIL t1"),
+        Seq(
+          p.minReaderVersion,
+          p.minWriterVersion,
+          p.implicitlySupportedFeatures.map(_.name).toArray.sorted),
+        Seq("minReaderVersion", "minWriterVersion", "tableFeatures"))
+
+      val features = p.readerAndWriterFeatureNames ++ p.implicitlySupportedFeatures.map(_.name)
       sql(s"""ALTER TABLE t1 SET TBLPROPERTIES (
              |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
              |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
-             |  delta.feature.${AppendOnlyTableFeature.name} = 'enabled'
+             |  delta.feature.${TestReaderWriterFeature.name} = 'enabled'
              |)""".stripMargin)
 
       checkResult(
@@ -254,8 +268,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         Seq(
           TABLE_FEATURES_MIN_READER_VERSION,
           TABLE_FEATURES_MIN_WRITER_VERSION,
-          (features + AppendOnlyTableFeature.name).toArray.sorted),
-        Seq("minReaderVersion", "minWriterVersion", "enabledTableFeatures"))
+          (features + TestReaderWriterFeature.name).toArray.sorted),
+        Seq("minReaderVersion", "minWriterVersion", "tableFeatures"))
     }
   }
 

@@ -23,7 +23,7 @@ import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
@@ -119,6 +119,7 @@ trait CloneTableSuiteBase extends QueryTest
       isReplaceOperation: Boolean = false,
       // If we are doing a replace, whether it is on a Delta table
       isReplaceDelta: Boolean = true,
+      tableProperties: Map[String, String] = Map.empty,
       commitLargeMetricsMap: Map[String, String] = Map.empty,
       expectedDataframe: DataFrame = spark.emptyDataFrame)
       (f: () => Unit =
@@ -132,7 +133,8 @@ trait CloneTableSuiteBase extends QueryTest
           sourceVersion,
           sourceTimestamp,
           isCreate,
-          isReplaceOperation)): Unit = {
+          isReplaceOperation,
+          tableProperties)): Unit = {
     // scalastyle:on
 
     // Truncate table before REPLACE
@@ -236,6 +238,7 @@ trait CloneTableSuiteBase extends QueryTest
     assert(blob("isReplaceDelta") === replacingDeltaTable)
     assert(blob("sourceTableSize") === cloneSource.sizeInBytes)
     assert(blob("sourceNumOfFiles") === cloneSource.numOfFiles)
+    assert(blob("partitionBy") === cloneSource.metadata.partitionColumns)
 
 
     // Check whether resulting metadata of target and source at version is the same
@@ -639,6 +642,34 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
+  cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
+    (source, clone) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+        // Create table without a default property setting.
+        spark.range(1L).write.format("delta").mode("overwrite").save(source)
+        val oldProtocol = DeltaLog.forTable(spark, source).update().protocol
+        assert(oldProtocol === Protocol(1, 1))
+        // Just use something that can be default.
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
+          TableFeatureProtocolUtils.defaultPropertyKey(TestWriterFeature) -> "enabled") {
+          // Clone in a session with default properties and check that they aren't merged
+          // (i.e. target properties are identical to source properties).
+          runAndValidateClone(
+            source,
+            clone
+          )()
+        }
+
+        val log = DeltaLog.forTable(spark, clone)
+        val targetProtocol = log.update().protocol
+        assert(targetProtocol === oldProtocol)
+      }
+  }
+
   testAllClones("clone a time traveled source using timestamp") { (source, clone, isShallow) =>
     // Create source
     spark.range(5).write.format("delta").save(source)
@@ -784,6 +815,19 @@ trait CloneTableSuiteBase extends QueryTest
       }
   }
 
+  testAllClones("CLONE with table properties to disable DV") { (source, target, isShallow) =>
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+      spark.range(10).write.format("delta").save(source)
+      spark.sql(s"DELETE FROM delta.`$source` WHERE id = 1")
+    }
+    intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
+      runAndValidateClone(
+        source,
+        target,
+        tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
+    }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
+  }
+
   testAllClones("clone parquet source - create or replace existing table using name",
     TAG_CHANGE_COLUMN_MAPPING_MODE) {
     (_, _, isShallow) =>
@@ -896,7 +940,7 @@ trait CloneTableSuiteBase extends QueryTest
         tableProperties = tblPropertyOverrides)
 
       val targetLog = DeltaLog.forTable(spark, target)
-      assert(targetLog.update().protocol.isFeatureEnabled(TestWriterFeature))
+      assert(targetLog.update().protocol.isFeatureSupported(TestWriterFeature))
   }
 }
 

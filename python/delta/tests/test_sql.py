@@ -44,7 +44,8 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
     def test_describe_history(self) -> None:
-        assert(len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()) > 0)
+        self.assertGreater(
+            len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()), 0)
 
     def test_generate(self) -> None:
         # create a delta table
@@ -67,7 +68,7 @@ class DeltaSqlTests(DeltaTestCase):
 
         shutil.rmtree(temp_path)
         # the number of files we write should equal the number of lines in the manifest
-        assert(len(files) == numFiles)
+        self.assertEqual(len(files), numFiles)
 
     def test_convert(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
@@ -95,7 +96,7 @@ class DeltaSqlTests(DeltaTestCase):
     def test_ddls(self) -> None:
         table = "deltaTable"
         table2 = "deltaTable2"
-        try:
+        with self.table(table, table2):
             def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
@@ -141,9 +142,6 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"ALTER TABLE {table2} SET LOCATION '{test_dir}'")
             self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 1)
-        finally:
-            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
-            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],

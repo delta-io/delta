@@ -606,25 +606,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
       cond: String,
       clauses: MergeClause*): Unit = {
 
-    def parseTableAndAlias(tableNameWithAlias: String): (String, Option[String]) = {
-      tableNameWithAlias.split(" ").toList match {
-        case tableName :: Nil =>
-          // 'MERGE INTO tableName' OR `MERGE INTO delta.`path`'
-          tableName -> None
-        case tableName :: alias :: Nil =>
-          // 'MERGE INTO tableName alias' or 'MERGE INTO delta.`path` alias'
-          tableName -> Some(alias)
-        case list if list.size >= 3 && list(list.size - 2).toLowerCase(Locale.ROOT) == "as" =>
-          // 'MERGE INTO ... AS alias'
-          list.dropRight(2).mkString(" ").trim() -> Some(list.last)
-        case list if list.size >= 2 =>
-          // 'MERGE INTO ... alias'
-          list.dropRight(1).mkString(" ").trim() -> Some(list.last)
-        case _ =>
-          fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
-      }
-    }
-
     def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
       : DeltaMergeBuilder = clause match {
       case _: MatchedClause =>
@@ -675,14 +656,14 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
       }
 
     val deltaTable = {
-      val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)
+      val (tableNameOrPath, optionalAlias) = DeltaTestUtils.parseTableAndAlias(tgt)
       var table = makeDeltaTable(tableNameOrPath)
       optionalAlias.foreach { alias => table = table.as(alias) }
       table
     }
 
     val sourceDataFrame: DataFrame = {
-      val (tableOrQuery, optionalAlias) = parseTableAndAlias(src)
+      val (tableOrQuery, optionalAlias) = DeltaTestUtils.parseTableAndAlias(src)
       var df =
         if (tableOrQuery.startsWith("(")) spark.sql(tableOrQuery) else spark.table(tableOrQuery)
       optionalAlias.foreach { alias => df = df.as(alias) }
@@ -750,11 +731,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
 
           if (result != null) {
             execMerge()
-            val expectedDf = if (targetSchema != null) {
-              spark.read.schema(targetSchema).json(strToJsonSeq(result).toDS)
-            } else {
-              spark.read.json(strToJsonSeq(result).toDS)
-            }
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
             checkAnswer(readDeltaTable(pathOrName), expectedDf)
           } else {
             val e = intercept[AnalysisException] {

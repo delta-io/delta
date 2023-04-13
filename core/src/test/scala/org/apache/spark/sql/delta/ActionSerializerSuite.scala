@@ -312,6 +312,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       size = 1,
       modificationTime = 1,
       dataChange = true,
+      stats = """{"numRecords":3}""",
       tags = Map.empty,
       deletionVector = deletionVectorWithAbsolutePath),
     expectedJson =
@@ -322,6 +323,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"size":1,
         |"modificationTime":1,
         |"dataChange":true,
+        |"stats":"{\"numRecords\":3}",
         |"tags":{},
         |"deletionVector":{
         |"storageType":"p",
@@ -329,7 +331,10 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"offset":10,
         |"sizeInBytes":10,
         |"cardinality":2}}
-        |}""".stripMargin.replaceAll("\n", "")
+        |}""".stripMargin.replaceAll("\n", ""),
+    extraSettings = Seq(
+      // Skip the table property check, so this write doesn't fail.
+      DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED.key -> "false")
   )
 
 
@@ -483,8 +488,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         val settings = Seq(
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
-          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") ++ extraSettings
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") ++ extraSettings
         withSQLConf(settings: _*) {
 
           // Do one empty commit so that protocol gets committed.
@@ -500,8 +504,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             FileNames.deltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
-          assert(committedActions.size == 1)
-          val serializedJson = committedActions.head
+          assert(committedActions.size == 2)
+          val serializedJson = committedActions.last
           assert(serializedJson === expectedJson)
           val asObject = Action.fromJson(serializedJson)
           assert(action === asObject)

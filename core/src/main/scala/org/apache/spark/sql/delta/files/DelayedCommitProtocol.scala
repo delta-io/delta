@@ -217,7 +217,9 @@ class DelayedCommitProtocol(
     if (addedFiles.nonEmpty) {
       val fs = new Path(path, addedFiles.head._2).getFileSystem(taskContext.getConfiguration)
       val statuses: Seq[FileAction] = addedFiles.map { f =>
+        // scalastyle:off pathfromuri
         val filePath = new Path(path, new Path(new URI(f._2)))
+        // scalastyle:on pathfromuri
         val stat = fs.getFileStatus(filePath)
 
         buildActionFromAddedFile(f, stat, taskContext)

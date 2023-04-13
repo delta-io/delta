@@ -261,7 +261,10 @@ case class DeleteCommand(
               cond)
 
             if (touchedFiles.nonEmpty) {
-              DeleteWithDeletionVectorsHelper.processUnmodifiedData(touchedFiles)
+              DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+                sparkSession,
+                touchedFiles,
+                txn.snapshot)
             } else {
               Nil // Nothing to update
             }

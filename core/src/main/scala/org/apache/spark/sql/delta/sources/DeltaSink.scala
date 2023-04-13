@@ -16,12 +16,16 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.util.concurrent.ConcurrentHashMap
+
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.SetTransaction
+import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
+import org.apache.spark.sql.delta.actions.{FileAction, SetTransaction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.hadoop.fs.Path
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -39,24 +43,48 @@ class DeltaSink(
     partitionColumns: Seq[String],
     outputMode: OutputMode,
     options: DeltaOptions)
-  extends Sink with ImplicitMetadataOperation with DeltaLogging {
+  extends Sink
+    with ImplicitMetadataOperation
+    with DeltaLogging {
 
   private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
 
   private val sqlConf = sqlContext.sparkSession.sessionState.conf
+
+  // This have to be lazy because queryId is a thread local property that is not available
+  // when the Sink object is created.
+  lazy val queryId = sqlContext.sparkContext.getLocalProperty(StreamExecution.QUERY_ID_KEY)
 
   override protected val canOverwriteSchema: Boolean =
     outputMode == OutputMode.Complete() && options.canOverwriteSchema
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
-  override def addBatch(batchId: Long, data: DataFrame): Unit = deltaLog.withNewTransaction { txn =>
-    val sc = data.sparkSession.sparkContext
-    val metrics = Map[String, SQLMetric](
-      "numAddedFiles" -> createMetric(sc, "number of files added"),
-      "numRemovedFiles" -> createMetric(sc, "number of files removed")
-    )
-    val queryId = sqlContext.sparkContext.getLocalProperty(StreamExecution.QUERY_ID_KEY)
+  case class PendingTxn(batchId: Long,
+                        optimisticTransaction: OptimisticTransaction,
+                        streamingUpdate: StreamingUpdate,
+                        newFiles: Seq[FileAction],
+                        deletedFiles: Seq[FileAction]) {
+    def commit(): Unit = {
+      val sc = sqlContext.sparkContext
+      val metrics = Map[String, SQLMetric](
+        "numAddedFiles" -> createMetric(sc, "number of files added"),
+        "numRemovedFiles" -> createMetric(sc, "number of files removed")
+      )
+      metrics("numRemovedFiles").set(deletedFiles.size)
+      metrics("numAddedFiles").set(newFiles.size)
+      optimisticTransaction.registerSQLMetrics(sqlContext.sparkSession, metrics)
+      val setTxn = SetTransaction(appId = queryId, version = batchId,
+        lastUpdated = Some(deltaLog.clock.getTimeMillis())) :: Nil
+      optimisticTransaction
+        .commit(actions = setTxn ++ newFiles ++ deletedFiles, op = streamingUpdate)
+      val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+      SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
+    }
+  }
+
+  override def addBatch(batchId: Long, data: DataFrame): Unit = {
+    val txn = deltaLog.startTransaction()
     assert(queryId != null)
 
     if (SchemaUtils.typeExistsRecursively(data.schema)(_.isInstanceOf[NullType])) {
@@ -93,17 +121,11 @@ class DeltaSink(
       case _ => Nil
     }
     val newFiles = txn.writeFiles(data, Some(options))
-    val setTxn = SetTransaction(queryId, batchId, Some(deltaLog.clock.getTimeMillis())) :: Nil
     val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId, options.userMetadata)
-    metrics("numRemovedFiles").set(deletedFiles.size)
-    metrics("numAddedFiles").set(newFiles.size)
-    txn.registerSQLMetrics(sqlContext.sparkSession, metrics)
-    txn.commit(setTxn ++ newFiles ++ deletedFiles, info)
-    // This is needed to make the SQL metrics visible in the Spark UI
-    val executionId = sqlContext.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-    SQLMetrics.postDriverMetricUpdates(
-      sqlContext.sparkContext, executionId, metrics.values.toSeq)
+    val pendingTxn = PendingTxn(batchId, txn, info, newFiles, deletedFiles)
+    pendingTxn.commit()
   }
+
 
   override def toString(): String = s"DeltaSink[$path]"
 }

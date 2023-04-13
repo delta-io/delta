@@ -25,13 +25,13 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
+import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
 import org.apache.spark.sql.types.StructType
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
  *
- * @param readPredicates partition predicates by which files have been queried by the transaction
+ * @param readPredicates predicates by which files have been queried by the transaction
  * @param readFiles files that have been seen by the transaction
  * @param readWholeTable whether the whole table was read during the transaction
  * @param readAppIds appIds that have been seen by the transaction
@@ -42,7 +42,7 @@ import org.apache.spark.sql.types.StructType
  */
 private[delta] class CurrentTransactionInfo(
     val txnId: String,
-    val readPredicates: Seq[DeltaTablePartitionReadPredicate],
+    val readPredicates: Seq[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
@@ -76,6 +76,8 @@ private[delta] class CurrentTransactionInfo(
    * issues.
    */
   val partitionSchemaAtReadTime: StructType = readSnapshot.metadata.partitionSchema
+
+  def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
 /**
@@ -178,6 +180,42 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * Filters the [[files]] list with the partition predicates of the current transaction
+   * and returns the first file that is matching.
+   */
+  protected def getFirstFileMatchingPartitionPredicates(files: Seq[AddFile]): Option[AddFile] = {
+    import org.apache.spark.sql.delta.implicits._
+    val filesDf = files.toDF(spark)
+
+    // we need to canonicalize the partition predicates per each group of rewrites vs. nonRewrites
+    val canonicalPredicates = currentTransactionInfo.readPredicates
+      .partition(_.shouldRewriteFilter) match {
+        case (rewrites, nonRewrites) =>
+          val canonicalRewrites =
+            ExpressionSet(rewrites.map(_.partitionPredicate)).map { e =>
+              DeltaTableReadPredicate(partitionPredicates = Seq(e))
+            }
+          val canonicalNonRewrites =
+            ExpressionSet(nonRewrites.map(_.partitionPredicate)).map { e =>
+              DeltaTableReadPredicate(partitionPredicates = Seq(e), shouldRewriteFilter = false)
+            }
+          canonicalRewrites ++ canonicalNonRewrites
+      }
+
+    val filesMatchingPartitionPredicates = canonicalPredicates.iterator
+      .flatMap { readPredicate =>
+        DeltaLog.filterFileList(
+          partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
+          files = filesDf,
+          partitionFilters = readPredicate.partitionPredicates,
+          shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
+        ).as[AddFile].head(1).headOption
+      }.take(1).toArray
+
+    filesMatchingPartitionPredicates.headOption
+  }
+
+  /**
    * Check if the new files added by the already committed transactions should have been read by
    * the current transaction.
    */
@@ -193,31 +231,10 @@ private[delta] class ConflictChecker(
           Seq.empty
       }
 
-      import org.apache.spark.sql.delta.implicits._
-      // we need to canonicalize the read predicates per each group of rewrites vs. nonRewrites
-      val canonicalPredicates = currentTransactionInfo.readPredicates
-        .partition(_.shouldRewriteFilter) match {
-        case (rewrites, nonRewrites) =>
-          val canonicalRewrites = ExpressionSet(rewrites.map(_.predicate))
-          val canonicalNonRewrites = ExpressionSet(nonRewrites.map(_.predicate))
-          canonicalRewrites.map(DeltaTablePartitionReadPredicate(_)) ++
-          canonicalNonRewrites.map(DeltaTablePartitionReadPredicate(_, shouldRewriteFilter = false))
-      }
+      val fileMatchingPartitionReadPredicates =
+        getFirstFileMatchingPartitionPredicates(addedFilesToCheckForConflicts)
 
-      val predicatesMatchingAddedFiles = canonicalPredicates.iterator
-        .flatMap { readPredicate =>
-
-          val conflictingFile = DeltaLog.filterFileList(
-            partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
-            files = addedFilesToCheckForConflicts.toDF(spark),
-            partitionFilters = readPredicate.predicate :: Nil,
-            shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
-          ).as[AddFile].take(1)
-
-          conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
-        }.take(1).toArray
-
-      if (predicatesMatchingAddedFiles.nonEmpty) {
+      if (fileMatchingPartitionReadPredicates.nonEmpty) {
         val isWriteSerializable = isolationLevel == WriteSerializable
 
         val retryMsg = if (isWriteSerializable && winningCommitSummary.onlyAddFiles &&
@@ -231,7 +248,7 @@ private[delta] class ConflictChecker(
         } else None
         throw DeltaErrors.concurrentAppendException(
           winningCommitSummary.commitInfo,
-          predicatesMatchingAddedFiles.head,
+          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues),
           retryMsg)
       }
     }
@@ -289,9 +306,7 @@ private[delta] class ConflictChecker(
     // transaction i.e. the winning transaction have [[SetTransaction]] corresponding to
     // some appId on which current transaction depends on. Example - This can happen when
     // multiple instances of the same streaming query are running at the same time.
-    val txnOverlap = winningCommitSummary.appLevelTransactions.map(_.appId).toSet intersect
-      currentTransactionInfo.readAppIds
-    if (txnOverlap.nonEmpty) {
+    if (winningCommitSummary.appLevelTransactions.exists(currentTransactionInfo.isConflict(_))) {
       throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
     }
   }

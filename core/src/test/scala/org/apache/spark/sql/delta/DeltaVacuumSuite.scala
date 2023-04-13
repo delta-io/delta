@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
+import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
@@ -29,11 +31,12 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
+import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -45,8 +48,11 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
-  with SharedSparkSession  with GivenWhenThen
-  with SQLTestUtils  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession
+  with GivenWhenThen
+  with SQLTestUtils
+  with DeletionVectorsTestUtils
+  with DeltaTestUtilsForTempViews {
 
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
     withTempDir { file =>
@@ -61,6 +67,34 @@ trait DeltaVacuumSuiteBase extends QueryTest
     DeltaConfigs.getMilliSeconds(
       IntervalUtils.safeStringToInterval(
         UTF8String.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)))
+  }
+
+  /** Lists the data files in a given dir recursively. */
+  protected def listDataFiles(spark: SparkSession, tableDir: String): Seq[String] = {
+    val result = ArrayBuffer.empty[String]
+    // scalastyle:off deltahadoopconfiguration
+    val fs = FileSystem.get(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
+    val iterator = fs.listFiles(fs.makeQualified(new Path(tableDir)), true)
+    while (iterator.hasNext) {
+      val path = iterator.next().getPath.toUri.toString
+      if (path.endsWith(".parquet") && !path.contains(".checkpoint")) {
+        result += path
+      }
+    }
+    result.toSeq
+  }
+
+  protected def assertNumFiles(
+      deltaLog: DeltaLog,
+      addFiles: Int,
+      addFilesWithDVs: Int,
+      dvFiles: Int,
+      dataFiles: Int): Unit = {
+    assert(deltaLog.update().allFiles.count() === addFiles)
+    assert(getFilesWithDeletionVectors(deltaLog).size === addFilesWithDVs)
+    assert(listDeletionVectors(deltaLog).size === dvFiles)
+    assert(listDataFiles(spark, deltaLog.dataPath.toString).size === dataFiles)
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString
@@ -414,6 +448,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
 
 class DeltaVacuumSuite
   extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
+  import testImplicits._
+
   override def sparkConf: SparkConf = {
     super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
   }
@@ -747,6 +783,199 @@ class DeltaVacuumSuite
       }
       assert(ex.getMessage.contains(
         s"Please provide the base path ($path) when Vacuuming Delta tables."))
+    }
+  }
+
+  test(s"vacuum table with DVs and zero retention policy throws exception by default") {
+    val targetDF = spark.range(0, 100, 1, 2)
+      .withColumn("value", col("id"))
+
+      withTempDeltaTable(targetDF, enableDVs = true) { (targetTable, targetLog) =>
+        // Add some DVs.
+        targetTable().delete("id < 10")
+        val e = intercept[IllegalArgumentException] {
+          spark.sql(s"VACUUM delta.`${targetLog.dataPath}` RETAIN 0 HOURS")
+        }
+        assert(e.getMessage.contains(
+          "Are you sure you would like to vacuum files with such a low retention period?"))
+      }
+  }
+
+  test(s"vacuum after purge with zero retention policy") {
+    val tableName = "testTable"
+    withDeletionVectorsEnabled() {
+      withSQLConf(
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        withTable(tableName) {
+          // Create a Delta Table with 5 files of 10 rows, and delete half rows from first 4 files.
+          spark.range(0, 50, step = 1, numPartitions = 5)
+            .write.format("delta").saveAsTable(tableName)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          spark.sql(s"DELETE from $tableName WHERE ID % 2 = 0 and ID < 40")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 4, dvFiles = 1, dataFiles = 5)
+
+          purgeDVs(tableName)
+
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 1, dataFiles = 9)
+          spark.sql(s"VACUUM $tableName RETAIN 0 HOURS")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0, dataFiles = 5)
+
+          checkAnswer(
+            spark.read.table(tableName),
+            Seq.range(0, 50).filterNot(x => x < 40 && x % 2 == 0).toDF)
+        }
+      }
+    }
+  }
+
+  // Helper method to remove the DVs in Delta table and rewrite the data files
+  def purgeDVs(tableName: String): Unit = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.0001",
+      DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> "2",
+      // Set the max file size to low so that we always rewrite the single file without DVs
+      // and not combining with other data files.
+      DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "2") {
+      spark.sql(s"OPTIMIZE $tableName")
+    }
+  }
+
+  test(s"vacuum after purging deletion vectors") {
+    val tableName = "testTable"
+    val clock = new ManualClock()
+    withDeletionVectorsEnabled() {
+      withSQLConf(
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        withTable(tableName) {
+          // Create Delta table with 5 files of 10 rows.
+          spark.range(0, 50, step = 1, numPartitions = 5)
+            .write.format("delta").saveAsTable(tableName)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0, dataFiles = 5)
+
+          // Delete 1 row from each file. DVs will be packed to one DV file.
+          val deletedRows1 = Seq(0, 10, 20, 30, 40)
+          val deletedRowsStr1 = deletedRows1.mkString("(", ",", ")")
+          spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr1")
+          val timestampV1 = deltaLog.update().timestamp
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 5, dvFiles = 1, dataFiles = 5)
+
+          // Delete all rows from the first file. An ephemeral DV will still be created.
+          spark.sql(s"DELETE FROM $tableName WHERE id < 10")
+          val timestampV2 = deltaLog.update().timestamp
+          assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 2, dataFiles = 5)
+          val expectedAnswerV2 = Seq.range(0, 50).filterNot(deletedRows1.contains).filterNot(_ < 10)
+
+          // Delete 1 more row from each file.
+          val deletedRows2 = Seq(11, 21, 31, 41)
+          val deletedRowsStr2 = deletedRows2.mkString("(", ",", ")")
+          spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr2")
+          val timestampV3 = deltaLog.update().timestamp
+          assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 3, dataFiles = 5)
+          val expectedAnswerV3 = expectedAnswerV2.filterNot(deletedRows2.contains)
+
+          // Delete DVs by rewriting the data files with DVs.
+          purgeDVs(tableName)
+
+          val numFilesAfterPurge = 4
+          val timestampV4 = deltaLog.update().timestamp
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
+            dataFiles = 9)
+
+          // Run VACUUM with nothing expired. It should not delete anything.
+          clock.setTime(System.currentTimeMillis())
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
+            dataFiles = 9)
+
+          // Run VACUUM @ V1.
+          clock.setTime(timestampV1 + TimeUnit.HOURS.toMillis(1))
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
+            dataFiles = 9)
+
+          // Run VACUUM @ V2. It should delete the ephemeral DV and the removed Parquet file.
+          clock.setTime(timestampV2 + TimeUnit.HOURS.toMillis(1))
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 2,
+            dataFiles = 8)
+          checkAnswer(
+            spark.sql(s"SELECT * FROM $tableName VERSION AS OF 2"), expectedAnswerV2.toDF)
+
+          // Run VACUUM @ V3. It should delete the persistent DVs from V1.
+          clock.setTime(timestampV3 + TimeUnit.HOURS.toMillis(1))
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 1,
+            dataFiles = 8)
+          checkAnswer(
+            spark.sql(s"SELECT * FROM $tableName VERSION AS OF 3"), expectedAnswerV3.toDF)
+
+          // Run VACUUM @ V4. It should delete the Parquet files and DVs of V3.
+          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1))
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 4)
+          checkAnswer(
+            spark.sql(s"SELECT * FROM $tableName VERSION AS OF 4"), expectedAnswerV3.toDF)
+
+          // Run VACUUM with zero retention period. It should not delete anything.
+          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1))
+          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(0), clock = clock, dryRun = false)
+          assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 4)
+
+          // Last version should still be readable.
+          checkAnswer(spark.sql(s"SELECT * FROM $tableName"), expectedAnswerV3.toDF)
+        }
+      }
+    }
+  }
+
+  for (partitioned <- DeltaTestUtils.BOOLEAN_DOMAIN) {
+    test(s"delete persistent deletion vectors - partitioned = $partitioned") {
+      val targetDF = spark.range(0, 100, 1, 10).toDF
+        .withColumn("v", col("id"))
+        .withColumn("partCol", lit(0))
+      val partitionBy = if (partitioned) Seq("partCol") else Seq.empty
+      withSQLConf(
+          DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE.key -> "0",
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        withDeletionVectorsEnabled() {
+          withTempDeltaTable(
+              targetDF,
+              partitionBy = partitionBy) { (targetTable, targetLog) =>
+            val targetDir = targetLog.dataPath
+
+            // Add a DV to all files and check that DVs are not deleted.
+            targetTable().delete("id % 2 == 0")
+
+            assert(listDeletionVectors(targetLog).size == 10)
+            targetTable().vacuum(0)
+            assert(listDeletionVectors(targetLog).size == 10)
+            checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(50))
+
+            // Update the DV of the first file by deleting two rows and check that previous DV is
+            // deleted.
+            targetTable().delete("id  < 10 AND id % 3 == 0")
+
+            assert(listDeletionVectors(targetLog).size == 11)
+            targetTable().vacuum(0)
+            assert(listDeletionVectors(targetLog).size == 10)
+            checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(48))
+
+            // Delete all rows in first 5 files and check that DVs are not deleted due to
+            // the retention period, but deleted after that.
+            targetTable().delete("id < 50")
+
+            assert(listDeletionVectors(targetLog).size == 15)
+            targetTable().vacuum(10)
+            assert(listDeletionVectors(targetLog).size == 15)
+            targetTable().vacuum(0)
+            assert(listDeletionVectors(targetLog).size == 5)
+            checkAnswer(sql(s"select count(*) from delta.`$targetDir`"), Row(25))
+          }
+        }
+      }
     }
   }
 

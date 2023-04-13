@@ -27,13 +27,14 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaThreadPool
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 /**
  * Wraps the most recently updated snapshot along with the timestamp the update was started.
@@ -134,11 +135,12 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
-      versionToLoad: Option[Long] = None): Option[LogSegment] = {
+      versionToLoad: Option[Long] = None,
+      checkpointMetadataHint: Option[CheckpointMetaData] = None): Option[LogSegment] = {
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
     val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
-    getLogSegmentForVersion(startCheckpoint, versionToLoad, newFiles)
+    getLogSegmentForVersion(startCheckpoint, versionToLoad, newFiles, checkpointMetadataHint)
   }
 
   /**
@@ -148,7 +150,8 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long],
-      files: Option[Array[FileStatus]]): Option[LogSegment] = {
+      files: Option[Array[FileStatus]],
+      checkpointMetadataHint: Option[CheckpointMetaData]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
       val newFiles = files.filterNot(_.isEmpty)
         .getOrElse {
@@ -175,10 +178,8 @@ trait SnapshotManagement { self: DeltaLog =>
       }
       val (checkpoints, deltas) = newFiles.partition(isCheckpointFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
-      val lastChkpoint = versionToLoad.map(CheckpointInstance(_, None))
-        .getOrElse(CheckpointInstance.MaxValue)
       val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
-      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, lastChkpoint)
+      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, versionToLoad)
       val newCheckpointVersion = newCheckpoint.map(_.version).getOrElse {
         // If we do not have any checkpoint, pass new checkpoint version as -1 so that first
         // delta version can be 0.
@@ -221,15 +222,8 @@ trait SnapshotManagement { self: DeltaLog =>
       }
 
       val newVersion = deltaVersions.lastOption.getOrElse(newCheckpoint.get.version)
-      val newCheckpointFiles: Seq[FileStatus] = newCheckpoint.map { newCheckpoint =>
-        val newCheckpointPaths = newCheckpoint.getCorrespondingFiles(logPath).toSet
-        val newCheckpointFileArray = checkpoints.filter(f => newCheckpointPaths.contains(f.getPath))
-        assert(newCheckpointFileArray.length == newCheckpointPaths.size,
-          "Failed in getting the file information for:\n" +
-            newCheckpointPaths.mkString(" -", "\n -", "") + "\n" +
-            "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
-        newCheckpointFileArray.toSeq
-      }.getOrElse(Nil)
+      val checkpointFileListProvider = newCheckpoint
+        .map(_.getCheckpointFileListProvider(logPath, checkpoints, checkpointMetadataHint))
 
       // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
       // they may just be before the checkpoint version unless we have a bug in log cleanup.
@@ -246,7 +240,7 @@ trait SnapshotManagement { self: DeltaLog =>
         logPath,
         newVersion,
         deltasAfterCheckpoint,
-        newCheckpointFiles,
+        checkpointFileListProvider,
         newCheckpoint.map(_.version),
         lastCommitTimestamp))
     }
@@ -365,14 +359,9 @@ trait SnapshotManagement { self: DeltaLog =>
       snapshotVersion >= maxExclusiveCheckpointVersion,
       s"snapshotVersion($snapshotVersion) is less than " +
         s"maxExclusiveCheckpointVersion($maxExclusiveCheckpointVersion)")
-    val largestCheckpointVersionToSearch = snapshotVersion.min(maxExclusiveCheckpointVersion - 1)
-    val previousCp = if (largestCheckpointVersionToSearch < 0) {
-      None
-    } else {
-      findLastCompleteCheckpoint(
-        // The largest possible `CheckpointInstance` at version `largestCheckpointVersionToSearch`
-        CheckpointInstance(largestCheckpointVersionToSearch, numParts = Some(Int.MaxValue)))
-    }
+    val upperBoundVersion = math.min(snapshotVersion + 1, maxExclusiveCheckpointVersion)
+    val previousCp =
+      if (upperBoundVersion > 0) findLastCompleteCheckpointBefore(upperBoundVersion) else None
     previousCp match {
       case Some(cp) =>
         val filesSinceCheckpointVersion = listDeltaAndCheckpointFiles(
@@ -391,13 +380,8 @@ trait SnapshotManagement { self: DeltaLog =>
         }
         // `checkpoints` may contain multiple checkpoints for different part sizes, we need to
         // search `FileStatus`s of the checkpoint files for `cp`.
-        val checkpointFileNames = cp.getCorrespondingFiles(logPath).map(_.getName).toSet
-        val newCheckpointFiles =
-          checkpoints.filter(f => checkpointFileNames.contains(f.getPath.getName))
-        assert(newCheckpointFiles.length == checkpointFileNames.size,
-          "Failed in getting the file information for:\n" +
-            checkpointFileNames.mkString(" -", "\n -", "") + "\n" +
-            "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
+        val checkpointFileListProvider = cp.getCheckpointFileListProvider(
+          logPath, checkpoints, checkpointMetadataHint = None)
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
           deltaVersion(file) > cp.version
@@ -415,15 +399,15 @@ trait SnapshotManagement { self: DeltaLog =>
           logPath,
           snapshotVersion,
           deltas,
-          newCheckpointFiles,
+          Some(checkpointFileListProvider),
           Some(cp.version),
           deltas.last.getModificationTime))
       case None =>
-        val deltas =
+        val (deltas, deltaVersions) =
           listDeltaAndCheckpointFiles(startVersion = 0, versionToLoad = Some(snapshotVersion))
             .getOrElse(Array.empty)
-            .filter(isDeltaFile)
-        val deltaVersions = deltas.map(deltaVersion)
+            .flatMap(DeltaFile.unapply(_))
+            .unzip
         try {
           verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
         } catch {
@@ -508,22 +492,24 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
-   * Checks if the snapshot has already been updated since the specified timestamp.
+   * Returns the snapshot, if it has been updated since the specified timestamp.
    *
    * Note that this should be used differently from isSnapshotStale. Staleness is
    * used to allow async updates if the table has been updated within the staleness
    * window, which allows for better perf in exchange for possibly using a slightly older
    * view of the table. For eg, if a table is queried multiple times in quick succession.
    *
-   * On the other hand, isSnapshotFresh is used to identify duplicate updates within a
+   * On the other hand, getSnapshotIfFresh is used to identify duplicate updates within a
    * single transaction. For eg, if a table isn't cached and the snapshot was fetched from the
    * logstore, then updating the snapshot again in the same transaction is superfluous. We can
    * use this function to detect and skip such an update.
    */
-  private def isSnapshotFresh(
+  private def getSnapshotIfFresh(
       capturedSnapshot: CapturedSnapshot,
-      checkIfUpdatedSinceTs: Option[Long]): Boolean = {
-    checkIfUpdatedSinceTs.exists(_ <= capturedSnapshot.updateTimestamp)
+      checkIfUpdatedSinceTs: Option[Long]): Option[Snapshot] = {
+    checkIfUpdatedSinceTs.collect {
+      case ts if ts <= capturedSnapshot.updateTimestamp => capturedSnapshot.snapshot
+    }
   }
 
   /**
@@ -541,31 +527,59 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(
       stalenessAcceptable: Boolean = false,
       checkIfUpdatedSinceTs: Option[Long] = None): Snapshot = {
+    val startTimeMs = System.currentTimeMillis()
     // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
+    val oldVersion = capturedSnapshot.snapshot.version
+    def sendEvent(
+      newSnapshot: Snapshot,
+      snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false
+    ): Unit = {
+      recordDeltaEvent(
+        this,
+        opType = "deltaLog.update",
+        data = Map(
+          "snapshotAlreadyUpdatedAfterRequiredTimestamp" ->
+            snapshotAlreadyUpdatedAfterRequiredTimestamp,
+          "newVersion" -> newSnapshot.version,
+          "oldVersion" -> oldVersion,
+          "timeTakenMs" -> (System.currentTimeMillis() - startTimeMs)
+        )
+      )
+    }
     // Eagerly exit if the snapshot is already new enough to satisfy the caller
-    if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
-      return capturedSnapshot.snapshot
+    getSnapshotIfFresh(capturedSnapshot, checkIfUpdatedSinceTs).foreach { snapshot =>
+      sendEvent(snapshot, snapshotAlreadyUpdatedAfterRequiredTimestamp = true)
+      return snapshot
     }
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(isAsync = false)
+          val newSnapshot = updateInternal(isAsync = false)
+          sendEvent(newSnapshot = capturedSnapshot.snapshot)
+          newSnapshot
         }
       }
     } else {
-      if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
-        val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
-        asyncUpdateTask = Future[Unit] {
-          spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
-          spark.sparkContext.setJobGroup(
-            jobGroup,
-            s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
-            interruptOnCancel = true)
-          tryUpdate(isAsync = true)
-        }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
+      // Kick off an async update, if one is not already obviously running. Intentionally racy.
+      if (Option(asyncUpdateTask).forall(_.isCompleted)) {
+        try {
+          val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
+          asyncUpdateTask = SnapshotManagement.deltaLogAsyncUpdateThreadPool.submit(spark) {
+            spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
+            spark.sparkContext.setJobGroup(
+              jobGroup,
+              s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
+              interruptOnCancel = true)
+            tryUpdate(isAsync = true)
+          }
+        } catch {
+          case NonFatal(e) if !Utils.isTesting =>
+            // Failed to schedule the future -- fail in testing, but just log it in prod.
+            recordDeltaEvent(this, "delta.snapshot.asyncUpdateFailed", data = Map("exception" -> e))
+        }
       }
       currentSnapshot.snapshot
     }
@@ -720,8 +734,10 @@ trait SnapshotManagement { self: DeltaLog =>
     }
 
     // Do not use the hint if the version we're asking for is smaller than the last checkpoint hint
-    val startingCheckpoint = lastCheckpointHint.collect { case ci if ci.version <= version => ci }
-      .orElse(findLastCompleteCheckpoint(CheckpointInstance(version, None)))
+    val startingCheckpoint =
+      lastCheckpointHint
+        .collect { case ci if ci.version <= version => ci }
+        .orElse(findLastCompleteCheckpointBefore(version))
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
@@ -735,9 +751,9 @@ trait SnapshotManagement { self: DeltaLog =>
 }
 
 object SnapshotManagement {
-  protected lazy val deltaLogAsyncUpdateThreadPool = {
+  protected[delta] lazy val deltaLogAsyncUpdateThreadPool = {
     val tpe = ThreadUtils.newDaemonCachedThreadPool("delta-state-update", 8)
-    ExecutionContext.fromExecutorService(tpe)
+    new DeltaThreadPool(tpe)
   }
 
   /**
@@ -792,9 +808,7 @@ case class SerializableFileStatus(
   def getHadoopPath: Path = new Path(path)
 
   def toFileStatus: FileStatus = {
-    new LocatedFileStatus(
-      new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path)),
-      Array.empty[BlockLocation])
+    new FileStatus(length, isDir, 0, 0, modificationTime, new Path(path))
   }
 
   override def equals(obj: Any): Boolean = obj match {
@@ -825,7 +839,8 @@ object SerializableFileStatus {
  * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
- * @param checkpoint The checkpoint file to read
+ * @param checkpointFileListProviderOpt provider to give information about Checkpoint files. This
+ *                                   should be non-empty if [[checkpointVersionOpt]] is present.
  * @param checkpointVersionOpt The checkpoint version used to start replay
  * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
@@ -835,9 +850,12 @@ case class LogSegment(
     logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
-    checkpoint: Seq[FileStatus],
+    checkpointFileListProviderOpt: Option[CheckpointFileListProvider],
     checkpointVersionOpt: Option[Long],
     lastCommitTimestamp: Long) {
+
+  def checkpoint: Seq[FileStatus] =
+    checkpointFileListProviderOpt.map(_.checkpointFiles).getOrElse(Nil)
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
 
@@ -856,6 +874,23 @@ case class LogSegment(
 }
 
 object LogSegment {
+
+  def apply(
+      logPath: Path,
+      version: Long,
+      deltas: Seq[FileStatus],
+      checkpoint: Seq[FileStatus],
+      checkpointVersionOpt: Option[Long],
+      lastCommitTimestamp: Long): LogSegment = {
+    LogSegment(
+      logPath,
+      version,
+      deltas,
+      if (checkpoint.nonEmpty) Some(PreloadedCheckpointFileProvider(checkpoint)) else None,
+      checkpointVersionOpt,
+      lastCommitTimestamp)
+  }
+
   /** The LogSegment for an empty transaction log directory. */
   def empty(path: Path): LogSegment = LogSegment(
     logPath = path,

@@ -223,11 +223,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
           // unknowingly to `\` and `%` encoding between the root dir and file names generated
           // by listing.
           val relativeManifestFilePath =
-            new Path(p).toUri.getPath.stripPrefix(prefixToStrip).stripPrefix(Path.SEPARATOR)
+            new URI(p).getPath.stripPrefix(prefixToStrip).stripPrefix(Path.SEPARATOR)
           new Path(relativeManifestFilePath).getParent.toString // returns "col1=0/col2=0"
         }.filterNot(_.trim.isEmpty).toSet
       } else Set.empty[String]
-    }.map(uri => new Path(new URI(uri)).toString)
+    }
     // paths returned from inputFiles are URI encoded so we need to convert them back to string.
     // So that they can compared with newManifestPartitionRelativePaths in the next step.
 

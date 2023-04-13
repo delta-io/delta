@@ -58,7 +58,8 @@ abstract class UpdateSuiteBase
 
   override def beforeEach() {
     super.beforeEach()
-    tempDir = Utils.createTempDir()
+    // Using a space in path to provide coverage for special characters.
+    tempDir = Utils.createTempDir(namePrefix = "spark test")
     deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
   }
 

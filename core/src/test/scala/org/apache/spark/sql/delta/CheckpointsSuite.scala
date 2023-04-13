@@ -271,6 +271,8 @@ class CheckpointsSuite extends QueryTest
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
 
+      sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` " +
+        s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
       def insertData(data: String): Unit = {
         spark.sql(s"INSERT INTO TABLE delta.`${target.getAbsolutePath}` $data")
       }

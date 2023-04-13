@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TimestampNTZTableFeature}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -212,7 +212,8 @@ object SchemaUtils extends DeltaLogging {
           case Some(original) => original.name
           // This is a virtual partition column used for doing CDC writes. It's not actually
           // in the table schema.
-          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
+          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME ||
+            field.name == CDCReader.CDC_PARTITION_COL => field.name
           case None =>
             throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)
         }
@@ -1026,6 +1027,13 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
+   * Find TimestampNTZ columns in the table schema.
+   */
+  def checkForTimestampNTZColumnsRecursively(schema: StructType): Boolean = {
+    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[TimestampNTZType])
+  }
+
+  /**
    * Find the unsupported data types in a `DataType` recursively. Add the unsupported data types to
    * the provided `unsupportedDataTypes` buffer.
    *
@@ -1057,8 +1065,6 @@ object SchemaUtils extends DeltaLogging {
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
-      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
-      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), TimestampNTZType)
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>

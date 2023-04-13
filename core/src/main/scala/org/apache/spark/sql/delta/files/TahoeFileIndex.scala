@@ -99,7 +99,9 @@ abstract class TahoeFileIndex(
   override def partitionSchema: StructType = metadata.partitionSchema
 
   protected def absolutePath(child: String): Path = {
+    // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
+    // scalastyle:on pathfromuri
     if (p.isAbsolute) {
       p
     } else {
@@ -178,7 +180,11 @@ case class TahoeLogFileIndex(
   }
 
   protected def getSnapshotToScan: Snapshot = {
-    if (isTimeTravelQuery) snapshotAtAnalysis else deltaLog.update(stalenessAcceptable = true)
+    if (isTimeTravelQuery) {
+      snapshotAtAnalysis
+    } else {
+      deltaLog.update(stalenessAcceptable = true)
+    }
   }
 
   /** Provides the version that's being used as part of the scan if this is a time travel query. */

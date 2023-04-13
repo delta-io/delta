@@ -280,15 +280,14 @@ object DeltaHistoryManager extends DeltaLogging {
    * This value must be used as a lower bound.
    */
   def getEarliestDeltaFile(deltaLog: DeltaLog): Long = {
-    val earliestVersionOpt = deltaLog.store.listFrom(
-      FileNames.listingPrefix(deltaLog.logPath, 0),
-      deltaLog.newDeltaHadoopConf())
-      .filter(FileNames.isDeltaFile)
-      .take(1).toArray.headOption
-    if (earliestVersionOpt.isEmpty) {
-      throw DeltaErrors.noHistoryFound(deltaLog.logPath)
-    }
-    FileNames.deltaVersion(earliestVersionOpt.get)
+    deltaLog.store
+      .listFrom(
+        path = FileNames.listingPrefix(deltaLog.logPath, 0),
+        hadoopConf = deltaLog.newDeltaHadoopConf())
+      .collectFirst { case DeltaFile(_, version) => version }
+      .getOrElse {
+        throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+      }
   }
 
   /**
@@ -311,12 +310,11 @@ object DeltaHistoryManager extends DeltaLogging {
       end: Option[Long],
       hadoopConf: Configuration): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
-    val commits = logStore.listFrom(listingPrefix(logPath, start), hadoopConf)
-      .filter(isDeltaFile)
-      .map { fileStatus =>
-        Commit(deltaVersion(fileStatus), fileStatus.getModificationTime)
-      }
-      .takeWhile(_.version < until)
+    val commits =
+      logStore
+        .listFrom(listingPrefix(logPath, start), hadoopConf)
+        .collect { case DeltaFile(file, version) => Commit(version, file.getModificationTime) }
+        .takeWhile(_.version < until)
 
     monotonizeCommitTimestamps(commits.toArray)
   }

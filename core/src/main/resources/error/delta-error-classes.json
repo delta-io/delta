@@ -11,6 +11,12 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADDING_DELETION_VECTORS_DISALLOWED" : {
+    "message" : [
+      "The current operation attempted to add a deletion vector to a table that does not permit the creation of new deletion vectors. Please file a bug report."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to add column <columnName> is lower than 0"
@@ -314,9 +320,21 @@
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
-      "The supported formats are 'delta' and 'parquet'."
+      "The supported formats are 'delta', 'iceberg' and 'parquet'."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET" : {
+    "message" : [
+      "The max column id property (<prop>) is not set on a column mapping enabled table."
+    ],
+    "sqlState" : "42703"
+  },
+  "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY" : {
+    "message" : [
+      "The max column id property (<prop>) on a column mapping enabled table is <tableMax>, which cannot be smaller than the max column id for all fields (<fieldMax>)."
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
@@ -497,6 +515,18 @@
       "Could not verify deletion vector integrity, CRC checksum verification failed."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered an invalid row index."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS" : {
+    "message" : [
+      "It is invalid to commit files with deletion vectors that are missing the numRecords statistic."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_DELETION_VECTOR_SIZE_MISMATCH" : {
     "message" : [
@@ -823,12 +853,6 @@
     ],
     "sqlState" : "XXKDS"
   },
-  "DELTA_INVALID_GENERATED_COLUMN_FORMAT" : {
-    "message" : [
-      "Generated columns are only supported by Delta"
-    ],
-    "sqlState" : "0AKDD"
-  },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [
       "A generated column cannot use a non-existent column or another generated column"
@@ -921,6 +945,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_INVALID_TABLE_VALUE_FUNCTION" : {
+    "message" : [
+      "Function <function> is an unsupported table valued function for CDC reads."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_TIMESTAMP_FORMAT" : {
     "message" : [
       "The provided timestamp <timestamp> does not match the expected syntax <format>."
@@ -976,6 +1006,12 @@
     ],
     "sqlState" : "42806"
   },
+  "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY" : {
+    "message" : [
+      "Keeping the source of the MERGE statement materialized has failed repeatedly."
+    ],
+    "sqlState" : "25000"
+  },
   "DELTA_MERGE_MISSING_WHEN" : {
     "message" : [
       "There must be at least one WHEN clause in a MERGE statement."
@@ -990,9 +1026,7 @@
   },
   "DELTA_METADATA_ABSENT" : {
     "message" : [
-      "Couldn't find Metadata while committing the first version of the Delta table. To disable",
-      "this check set <deltaCommitValidationEnabled> to \"false\"",
-      ""
+      "Couldn't find Metadata while committing the first version of the Delta table."
     ],
     "sqlState" : "XXKDS"
   },
@@ -1489,7 +1523,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -1523,6 +1557,50 @@
       "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."
     ],
     "sqlState" : "KD002"
+  },
+  "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT" : {
+    "message" : [
+      "Detected conflicting schema location '<loc>' while streaming from table or table located at '<table>'.",
+      "Another stream may be reusing the same schema location, which is not allowed.",
+      "Please provide a new unique `schemaTrackingLocation` path or `streamingSourceTrackingId` as a reader option for one of the streams from this table."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT" : {
+    "message" : [
+      "Schema location '<schemaTrackingLocation>' must be placed under checkpoint location '<checkpointLocation>'."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_DESERIALIZE_FAILED" : {
+    "message" : [
+      "Incomplete log file in the Delta streaming source schema log at '<location>'.",
+      "The schema log may have been corrupted. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID" : {
+    "message" : [
+      "Detected incompatible Delta table id when trying to read Delta stream.",
+      "Persisted table id: <persistedId>, Table id: <tableId>",
+      "The schema log might have been reused. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_PARTITION_SCHEMA" : {
+    "message" : [
+      "Detected incompatible partition schema when trying to read Delta stream.",
+      "Persisted schema: <persistedSchema>, Delta partition schema: <partitionSchema>",
+      "Please pick a new schema location to reinitialize the schema log if you have manually changed the table's partition schema recently."
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_LOG_PARSE_SCHEMA_FAILED" : {
+    "message" : [
+      "Failed to parse the schema from the Delta streaming source schema log.",
+      "The schema log may have been corrupted. Please pick a new schema location."
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
@@ -1758,6 +1836,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS" : {
+    "message" : [
+      "Reading Change Data Feed from Version {version}, which contains Deletion Vectors, is unsupported by this version of Delta Lake."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",
@@ -1846,6 +1930,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_EXPRESSION" : {
+    "message" : [
+      "Unsupported expression type(<expType>) for <causedBy>. The supported types are [<supportedTypes>]."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
       "<expression> cannot be used in a generated column"
@@ -1872,7 +1962,7 @@
   },
   "DELTA_UNSUPPORTED_FEATURE_STATUS" : {
     "message" : [
-      "Expecting the status for table feature <feature> to be \"enabled\", but got \"<status>\"."
+      "Expecting the status for table feature <feature> to be \"supported\", but got \"<status>\"."
     ],
     "sqlState" : "0AKDE"
   },
@@ -1991,6 +2081,21 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_TIMESTAMP_NTZ" : {
+    "message" : [
+      "Your table schema <schema> contains a column of type TimestampNTZ.",
+      "TimestampNTZ type is not supported by your table's protocol.",
+      "",
+      "Required Delta protocol version and features for TimestampNTZ:",
+      "<requiredVersion>",
+      "Your table's current Delta protocol version and enabled features:",
+      "<currentVersion>",
+      "",
+      "Run the following command to add TimestampNTZ support to your table.",
+      "ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')"
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
@@ -2067,6 +2172,12 @@
       "<colName> is a partition column. Z-Ordering can only be performed on data columns"
     ],
     "sqlState" : "42P10"
+  },
+  "INCORRECT_NUMBER_OF_ARGUMENTS" : {
+    "message" : [
+      "<failure>, <functionName> requires at least <minArgs> arguments and at most <maxArgs> arguments."
+    ],
+    "sqlState" : "22023"
   },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [

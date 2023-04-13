@@ -715,6 +715,43 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
+  testColumnMapping("update column mapped table invalid max id property is blocked") { mode =>
+    withTable("t1") {
+      createTableWithSQLAPI(
+        "t1",
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+        withColumnIds = true
+      )
+
+      val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+      // Get rid of max column id prop
+      assert {
+        intercept[DeltaAnalysisException] {
+          log.withNewTransaction { txn =>
+            val existingMetadata = log.update().metadata
+            txn.commit(existingMetadata.copy(configuration =
+              existingMetadata.configuration - DeltaConfigs.COLUMN_MAPPING_MAX_ID.key) :: Nil,
+              DeltaOperations.ManualUpdate)
+          }
+        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
+      }
+      // Use an invalid max column id prop
+      assert {
+        intercept[DeltaAnalysisException] {
+          log.withNewTransaction { txn =>
+            val existingMetadata = log.update().metadata
+            txn.commit(existingMetadata.copy(configuration =
+              existingMetadata.configuration ++ Map(
+                // '1' is less than the current max
+                DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "1"
+              )) :: Nil,
+              DeltaOperations.ManualUpdate)
+          }
+        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
+      }
+    }
+  }
+
   testColumnMapping(
     "create column mapped table with duplicated id/physical name should error"
   ) { mode =>
@@ -1593,7 +1630,11 @@ class DeltaColumnMappingSuite extends QueryTest
               .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, newId)
               .build())
           val newSchema = StructType(Seq(updated) ++ currentSchema.filter(_.name != field.name))
-          txn.commit(currentMetadata.copy(schemaString = newSchema.json) :: Nil, ManualUpdate)
+          txn.commit(currentMetadata.copy(
+            schemaString = newSchema.json,
+            configuration = currentMetadata.configuration ++
+              // Just a big id to bypass the check
+              Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "10000")) :: Nil, ManualUpdate)
         }
       }
 

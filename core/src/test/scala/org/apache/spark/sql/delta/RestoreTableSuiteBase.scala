@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -89,25 +89,37 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       checkAnswer(spark.read.format("delta").load(path), df1.union(df2))
 
       // Set a custom timestamp for the commit
-      val desiredTime = "1996-01-12"
-      setTimestampToCommitFileAtVersion(deltaLog, version = 0, time = desiredTime)
+      val desiredDate = "1996-01-12"
+      setTimestampToCommitFileAtVersion(deltaLog, version = 0, date = desiredDate)
 
       // restore by timestamp to version 0
-      restoreTableToTimestamp(path, desiredTime, false)
+      restoreTableToTimestamp(path, desiredDate, false)
       checkAnswer(spark.read.format("delta").load(path), df1)
     }
   }
 
-  protected def timeStringToTimestamp(time: String): Long = {
+  protected def dateStringToTimestamp(date: String): Long = {
     val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+    format.parse(date).getTime
+  }
+
+  protected def timeStringToTimestamp(time: String): Long = {
+    val format = new java.text.SimpleDateFormat("yyyy-MM-dd hh:mm:ss Z")
     format.parse(time).getTime
   }
 
   protected def setTimestampToCommitFileAtVersion(
       deltaLog: DeltaLog,
       version: Int,
-      time: String): Unit = {
-    val timestamp = timeStringToTimestamp(time)
+      date: String): Unit = {
+    val timestamp = dateStringToTimestamp(date)
+    setTimestampToCommitFileAtVersion(deltaLog, version, timestamp)
+  }
+
+  protected def setTimestampToCommitFileAtVersion(
+      deltaLog: DeltaLog,
+      version: Int,
+      timestamp: Long): Unit = {
     val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(timestamp)
   }
@@ -236,7 +248,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(Seq(TestLegacyReaderWriterFeature))
-            .withFeatures(oldProtocolVersion.implicitlyEnabledFeatures))
+            .withFeatures(oldProtocolVersion.implicitlySupportedFeatures))
         val newProtocolVersion = deltaLog.snapshot.protocol
         assert(
           newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
@@ -259,6 +271,33 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         }
       }
     }
+
+  test("RESTORE doesn't account for session defaults") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+      DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+      withTempDir { dir =>
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        spark
+          .range(start = 10, end = 20)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val oldProtocol = log.update().protocol
+        assert(oldProtocol === Protocol(1, 1))
+        withSQLConf(
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
+          TableFeatureProtocolUtils.defaultPropertyKey(TestWriterFeature) -> "enabled") {
+          restoreTableToVersion(dir.getAbsolutePath, 0, isMetastoreTable = false)
+        }
+        val newProtocol = log.update().protocol
+        assert(newProtocol === oldProtocol)
+      }
+    }
+  }
 
   test("restore operation metrics in Delta table history") {
     withSQLConf(
