@@ -346,7 +346,7 @@ The schema of the `add` action is as follows:
 | stats            | [Statistics Struct](#Per-file-Statistics)            | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file                                                                                                                                                                                      | optional          |
 | tags             | Map[String, String]                                  | Map containing metadata about this logical file                                                                                                                                                                                                                                        | optional          |
 | deletionVector   | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.                                                                                        | optional          |
-| baseRowId        | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base row ID. See also [Row IDs](#row-ids)                                       | required          |
+| baseRowId        | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids)                                       | required          |
 
 The following is an example `add` action:
 ```json
@@ -375,7 +375,7 @@ The schema of the `remove` action is as follows:
 | size                 | Long                                                 | The size of this data file in bytes                                                                                                                                                                                                                                                   | optional          |
 | tags                 | Map[String, String]                                  | Map containing metadata about this file                                                                                                                                                                                                                                               | optional          |
 | deletionVector       | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.                                                                                       | optional          |
-| baseRowId            | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base row ID. See also [Row IDs](#row-ids)                                          | required          |
+| baseRowId            | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids)                                      | required          |
 
 The following is an example `remove` action.
 ```json
@@ -545,7 +545,7 @@ An example of storing provenance information related to an `INSERT` operation:
 ```
 
 ### Increase Row ID High Watermark
-The row ID high watermark tracks the largest ID that has been assigned to a row in the table.
+The Row ID high watermark tracks the largest ID that has been assigned to a row in the table.
 
 The schema of `rowIdHighWaterMark` action is as follows:
 
@@ -739,7 +739,7 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 
 # Row IDs
 
-Delta provides row IDs. Row IDs are integers that are used to uniquely identify rows within a table.
+Delta provides Row IDs. Row IDs are integers that are used to uniquely identify rows within a table.
 Every row has two Row IDs:
 
 - A **fresh** or unstable **Row ID**.
@@ -747,9 +747,9 @@ Every row has two Row IDs:
   The fresh ID of a row may change every time the table is updated, even for rows that are not modified. E.g. when a row is copied unchanged during an update operation, it will get a new fresh ID. Fresh IDs can be used to identify rows within one version of the table, e.g. for identifying matching rows in self joins.
 - A **stable Row ID**.
   This ID uniquely identifies the row across versions of the table and across updates.
-  When a row is updated or copied, the stable row ID for this row is preserved.
+  When a row is updated or copied, the stable Row ID for this row is preserved.
 
-The fresh and stable Row IDs are not required to be equal for updated or reorganized rows.
+The fresh and stable Row IDs are not required to be equal.
 
 Row IDs are stored in two ways:
 
@@ -763,69 +763,63 @@ Row IDs are stored in two ways:
   This column may contain `null` values meaning that the corresponding row has no materialized Row ID. This column may be omitted if all its values are `null` in the file.
   Materialized Row IDs provide a mechanism for writers to preserve stable Row IDs for rows that are updated or copied.
 
-Enablement:
-- The table must be on a Writer Version 7.
-- The table property `delta.rowIds.enabled` must be set to `true`.
+The fresh Row ID of a row is equal to the default generated Row ID. The stable Row ID of a row is equal to the materialized Row ID of the row when that column is present and the value is not NULL, otherwise it is equal to the default generated Row ID.
 
-When enabling:
-- The feature `rowIds` must be added to the table `protocol`'s `writerFeatures` if it is not already listed there.
-  This ensures that writers assign Row IDs when inserting or rewriting rows.
-  Adding the table feature `rowIds` may be done in a separate commit before the commit setting the table property `delta.rowIds.enabled` to `true`.
+Row IDs are defined to be **supported** or **enabled** on a table as follows:
+- When the feature `delta.rowIds` exists in the table `protocol`'s `writerFeatures` but the table property `delta.enableRowIds` is not set to true, then we say that row IDs are **supported**.
+  In this situation, writers must assign new fresh row IDs, but row IDs cannot yet be relied upon to be present in the table.
+- When the feature `delta.rowIds` exists in the table `protocol`'s `writerFeatures` and the table property `delta.enableRowIds` is set to true, then we say that row IDs are **enabled**.
+  In this situation, row IDs can be relied upon to be present in the table for all rows.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `delta.rowIds` must exist in the table `protocol`'s `writerFeatures`.
+- The table property `delta.enableRowIds` must be set to `true`.
+
+When enabled:
 - Default generated Row IDs must be assigned to all existing rows.
-  - All files that are part of the table version that sets the table property `delta.rowIds.enabled` to `true` must have `baseRowId` set.
-    A backfill operation may be required to commit `add` and `remove` actions with the `baseRowId` field set for all data files.
+  This means in particular that all files that are part of the table version that sets the table property `delta.enableRowIds` to `true` must have `baseRowId` set.
+  A backfill operation may be required to commit `add` and `remove` actions with the `baseRowId` field set for all data files before  the table property `delta.enableRowIds` can be set to `true`.
 
 ## Reader Requirements for Row IDs
 
-When Row IDs are enabled (when the table property `delta.rowIds.enabled` is set to `true`) and Row IDs are to be read, then:
+When Row IDs are enabled (when the table property `delta.enableRowIds` is set to `true`) and Row IDs are to be read, then:
 - When requested, readers must reconstruct stable Row IDs as follows:
   1. Readers must use the materialized Row ID if the physical Row ID column determined by `delta.rowIds.physicalColumnName` is present in the data file and the column contains a non `null` value for a row.
-  2. Readers must use the default generated Row ID if the materialized Row ID cannot be used for a row.
-- Readers cannot read Row IDs while reading change data files.
+  2. Readers must use the default generated Row ID in all other cases.
+- Readers cannot read Row IDs while reading change data files from `cdc` actions.
 
 ## Writer Requirements for Row IDs
 
-When Row IDs are supported (when the `writerFeatures` field of a table's `protocol` action contains `rowIds`) then:
-- Writers must assign unique fresh Row IDs to all rows in the table.
-  - Writers must store fresh Row IDs using default generated Row IDs.
-    Writers must set the `baseRowId` field in all `add` actions that they commit.
-    Writers must not commit `add` actions with default generated Row IDs that overlap with any previously committed `add` actions with a different `path`,
-    or with any other `add` action in the same commit.
-    An `add` action contains default generated Row IDs ranging from `add.baseRowId` (inclusive) to `add.baseRowId + add.stats.numRecords` (exclusive) for non-empty files. Empty files contain no default generated Row IDs.
-  - `add` actions for new physical files must have a value in the `baseRowId` field that is larger than the `highWaterMark` value in the last committed `rowIdHighWaterMark` action.
-    If the table doesn't have any committed `rowIdHighWaterMark` action, the `highWaterMark` value is -1.
-  - `add` actions for existing physical files must have the same value in the `baseRowId` as the last committed `add` action with the same `path`.
-  - The `baseRowId` field in `remove` actions must be equal to `baseRowId` field of the last committed `add` action with the same `path`.
-  - Writers must include a new `rowIdHighWaterMark` action whenever they assign new fresh Row IDs, i.e. whenever they commit an `add` action for a new physical file.
-    The `highWaterMark` value of the `rowIdHighWaterMark` action must be equal to the highest fresh Row ID committed so far.
-    I.e., writers must increase the `highWaterMark` value in the `rowIdHighWaterMark` by the number of newly inserted rows.
-    The `highWaterMark` value of the `rowIdHighWaterMark` action can never be lower than `highWaterMark` of previously committed `rowIdHighWaterMark` actions.
+When Row IDs are supported (when the `writerFeatures` field of a table's `protocol` action contains `rowIds`), then:
+- Writers must assign unique fresh Row IDs to all rows that they commit, i.e. writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
+  Writers must never commit duplicate Row IDs in the table in any version.
+- Writers must set the `baseRowId` field in `remove` actions to the `baseRowId` value of the last committed `add` action with the same `path`.
+- Writers must include a `rowIdHighWaterMark` action whenever they assign new fresh Row IDs, i.e. whenever they commit an `add` action for a new physical file.
+  The `highWaterMark` value of the `rowIdHighWaterMark` action must always be equal to or greater than the highest fresh Row ID committed so far.
+  Writers are allowed to reserve Row IDs in a first commit and assign them in following commits. In that case, each commit must include a `rowIdHighWaterMark` action even when the `highWaterMark` value is not changing.
 
-When Row IDs are enabled (when the table property `delta.rowIds.enabled` is set to `true`), then:
+Writers can enable Row IDs by setting `delta.enableRowIds` to `true` in the `configuration` of the table's `metaData`.
+This is only allowed if the following requirements are satisfied:
+- The feature `rowIds` has been added to the `writerFeatures` field of a table's `protocol` action either in the same version of the table or in an earlier version of the table.
+- A physical column name for the materialized Row IDs has been assigned and added to the `configuration` in the table's `metaData` action using the key `delta.rowIds.physicalColumnName`.
+  - The assigned column name must be unique. It must not be equal to the name of any other column in the table's schema.
+    The assigned column name must remain unique in all future versions of the table.
+    If [Column Mapping](#column-mapping) is enabled, then the assigned column name must be distinct from the physical column names of the table.
+- The `baseRowId` field is set for all active `add` actions in the version of the table in which `delta.enableRowIds` is set to `true`.
+- If the `baseRowId` field is not set in some active `add` action in the table, then writers must first commit new `add` actions that set the `baseRowId` field to replace the `add` actions that do not have the `baseRowId` field set.
+  This can be done in the commit that sets `delta.enableRowIds` to `true` or in an earlier commit.
+  The assigned `baseRowId` values must satisfy the same requirements as when assigning fresh Row IDs.
+
+When Row IDs are enabled (when the table property `delta.enableRowIds` is set to `true`), then:
 - Writers should assign stable Row IDs to all rows.
   - Stable Row IDs must be unique within a version of the table and must not be equal to the fresh Row IDs of other rows in the same version of the table.
   - Writers should preserve the stable Row IDs of rows that are updated or copied using materialized Row IDs.
     - The preserved stable Row ID (i.e. a stable Row ID that is not equal to the fresh Row ID of the same physical row) should be equal to the stable Row ID of the same logical row before it was updated or copied.
     - Materialized Row IDs must be written to the physical column determined by `delta.rowIds.physicalColumnName` in the `configuration` of the table's `metaData` action.
       The value in this physical column must be set to `NULL` for stable Row IDs that are not preserved.
-    - Writers must set the `preservedRowIds` flag of the `rowIdHighWaterMark` action to `true` whenever all the stable Row IDs of rows that are updated or copied were preserved.
-      Writers must set that flag to false otherwise. In particular, writers must set the `preservedRowIds` flag of the `rowIdHighWaterMark` action to `true` if no rows are updated or copied.
-
-Writers can add the feature `rowIds` to the `writerFeatures` field of a table's `protocol` action.
-This is only allowed if the following requirements are satisfied:
-- Writers must assign a physical column name for the materialized Row IDs,
-  and add it to the `configuration` in the table's `metaData` action using the key `delta.rowIds.physicalColumnName`.
-- The assigned column name must be unique. It must not be equal to the name of any other column in the table's schema.
-  The assigned column must remain unique in all future versions of the table.
-  If [Column Mapping](#column-mapping) is enabled, then the assigned column name must be distinct from the physical column names of the table.
-
-Writers can enable Row IDs by setting `delta.rowIds.enabled` to `true` in the `configuration` of the table's `metaData`.
-This is only allowed if the following requirements are satisfied:
-- The feature `rowIds` has been added to the `writerFeatures` field of a table's `protocol` action either in the same version of the table or in an earlier version of the table.
-- The `baseRowId` field is set for all active `add` actions in the version of the table in which `delta.rowIds.enabled` is set to `true`.
-- If the `baseRowId` field is not set in any active `add` action in the table, then writers must first commit new `add` actions that set the `baseRowId` field to replace the `add` actions that do not have the `baseRowId` field set.
-  This can be done in the commit that sets `delta.rowIds.enabled` to `true` or in an earlier commit.
-  The assigned `baseRowId` values must satisfy the same requirements as when assigning fresh Row IDs.
+- Writers must set the `preservedRowIds` flag of the `rowIdHighWaterMark` action to `true` whenever all the stable Row IDs of rows that are updated or copied were preserved.
+  Writers must set that flag to false otherwise. In particular, writers must set the `preservedRowIds` flag of the `rowIdHighWaterMark` action to `true` if no rows are updated or copied.
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -1011,6 +1005,7 @@ Feature | Name | Readers or Writers?
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
+[Row IDs](#row-ids) | `rowIds` | Writers only
 
 ## Deletion Vector Format
 
