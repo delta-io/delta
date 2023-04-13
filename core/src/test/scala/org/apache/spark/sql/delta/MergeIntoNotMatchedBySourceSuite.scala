@@ -460,6 +460,34 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     ),
     cdc = Seq((0, 2, "insert")))
 
+  testExtendedMergeWithCDC("empty source")(
+    source = Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "t.key = 2", set = "value = t.value + 1"),
+    deleteNotMatched(condition = "t.key = 7"))(
+    result = Seq(
+      (2, 3), // Not matched by source, updated
+      (1, 4) // Not matched by source, no change
+      // (7, 3) Not matched by source, deleted
+    ),
+    cdc = Seq(
+      (2, 2, "update_preimage"),
+      (2, 3, "update_postimage"),
+      (7, 3, "delete")))
+
+  testExtendedMergeWithCDC("empty source delete only")(
+    source = Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(condition = "t.key = 7"))(
+    result = Seq(
+      (2, 2), // Not matched by source, no change
+      (1, 4) // Not matched by source, no change
+      // (7, 3) Not matched by source, deleted
+    ),
+    cdc = Seq((7, 3, "delete")))
+
   testExtendedMergeWithCDC("all 3 clauses - no changes")(
     source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
     target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
