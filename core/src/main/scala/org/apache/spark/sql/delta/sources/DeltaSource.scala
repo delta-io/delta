@@ -218,7 +218,7 @@ trait DeltaSourceBase extends Source
       isStartingVersion: Boolean,
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())):
   ClosableIterator[IndexedFile] = {
-    var iter = if (options.readChangeFeed) {
+    val iter = if (options.readChangeFeed) {
       // In this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
       // offset.
 
@@ -242,8 +242,8 @@ trait DeltaSourceBase extends Source
         }
       }
     }
-    iter = stopIndexedFileIteratorAtSchemaChangeBarrier(iter)
-    iter
+    // Stop before any schema change barrier if detected.
+    stopIndexedFileIteratorAtSchemaChangeBarrier(iter)
   }
 
   /**
