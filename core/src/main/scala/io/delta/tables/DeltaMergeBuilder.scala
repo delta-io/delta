@@ -265,14 +265,6 @@ class DeltaMergeBuilder private(
    */
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
-    // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
-    // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
-    // references in the DeltaMergeInto using both source and target child plans, even before
-    // DeltaAnalysis rule kicks in. This is because the Analyzer  understands only MergeIntoTable,
-    // and handles that separately by skipping resolution (for Delta) and letting the
-    // DeltaAnalysis rule do the resolving correctly. This can be solved by generating
-    // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
-    // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
       DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferences(sparkSession) _)
