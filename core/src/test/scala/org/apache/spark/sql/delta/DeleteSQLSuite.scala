@@ -105,8 +105,11 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite with DeletionVect
   }
 
   override def excluded: Set[String] = super.excluded ++ Set(
+    // The following two tests must fail when DV is used. Covered by another test case:
+    // "throw error when non-pinned TahoeFileIndex snapshot is used".
     "data and partition columns - Partition=true Skipping=false",
     "data and partition columns - Partition=false Skipping=false",
+    // The scan schema contains additional row index filter columns.
     "nested schema pruning on data condition")
 
   // This works correctly with DVs, but fails in classic DELETE.
