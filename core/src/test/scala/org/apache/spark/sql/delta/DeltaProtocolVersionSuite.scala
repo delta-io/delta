@@ -1786,6 +1786,40 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("can't write to a table with identity columns (legacy protocol)") {
+    withTempDir { dir =>
+      val writerVersion = 6
+      createTableWithProtocol(Protocol(1, writerVersion), dir)
+
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`${dir.getCanonicalPath}`"),
+        spark.range(0).toDF)
+      assert(intercept[InvalidProtocolVersionException] {
+        sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
+      }.getMessage.contains(s"table requires 6"))
+    }
+  }
+
+  test("can't write to a table with identity columns (table features)") {
+    withTempDir { dir =>
+      val featureName = "identityColumns"
+      createTableWithProtocol(
+        Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION,
+          readerFeatures = Some(Set.empty),
+          writerFeatures = Some(Set(featureName))),
+        dir)
+
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`${dir.getCanonicalPath}`"),
+        spark.range(0).toDF)
+      assert(intercept[DeltaTableFeatureException] {
+        sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
+      }.getMessage.contains(s"unsupported by this version of Delta Lake: $featureName"))
+    }
+  }
+
   private def assertPropertiesAndShowTblProperties(
       deltaLog: DeltaLog,
       tableHasFeatures: Boolean = false): Unit = {

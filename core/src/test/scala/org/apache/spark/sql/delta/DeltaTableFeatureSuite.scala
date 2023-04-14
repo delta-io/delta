@@ -335,13 +335,6 @@ class DeltaTableFeatureSuite
     }
   }
 
-  test("can't write to a table with identity columns") {
-    val p = "/Users/pengfei.xu/runtime/sql/core/src/test/resources/tables-by-dbr-version/11.3-checkConstraints-changeDataFeed-generatedColumns-identityColumns"
-    val table0 = sql(s"select * from delta.`$p`").collect()
-    sql(s"insert into delta.`$p` (id, date, idCol) values (999, from_unixtime(999), 888)")
-
-  }
-
   private def buildTablePropertyModifyingCommand(
       commandName: String,
       targetTableName: String,
