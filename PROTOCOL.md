@@ -336,17 +336,17 @@ For example, streaming queries that are tailing the transaction log can use this
 
 The schema of the `add` action is as follows:
 
-| Field Name       | Data Type                                            | Description                                                                                                                                                                                                                                                                            | optional/required |
-|------------------|------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------|
-| path             | String                                               | A relative path to a data file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required          |
-| partitionValues  | Map[String, String]                                  | A map from partition column to value for this logical file. See also [Partition Value Serialization](#Partition-Value-Serialization)                                                                                                                                                   | required          |
-| size             | Long                                                 | The size of this data file in bytes                                                                                                                                                                                                                                                    | required          |
-| modificationTime | Long                                                 | The time this logical file was created, as milliseconds since the epoch                                                                                                                                                                                                                | required          |
-| dataChange       | Boolean                                              | When `false` the logical file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version                                                                                                              | required          |
-| stats            | [Statistics Struct](#Per-file-Statistics)            | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file                                                                                                                                                                                      | optional          |
-| tags             | Map[String, String]                                  | Map containing metadata about this logical file                                                                                                                                                                                                                                        | optional          |
-| deletionVector   | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.                                                                                        | optional          |
-| baseRowId        | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids)                                       | required          |
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+path| String | A relative path to a data file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
+partitionValues| Map[String, String] | A map from partition column to value for this logical file. See also [Partition Value Serialization](#Partition-Value-Serialization) | required
+size| Long | The size of this data file in bytes | required
+modificationTime | Long | The time this logical file was created, as milliseconds since the epoch | required
+dataChange | Boolean | When `false` the logical file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version | required
+stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
+tags | Map[String, String] | Map containing metadata about this logical file | optional
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
+baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | required
 
 The following is an example `add` action:
 ```json
@@ -365,17 +365,17 @@ The following is an example `add` action:
 
 The schema of the `remove` action is as follows:
 
-| Field Name           | Data Type                                            | Description                                                                                                                                                                                                                                                                           | optional/required |
-|----------------------|------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------|
-| path                 | String                                               | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required          |
-| deletionTimestamp    | Option[Long]                                         | The time the deletion occurred, represented as milliseconds since the epoch                                                                                                                                                                                                           | optional          |
-| dataChange           | Boolean                                              | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version                                                                                                                                                                  | required          |
-| extendedFileMetadata | Boolean                                              | When `true` the fields `partitionValues`, `size`, and `tags` are present                                                                                                                                                                                                              | optional          |
-| partitionValues      | Map[String, String]                                  | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)                                                                                                                                                          | optional          |
-| size                 | Long                                                 | The size of this data file in bytes                                                                                                                                                                                                                                                   | optional          |
-| tags                 | Map[String, String]                                  | Map containing metadata about this file                                                                                                                                                                                                                                               | optional          |
-| deletionVector       | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file.                                                                                       | optional          |
-| baseRowId            | Long                                                 | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids)                                      | required          |
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
+deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
+dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
+size| Long | The size of this data file in bytes | optional
+tags | Map[String, String] | Map containing metadata about this file | optional
+deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
+baseRowId | Long | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | required
 
 The following is an example `remove` action.
 ```json
@@ -394,13 +394,13 @@ The `cdc` action is used to add a [file](#change-data-files) containing only the
 
 The schema of the `cdc` action is as follows:
 
-| Field Name      | Data Type           | Description                                                                                                                                                                                                                                                                                          |
-|-----------------|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| path            | String              | A relative path to a change data file from the root of the table or an absolute path to a change data file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path. |
-| partitionValues | Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)                                                                                                                                                                         |
-| size            | Long                | The size of this file in bytes                                                                                                                                                                                                                                                                       |
-| dataChange      | Boolean             | Should always be set to `false` for `cdc` actions because they _do not_ change the underlying data of the table                                                                                                                                                                                      |
-| tags            | Map[String, String] | Map containing metadata about this file                                                                                                                                                                                                                                                              |
+Field Name | Data Type | Description
+-|-|-
+path| String | A relative path to a change data file from the root of the table or an absolute path to a change data file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+dataChange | Boolean | Should always be set to `false` for `cdc` actions because they _do not_ change the underlying data of the table
+tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example of `cdc` action.
 
@@ -549,10 +549,10 @@ The Row ID high-water mark tracks the largest ID that has been assigned to a row
 
 The schema of `rowIdHighWaterMark` action is as follows:
 
-| Field Name      | Data Type | Description                                                                                         |
-|-----------------|-----------|-----------------------------------------------------------------------------------------------------|
-| highWaterMark   | Long      | Highest Row ID that has been assigned to a row in the table.                                        |
-| preservedRowIds | Boolean   | When true, the commit that wrote this high-water mark preserved existing Row IDs of rewritten rows. |
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+highWaterMark | Long | Highest Row ID that has been assigned to a row in the table. | required
+preservedRowIds | Boolean | When true, the commit that wrote this high-water mark preserved existing Row IDs of rewritten rows. | required
 
 The following is an example `rowIdHighWaterMark` action:
 ```json
