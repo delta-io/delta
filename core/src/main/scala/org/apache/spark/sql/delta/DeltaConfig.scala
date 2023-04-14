@@ -298,6 +298,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     i.months == 0 && getMicroSeconds(i) >= 0
   }
 
+  private case class VersionNumbers(reader: Set[Int], writer: Set[Int])
+
+  private lazy val supportedProtocolVersionNumbers: VersionNumbers = {
+    val features = Action.supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures
+    VersionNumbers(features.map(_.minReaderVersion),
+      features.map(_.minWriterVersion))
+  }
+
   /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
    * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
@@ -307,8 +315,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     "minReaderVersion",
     Action.supportedProtocolVersion().minReaderVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.supportedProtocolVersion().minReaderVersion,
-    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minReaderVersion}].")
+    v => supportedProtocolVersionNumbers.reader.contains(v),
+    s"needs to be one of ${supportedProtocolVersionNumbers.reader.mkString(", ")}.")
 
   /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
@@ -319,8 +327,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     "minWriterVersion",
     Action.supportedProtocolVersion().minWriterVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.supportedProtocolVersion().minWriterVersion,
-    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minWriterVersion}].")
+    v => supportedProtocolVersionNumbers.writer.contains(v),
+    s"needs to be one of ${supportedProtocolVersionNumbers.writer.mkString(", ")}.")
 
   /**
    * Ignore protocol-related configs set in SQL config.

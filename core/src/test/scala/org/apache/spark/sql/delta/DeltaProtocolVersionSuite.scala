@@ -228,7 +228,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             CheckConstraintsTableFeature,
             ColumnMappingTableFeature,
             GeneratedColumnsTableFeature,
-            IdentityColumnsTableFeature,
             InvariantsTableFeature,
             TestLegacyWriterFeature,
             TestLegacyReaderWriterFeature)
@@ -252,7 +251,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               CheckConstraintsTableFeature,
               ColumnMappingTableFeature,
               GeneratedColumnsTableFeature,
-              IdentityColumnsTableFeature,
               InvariantsTableFeature,
               TestLegacyWriterFeature,
               TestLegacyReaderWriterFeature,

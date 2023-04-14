@@ -221,10 +221,6 @@ object Protocol {
         }
       case _ => () // Do nothing. We only care about features that can be activated in metadata.
     }
-
-    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-      throw DeltaErrors.identityColumnNotSupported()
-    }
     enabledFeatures.toSet
   }
 

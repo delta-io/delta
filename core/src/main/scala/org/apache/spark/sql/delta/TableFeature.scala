@@ -210,7 +210,6 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
-      IdentityColumnsTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
@@ -303,16 +302,6 @@ object ColumnMappingTableFeature
       case NoMapping => false
       case _ => true
     }
-  }
-}
-
-object IdentityColumnsTableFeature
-  extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
-  with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata,
-      spark: SparkSession): Boolean = {
-    ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
   }
 }
 

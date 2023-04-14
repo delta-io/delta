@@ -110,7 +110,6 @@ class DeltaTableFeatureSuite
         CheckConstraintsTableFeature,
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
-        IdentityColumnsTableFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature))
     assert(
@@ -175,7 +174,6 @@ class DeltaTableFeatureSuite
           ChangeDataFeedTableFeature,
           CheckConstraintsTableFeature,
           GeneratedColumnsTableFeature,
-          IdentityColumnsTableFeature,
           TestLegacyWriterFeature,
           TestLegacyReaderWriterFeature)))
   }
@@ -203,7 +201,6 @@ class DeltaTableFeatureSuite
               ChangeDataFeedTableFeature,
               GeneratedColumnsTableFeature,
               ColumnMappingTableFeature,
-              IdentityColumnsTableFeature,
               TestLegacyWriterFeature,
               TestLegacyReaderWriterFeature))))
     assert(
@@ -216,7 +213,6 @@ class DeltaTableFeatureSuite
             ChangeDataFeedTableFeature,
             GeneratedColumnsTableFeature,
             ColumnMappingTableFeature,
-            IdentityColumnsTableFeature,
             TestLegacyWriterFeature,
             TestLegacyReaderWriterFeature))))
     // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
@@ -337,6 +333,13 @@ class DeltaTableFeatureSuite
         }
       }
     }
+  }
+
+  test("can't write to a table with identity columns") {
+    val p = "/Users/pengfei.xu/runtime/sql/core/src/test/resources/tables-by-dbr-version/11.3-checkConstraints-changeDataFeed-generatedColumns-identityColumns"
+    val table0 = sql(s"select * from delta.`$p`").collect()
+    sql(s"insert into delta.`$p` (id, date, idCol) values (999, from_unixtime(999), 888)")
+
   }
 
   private def buildTablePropertyModifyingCommand(
