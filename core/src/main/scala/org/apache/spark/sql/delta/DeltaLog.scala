@@ -327,13 +327,11 @@ class DeltaLog private(
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
       case "read" => (
-        clientSupportedProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.minReaderVersion)
-          + 1, // Version 1 does not introduce new feature, it's always supported.
+        Action.supportedReaderVersionNumbers,
         tableProtocol.minReaderVersion,
         (f: Protocol) => f.readerFeatureNames)
       case "write" => (
-        clientSupportedProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.minWriterVersion)
-          + 1, // Version 1 does not introduce new feature, it's always supported.
+        Action.supportedWriterVersionNumbers,
         tableProtocol.minWriterVersion,
         (f: Protocol) => f.writerFeatureNames)
       case _ =>

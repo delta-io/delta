@@ -67,6 +67,18 @@ object Action {
     }
   }
 
+  /** All reader protocol version numbers (including 0) supported by the system. */
+  private[delta] lazy val supportedReaderVersionNumbers: Set[Int] = {
+    Set(0, 1) ++ // Version 1 does not introduce new feature, it's always supported.
+      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minReaderVersion)
+  }
+
+  /** All writer protocol version numbers (including 0) supported by the system. */
+  private[delta] lazy val supportedWriterVersionNumbers: Set[Int] = {
+    Set(0, 1) ++ // Version 1 does not introduce new feature, it's always supported.
+      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minWriterVersion)
+  }
+
   def fromJson(json: String): Action = {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
