@@ -1539,7 +1539,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion='delta rulz')")
       }
-      assert(e.getMessage.contains("integer"))
+      assert(e.getMessage.contains(" one of "))
 
       val e2 = intercept[AnalysisException] {
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
@@ -1551,7 +1551,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion=0)")
       }
-      assert(e3.getMessage.contains("integer"))
+      assert(e3.getMessage.contains(" one of "))
     }
   }
 
@@ -1711,7 +1711,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(log.update().protocol === Protocol(1, 2))
       withSQLConf(
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "6") {
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "5") {
         replaceTableAs(path)
       }
       assert(log.update().protocol === Protocol(2, 6))

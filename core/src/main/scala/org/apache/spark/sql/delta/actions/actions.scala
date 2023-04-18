@@ -67,16 +67,18 @@ object Action {
     }
   }
 
-  /** All reader protocol version numbers (including 0) supported by the system. */
+  /** All reader protocol version numbers supported by the system. */
   private[delta] lazy val supportedReaderVersionNumbers: Set[Int] = {
-    Set(0, 1) ++ // Version 1 does not introduce new feature, it's always supported.
-      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minReaderVersion)
+    supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minReaderVersion) ++
+      Set(1) -- // Version 1 does not introduce new feature, it's always supported.
+      Set(0) // Version 0 is not intended to be used
   }
 
-  /** All writer protocol version numbers (including 0) supported by the system. */
+  /** All writer protocol version numbers supported by the system. */
   private[delta] lazy val supportedWriterVersionNumbers: Set[Int] = {
-    Set(0, 1) ++ // Version 1 does not introduce new feature, it's always supported.
-      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minWriterVersion)
+    supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minWriterVersion) ++
+      Set(1) -- // Version 1 does not introduce new feature, it's always supported.
+      Set(0) // Version 0 is not intended to be used
   }
 
   def fromJson(json: String): Action = {
