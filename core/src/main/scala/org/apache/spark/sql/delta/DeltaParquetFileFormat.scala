@@ -358,9 +358,7 @@ object DeltaParquetFileFormat {
   /** Helper class to encapsulate column info */
   case class ColumnMetadata(index: Int, structField: StructField)
 
-  import org.apache.spark.sql.delta.files.TahoeFileIndex
-
-  /** Helper class that encapsulate an integer representing a [[RowIndexFilterType]]. */
+  /** Helper class that encapsulate an [[RowIndexFilterType]]. */
   case class DeletionVectorDescriptorWithFilterType(
       descriptor: DeletionVectorDescriptor,
       filterType: RowIndexFilterType) {

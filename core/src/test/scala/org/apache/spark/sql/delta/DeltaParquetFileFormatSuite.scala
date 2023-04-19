@@ -44,11 +44,15 @@ class DeltaParquetFileFormatSuite extends QueryTest
   for {
     readIsRowDeletedCol <- BOOLEAN_DOMAIN
     readRowIndexCol <- BOOLEAN_DOMAIN
+    rowIndexFilterType <- Seq(RowIndexFilterType.IF_CONTAINED, RowIndexFilterType.IF_NOT_CONTAINED)
     // this isn't need to be tested as it is same as regular reading path without DVs.
     if readIsRowDeletedCol || readRowIndexCol
   } {
-    testWithBothParquetReaders("read DV metadata columns: " +
-        s"with isRowDeletedCol=$readIsRowDeletedCol, with rowIndexCol=$readRowIndexCol") {
+    testWithBothParquetReaders(
+      "read DV metadata columns: " +
+        s"with isRowDeletedCol=$readIsRowDeletedCol, " +
+        s"with rowIndexCol=$readRowIndexCol, " +
+        s"with rowIndexFilterType=$rowIndexFilterType") {
       withTempDir { tempDir =>
         val tablePath = tempDir.toString
 
@@ -77,7 +81,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
         val fs = addFilePath.getFileSystem(hadoopConf)
         val broadcastDvMap = spark.sparkContext.broadcast(
           Map(fs.getFileStatus(addFilePath).getPath().toUri ->
-            DeletionVectorDescriptorWithFilterType(dv, RowIndexFilterType.IF_CONTAINED))
+            DeletionVectorDescriptorWithFilterType(dv, rowIndexFilterType))
         )
 
         val broadcastHadoopConf = spark.sparkContext.broadcast(
@@ -107,12 +111,24 @@ class DeltaParquetFileFormatSuite extends QueryTest
           // Select some rows that are deleted and some rows not deleted
           // Deleted row `value`: 0, 200, 300, 756, 10352, 19999
           // Not deleted row `value`: 7, 900
+          val (deletedColumnValue, notDeletedColumnValue) = rowIndexFilterType match {
+            case RowIndexFilterType.IF_CONTAINED => (1, 0)
+            case RowIndexFilterType.IF_NOT_CONTAINED => (0, 1)
+            case _ => (-1, -1) // Invalid, expecting the test to fail.
+          }
           checkDatasetUnorderly(
             Dataset.ofRows(spark, plan)
               .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
               .select("value", DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
               .as[(Int, Int)],
-            (0, 1), (7, 0), (200, 1), (300, 1), (756, 1), (900, 0), (10352, 1), (19999, 1))
+            (0, deletedColumnValue),
+            (7, notDeletedColumnValue),
+            (200, deletedColumnValue),
+            (300, deletedColumnValue),
+            (756, deletedColumnValue),
+            (900, notDeletedColumnValue),
+            (10352, deletedColumnValue),
+            (19999, deletedColumnValue))
         }
 
         if (readRowIndexCol) {

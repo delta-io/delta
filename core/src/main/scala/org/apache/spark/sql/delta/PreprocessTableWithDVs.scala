@@ -178,6 +178,12 @@ object ScanWithDeletionVectors {
     val filesWithDVs = tahoeFileIndex
       .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
       .filter(_.deletionVector != null)
+    // Attach filter types to FileActions, so that later [[DeltaParquetFileFormat]] could pick it up
+    // to decide which kind of rows should be filtered out. This info is necessary for reading CDC
+    // rows that have been deleted (marked in DV), in which case marked rows must be kept rather
+    // than filtered out. In such a case, the `filterTypes` map will be populated by [[CDCReader]]
+    // to indicate IF_NOT_CONTAINED filter should be used. In other cases, `filterTypes` will be
+    // empty, so we generate IF_CONTAINED as the default DV behavior.
     val filePathToDVMap = filesWithDVs.map { addFile =>
       val key = absolutePath(tahoeFileIndex.path.toString, addFile.path).toUri
       val filterType =
