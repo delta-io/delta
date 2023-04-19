@@ -97,7 +97,13 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
         feature = "feature",
         currentVersion = 1,
-        requiredVersion = 7)
+        requiredVersion = 7),
+    "blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges" ->
+      DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+        spark,
+        StructType.fromDDL("id int"),
+        StructType.fromDDL("id2 int"),
+        detectedDuringStreaming = true)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(

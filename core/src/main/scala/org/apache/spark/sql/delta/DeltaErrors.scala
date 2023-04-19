@@ -101,7 +101,8 @@ trait DocsPath {
     "icebergClassMissing",
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
-    "tableFeatureRequiresHigherWriterProtocolVersion"
+    "tableFeatureRequiresHigherWriterProtocolVersion",
+    "blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges"
   )
 }
 
@@ -2557,12 +2558,13 @@ trait DeltaErrorsBase
       readSchema: StructType,
       incompatibleSchema: StructType,
       detectedDuringStreaming: Boolean): Throwable = {
+    val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION)
     new DeltaStreamingColumnMappingSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,
-      "",
+      generateDocsLink(spark.sparkContext.getConf, docLink),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString
@@ -3109,7 +3111,7 @@ class DeltaStreamingColumnMappingSchemaIncompatibleException(
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"
     },
     messageParameters = Array(
+      docLink,
       readSchema.json,
-      incompatibleSchema.json,
-      docLink)
+      incompatibleSchema.json)
   )

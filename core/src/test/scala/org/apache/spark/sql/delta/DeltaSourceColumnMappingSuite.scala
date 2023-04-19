@@ -27,12 +27,13 @@ import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingExecutionRelation}
-import org.apache.spark.sql.streaming.{DataStreamReader, StreamingQuery, StreamTest}
+import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
@@ -214,11 +215,11 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         writeDeltaData(0 until 5, deltaLog, Some(StructType.fromDDL("id string, name string")))
       }
 
-      def df: DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+      def createNewDf(): DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
 
       val checkpointDir = new File(inputDir, "_checkpoint")
 
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
@@ -247,7 +248,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       )
 
       // but should not block after restarting, now in column mapping mode
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         // Sink is reinitialized, only 10-15 are ingested
@@ -258,7 +259,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       // use a different checkpoint to simulate a clean stream restart
       val checkpointDir2 = new File(inputDir, "_checkpoint2")
 
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir2.getCanonicalPath),
         ProcessAllAvailable(),
         // Since the latest schema contain the additional column, it is null for previous batches.
@@ -628,6 +629,83 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         },
         ExpectStreamStartInCompatibleSchemaFailure
       )
+    }
+  }
+
+  test("unsafe flag can unblock drop or rename column") {
+    // upgrade should not blocked both during the stream AND during stream restart
+    withTempDir { inputDir =>
+      Seq(
+        s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value",
+        s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` RENAME COLUMN value TO value2"
+      ).foreach { schemaChangeQuery =>
+        FileUtils.deleteDirectory(inputDir)
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        withColumnMappingConf("none") {
+          writeDeltaData(0 until 5, deltaLog,
+            Some(StructType.fromDDL("id string, value string")))
+        }
+
+        def createNewDf(): DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+
+        val checkpointDir = new File(inputDir, s"_checkpoint_${schemaChangeQuery.hashCode}")
+        val isRename = schemaChangeQuery.contains("RENAME")
+        testStream(createNewDf())(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
+          Execute { _ =>
+            sql(
+              s"""
+                 |ALTER TABLE delta.`${inputDir.getCanonicalPath}`
+                 |SET TBLPROPERTIES (
+                 |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
+                 |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
+                 |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+            // Add another schema change to ensure even after enable the flag, we would still hit
+            // a schema change with more columns than read schema so `verifySchemaChange` would see
+            // that can complain.
+            sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` ADD COLUMN (random STRING)")
+            sql(schemaChangeQuery)
+            writeDeltaData(5 until 10, deltaLog)
+          },
+          ProcessAllAvailableIgnoreError,
+          ExistingRetryableInStreamSchemaChangeFailure
+        )
+
+        // Without the flag it would still fail
+        testStream(createNewDf())(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          ExpectStreamStartInCompatibleSchemaFailure
+        )
+
+        val checkExpectedResult = if (isRename) {
+          CheckAnswer((5 until 10).map(i => (i.toString, i.toString, i.toString)): _*)
+        } else {
+          CheckAnswer((5 until 10).map(i => (i.toString, i.toString)): _*)
+        }
+
+        withSQLConf(DeltaSQLConf
+            .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+            .key -> "true") {
+          testStream(createNewDf())(
+            StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+            // The processing will pass, ignoring any schema column missing in the backfill.
+            ProcessAllAvailable(),
+            // Show up as dropped column
+            checkExpectedResult,
+            Execute { _ =>
+              // But any schema change post the stream analysis would still cause exceptions
+              // as usual, which is critical to avoid data loss.
+              sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` ADD COLUMN (random2 STRING)")
+            },
+            ProcessAllAvailableIgnoreError,
+            ExistingRetryableInStreamSchemaChangeFailure
+          )
+        }
+      }
     }
   }
 }

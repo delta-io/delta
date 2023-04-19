@@ -132,12 +132,17 @@ trait DeltaSourceBase extends Source
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
 
   /**
+   * Whether we are streaming from a table with column mapping enabled
+   */
+  protected val isStreamingFromColumnMappingTable: Boolean =
+    snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
+
+  /**
    * Whether we should explicitly verify column mapping related schema changes such as rename or
    * drop columns.
    */
   protected lazy val shouldVerifyColumnMappingSchemaChanges =
-    snapshotAtSourceInit.metadata.columnMappingMode != NoMapping &&
-      !forceEnableStreamingReadOnColumnMappingSchemaChanges
+    isStreamingFromColumnMappingTable && !forceEnableStreamingReadOnColumnMappingSchemaChanges
 
   /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
@@ -531,7 +536,20 @@ trait DeltaSourceBase extends Source
       // because we don't ever want to read back any nulls when the read schema is non-nullable.
       val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
       if (!SchemaUtils.isReadCompatible(
-          schemaChange, schema, forbidTightenNullability = shouldForbidTightenNullability)) {
+          schemaChange, schema,
+          forbidTightenNullability = shouldForbidTightenNullability,
+          // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
+          // column mapping schema changes, we can allow the standard check to allow missing columns
+          // from the read schema in the schema change, because the only case that happens is when
+          // user rename/drops column but they don't care so they enabled the flag to unblock.
+          // This is only allowed when we are "backfilling", i.e. the stream progress is older than
+          // the analyzed table version. Any schema change past the analysis should still throw
+          // exception, because additive schema changes MUST be taken into account.
+          allowMissingColumns =
+            isStreamingFromColumnMappingTable &&
+              forceEnableStreamingReadOnColumnMappingSchemaChanges &&
+              backfilling
+        )) {
         // Only schema change later than the current read snapshot/schema can be retried, in other
         // words, backfills could never be retryable, because we have no way to refresh
         // the latest schema to "catch up" when the schema change happens before than current read
