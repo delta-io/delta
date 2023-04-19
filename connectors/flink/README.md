@@ -331,24 +331,32 @@ using Flink API without Delta Catalog configured will cause SQL job to fail.
 | [SQL INSERT](#insert-query)                    | Support both streaming and batch mode.                                                  |
 
 ### Delta Catalog
-The Delta Catalog is meant to be a source of truth regarding Delta tables in Flink's SQL API.
-That is why it is required by user to use Delta Catalog for every interaction with Delta table using Flink SQL query.
-Such SQL query will fail if used without Delta Catalog properly configured for given SQL session.
+The delta log is the source of truth for Delta tables, and the Delta Catalog is the only
+Flink catalog implementation that enforces this.
+It is required for every interaction with Delta tables via the Flink SQL API. If you attempt to use
+any other catalog other than the Delta Catalog, your SQL query will fail.
 
-At the same time, any other Flink connector (Kafka, Filesystem etc.) can be used with Delta Catalog unless it has any restrictions on its own.
-This is achieved by Delta Catalog acting as a proxy for non Delta tables.
-For Delta tables however, the Delta Catalog ensures that any DDL operation is reflected in underlying Delta table log.
-In other words, Delta Catalog ensures that only valid Delta tables can be created and used by Flink job.
+At the same time, any other Flink connector (Kafka, Filesystem etc.) can be used with Delta Catalog
+(so long as it doesn't have any restrictions of its own). This is achieved by Delta Catalog acting
+as a proxy for non-Delta tables.
+
+For Delta tables, however, the Delta Catalog ensures that any DDL operation is reflected in the
+underlying Delta table. In other words, the Delta Catalog ensures that only valid Delta tables
+can be created and used by Flink job.
 
 #### Decorated catalog
-Delta Catalog is implemented using a decorator pattern. It decorates/wraps other [Catalog](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/table/catalogs/)
-implementation.
+Delta Catalog acts as a wrapper around other [Catalog](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/table/catalogs/) implementation.
+Currently, we support `in-memory` and `hive` decorated catalogs.
+The `in-memory` type is ephemeral and does not persist any data in external metastore. This means that
+its bounded only to single session.
 
-For Delta tables, only minimum information such as database/table name, connector type and delta table file path will be stored in the metastore.
+The `hive` type is based on Flink's Hive catalog where metadata is persistence external Hive metastore.
+In this case, tables defined by user A can be used by user B.
+
+For Delta tables, only minimum information such as database/table name, connector type
+and delta table file path will be stored in the metastore.
 For Delta tables no information about table properties or schema will be stored in the metastore.
 Delta Catalog will store those in `_delta_log`.
-
-For non-Delta tables, Delta Catalog acts as a simple proxy and fully redirects every method call to decorated catalog.
 
 #### Delta Catalog Configuration
 A catalog is created and named by executing the following query:
