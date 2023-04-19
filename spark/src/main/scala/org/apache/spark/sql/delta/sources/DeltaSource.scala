@@ -851,7 +851,7 @@ case class DeltaSource(
     Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
     getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
     filteredIterator
-      .map(_.asInstanceOf[AddFile])
+      .map(_.asInstanceOf[AddFile].copy(stats = null))
       .zipWithIndex
       .sliding(size = 2)
       .flatMap {
