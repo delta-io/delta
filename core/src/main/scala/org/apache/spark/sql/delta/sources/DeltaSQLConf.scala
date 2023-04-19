@@ -336,6 +336,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA =
+    buildConf("schema.removeSparkInternalMetadata")
+      .doc(
+        """Whether to remove leaked Spark's internal metadata from the table schema before returning
+          |to Spark. These internal metadata might be stored unintentionally in tables created by
+          |old Spark versions""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without

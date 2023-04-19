@@ -18,11 +18,14 @@ package org.apache.spark.sql.delta
 
 import java.net.URI
 
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types._
 
 class DeltaTableUtilsSuite extends SharedSparkSession with DeltaSQLCommandTest {
 
@@ -48,6 +51,32 @@ class DeltaTableUtilsSuite extends SharedSparkSession with DeltaSQLCommandTest {
       new Path("s3://my-bucket/subfolder/_delta_log"))
     assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "_delta_log") ==
       new Path("s3://my-bucket/_delta_log"))
+  }
+
+  test("removeInternalMetadata") {
+    for (flag <- BOOLEAN_DOMAIN) {
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA.key -> flag.toString) {
+        for (internalMetadataKey <- DeltaTableUtils.SPARK_INTERNAL_METADATA_KEYS) {
+          val metadata = new MetadataBuilder()
+            .putString(internalMetadataKey, "foo")
+            .putString("other", "bar")
+            .build()
+          val schema = StructType(Seq(StructField("foo", StringType, metadata = metadata)))
+          val newSchema = DeltaTableUtils.removeInternalMetadata(spark, schema)
+          newSchema.foreach { f =>
+            if (flag) {
+              // Flag on: should remove internal metadata
+              assert(!f.metadata.contains(internalMetadataKey))
+              // Should reserve non internal metadata
+              assert(f.metadata.contains("other"))
+            } else {
+              // Flag off: no-op
+              assert(f.metadata == metadata)
+            }
+          }
+        }
+      }
+    }
   }
 }
 

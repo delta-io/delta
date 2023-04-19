@@ -489,12 +489,13 @@ class DeltaLog private(
 
     val relation = HadoopFsRelation(
       fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(partitionSchema),
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalMetadata(spark, partitionSchema)),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        ColumnWithDefaultExprUtils.removeDefaultExpressions(metadata.schema)),
+        DeltaTableUtils.removeInternalMetadata(spark, metadata.schema)),
       bucketSpec = None,
       fileFormat(snapshot.protocol, metadata),
       hadoopOptions)(spark)
@@ -542,7 +543,7 @@ class DeltaLog private(
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        ColumnWithDefaultExprUtils.removeDefaultExpressions(
+        DeltaTableUtils.removeInternalMetadata(spark,
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       fileFormat(snapshotToUse.protocol, snapshotToUse.metadata),

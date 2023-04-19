@@ -95,7 +95,7 @@ class DeltaDataSource
         .getOrElse(snapshot.schema)
     }
 
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchema)
+    val schemaToUse = DeltaTableUtils.removeInternalMetadata(sqlContext.sparkSession, readSchema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }

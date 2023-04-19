@@ -166,8 +166,7 @@ trait DeltaSourceBase extends Source
   protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val schemaWithoutCDC =
-      ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchemaAtSourceInit)
+    val schemaWithoutCDC = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
     if (options.readChangeFeed) {
       CDCReader.cdcReadSchema(schemaWithoutCDC)
     } else {
