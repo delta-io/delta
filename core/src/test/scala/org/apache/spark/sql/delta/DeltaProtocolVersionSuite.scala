@@ -1549,7 +1549,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       val e3 = intercept[IllegalArgumentException] {
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
-          "TBLPROPERTIES (delta.minWriterVersion=0)")
+          "TBLPROPERTIES (delta.minWriterVersion='-1')")
       }
       assert(e3.getMessage.contains(" one of "))
     }
