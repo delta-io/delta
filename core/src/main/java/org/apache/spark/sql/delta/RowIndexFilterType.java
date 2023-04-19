@@ -16,9 +16,13 @@
 
 package org.apache.spark.sql.delta;
 
+/** Filter types corresponding to every row index filter implementations. */
 public enum RowIndexFilterType {
+    /** Corresponding to [[DropMarkedRowsFilter]]. */
     IF_CONTAINED(0),
+    /** Corresponding to [[KeepMarkedRowsFilter]]. */
     IF_NOT_CONTAINED(1),
+    /** Invalid filter type. */
     UNKNOWN(-1);
 
     private final int id;
