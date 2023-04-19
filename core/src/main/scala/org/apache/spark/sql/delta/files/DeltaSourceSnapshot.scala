@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.files
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.IndexedFile
+import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.util.StateCache
 
 import org.apache.spark.sql.{Dataset, SparkSession}
@@ -60,6 +61,9 @@ class DeltaSourceSnapshot(
       snapshot.allFiles.sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
+        // Stats aren't used for streaming reads right now, so decrease
+        // the size of the files by nulling out the stats if they exist
+        .withColumn("add", col("add").withField("stats", DataSkippingReader.nullStringLiteral))
         .withColumn("remove", SingleAction.nullLitForRemoveFile)
         .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))

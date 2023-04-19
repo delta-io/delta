@@ -764,7 +764,7 @@ case class DeltaSource(
         case _ => false
       }
     Iterator.single(IndexedFile(version, -1, null)) ++ filteredIterator
-      .map(_.asInstanceOf[AddFile])
+      .map(_.asInstanceOf[AddFile].copy(stats = null))
       .zipWithIndex.map { case (action, index) =>
       IndexedFile(version, index.toLong, action, isLast = !iterator.hasNext)
     }
