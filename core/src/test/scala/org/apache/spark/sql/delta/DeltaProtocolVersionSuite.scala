@@ -213,8 +213,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   test("upgrade to support table features - many features") {
     withTempDir { path =>
-      val log = createTableWithProtocol(Protocol(2, 6), path)
-      assert(log.snapshot.protocol === Protocol(2, 6))
+      val log = createTableWithProtocol(Protocol(2, 5), path)
+      assert(log.snapshot.protocol === Protocol(2, 5))
       val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
       table.upgradeTableProtocol(2, TABLE_FEATURES_MIN_WRITER_VERSION)
       assert(
@@ -1714,7 +1714,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "5") {
         replaceTableAs(path)
       }
-      assert(log.update().protocol === Protocol(2, 6))
+      assert(log.update().protocol === Protocol(2, 5))
       withSQLConf(
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
@@ -1723,11 +1723,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       assert(
         log.update().protocol ===
-          Protocol(2, 6).merge(Protocol(3, 7)).withFeature(TestReaderWriterFeature))
+          Protocol(2, 5).merge(Protocol(3, 7)).withFeature(TestReaderWriterFeature))
     }
   }
 
-  for (p <- Seq(Protocol(2, 6), Protocol(3, 7).withFeature(TestReaderWriterFeature)))
+  for (p <- Seq(Protocol(2, 5), Protocol(3, 7).withFeature(TestReaderWriterFeature)))
     test(s"REPLACE AS keeps protocol when defaults are lower ($p)") {
       withTempDir { path =>
         spark

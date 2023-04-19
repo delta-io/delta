@@ -351,7 +351,7 @@ object TestLegacyReaderWriterFeature
   extends LegacyReaderWriterFeature(
     name = "testLegacyReaderWriter",
     minReaderVersion = 2,
-    minWriterVersion = 6)
+    minWriterVersion = 5)
 
 object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
 
