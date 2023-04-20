@@ -20,7 +20,6 @@ package org.apache.spark.sql.delta.sources
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import scala.collection.mutable
 import scala.util.{Success, Try}
 import scala.util.control.NonFatal
 import scala.util.matching.Regex

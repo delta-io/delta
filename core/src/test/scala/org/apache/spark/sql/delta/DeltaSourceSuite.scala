@@ -25,22 +25,21 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
-import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
@@ -156,6 +155,21 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         ExpectFailure[DeltaIllegalStateException](t =>
           assert(t.getMessage.contains("Detected schema change")))
       )
+    }
+  }
+
+  test("drop stats for file index") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val initialState = new DeltaSourceSnapshot(spark, deltaLog.update(), Seq.empty)
+      initialState.iterator().foreach { indexedFile =>
+        assert(indexedFile.add.stats == null)
+      }
     }
   }
 
