@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.files.SupportsRowIndexFilters
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -53,6 +54,7 @@ trait DeletionVectorUtils {
    */
   def fileIndexSupportsReadingDVs(fileIndex: FileIndex): Boolean = fileIndex match {
     case index: TahoeFileIndex => deletionVectorsReadable(index)
+    case _: SupportsRowIndexFilters => true
     case _ => false
   }
 

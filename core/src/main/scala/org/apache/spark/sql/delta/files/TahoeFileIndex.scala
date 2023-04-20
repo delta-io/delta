@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
@@ -42,7 +43,8 @@ abstract class TahoeFileIndex(
     override val deltaLog: DeltaLog,
     val path: Path)
   extends FileIndex
-    with SnapshotDescriptor {
+  with SupportsRowIndexFilters
+  with SnapshotDescriptor {
 
   override def rootPaths: Seq[Path] = path :: Nil
 
@@ -275,3 +277,14 @@ class TahoeBatchFileIndex(
   override def refresh(): Unit = {}
   override lazy val sizeInBytes: Long = addFiles.map(_.size).sum
 }
+
+trait SupportsRowIndexFilters {
+  /**
+   * If we know a-priori which exact rows we want to read (e.g., from a previous scan)
+   * find the per-file filter here, which must be passed down to the appropriate reader.
+   *
+   * @return a mapping from file names to the row index filter for that file.
+   */
+  def rowIndexFilters: Option[Map[String, RowIndexFilterType]] = None
+}
+

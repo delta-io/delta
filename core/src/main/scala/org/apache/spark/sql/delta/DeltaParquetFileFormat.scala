@@ -21,9 +21,10 @@ import java.net.URI
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
-import org.apache.spark.sql.delta.deletionvectors.DeletedRowsMarkingFilter
+import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAllRowsFilter, KeepMarkedRowsFilter}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -52,7 +53,7 @@ case class DeltaParquetFileFormat(
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
     tablePath: Option[String] = None,
-    broadcastDvMap: Option[Broadcast[Map[URI, DeletionVectorDescriptor]]] = None,
+    broadcastDvMap: Option[Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]]] = None,
     broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
@@ -165,7 +166,7 @@ case class DeltaParquetFileFormat(
 
   def copyWithDVInfo(
       tablePath: String,
-      broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptor]],
+      broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
       broadcastHadoopConf: Broadcast[SerializableConfiguration]): DeltaParquetFileFormat = {
     this.copy(
       isSplittable = false,
@@ -192,11 +193,23 @@ case class DeltaParquetFileFormat(
 
     val rowIndexFilter = isRowDeletedColumn.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter
-      val dvDescriptor = broadcastDvMap.get.value.get(pathUri)
-      DeletedRowsMarkingFilter.createInstance(
-        dvDescriptor.getOrElse(DeletionVectorDescriptor.EMPTY),
-        broadcastHadoopConf.get.value.value,
-        tablePath.map(new Path(_)))
+      broadcastDvMap.get.value
+        .get(pathUri)
+        .map { case DeletionVectorDescriptorWithFilterType(dvDescriptor, filterType) =>
+          filterType match {
+            case i if i == RowIndexFilterType.IF_CONTAINED =>
+              DropMarkedRowsFilter.createInstance(
+                dvDescriptor,
+                broadcastHadoopConf.get.value.value,
+                tablePath.map(new Path(_)))
+            case i if i == RowIndexFilterType.IF_NOT_CONTAINED =>
+              KeepMarkedRowsFilter.createInstance(
+                dvDescriptor,
+                broadcastHadoopConf.get.value.value,
+                tablePath.map(new Path(_)))
+          }
+        }
+        .getOrElse(KeepAllRowsFilter)
     }
 
     val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
@@ -344,4 +357,10 @@ object DeltaParquetFileFormat {
 
   /** Helper class to encapsulate column info */
   case class ColumnMetadata(index: Int, structField: StructField)
+
+  /** Helper class that encapsulate an [[RowIndexFilterType]]. */
+  case class DeletionVectorDescriptorWithFilterType(
+      descriptor: DeletionVectorDescriptor,
+      filterType: RowIndexFilterType) {
+  }
 }
