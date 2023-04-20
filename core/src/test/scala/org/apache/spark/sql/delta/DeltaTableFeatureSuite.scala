@@ -139,7 +139,7 @@ class DeltaTableFeatureSuite
 
     assert(
       intercept[DeltaTableFeatureException] {
-        Protocol(1, 4).withFeature(TestLegacyReaderWriterFeature)
+        Protocol(2, 4).withFeature(TestLegacyReaderWriterFeature)
       }.getMessage.contains(
         "Unable to enable table feature testLegacyReaderWriter because it requires a higher " +
           "writer protocol version (current 4)"))
