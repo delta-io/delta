@@ -21,7 +21,7 @@ import java.io.FileNotFoundException
 import java.sql.Timestamp
 
 import scala.collection.mutable
-import scala.util.{Success, Try}
+import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
@@ -46,7 +46,7 @@ import org.apache.spark.sql.types.StructType
 /**
  * A case class to help with `Dataset` operations regarding Offset indexing, representing AddFile
  * actions in a Delta log. For proper offset tracking (SC-19523), there are also special sentinel
- * values with index = -1 and add = null.
+ * values with negative index = [[DeltaSourceOffset.BASE_INDEX]] and add = null.
  *
  * This class is not designed to be persisted in offset logs or such.
  *
@@ -122,7 +122,7 @@ trait DeltaSourceBase extends Source
    */
   protected lazy val forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
     spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_SATRT)
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START)
 
   /**
    * Flag that allow user to fallback to the legacy behavior in which user can allow nullable=false
@@ -132,11 +132,24 @@ trait DeltaSourceBase extends Source
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
 
   /**
+   * Whether we are streaming from a table with column mapping enabled
+   */
+  protected val isStreamingFromColumnMappingTable: Boolean =
+    snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
+
+  /**
+   * Whether we should explicitly verify column mapping related schema changes such as rename or
+   * drop columns.
+   */
+  protected lazy val shouldVerifyColumnMappingSchemaChanges =
+    isStreamingFromColumnMappingTable && !forceEnableStreamingReadOnColumnMappingSchemaChanges
+
+  /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
    * streaming source.
    */
   protected val persistedSchemaAtSourceInit: Option[PersistedSchema] =
-    schemaLog.flatMap(_.getSchemaAtLogInit)
+    schemaTrackingLog.flatMap(_.getCurrentTrackedSchema)
 
   /**
    * The read schema for this source during initialization, taking in account of SchemaLog.
@@ -146,7 +159,6 @@ trait DeltaSourceBase extends Source
       snapshotAtSourceInit.schema
     }
 
-
   /**
    * A global flag to mark whether we have done a per-stream start check for column mapping
    * schema changes (rename / drop).
@@ -154,8 +166,7 @@ trait DeltaSourceBase extends Source
   protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val schemaWithoutCDC =
-      ColumnWithDefaultExprUtils.removeDefaultExpressions(readSchemaAtSourceInit)
+    val schemaWithoutCDC = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
     if (options.readChangeFeed) {
       CDCReader.cdcReadSchema(schemaWithoutCDC)
     } else {
@@ -209,9 +220,9 @@ trait DeltaSourceBase extends Source
       fromIndex: Long,
       isStartingVersion: Boolean,
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())):
-    ClosableIterator[IndexedFile] = {
-    if (options.readChangeFeed) {
-      // in this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
+  ClosableIterator[IndexedFile] = {
+    val iter = if (options.readChangeFeed) {
+      // In this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
       // offset.
 
       // This method is only used to get the offset so we need to return an iterator of IndexedFile.
@@ -219,18 +230,23 @@ trait DeltaSourceBase extends Source
         .toClosable
     } else {
       val changes = getFileChanges(fromVersion, fromIndex, isStartingVersion)
-      if (limits.isEmpty) return changes
 
       // Take each change until we've seen the configured number of addFiles. Some changes don't
       // represent file additions; we retain them for offset tracking, but they don't count towards
       // the maxFilesPerTrigger conf.
-      val admissionControl = limits.get
-      changes.withClose { it =>
-        it.takeWhile { index =>
-          admissionControl.admit(Option(index.add))
+      if (limits.isEmpty) {
+        changes
+      } else {
+        val admissionControl = limits.get
+        changes.withClose { it =>
+          it.takeWhile { index =>
+            admissionControl.admit(Option(index.add))
+          }
         }
       }
     }
+    // Stop before any schema change barrier if detected.
+    stopIndexedFileIteratorAtSchemaChangeBarrier(iter)
   }
 
   /**
@@ -249,13 +265,13 @@ trait DeltaSourceBase extends Source
     if (options.readChangeFeed) {
       getCDCFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
     } else {
-      val changes = getFileChanges(startVersion, startIndex, isStartingVersion)
+      val fileActionsIter = getFileChanges(
+        startVersion,
+        startIndex,
+        isStartingVersion,
+        endOffset = Some(endOffset)
+      )
       try {
-        val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _, _) =>
-          version < endOffset.reservoirVersion ||
-            (version == endOffset.reservoirVersion && index <= endOffset.index)
-        }
-
         val filteredIndexedFiles = fileActionsIter.filter { indexedFile =>
           indexedFile.getFileAction != null &&
             excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
@@ -263,7 +279,7 @@ trait DeltaSourceBase extends Source
 
         createDataFrame(filteredIndexedFiles)
       } finally {
-        changes.close()
+        fileActionsIter.close()
       }
     }
   }
@@ -283,13 +299,14 @@ trait DeltaSourceBase extends Source
       snapshotAtSourceInit,
       addFilesList,
       isStreaming = true,
-      customReadSchema = persistedSchemaAtSourceInit
+      customDataSchema = persistedSchemaAtSourceInit.map(_.dataSchema)
     )
   }
 
   /**
    * Returns the offset that starts from a specific delta table version. This function is
    * called when starting a new stream query.
+   *
    * @param fromVersion The version of the delta table to calculate the offset from.
    * @param isStartingVersion Whether the delta version is for the initial snapshot or not.
    * @param limits Indicates how much data can be processed by a micro batch.
@@ -298,12 +315,17 @@ trait DeltaSourceBase extends Source
       fromVersion: Long,
       isStartingVersion: Boolean,
       limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
+    // Initialize schema tracking log if possible, no-op if already initialized
+    // This is one of the two places can initialize schema tracking.
+    // This case specifically handles when we have a fresh stream.
+    initializeSchemaTrackingAndExitStreamIfNeeded(fromVersion)
 
     val changes = getFileChangesWithRateLimit(
       fromVersion,
-      fromIndex = -1L,
+      fromIndex = DeltaSourceOffset.BASE_INDEX,
       isStartingVersion = isStartingVersion,
       limits)
+
     val lastFileChange = iteratorLast(changes)
 
     if (lastFileChange.isEmpty) {
@@ -322,18 +344,35 @@ trait DeltaSourceBase extends Source
   protected def getNextOffsetFromPreviousOffset(
       previousOffset: DeltaSourceOffset,
       limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
+    if (trackingSchemaChange) {
+      val lastProcessedVersion = previousOffset.reservoirVersion
+      val schemaVersion =
+        schemaTrackingLog.flatMap(_.getCurrentTrackedSchema.map(_.deltaCommitVersion)).get
+      assert(lastProcessedVersion >= schemaVersion,
+        s"Delta schema log uses a schema at version $schemaVersion " +
+          s"but the last processed version $lastProcessedVersion is in the past. ")
+      getNextOffsetFromPreviousOffsetIfPendingSchemaChange(previousOffset) match {
+        case None =>
+        case updatedPreviousOffsetOpt =>
+          // Stop generating new offset if there were pending schema changes
+          return updatedPreviousOffsetOpt
+      }
+    }
+
     val changes = getFileChangesWithRateLimit(
       previousOffset.reservoirVersion,
       previousOffset.index,
       previousOffset.isStartingVersion,
       limits)
+
     val lastFileChange = iteratorLast(changes)
 
     if (lastFileChange.isEmpty) {
       Some(previousOffset)
     } else {
-      // Similarly, block latestOffset() from generating an invalid offset by proactively verifying
-      // incompatible schema changes under column mapping. See more details in the method doc.
+      // Similarly, block latestOffset() from generating an invalid offset by proactively
+      // verifying incompatible schema changes under column mapping. See more details in the
+      // method scala doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, previousOffset.reservoirVersion,
         previousOffset.isStartingVersion)
@@ -351,23 +390,29 @@ trait DeltaSourceBase extends Source
       indexedFile: IndexedFile,
       version: Long,
       isStartingVersion: Boolean): Option[DeltaSourceOffset] = {
-    val IndexedFile(v, i, _, _, _, isLastFileInVersion, _) = indexedFile
+    val (v, i, isLastFileInVersion) = (indexedFile.version, indexedFile.index, indexedFile.isLast)
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
         s"tableId: $tableId")
 
     // If the last file in previous batch is the last file of that version, automatically bump
     // to next version to skip accessing that version file altogether.
-    if (isLastFileInVersion) {
+    val offset = if (isLastFileInVersion) {
       // isStartingVersion must be false here as we have bumped the version.
-      Some(DeltaSourceOffset(DeltaSourceOffset.VERSION_1, tableId, v + 1, index = -1,
+      Some(DeltaSourceOffset(
+        tableId,
+        v + 1,
+        index = DeltaSourceOffset.BASE_INDEX,
         isStartingVersion = false))
     } else {
       // isStartingVersion will be true only if previous isStartingVersion is true and the next file
       // is still at the same version (i.e v == version).
-      Some(DeltaSourceOffset(DeltaSourceOffset.VERSION_1, tableId, v, i,
-        isStartingVersion = v == version && isStartingVersion))
+      Some(DeltaSourceOffset(
+        tableId, v, i,
+        isStartingVersion = v == version && isStartingVersion
+      ))
     }
+    offset
   }
 
   /**
@@ -377,7 +422,6 @@ trait DeltaSourceBase extends Source
       startVersion: Long,
       startIndex: Long,
       isStartingVersion: Boolean,
-      startSourceVersion: Option[Long],
       startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): DataFrame = {
     getFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
@@ -405,95 +449,122 @@ trait DeltaSourceBase extends Source
    * would look exactly the same as the latest schema so verifyStreamHygiene would not work.
    * 3. latestOffset would return this new offset cross the schema boundary.
    *
-   * TODO: unblock the column mapping side after we roll out the proper semantics.
+   * If a schema log is already initialized, we don't have to run the initialization nor schema
+   * checks any more.
    */
-  protected def checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion: Long): Unit = {
-    if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) {
-      return
-    }
-    // Column-mapping related schema changes, all of them should not be retryable
-    if (snapshotAtSourceInit.metadata.columnMappingMode != NoMapping &&
-        !forceEnableStreamingReadOnColumnMappingSchemaChanges) {
+  protected def checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+      batchStartVersion: Long): Unit = {
+    if (trackingSchemaChange) return
+    if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return
 
-      val snapshotAtStartVersionToScan = try {
-        getSnapshotFromDeltaLog(startVersion)
-      } catch {
-        case NonFatal(e) =>
-          // If we could not construct a snapshot, unfortunately there isn't much we could do
-          // to completely ensure data consistency.
-          throw DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(e)
+    lazy val (startVersionSnapshotOpt, errOpt) =
+      Try(getSnapshotFromDeltaLog(batchStartVersion)) match {
+        case Success(snapshot) => (Some(snapshot), None)
+        case Failure(exception) => (None, Some(exception))
       }
 
-      // Compare stream metadata with that to detect column mapping schema changes
-      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-          snapshotAtSourceInit.metadata, snapshotAtStartVersionToScan.metadata)) {
-        throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
-          readSchema = snapshotAtSourceInit.schema,
-          incompatibleSchema = snapshotAtStartVersionToScan.schema,
-          isCdfRead = options.readChangeFeed,
-          detectedDuringStreaming = false
-        )
+    // Cannot perfectly verify column mapping schema changes if we cannot compute a start snapshot.
+    if (shouldVerifyColumnMappingSchemaChanges && errOpt.isDefined) {
+      throw DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(errOpt.get)
+    }
+
+    // Perform schema check if we need to, considering all escape flags.
+    if (shouldVerifyColumnMappingSchemaChanges ||
+        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+      startVersionSnapshotOpt.foreach { snapshot =>
+        checkReadIncompatibleSchemaChanges(
+          snapshot.metadata, snapshot.version, validateAgainstStartSnapshot = true)
       }
     }
 
-    if (!forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
-      // Other read-incompatible schema changes, some of them can be retryable
-      Try(getSnapshotFromDeltaLog(startVersion)) match {
-        case Success(startSnapshot) =>
-          verifySchemaChange(startSnapshot.schema, startSnapshot.version)
-        case _ =>
-        // Don't regress and fail if we could not calculate such snapshot.
-      }
-    }
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true
   }
 
   /**
-   * Check column mapping schema changes during stream execution. It does the following:
-   * 1. Unifies the error messages thrown when encountering rename/drop column during streaming.
-   * 2. Prevents a tricky case in which when a drop column happened, the read compatibility check
-   *    could NOT detect that, so it would move PAST that version and later MicroBatchExecution
-   *    would throw a different exception. BUT, if the stream restarts, it would start serving
-   *    the batches POST the drop column and none of our checks will be able to capture that.
-   *    This check, however, would make sure the stream to NOT move past the drop column change so
-   *    next time when stream restarts, it would be blocked right again.
-   *
-   * We need to compare change versions so that we won't accidentally block an ADD column by
-   * detecting it as a reverse DROP column.
-   *
-   * TODO: unblock this after we roll out the proper semantics.
+   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically:
+   * 1. Any column mapping related schema changes (rename / drop) columns
+   * 2. Standard read-compatibility changes including:
+   *    a) No missing columns
+   *    b) No data type changes
+   *    c) No read-incompatible nullability changes
+   * If the check fails, we throw an exception to exit the stream.
+   * @param metadata Metadata that contains a potential schema change
+   * @param version Version for the metadata action
+   * @param validateAgainstStartSnapshot Whether this check is being done on a start snapshot.
    */
-  protected def checkColumnMappingSchemaChangesDuringStreaming(
-      curMetadata: Metadata,
-      curVersion: Long): Unit = {
+  protected def checkReadIncompatibleSchemaChanges(
+      metadata: Metadata,
+      version: Long,
+      validateAgainstStartSnapshot: Boolean = false): Unit = {
 
-    val metadataAtSourceInit = snapshotAtSourceInit.metadata
-
-    if (metadataAtSourceInit.columnMappingMode != NoMapping &&
-      !forceEnableStreamingReadOnColumnMappingSchemaChanges) {
-      if (curVersion < snapshotAtSourceInit.version) {
-        // Stream version is newer, ensure there's no column mapping schema changes
-        // from cur -> stream.
-        if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-            metadataAtSourceInit, curMetadata)) {
-          throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
-            curMetadata.schema,
-            metadataAtSourceInit.schema,
-            isCdfRead = options.readChangeFeed,
-            detectedDuringStreaming = true)
-        }
+    // Column mapping schema changes
+    if (shouldVerifyColumnMappingSchemaChanges) {
+      assert(!trackingSchemaChange, "should not check schema change while tracking it")
+      val (newMetadata, oldMetadata) = if (version < snapshotAtSourceInit.version) {
+        (snapshotAtSourceInit.metadata, metadata)
       } else {
-        // Current metadata action version is newer, ensure there's no column mapping schema changes
-        // from stream -> cur.
-        if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-            curMetadata, metadataAtSourceInit)) {
-          throw DeltaErrors.blockStreamingReadsOnColumnMappingEnabledTable(
-            metadataAtSourceInit.schema,
-            curMetadata.schema,
-            isCdfRead = options.readChangeFeed,
-            detectedDuringStreaming = true)
-        }
+        (metadata, snapshotAtSourceInit.metadata)
+      }
+
+      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata)) {
+        throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+          spark,
+          oldMetadata.schema,
+          newMetadata.schema,
+          detectedDuringStreaming = !validateAgainstStartSnapshot)
+      }
+    }
+
+    // Other standard read compatibility changes
+    if (!validateAgainstStartSnapshot ||
+        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+
+      val schemaChange = if (options.readChangeFeed) {
+        CDCReader.cdcReadSchema(metadata.schema)
+      } else {
+        metadata.schema
+      }
+
+      // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
+      // check whether we can use `schema` (the fixed source schema we use in the same run of the
+      // query) to read these new files safely.
+      val backfilling = version < snapshotAtSourceInit.version
+      // We forbid the case when the the schemaChange is nullable while the read schema is NOT
+      // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
+      // because we don't ever want to read back any nulls when the read schema is non-nullable.
+      val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
+      if (!SchemaUtils.isReadCompatible(
+          schemaChange, schema,
+          forbidTightenNullability = shouldForbidTightenNullability,
+          // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
+          // column mapping schema changes, we can allow the standard check to allow missing columns
+          // from the read schema in the schema change, because the only case that happens is when
+          // user rename/drops column but they don't care so they enabled the flag to unblock.
+          // This is only allowed when we are "backfilling", i.e. the stream progress is older than
+          // the analyzed table version. Any schema change past the analysis should still throw
+          // exception, because additive schema changes MUST be taken into account.
+          allowMissingColumns =
+            isStreamingFromColumnMappingTable &&
+              forceEnableStreamingReadOnColumnMappingSchemaChanges &&
+              backfilling
+        )) {
+        // Only schema change later than the current read snapshot/schema can be retried, in other
+        // words, backfills could never be retryable, because we have no way to refresh
+        // the latest schema to "catch up" when the schema change happens before than current read
+        // schema version.
+        // If not backfilling, we do another check to determine retryability, in which we assume
+        // we will be reading using this later `schemaChange` back on the current outdated `schema`,
+        // and if it works (including that `schemaChange` should not tighten the nullability
+        // constraint from `schema`), it is a retryable exception.
+        val retryable = !backfilling && SchemaUtils.isReadCompatible(
+          schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
+        throw DeltaErrors.schemaChangedException(
+          schema,
+          schemaChange,
+          retryable = retryable,
+          Some(version),
+          includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
       }
     }
   }
@@ -514,10 +585,11 @@ case class DeltaSource(
     deltaLog: DeltaLog,
     options: DeltaOptions,
     snapshotAtSourceInit: Snapshot,
-    schemaLog: Option[DeltaSourceSchemaLog] = None,
+    schemaTrackingLog: Option[DeltaSourceSchemaTrackingLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
-  with DeltaSourceCDCSupport {
+  with DeltaSourceCDCSupport
+  with DeltaSourceSchemaEvolutionSupport {
 
   private val shouldValidateOffsets =
     spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION)
@@ -552,17 +624,25 @@ case class DeltaSource(
    * Get the changes starting from (startVersion, startIndex). The start point should not be
    * included in the result.
    *
-   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
-   * metadata changes.
+   * @param endOffset If defined, do not return changes beyond this offset.
+   *                  If not defined, we must be scanning the log to find the next offset.
+   * @param verifyMetadataAction If true, we will break the stream when we detect any
+   *                             read-incompatible metadata changes.
    */
   protected def getFileChanges(
       fromVersion: Long,
       fromIndex: Long,
       isStartingVersion: Boolean,
-      verifyMetadataAction: Boolean = true): ClosableIterator[IndexedFile] = {
+      endOffset: Option[DeltaSourceOffset] = None,
+      verifyMetadataAction: Boolean = true
+  ): ClosableIterator[IndexedFile] = {
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): ClosableIterator[IndexedFile] = {
+      // TODO: handle the case when failOnDataLoss = false and we are missing change log files
+      //    in that case, we need to recompute the start snapshot and evolve the schema if needed
+      require(options.failOnDataLoss || !trackingSchemaChange,
+        "Using schema from schema tracking log cannot tolerate missing commit files.")
       deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).flatMapWithClose {
         case (version, filestatus) =>
           lazy val inMemoryActions = deltaLog.store.read(filestatus, deltaLog.newDeltaHadoopConf())
@@ -581,13 +661,17 @@ case class DeltaSource(
             }
 
           // First pass reads the whole commit and closes the iterator.
-          val shouldSkipCommit = createActionsIterator().processAndClose { actionsIter =>
-            validateCommitAndDecideSkipping(actionsIter, version, verifyMetadataAction)
-          }
+          val (shouldSkipCommit, metadataOpt) =
+            createActionsIterator().processAndClose { actionsIter =>
+              validateCommitAndDecideSkipping(
+                actionsIter, version,
+                verifyMetadataAction && !trackingSchemaChange
+              )
+            }
 
           // Second pass reads the commit lazily.
           createActionsIterator().withClose { actionsIter =>
-            filterAndGetIndexedFiles(actionsIter, version, shouldSkipCommit)
+            filterAndGetIndexedFiles(actionsIter, version, shouldSkipCommit, metadataOpt)
           }
       }
     }
@@ -602,14 +686,20 @@ case class DeltaSource(
     }
 
     iter = iter.withClose { it =>
-      it.filter { case IndexedFile(version, index, _, _, _, _, _) =>
-        version > fromVersion || index > fromIndex
+      it.filter { file =>
+        file.version > fromVersion || file.index > fromIndex
       }
     }
 
-    lastOffsetForTriggerAvailableNow.foreach { bound =>
+    // If endOffset is provided, we are getting a batch on a constructed range so we should use
+    // the endOffset as the limit.
+    // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
+    // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
+    val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
+
+    lastOffsetForThisScan.foreach { bound =>
       iter = iter.withClose { it =>
-        it.filter { case file =>
+        it.takeWhile { file =>
           file.version < bound.reservoirVersion ||
             (file.version == bound.reservoirVersion && file.index <= bound.index)
         }
@@ -715,47 +805,14 @@ case class DeltaSource(
   }
 
   /**
-   * Verify whether the schema change in `version` is safe to continue. If not, throw an exception
-   * to fail the query.
-   */
-  protected def verifySchemaChange(schemaChange: StructType, version: Long): Unit = {
-    // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
-    // check whether we can use `schema` (the fixed source schema we use in the same run of the
-    // query) to read these new files safely.
-    val backfilling = version < snapshotAtSourceInit.version
-    // We forbid the case when the the schemaChange is nullable while the read schema is NOT
-    // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
-    // because we don't ever want to read back any nulls when the read schema is non-nullable.
-    val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
-    if (!SchemaUtils.isReadCompatible(
-        schemaChange, schema, forbidTightenNullability = shouldForbidTightenNullability)) {
-      // Only schema change later than the current read snapshot/schema can be retried, in other
-      // words, backfills could never be retryable, because we have no way to refresh
-      // the latest schema to "catch up" when the schema change happens before than current read
-      // schema version.
-      // If not backfilling, we do another check to determine retryability, in which we assume that
-      // we will be reading using this later `schemaChange` back on the current outdated `schema`,
-      // and if it works (including that `schemaChange` should not tighten the nullability
-      // constraint from `schema`), it is a retryable exception.
-      val retryable = !backfilling && SchemaUtils.isReadCompatible(
-        schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
-      throw DeltaErrors.schemaChangedException(
-        schema,
-        schemaChange,
-        retryable = retryable,
-        Some(version),
-        includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
-    }
-  }
-
-  /**
    * Filter the iterator with only add files that contain data change and get indexed files.
    * @return indexed add files
    */
   private def filterAndGetIndexedFiles(
       iterator: Iterator[Action],
       version: Long,
-      shouldSkipCommit: Boolean): Iterator[IndexedFile] = {
+      shouldSkipCommit: Boolean,
+      metadataOpt: Option[Metadata]): Iterator[IndexedFile] = {
     val filteredIterator =
       if (shouldSkipCommit) {
         Iterator.empty.toClosable
@@ -763,10 +820,12 @@ case class DeltaSource(
         case a: AddFile if a.dataChange => true
         case _ => false
       }
-    Iterator.single(IndexedFile(version, -1, null)) ++ filteredIterator
-      .map(_.asInstanceOf[AddFile])
-      .zipWithIndex.map { case (action, index) =>
-      IndexedFile(version, index.toLong, action, isLast = !iterator.hasNext)
+    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
+      getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
+      filteredIterator
+        .map(_.asInstanceOf[AddFile])
+        .zipWithIndex.map { case (action, index) =>
+        IndexedFile(version, index.toLong, action, isLast = !iterator.hasNext)
     }
   }
 
@@ -776,12 +835,12 @@ case class DeltaSource(
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
    * metadata changes.
    *
-   * @return true if commit should be skipped
+   * @return (true if commit should be skipped, a metadata action if found)
    */
   protected def validateCommitAndDecideSkipping(
       actions: Iterator[Action],
       version: Long,
-      verifyMetadataAction: Boolean = true): Boolean = {
+      verifyMetadataAction: Boolean = true): (Boolean, Option[Metadata]) = {
     /** A check on the source table that disallows changes on the source data. */
     val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
     /** A check on the source table that disallows commits that only include deletes to the data. */
@@ -789,6 +848,7 @@ case class DeltaSource(
 
     var seenFileAdd = false
     var skippedCommit = false
+    var metadataAction: Option[Metadata] = None
     var removeFileActionPath: Option[String] = None
     actions.foreach {
       case a: AddFile if a.dataChange =>
@@ -800,9 +860,11 @@ case class DeltaSource(
         }
       case m: Metadata =>
         if (verifyMetadataAction) {
-          checkColumnMappingSchemaChangesDuringStreaming(m, version)
-          verifySchemaChange(m.schema, version)
+          checkReadIncompatibleSchemaChanges(m, version)
         }
+        assert(metadataAction.isEmpty,
+          "Should not encounter two metadata actions in the same commit")
+        metadataAction = Some(m)
       case protocol: Protocol =>
         deltaLog.protocolRead(protocol)
       case _ => ()
@@ -822,30 +884,27 @@ case class DeltaSource(
         )
       }
     }
-    skippedCommit
+    (skippedCommit, metadataAction)
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
 
-    val (startVersion,
-        startIndex,
-        isStartingVersion,
-        startSourceVersion) = if (startOffsetOption.isEmpty) {
+    val (startVersion, startIndex, isStartingVersion) = if (startOffsetOption.isEmpty) {
       getStartingVersion match {
         case Some(v) =>
-          (v, -1L, false, None)
+          (v, DeltaSourceOffset.BASE_INDEX, false)
 
         case _ =>
           if (endOffset.isStartingVersion) {
-            (endOffset.reservoirVersion, -1L, true, None)
+            (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
           } else {
             assert(
               endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
             // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
             // is still valid.
-            (endOffset.reservoirVersion - 1L, -1L, true, None)
+            (endOffset.reservoirVersion - 1L, DeltaSourceOffset.BASE_INDEX, true)
           }
       }
     } else {
@@ -854,16 +913,38 @@ case class DeltaSource(
         // unpersist `snapshot` because it won't be used any more.
         cleanUpSnapshotResources()
       }
-      if (startOffset == endOffset) {
-        // This happens only if we recover from a failure and `MicroBatchExecution` tries to call
-        // us with the previous offsets. The returned DataFrame will be dropped immediately, so we
-        // can return any DataFrame.
-        return spark.sqlContext.internalCreateDataFrame(
-          spark.sparkContext.emptyRDD[InternalRow], schema, isStreaming = true)
-      }
-      (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion,
-        Some(startOffset.sourceVersion))
+      (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
     }
+
+    // Initialize schema tracking log if possible, no-op if already initialized.
+    // This is one of the two places can initialize schema tracking.
+    // This case specifically handles initialization when we are already working with an initialized
+    // stream.
+    // Here we may have two conditions:
+    // 1. We are dealing with the recovery getBatch() that gives us the previous committed offset.
+    // In this case, we should initialize the schema at the previous committed offset (endOffset).
+    // This also means we are caught up with the stream and we can start schema tracking in the
+    // next latestOffset call.
+    // 2. We are running an already-constructed batch, we need the schema to be compatible
+    // with the entire batch, so we also pass the batch end offset. The schema tracking log will
+    // only be initialized if there exists a consistent read schema for the entire batch. If such
+    // a consistent schema does not exist, the stream will be broken. This case will be rare: it can
+    // only happen for streams where the schema tracking log was added after the stream has already
+    // been running, *and* the stream was running on an older version of the DeltaSource that did
+    // not detect non-additive schema changes, *and* it was stopped while processing a batch that
+    // contained such a schema change.
+    // In either world, the initialization logic would find the superset compatible schema for this
+    // batch by scanning Delta log.
+    initializeSchemaTrackingAndExitStreamIfNeeded(startVersion, Some(endOffset.reservoirVersion))
+
+    if (startOffsetOption.contains(endOffset)) {
+      // This happens only if we recover from a failure and `MicroBatchExecution` tries to call
+      // us with the previous offsets. The returned DataFrame will be dropped immediately, so we
+      // can return any DataFrame.
+      return spark.sqlContext.internalCreateDataFrame(
+        spark.sparkContext.emptyRDD[InternalRow], schema, isStreaming = true)
+    }
+
     val offsetRangeInfo = s"(getBatch)start: $startDeltaOffsetOption end: $end"
     if (endOffset.reservoirVersion - startVersion > 1000L) {
       // Improve the log level if the source is processing a large batch.
@@ -873,18 +954,28 @@ case class DeltaSource(
     }
 
     // Check for column mapping + streaming incompatible schema changes
-    // Note for initial snapshot, the startVersion should be the same as the latestOffset's version
-    // and therefore this check won't have any effect.
+    // Note for initial snapshot, the startVersion should be the same as the latestOffset's
+    // version and therefore this check won't have any effect.
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion)
 
-    val createdDf = createDataFrameBetweenOffsets(startVersion, startIndex, isStartingVersion,
-      startSourceVersion, startDeltaOffsetOption, endOffset)
+    val createdDf = createDataFrameBetweenOffsets(
+      startVersion, startIndex, isStartingVersion, startDeltaOffsetOption, endOffset)
 
     createdDf
   }
 
   override def stop(): Unit = {
     cleanUpSnapshotResources()
+  }
+
+  // Marks that the `end` offset is done and we can safely run any actions in response to that.
+  // This happens AFTER `end` offset is committed by the streaming engine so we can safely fail this
+  // if needed, e.g. for failing the stream to conduct schema evolution.
+  override def commit(end: Offset): Unit = {
+    super.commit(end)
+    // IMPORTANT: for future developers, please place any work you would like to do in commit()
+    // before `updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)` as it may throw an exception.
+    updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)
   }
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"

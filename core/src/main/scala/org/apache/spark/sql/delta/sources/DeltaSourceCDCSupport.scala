@@ -70,7 +70,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     private def hasNoFileActionAndStartIndex(indexedFile: IndexedFile): Boolean = {
-      !indexedFile.hasFileAction && indexedFile.index == -1
+      !indexedFile.hasFileAction && indexedFile.index == DeltaSourceOffset.BASE_INDEX
     }
 
     private def hasAddsOrRemoves(indexedFile: IndexedFile): Boolean = {
@@ -129,7 +129,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           }
         } else {
           // CDC is recorded as AddFile or RemoveFile
-          // We also allow entries with no file actions and index as -1
+          // We allow entries with no file actions and index as [[DeltaSourceOffset.BASE_INDEX]]
           // that are used primarily to update latest offset when no other
           // file action based entries are present.
           fileActions.filter(indexedFile => hasAddsOrRemoves(indexedFile) ||
@@ -205,7 +205,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile) =
           filterCDCActions(actions, version, verifyMetadataAction)
-        val itr = Iterator(IndexedFile(version, -1, null)) ++ fileActions
+        val itr = Iterator(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++ fileActions
           .zipWithIndex.map {
           case (action: AddFile, index) =>
             IndexedFile(
@@ -295,9 +295,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           false
         case m: Metadata =>
           if (verifyMetadataAction) {
-            checkColumnMappingSchemaChangesDuringStreaming(m, version)
-            val cdcSchema = CDCReader.cdcReadSchema(m.schema)
-            verifySchemaChange(cdcSchema, version)
+            checkReadIncompatibleSchemaChanges(m, version)
           }
           false
         case protocol: Protocol =>

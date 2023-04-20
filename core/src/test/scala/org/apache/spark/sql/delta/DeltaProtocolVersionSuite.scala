@@ -564,14 +564,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   import testImplicits._
   /** Creates a Delta table and checks the expected protocol version */
-  private def testCreation(tableName: String, writerVersion: Int)(fn: String => Unit): Unit = {
+  private def testCreation(tableName: String, writerVersion: Int, tableInitialized: Boolean = false)
+                          (fn: String => Unit): Unit = {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
         withTable(tableName) {
           fn(dir.getCanonicalPath)
 
           val deltaLog = DeltaLog.forTable(spark, dir)
-          assert(deltaLog.snapshot.version === 0, "did not create a Delta table")
+          assert((deltaLog.snapshot.version != 0) == tableInitialized)
           assert(deltaLog.snapshot.protocol.minWriterVersion === writerVersion)
           assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
         }
@@ -647,8 +648,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("creating a new table with default protocol") {
     val tableName = "delta_test"
 
-    def testTableCreation(fn: String => Unit): Unit = {
-      testCreation(tableName, 1) { dir =>
+    def testTableCreation(fn: String => Unit, tableInitialized: Boolean = false): Unit = {
+      testCreation(tableName, 1, tableInitialized) { dir =>
         fn(dir)
       }
     }
@@ -666,7 +667,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testTableCreation { dir =>
       sql(s"CREATE TABLE $tableName USING delta LOCATION '$dir' AS SELECT * FROM range(10)")
     }
-    testTableCreation { dir =>
+    testTableCreation(dir => {
       val stream = MemoryStream[Int]
       stream.addData(1 to 10)
       val q = stream.toDF().writeStream.format("delta")
@@ -675,6 +676,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       q.processAllAvailable()
       q.stop()
     }
+    )
 
     testTableCreation { dir =>
       spark.range(10).write.mode("append").parquet(dir)
@@ -685,7 +687,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test(
     "creating a new table with default protocol - requiring more recent protocol version") {
     val tableName = "delta_test"
-    def testTableCreation(fn: String => Unit): Unit = testCreation(tableName, 2)(fn)
+    def testTableCreation(fn: String => Unit, tableInitialized: Boolean = false): Unit =
+      testCreation(tableName, 2, tableInitialized)(fn)
 
     testTableCreation { dir =>
       spark.range(10).writeTo(tableName).using("delta")
@@ -719,7 +722,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       testTableCreation { dir =>
         sql(s"CREATE TABLE $tableName USING delta LOCATION '$dir' AS SELECT * FROM range(10)")
       }
-      testTableCreation { dir =>
+      testTableCreation(dir => {
         val stream = MemoryStream[Int]
         stream.addData(1 to 10)
         val q = stream.toDF().writeStream.format("delta")
@@ -728,6 +731,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         q.processAllAvailable()
         q.stop()
       }
+      )
 
       testTableCreation { dir =>
         spark.range(10).write.mode("append").parquet(dir)

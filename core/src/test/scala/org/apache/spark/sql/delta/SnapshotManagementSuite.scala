@@ -437,9 +437,9 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val oldLogSegment = log.snapshot.logSegment
       spark.range(10).write.format("delta").save(path)
       val newLogSegment = log.snapshot.logSegment
-      assert(log.getLogSegmentAfterCommit(oldLogSegment) === newLogSegment)
+      assert(log.getLogSegmentAfterCommit(oldLogSegment, None) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
-      assert(log.getLogSegmentAfterCommit(newLogSegment) === log.snapshot.logSegment)
+      assert(log.getLogSegmentAfterCommit(newLogSegment, None) === log.snapshot.logSegment)
     }
   }
 

@@ -231,7 +231,7 @@ object SchemaUtils extends DeltaLogging {
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
-   *   - Dropping any column that was present in the existing schema
+   *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
    *   - Any change of datatype
    *   - If `forbidTightenNullability` = true:
    *      - Forbids tightening the nullability (existing nullable=true -> read nullable=false)
@@ -249,7 +249,8 @@ object SchemaUtils extends DeltaLogging {
   def isReadCompatible(
       existingSchema: StructType,
       readSchema: StructType,
-      forbidTightenNullability: Boolean = false): Boolean = {
+      forbidTightenNullability: Boolean = false,
+      allowMissingColumns: Boolean = false): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -287,7 +288,7 @@ object SchemaUtils extends DeltaLogging {
         "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
-      if (!existingFieldNames.subsetOf(newFields)) {
+      if (!allowMissingColumns && !existingFieldNames.subsetOf(newFields)) {
         // Dropped a column that was present in the DataFrame schema
         return false
       }

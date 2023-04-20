@@ -68,8 +68,8 @@ class Snapshot(
     val logSegment: LogSegment,
     override val deltaLog: DeltaLog,
     val timestamp: Long,
-    val checksumOpt: Option[VersionChecksum],
-    checkpointMetadataOpt: Option[CheckpointMetaData] = None)
+    val checksumOpt: Option[VersionChecksum]
+  )
   extends SnapshotDescriptor
   with SnapshotStateManager
   with StateCache
@@ -354,7 +354,8 @@ class Snapshot(
     }
   }
 
-  def getCheckpointMetadataOpt: Option[CheckpointMetaData] = checkpointMetadataOpt
+  def getCheckpointMetadataOpt: Option[CheckpointMetaData] =
+    logSegment.checkpointProviderOpt.map(_.checkpointMetadata)
 
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)

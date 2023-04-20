@@ -128,7 +128,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType =
     DeltaColumnMapping.dropColumnMappingMetadata(
-      ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema))
+      DeltaTableUtils.removeInternalMetadata(spark, snapshot.schema))
 
   override def schema(): StructType = tableSchema
 

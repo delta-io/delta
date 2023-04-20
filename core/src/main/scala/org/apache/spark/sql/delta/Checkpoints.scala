@@ -97,6 +97,11 @@ case class CheckpointMetaData(
     case Some(_) => CheckpointMetaData.Format.WITH_PARTS
     case None => CheckpointMetaData.Format.SINGLE
   }
+
+  /** Whether two [[CheckpointMetaData]] represents the same checkpoint */
+  def semanticEquals(other: CheckpointMetaData): Boolean = {
+    CheckpointInstance(this) == CheckpointInstance(other)
+  }
 }
 
 object CheckpointMetaData {
@@ -248,17 +253,16 @@ object CheckpointMetaData {
     s""""$result""""
   }
 
-  def fromLogSegment(segment: LogSegment): Option[CheckpointMetaData] = {
-    segment.checkpointVersionOpt.map { version =>
-      CheckpointMetaData(
-        version = version,
-        size = -1L,
-        parts = numCheckpointParts(segment.checkpoint.head.getPath),
-        sizeInBytes = Some(segment.checkpoint.map(_.getLen).sum),
-        numOfAddFiles = None,
-        checkpointSchema = None
-      )
-    }
+  def fromFiles(files: Seq[FileStatus]): CheckpointMetaData = {
+    assert(files.nonEmpty, "files should be non empty to construct CheckpointMetaData")
+    CheckpointMetaData(
+      version = checkpointVersion(files.head),
+      size = -1L,
+      parts = numCheckpointParts(files.head.getPath),
+      sizeInBytes = Some(files.map(_.getLen).sum),
+      numOfAddFiles = None,
+      checkpointSchema = None
+    )
   }
 }
 
@@ -278,13 +282,15 @@ case class CheckpointInstance(
       s" ${CheckpointMetaData.Format.WITH_PARTS.name}")
 
   /**
-   * Returns a [[CheckpointFileListProvider]] which can tell the files corresponding to this
+   * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
    * checkpoint.
+   * The `checkpointMetadataHint` might be passed to [[CheckpointProvider]] so that underlying
+   * [[CheckpointProvider]] provides more precise info.
    */
-  def getCheckpointFileListProvider(
+  def getCheckpointProvider(
       logPath: Path,
-      filesForLegacyCheckpointConstruction: Seq[FileStatus],
-      checkpointMetadataHint: Option[CheckpointMetaData] = None): CheckpointFileListProvider = {
+      filesForCheckpointConstruction: Seq[FileStatus],
+      checkpointMetadataHint: Option[CheckpointMetaData] = None): CheckpointProvider = {
     format match {
       case CheckpointMetaData.Format.WITH_PARTS | CheckpointMetaData.Format.SINGLE =>
         val filePaths = if (format == CheckpointMetaData.Format.WITH_PARTS) {
@@ -293,12 +299,14 @@ case class CheckpointInstance(
           Set(checkpointFileSingular(logPath, version))
         }
         val newCheckpointFileArray =
-          filesForLegacyCheckpointConstruction.filter(f => filePaths.contains(f.getPath))
+          filesForCheckpointConstruction.filter(f => filePaths.contains(f.getPath))
         assert(newCheckpointFileArray.length == filePaths.size,
           "Failed in getting the file information for:\n" +
             filePaths.mkString(" -", "\n -", "") + "\namong\n" +
-            filesForLegacyCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
-        PreloadedCheckpointFileProvider(newCheckpointFileArray)
+            filesForCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
+        PreloadedCheckpointProvider(
+          newCheckpointFileArray,
+          checkpointMetadataHint.filter(cm => CheckpointInstance(cm) == this))
       case CheckpointMetaData.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
           s"invalid checkpoint format ${CheckpointMetaData.Format.SENTINEL}")
@@ -484,7 +492,8 @@ trait Checkpoints extends DeltaLogging {
       parts = cv.numParts,
       sizeInBytes = None,
       numOfAddFiles = None,
-      checkpointSchema = None)
+      checkpointSchema = None
+    )
   }
 
   /**
@@ -731,7 +740,8 @@ object Checkpoints extends DeltaLogging {
       parts = numPartsOption,
       sizeInBytes = Some(checkpointSizeInBytes),
       numOfAddFiles = Some(snapshot.numOfFiles),
-      checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema))
+      checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
+    )
   }
 
   /**
@@ -859,18 +869,32 @@ object CheckpointV2 {
 }
 
 /**
- * A trait which provides functionality to retrieve the underlying files for a Checkpoint.
+ * A trait which provides information about a checkpoint to the Snapshot.
+ * - files in the underlying checkpoint
+ * - metadata of the underlying checkpoint
  */
-trait CheckpointFileListProvider {
+trait CheckpointProvider {
   def checkpointFiles: Seq[FileStatus]
+  def checkpointMetadata: CheckpointMetaData
 }
 
 /**
- * An implementation of [[CheckpointFileListProvider]] where the information about checkpoint files
+ * An implementation of [[CheckpointProvider]] where the information about checkpoint files
  * (i.e. Seq[FileStatus]) is already known in advance.
+ *
+ * @param checkpointFiles - file statuses for the checkpoint
+ * @param checkpointMetadataOpt - optional checkpoint metadata for the checkpoint.
+ *                              If this is passed, the provider will use it instead of deriving the
+ *                              [[CheckpointMetaData]] from the file list.
  */
-case class PreloadedCheckpointFileProvider(
-    override val checkpointFiles: Seq[FileStatus]) extends CheckpointFileListProvider {
+case class PreloadedCheckpointProvider(
+    override val checkpointFiles: Seq[FileStatus],
+    checkpointMetadataOpt: Option[CheckpointMetaData]
+) extends CheckpointProvider {
+
+  override def checkpointMetadata: CheckpointMetaData = {
+    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))
+  }
 
   require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
 }

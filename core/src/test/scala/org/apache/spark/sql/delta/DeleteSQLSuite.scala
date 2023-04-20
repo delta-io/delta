@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.Row
 
@@ -98,19 +98,23 @@ class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
 
 }
 
-class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite with DeletionVectorsTestUtils {
+class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
+  with DeltaExcludedTestMixin
+  with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsForDeletes(spark)
   }
 
-  override def excluded: Set[String] = super.excluded ++ Set(
-    // The following two tests must fail when DV is used. Covered by another test case:
-    // "throw error when non-pinned TahoeFileIndex snapshot is used".
-    "data and partition columns - Partition=true Skipping=false",
-    "data and partition columns - Partition=false Skipping=false",
-    // The scan schema contains additional row index filter columns.
-    "nested schema pruning on data condition")
+  override def excluded: Seq[String] = super.excluded ++
+    Seq(
+      // The following two tests must fail when DV is used. Covered by another test case:
+      // "throw error when non-pinned TahoeFileIndex snapshot is used".
+      "data and partition columns - Partition=true Skipping=false",
+      "data and partition columns - Partition=false Skipping=false",
+      // The scan schema contains additional row index filter columns.
+      "nested schema pruning on data condition"
+  )
 
   // This works correctly with DVs, but fails in classic DELETE.
   override def testSuperSetColsTempView(): Unit = {

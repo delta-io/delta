@@ -27,12 +27,13 @@ import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingExecutionRelation}
-import org.apache.spark.sql.streaming.{DataStreamReader, StreamingQuery, StreamTest}
+import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
@@ -53,28 +54,24 @@ trait ColumnMappingStreamingTestUtils extends StreamTest with DeltaColumnMapping
   protected def isColumnMappingSchemaIncompatibleFailure(
       t: Throwable,
       detectedDuringStreaming: Boolean): Boolean = t match {
-    case e: DeltaColumnMappingUnsupportedSchemaIncompatibleException =>
-      if (isCdcTest) {
-        e.opName == "Streaming read of Change Data Feed (CDF)"
-      } else {
-        e.opName == "Streaming read"
-      } && e.additionalProperties.get("detectedDuringStreaming")
+    case e: DeltaStreamingColumnMappingSchemaIncompatibleException =>
+      e.additionalProperties.get("detectedDuringStreaming")
         .exists(_.toBoolean == detectedDuringStreaming)
     case _ => false
   }
 
   protected val ExpectStreamStartInCompatibleSchemaFailure =
-    ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = false))
     }
 
   protected val ExpectInStreamSchemaChangeFailure =
-    ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = true))
     }
 
   protected val ExpectGenericSchemaIncompatibleFailure =
-    ExpectFailure[DeltaColumnMappingUnsupportedSchemaIncompatibleException]()
+    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException]()
 
   // Failure thrown by the current DeltaSource schema change incompatible check
   protected val ExistingRetryableInStreamSchemaChangeFailure = Execute { q =>
@@ -184,9 +181,9 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
 
       val checkpointDir = new File(inputDir, "_checkpoint")
 
-      def df: DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+      def loadDf(): DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
 
-      testStream(df)(
+      testStream(loadDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
@@ -199,7 +196,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         ExistingRetryableInStreamSchemaChangeFailure
       )
 
-      testStream(df)(
+      testStream(loadDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         // Sink is reinitialized, only 5-10 are ingested
@@ -218,11 +215,11 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         writeDeltaData(0 until 5, deltaLog, Some(StructType.fromDDL("id string, name string")))
       }
 
-      def df: DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+      def createNewDf(): DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
 
       val checkpointDir = new File(inputDir, "_checkpoint")
 
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
@@ -251,7 +248,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       )
 
       // but should not block after restarting, now in column mapping mode
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
         ProcessAllAvailable(),
         // Sink is reinitialized, only 10-15 are ingested
@@ -262,7 +259,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       // use a different checkpoint to simulate a clean stream restart
       val checkpointDir2 = new File(inputDir, "_checkpoint2")
 
-      testStream(df)(
+      testStream(createNewDf())(
         StartStream(checkpointLocation = checkpointDir2.getCanonicalPath),
         ProcessAllAvailable(),
         // Since the latest schema contain the additional column, it is null for previous batches.
@@ -457,7 +454,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       //          But once the initial snapshot is served, all subsequent batches will fail if
       //          encountering a schema change during streaming, and all restart effort should fail.
       val checkpointDir = new File(inputDir, "_checkpoint")
-      val df = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+      def df: DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
 
       testStream(df)(
         StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
@@ -471,28 +468,29 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         ProcessAllAvailable(),
         // can still work because the schema is still compatible
         CheckAnswer((0 until 20).map(i => (i.toString, i.toString)): _*),
+        // stop stream to allow schema change + data update to start in a batch
+        StopStream,
         // But a new schema change would cause stream to fail
         // Note here we are restoring back the original schema, see next case for how we test
         // some extra special cases when schemas are reverted.
         Execute { _ =>
-          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` $schemaRestoreQuery")
-        },
-        // write more data in updated schema again
-        Execute { _ =>
           writeDeltaData(20 until 25, deltaLog)
-        },
-        // the last batch should not be processed and stream should fail
-        ProcessAllAvailableIgnoreError,
-        // sink data did not change
-        CheckAnswer((0 until 20).map(i => (i.toString, i.toString)): _*),
-        // detected schema change
-        ExpectInStreamSchemaChangeFailure
+          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` $schemaRestoreQuery")
+        }
       )
 
       val df2 = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
-      // Renamed columns could not proceed after restore because its schema change is not read
-      // compatible at all.
-      checkStreamStartBlocked(df2, checkpointDir, ExpectStreamStartInCompatibleSchemaFailure)
+      testStream(df2)(
+        // Restart stream
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        // the last batch should not be processed because the batch cross an incompatible
+        // schema change.
+        ProcessAllAvailableIgnoreError,
+        // no data processed
+        CheckAnswer(Nil: _*),
+        // detected schema change while trying to generate the next offset
+        ExpectStreamStartInCompatibleSchemaFailure
+      )
 
       // Case 2 - Specifically we use startingVersion=0 to simulate serving the entire table's data
       //          in a streaming fashion, ignoring the initialSnapshot.
@@ -586,13 +584,13 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
 
       // Case 2 - in stream failure should not progress latest offset too
       // This is the handle prior to SC-111607, which should cover the major cases.
-      val df3 = dropCDCFields(
+      def loadDf(): DataFrame = dropCDCFields(
         dsr.option("startingVersion", dropVersion + 1) // so we could move on to in stream failure
            .load(inputDir.getCanonicalPath))
 
       val ckpt = Utils.createTempDir().getCanonicalPath
       var latestAvailableOffsets: Seq[String] = null
-      testStream(df3)(
+      testStream(loadDf())(
         StartStream(checkpointLocation = ckpt), // fresh checkpoint
         ProcessAllAvailable(),
         CheckAnswer((10 until 15).map(i => (i.toString)): _*),
@@ -619,7 +617,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       // Case 3 - resuming from existing checkpoint, note that getBatch's stream start check
       // should be called instead of latestOffset for recovery.
       // This is also the handle prior to SC-111607, which should cover the major cases.
-      testStream(df3)(
+      testStream(loadDf())(
         StartStream(checkpointLocation = ckpt), // existing checkpoint
         ProcessAllAvailableIgnoreError,
         CheckAnswer(Nil: _*),
@@ -631,6 +629,83 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         },
         ExpectStreamStartInCompatibleSchemaFailure
       )
+    }
+  }
+
+  test("unsafe flag can unblock drop or rename column") {
+    // upgrade should not blocked both during the stream AND during stream restart
+    withTempDir { inputDir =>
+      Seq(
+        s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value",
+        s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` RENAME COLUMN value TO value2"
+      ).foreach { schemaChangeQuery =>
+        FileUtils.deleteDirectory(inputDir)
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        withColumnMappingConf("none") {
+          writeDeltaData(0 until 5, deltaLog,
+            Some(StructType.fromDDL("id string, value string")))
+        }
+
+        def createNewDf(): DataFrame = dropCDCFields(dsr.load(inputDir.getCanonicalPath))
+
+        val checkpointDir = new File(inputDir, s"_checkpoint_${schemaChangeQuery.hashCode}")
+        val isRename = schemaChangeQuery.contains("RENAME")
+        testStream(createNewDf())(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
+          Execute { _ =>
+            sql(
+              s"""
+                 |ALTER TABLE delta.`${inputDir.getCanonicalPath}`
+                 |SET TBLPROPERTIES (
+                 |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = "name",
+                 |  ${DeltaConfigs.MIN_READER_VERSION.key} = "2",
+                 |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = "5")""".stripMargin)
+            // Add another schema change to ensure even after enable the flag, we would still hit
+            // a schema change with more columns than read schema so `verifySchemaChange` would see
+            // that can complain.
+            sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` ADD COLUMN (random STRING)")
+            sql(schemaChangeQuery)
+            writeDeltaData(5 until 10, deltaLog)
+          },
+          ProcessAllAvailableIgnoreError,
+          ExistingRetryableInStreamSchemaChangeFailure
+        )
+
+        // Without the flag it would still fail
+        testStream(createNewDf())(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          ExpectStreamStartInCompatibleSchemaFailure
+        )
+
+        val checkExpectedResult = if (isRename) {
+          CheckAnswer((5 until 10).map(i => (i.toString, i.toString, i.toString)): _*)
+        } else {
+          CheckAnswer((5 until 10).map(i => (i.toString, i.toString)): _*)
+        }
+
+        withSQLConf(DeltaSQLConf
+            .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+            .key -> "true") {
+          testStream(createNewDf())(
+            StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+            // The processing will pass, ignoring any schema column missing in the backfill.
+            ProcessAllAvailable(),
+            // Show up as dropped column
+            checkExpectedResult,
+            Execute { _ =>
+              // But any schema change post the stream analysis would still cause exceptions
+              // as usual, which is critical to avoid data loss.
+              sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` ADD COLUMN (random2 STRING)")
+            },
+            ProcessAllAvailableIgnoreError,
+            ExistingRetryableInStreamSchemaChangeFailure
+          )
+        }
+      }
     }
   }
 }
@@ -668,7 +743,5 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
   with DeltaSourceColumnMappingSuiteBase {
 
   override protected def isCdcTest: Boolean = false
-
-  import testImplicits._
 
 }
