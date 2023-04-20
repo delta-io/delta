@@ -460,6 +460,34 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     ),
     cdc = Seq((0, 2, "insert")))
 
+  testExtendedMergeWithCDC("empty source")(
+    source = Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "t.key = 2", set = "value = t.value + 1"),
+    deleteNotMatched(condition = "t.key = 7"))(
+    result = Seq(
+      (2, 3), // Not matched by source, updated
+      (1, 4) // Not matched by source, no change
+      // (7, 3) Not matched by source, deleted
+    ),
+    cdc = Seq(
+      (2, 2, "update_preimage"),
+      (2, 3, "update_postimage"),
+      (7, 3, "delete")))
+
+  testExtendedMergeWithCDC("empty source delete only")(
+    source = Nil,
+    target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(condition = "t.key = 7"))(
+    result = Seq(
+      (2, 2), // Not matched by source, no change
+      (1, 4) // Not matched by source, no change
+      // (7, 3) Not matched by source, deleted
+    ),
+    cdc = Seq((7, 3, "delete")))
+
   testExtendedMergeWithCDC("all 3 clauses - no changes")(
     source = (1, 1) :: (0, 2) :: (5, 5) :: Nil,
     target = (2, 2) :: (1, 4) :: (7, 3) :: Nil,
@@ -473,6 +501,32 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (7, 3) // Not matched by source, no change
     ),
     cdc = Seq.empty)
+
+  test(s"special character in path - not matched by source delete") {
+    val source = s"$tempDir/sou rce^"
+    val target = s"$tempDir/tar get="
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = deleteNotMatched())
+    checkAnswer(readDeltaTable(target), Seq(0, 2, 4, 6, 8).toDF("id"))
+  }
+
+  test(s"special character in path - not matched by source update") {
+    val source = s"$tempDir/sou rce@"
+    val target = s"$tempDir/tar get#"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = updateNotMatched(set = "id = t.id * 10"))
+    checkAnswer(readDeltaTable(target), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+  }
 
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and delete not matched by source")(

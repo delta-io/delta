@@ -526,7 +526,7 @@ class DeltaAnalysis(session: SparkSession)
     EliminateSubqueryAliases(targetPlan) match {
       // Target is a path based table
       case DataSourceV2Relation(targetTbl @ DeltaTableV2(_, path, _, _, _, _, _), _, _, _, _)
-          if !targetTbl.deltaLog.tableExists =>
+          if !targetTbl.tableExists =>
         val tblIdent = TableIdentifier(path.toString, Some("delta"))
         if (!isCreate) {
           throw DeltaErrors.cannotReplaceMissingTableException(

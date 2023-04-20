@@ -72,7 +72,6 @@ object Action {
   }
 
   lazy val logSchema = ExpressionEncoder[SingleAction].schema
-
 }
 
 /**
@@ -250,7 +249,7 @@ object Protocol {
     val tableConf = metadata.configuration
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
-    val tablePropEnabledFeatures = getSupportedFeaturesFromConfigs(tableConf, FEATURE_PROP_PREFIX)
+    val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
     val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
@@ -282,10 +281,8 @@ object Protocol {
 
     // Protocol version provided in table properties can upgrade the protocol, but only when they
     // are higher than which required by the enabled features.
-    val readerVersionFromTableConfOpt =
-      tableConf.get(MIN_READER_VERSION_PROP).map(getVersion(MIN_READER_VERSION_PROP, _))
-    val writerVersionFromTableConfOpt =
-      tableConf.get(MIN_WRITER_VERSION_PROP).map(getVersion(MIN_WRITER_VERSION_PROP, _))
+    val (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) =
+      getProtocolVersionsFromTableConf(tableConf)
 
     // Decide the final protocol version:
     //   a. 1, aka the lowest version possible
@@ -313,7 +310,8 @@ object Protocol {
    * and [[FEATURE_PROP_PREFIX]].
    */
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
-      spark: SparkSession, metadata: Metadata): (Int, Int, Set[TableFeature]) = {
+      spark: SparkSession,
+      metadata: Metadata): (Int, Int, Set[TableFeature]) = {
     val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
@@ -325,20 +323,28 @@ object Protocol {
   }
 
   /** Cast the table property for the protocol version to an integer. */
-  def getVersion(key: String, value: String): Int = {
-    try value.toInt catch {
-      case n: NumberFormatException => throw DeltaErrors.protocolPropNotIntException(key, value)
+  private def tryCastProtocolVersionToInt(key: String, value: String): Int = {
+    try value.toInt
+    catch {
+      case _: NumberFormatException =>
+        throw DeltaErrors.protocolPropNotIntException(key, value)
     }
   }
 
-  /**
-   * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set for the table. Returns the minimum required protocol if not.
-   */
-  def checkProtocolRequirements(
-      spark: SparkSession,
-      metadata: Metadata,
-      current: Protocol): Option[Protocol] = {
+  def getReaderVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
+    conf.get(MIN_READER_VERSION_PROP).map(tryCastProtocolVersionToInt(MIN_READER_VERSION_PROP, _))
+  }
+
+  def getWriterVersionFromTableConf(conf: Map[String, String]): Option[Int] = {
+    conf.get(MIN_WRITER_VERSION_PROP).map(tryCastProtocolVersionToInt(MIN_WRITER_VERSION_PROP, _))
+  }
+
+  def getProtocolVersionsFromTableConf(conf: Map[String, String]): (Option[Int], Option[Int]) = {
+    (getReaderVersionFromTableConf(conf), getWriterVersionFromTableConf(conf))
+  }
+
+  /** Assert a table metadata contains no protocol-related table properties. */
+  private def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
     assert(
       !metadata.configuration.contains(MIN_READER_VERSION_PROP),
       "Should not have the " +
@@ -355,18 +361,74 @@ object Protocol {
       !metadata.configuration.contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key),
       "Should not have the table property " +
         s"${DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key} stored in table metadata")
-    val (readerVersion, writerVersion, enabledFeatures) =
+  }
+
+  /**
+   * Upgrade the current protocol to satisfy all auto-update capable features required by the table
+   * metadata. An Delta error will be thrown if a non-auto-update capable feature is required by
+   * the metadata and not in the resulting protocol, in such a case the user must run `ALTER TABLE`
+   * to add support for this feature beforehand using the `delta.feature.featureName` table
+   * property.
+   *
+   * Refer to [[FeatureAutomaticallyEnabledByMetadata.automaticallyUpdateProtocolOfExistingTables]]
+   * to know more about "auto-update capable" features.
+   *
+   * Note: this method only considers metadata-enabled features. To avoid confusion, the caller
+   * must apply and remove protocol-related table properties from the metadata before calling this
+   * method.
+   */
+  def upgradeProtocolFromMetadataForExistingTable(
+      spark: SparkSession,
+      metadata: Metadata,
+      current: Protocol): Option[Protocol] = {
+    assertMetadataContainsNoProtocolProps(metadata)
+
+    val (readerVersion, writerVersion, minRequiredFeatures) =
       minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
 
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists
     val required = Protocol(
-        readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
-        .withFeatures(enabledFeatures)
+      readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
+      .withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
+      // When the current protocol does not satisfy metadata requirement, some additional features
+      // must be supported by the protocol. We assert those features can actually perform the
+      // auto-update.
+      assertMetadataTableFeaturesAutomaticallySupported(
+        current.implicitlyAndExplicitlySupportedFeatures,
+        required.implicitlyAndExplicitlySupportedFeatures)
       Some(required.merge(current))
     } else {
       None
+    }
+  }
+
+  /**
+   * Ensure all features listed in `currentFeatures` are also listed in `requiredFeatures`, or, if
+   * one is not listed, it must be capable to auto-update a protocol.
+   *
+   * Refer to [[FeatureAutomaticallyEnabledByMetadata.automaticallyUpdateProtocolOfExistingTables]]
+   * to know more about "auto-update capable" features.
+   *
+   * Note: Caller must make sure `requiredFeatures` is obtained from a min protocol that satisfies
+   * a table metadata.
+   */
+  private def assertMetadataTableFeaturesAutomaticallySupported(
+      currentFeatures: Set[TableFeature],
+      requiredFeatures: Set[TableFeature]): Unit = {
+    val (autoUpdateCapableFeatures, nonAutoUpdateCapableFeatures) =
+      requiredFeatures.diff(currentFeatures)
+        .collect { case f: FeatureAutomaticallyEnabledByMetadata => f }
+        .partition(_.automaticallyUpdateProtocolOfExistingTables)
+    if (nonAutoUpdateCapableFeatures.nonEmpty) {
+      // The "current features" we give the user are which from the original protocol, plus
+      // features newly supported by table properties in the current transaction, plus
+      // metadata-enabled features that are auto-update capable. The first two are provided by
+      // `currentFeatures`.
+      throw DeltaErrors.tableFeaturesRequireManualEnablementException(
+        nonAutoUpdateCapableFeatures,
+        currentFeatures ++ autoUpdateCapableFeatures)
     }
   }
 

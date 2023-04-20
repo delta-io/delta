@@ -143,7 +143,7 @@ object CDCReader extends CDCReaderImpl
           deltaLog.update().version
         },
         sqlContext.sparkSession,
-        Some(snapshotForBatchSchema))
+        readSchemaSnapshot = Some(snapshotForBatchSchema))
 
       df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
     }
@@ -593,14 +593,17 @@ trait CDCReaderImpl extends DeltaLogging {
       readSchemaSnapshot, isStreaming, spark)
     dfs.append(deletedAndAddedRows: _*)
 
+    val readSchema = cdcReadSchema(readSchemaSnapshot.metadata.schema)
     // build an empty DS. This DS retains the table schema and the isStreaming property
     val emptyDf = spark.sqlContext.internalCreateDataFrame(
       spark.sparkContext.emptyRDD[InternalRow],
-      cdcReadSchema(readSchemaSnapshot.metadata.schema),
+      readSchema,
       isStreaming)
 
     CDCVersionDiffInfo(
-      dfs.reduceOption((df1, df2) => df1.union(df2)).getOrElse(emptyDf),
+      (emptyDf +: dfs).reduce((df1, df2) => df1.union(
+        df2
+      )),
       totalFiles,
       totalBytes)
   }

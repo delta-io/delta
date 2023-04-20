@@ -111,18 +111,32 @@ sealed trait LegacyFeatureType
  * A trait indicating this feature can be automatically enabled via a change in a table's
  * metadata, e.g., through setting particular values of certain feature-specific table properties.
  *
- * When the feature's metadata requirements are satisfied during table creation
- * ([[actions.Protocol.forNewTable]]) or commit ([[OptimisticTransaction.updateMetadata]]), the
+ * When the feature's metadata requirements are satisfied for <b>new tables</b>, or for
+ * <b>existing tables when [[automaticallyUpdateProtocolOfExistingTables]] set to `true`</b>, the
  * client will silently add the feature to the protocol's `readerFeatures` and/or
- * `writerFeatures`.
+ * `writerFeatures`. Otherwise, a proper protocol version bump must be present in the same
+ * transaction.
  */
-sealed trait FeatureAutomaticallyEnabledByMetadata {
+sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
+
+  /**
+   * Whether the feature can automatically update the protocol of an existing table when the
+   * metadata requirements are satisfied. As a rule of thumb, a table feature that requires
+   * explicit operations (e.g., turning on a table property) should set this flag to `true`, while
+   * features that are used implicitly (e.g., when using a new data type) should set this flag to
+   * `false`.
+   */
+  def automaticallyUpdateProtocolOfExistingTables: Boolean = this.isLegacyFeature
 
   /**
    * Determine whether the feature must be supported and enabled because its metadata requirements
    * are satisfied.
    */
   def metadataRequiresFeatureToBeEnabled(metadata: Metadata, spark: SparkSession): Boolean
+
+  require(
+    !this.isLegacyFeature || automaticallyUpdateProtocolOfExistingTables,
+    "Legacy feature must be auto-update capable.")
 }
 
 /**
@@ -205,10 +219,12 @@ object TableFeature {
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
-        TestWriterFeature,
         TestLegacyReaderWriterFeature,
+        TestWriterFeature,
+        TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
-        TestReaderWriterMetadataFeature)
+        TestReaderWriterMetadataAutoUpdateFeature,
+        TestReaderWriterMetadataNoAutoUpdateFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -302,7 +318,6 @@ object IdentityColumnsTableFeature
 
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
     with FeatureAutomaticallyEnabledByMetadata {
-
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
@@ -312,6 +327,8 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
   with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = {
@@ -330,6 +347,17 @@ object TestLegacyWriterFeature
 
 object TestWriterFeature extends WriterFeature(name = "testWriter")
 
+object TestWriterMetadataNoAutoUpdateFeature
+  extends WriterFeature(name = "testWriterMetadataNoAutoUpdate")
+  with FeatureAutomaticallyEnabledByMetadata {
+  val TABLE_PROP_KEY = "_123testWriterMetadataNoAutoUpdate321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+}
+
 object TestLegacyReaderWriterFeature
   extends LegacyReaderWriterFeature(
     name = "testLegacyReaderWriter",
@@ -338,10 +366,24 @@ object TestLegacyReaderWriterFeature
 
 object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
 
-object TestReaderWriterMetadataFeature
-  extends ReaderWriterFeature(name = "testReaderWriterMetadata")
+object TestReaderWriterMetadataNoAutoUpdateFeature
+  extends ReaderWriterFeature(name = "testReaderWriterMetadataNoAutoUpdate")
   with FeatureAutomaticallyEnabledByMetadata {
-  val TABLE_PROP_KEY = "_123testReaderWriterMetadata321_"
+  val TABLE_PROP_KEY = "_123testReaderWriterMetadataNoAutoUpdate321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+}
+
+object TestReaderWriterMetadataAutoUpdateFeature
+  extends ReaderWriterFeature(name = "testReaderWriterMetadataAutoUpdate")
+  with FeatureAutomaticallyEnabledByMetadata {
+  val TABLE_PROP_KEY = "_123testReaderWriterMetadataAutoUpdate321_"
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = {

@@ -23,6 +23,7 @@ import java.util.Date
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
@@ -428,6 +429,46 @@ abstract class DeltaCDCSuiteBase
         new TableName(tblName), StartingVersion("0"), EndingVersion("0"))
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier("tbl")),
+        readDf,
+        spark.range(10)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  for (readWithVersionNumber <- BOOLEAN_DOMAIN)
+  test(s"CDC read respects timezone and DST - readWithVersionNumber=$readWithVersionNumber") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      createTblWithThreeVersions(tblName = Some(tblName))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+
+      // Set commit time during Daylight savings time change.
+      val restoreDate = "2022-11-06 01:42:44"
+      val format = new java.text.SimpleDateFormat("yyyy-MM-dd hh:mm:ss Z")
+      val timestamp = format.parse(s"$restoreDate -0800").getTime
+      modifyDeltaTimestamp(deltaLog, 0, timestamp)
+
+      // Verify DST is respected.
+      val e = intercept[Exception] {
+        cdcRead(new TableName(tblName),
+          StartingTimestamp(s"$restoreDate -0700"),
+          EndingTimestamp(s"$restoreDate -0700"))
+      }
+      assert(e.getMessage.contains("is before the earliest version available"))
+
+      val readDf = if (readWithVersionNumber) {
+        cdcRead(new TableName(tblName), StartingVersion("0"), EndingVersion("0"))
+      } else {
+        cdcRead(
+          new TableName(tblName),
+          StartingTimestamp(s"$restoreDate -0800"),
+          EndingTimestamp(s"$restoreDate -0800"))
+      }
+
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, TableIdentifier(tblName)),
         readDf,
         spark.range(10)
           .withColumn("_change_type", lit("insert"))

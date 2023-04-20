@@ -32,15 +32,14 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonPropertyOrder}
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude, JsonPropertyOrder}
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.commons.codec.digest.DigestUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
@@ -91,9 +90,35 @@ case class CheckpointMetaData(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     numOfAddFiles: Option[Long],
     checkpointSchema: Option[StructType],
-    checksum: Option[String] = None)
+    checksum: Option[String] = None) {
+
+  @JsonIgnore
+  def getFormatEnum(): CheckpointMetaData.Format = parts match {
+    case Some(_) => CheckpointMetaData.Format.WITH_PARTS
+    case None => CheckpointMetaData.Format.SINGLE
+  }
+}
 
 object CheckpointMetaData {
+
+  sealed abstract class Format(val ordinal: Int, val name: String) extends Ordered[Format] {
+    override def compare(other: Format): Int = ordinal compare other.ordinal
+  }
+
+  object Format {
+    def unapply(name: String): Option[Format] = name match {
+      case SINGLE.name => Some(SINGLE)
+      case WITH_PARTS.name => Some(WITH_PARTS)
+      case _ => None
+    }
+
+    /** single-file checkpoint format */
+    object SINGLE extends Format(0, "SINGLE")
+    /** multi-file checkpoint format */
+    object WITH_PARTS extends Format(1, "WITH_PARTS")
+    /** Sentinel, for internal use only */
+    object SENTINEL extends Format(Int.MaxValue, "SENTINEL")
+  }
 
   val STORED_CHECKSUM_KEY = "checksum"
 
@@ -243,52 +268,85 @@ object CheckpointMetaData {
  */
 case class CheckpointInstance(
     version: Long,
+    format: CheckpointMetaData.Format,
     numParts: Option[Int]) extends Ordered[CheckpointInstance] {
+
+  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
+  // For other formats, numParts must be None.
+  require((format == CheckpointMetaData.Format.WITH_PARTS) == numParts.isDefined,
+    s"numParts ($numParts) must be present for checkpoint format" +
+      s" ${CheckpointMetaData.Format.WITH_PARTS.name}")
+
   /**
-   * Due to lexicographic sorting, a version with more parts will appear after a version with
-   * less parts during file listing. We use that logic here as well.
+   * Returns a [[CheckpointFileListProvider]] which can tell the files corresponding to this
+   * checkpoint.
    */
-  def isEarlierThan(other: CheckpointInstance): Boolean = {
-    if (other == CheckpointInstance.MaxValue) return true
-    // numParts is set to None if the checkpoint is made up of a single
-    // file ($version%020d.checkpoint.parquet). None < Some(x) for all x, which means
-    // we'll break ties in favor of multi-part checkpoints (because they appear "larger").
-    (version, numParts) < (other.version, other.numParts)
-  }
-
-  def isNotLaterThan(other: CheckpointInstance): Boolean = {
-    if (other == CheckpointInstance.MaxValue) return true
-    version <= other.version
-  }
-
-  def getCorrespondingFiles(path: Path): Seq[Path] = {
-    assert(this != CheckpointInstance.MaxValue, "Can't get files for CheckpointVersion.MaxValue.")
-    numParts match {
-      case None => checkpointFileSingular(path, version) :: Nil
-      case Some(parts) => checkpointFileWithParts(path, version, parts)
+  def getCheckpointFileListProvider(
+      logPath: Path,
+      filesForLegacyCheckpointConstruction: Seq[FileStatus],
+      checkpointMetadataHint: Option[CheckpointMetaData] = None): CheckpointFileListProvider = {
+    format match {
+      case CheckpointMetaData.Format.WITH_PARTS | CheckpointMetaData.Format.SINGLE =>
+        val filePaths = if (format == CheckpointMetaData.Format.WITH_PARTS) {
+          checkpointFileWithParts(logPath, version, numParts.get).toSet
+        } else {
+          Set(checkpointFileSingular(logPath, version))
+        }
+        val newCheckpointFileArray =
+          filesForLegacyCheckpointConstruction.filter(f => filePaths.contains(f.getPath))
+        assert(newCheckpointFileArray.length == filePaths.size,
+          "Failed in getting the file information for:\n" +
+            filePaths.mkString(" -", "\n -", "") + "\namong\n" +
+            filesForLegacyCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
+        PreloadedCheckpointFileProvider(newCheckpointFileArray)
+      case CheckpointMetaData.Format.SENTINEL =>
+        throw DeltaErrors.assertionFailedError(
+          s"invalid checkpoint format ${CheckpointMetaData.Format.SENTINEL}")
     }
   }
 
-  override def compare(that: CheckpointInstance): Int = {
-    if (version == that.version) {
-      numParts.getOrElse(1) - that.numParts.getOrElse(1)
-    } else {
-      // we need to guard against overflow. We just can't return (this - that).toInt
-      if (version - that.version < 0) -1 else 1
-    }
+  /**
+   * Comparison rules:
+   * 1. A [[CheckpointInstance]] with higher version is greater than the one with lower version.
+   * 2. For [[CheckpointInstance]]s with same version, a Multi-part checkpoint is greater than a
+   *    Single part checkpoint.
+   * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
+   *    parts is greater than the one with less parts.
+   */
+  override def compare(other: CheckpointInstance): Int = {
+    (version, format, numParts) compare (other.version, other.format, other.numParts)
   }
 }
 
 object CheckpointInstance {
   def apply(path: Path): CheckpointInstance = {
-    CheckpointInstance(checkpointVersion(path), numCheckpointParts(path))
+    // Three formats to worry about:
+    // * <version>.checkpoint.parquet
+    // * <version>.checkpoint.<i>.<n>.parquet
+    path.getName.split("\\.") match {
+      case Array(v, "checkpoint", "parquet") =>
+        CheckpointInstance(v.toLong, CheckpointMetaData.Format.SINGLE, numParts = None)
+      case Array(v, "checkpoint", _, n, "parquet") =>
+        CheckpointInstance(v.toLong, CheckpointMetaData.Format.WITH_PARTS, numParts = Some(n.toInt))
+      case _ =>
+        throw DeltaErrors.assertionFailedError(s"Unrecognized checkpoint path format: $path")
+    }
+  }
+
+  def apply(version: Long): CheckpointInstance = {
+    CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
   }
 
   def apply(metadata: CheckpointMetaData): CheckpointInstance = {
-    CheckpointInstance(metadata.version, metadata.parts)
+    CheckpointInstance(metadata.version, metadata.getFormatEnum(), metadata.parts)
   }
 
-  val MaxValue: CheckpointInstance = CheckpointInstance(-1, None)
+  val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)
+
+  def sentinelValue(versionOpt: Option[Long]): CheckpointInstance = {
+    val version = versionOpt.getOrElse(Long.MaxValue)
+    CheckpointInstance(version, CheckpointMetaData.Format.SENTINEL, numParts = None)
+  }
 }
 
 trait Checkpoints extends DeltaLogging {
@@ -413,7 +471,7 @@ trait Checkpoints extends DeltaLogging {
           // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
           // not atomic. We will try to list all files to find the latest checkpoint and restore
           // CheckpointMetaData from it.
-          val verifiedCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(-1L, None))
+          val verifiedCheckpoint = findLastCompleteCheckpointBefore(checkpointInstance = None)
           verifiedCheckpoint.map(manuallyLoadCheckpoint)
       }
     }
@@ -431,12 +489,26 @@ trait Checkpoints extends DeltaLogging {
 
   /**
    * Finds the first verified, complete checkpoint before the given version.
-   *
-   * @param cv The CheckpointVersion to compare against
+   * Note that the returned checkpoint will always be < `version`.
+   * @param version The checkpoint version to compare against
    */
-  protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
-    var cur = math.max(cv.version, 0L)
-    val startVersion = cur
+  protected def findLastCompleteCheckpointBefore(version: Long): Option[CheckpointInstance] = {
+    val upperBound = CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
+    findLastCompleteCheckpointBefore(Some(upperBound))
+  }
+
+  /**
+   * Finds the first verified, complete checkpoint before the given [[CheckpointInstance]].
+   * If `checkpointInstance` is passed as None, then we return the last complete checkpoint in the
+   * deltalog directory.
+   * @param cv The checkpoint instance to compare against
+   */
+  protected def findLastCompleteCheckpointBefore(
+      checkpointInstance: Option[CheckpointInstance] = None): Option[CheckpointInstance] = {
+    val (upperBoundCv, startVersion) = checkpointInstance
+      .collect { case cv if cv.version >= 0 => (cv, cv.version) }
+      .getOrElse((CheckpointInstance.sentinelValue(versionOpt = None), 0L))
+    var cur = startVersion
     val hadoopConf = newDeltaHadoopConf()
 
     logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
@@ -448,9 +520,10 @@ trait Checkpoints extends DeltaLogging {
           // such files, hence we drop them so that we never pick up such checkpoints.
           .filter { file => isCheckpointFile(file) && file.getLen != 0 }
           .map{ file => CheckpointInstance(file.getPath) }
-          .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
+          .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv < upperBoundCv)
           .toArray
-      val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
+      val lastCheckpoint =
+        getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
       if (lastCheckpoint.isDefined) {
         logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
         return lastCheckpoint
@@ -468,10 +541,19 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def getLatestCompleteCheckpointFromList(
       instances: Array[CheckpointInstance],
-      notLaterThan: CheckpointInstance): Option[CheckpointInstance] = {
-    val complete = instances.filter(_.isNotLaterThan(notLaterThan)).groupBy(identity).filter {
-      case (CheckpointInstance(_, None), inst) => inst.length == 1
-      case (CheckpointInstance(_, Some(parts)), inst) => inst.length == parts
+      notLaterThanVersion: Option[Long] = None): Option[CheckpointInstance] = {
+    val sentinelCv = CheckpointInstance.sentinelValue(notLaterThanVersion)
+    val complete = instances.filter(_ <= sentinelCv).groupBy(identity).filter {
+      case (ci, matchingCheckpointInstances) =>
+       ci.format match {
+         case CheckpointMetaData.Format.SINGLE =>
+           matchingCheckpointInstances.length == 1
+         case CheckpointMetaData.Format.WITH_PARTS =>
+           assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
+           matchingCheckpointInstances.length == ci.numParts.get
+         case CheckpointMetaData.Format.SENTINEL =>
+           false
+       }
     }
     if (complete.isEmpty) None else Some(complete.keys.max)
   }
@@ -774,4 +856,21 @@ object CheckpointV2 {
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }
+}
+
+/**
+ * A trait which provides functionality to retrieve the underlying files for a Checkpoint.
+ */
+trait CheckpointFileListProvider {
+  def checkpointFiles: Seq[FileStatus]
+}
+
+/**
+ * An implementation of [[CheckpointFileListProvider]] where the information about checkpoint files
+ * (i.e. Seq[FileStatus]) is already known in advance.
+ */
+case class PreloadedCheckpointFileProvider(
+    override val checkpointFiles: Seq[FileStatus]) extends CheckpointFileListProvider {
+
+  require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
 }

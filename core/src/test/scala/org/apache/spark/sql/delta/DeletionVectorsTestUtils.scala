@@ -67,9 +67,11 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
           .format("delta")
           .save(tablePath.toString)
       }
-      // Use a function instead of a value, because DeltaTable hangs on to the first snapshot it
-      // resolved for the underlying dataframe, which generally isn't the desired behaviour in
-      // tests.
+      // DeltaTable hangs on to the DataFrame it is created with for the entire object lifetime.
+      // That means subsequent `targetTable.toDF` calls will return the same snapshot.
+      // The DV tests are generally written assuming `targetTable.toDF` would return a new snapshot.
+      // So create a function here instead of a n instance, so `targetTable().toDF`
+      // will actually provide a new snapshot.
       val targetTable =
         () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
       val targetLog = DeltaLog.forTable(spark, tablePath)
@@ -87,6 +89,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
   /** Returns all [[AddFile]] actions of a Delta table that contain Deletion Vectors. */
   def getFilesWithDeletionVectors(log: DeltaLog): Seq[AddFile] =
     log.update().allFiles.collect().filter(_.deletionVector != null).toSeq
+
+  /** Lists the Deletion Vectors files of a table. */
+  def listDeletionVectors(log: DeltaLog): Seq[File] = {
+    val dir = new File(log.dataPath.toUri.getPath)
+    dir.listFiles().filter(_.getName.startsWith(
+      DeletionVectorDescriptor.DELETION_VECTOR_FILE_NAME_CORE))
+  }
 
   /** Helper to check that the Deletion Vectors of the provided file actions exist on disk. */
   def assertDeletionVectorsExist(log: DeltaLog, filesWithDVs: Seq[AddFile]): Unit = {

@@ -86,7 +86,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         hasNoFileActionAndStartIndex(indexedFile)) &&
         moreThanFrom(indexedFile, fromVersion, fromIndex) &&
         lessThanEnd(indexedFile, endOffset) && noMatchesRegex(indexedFile) &&
-        lessThanEnd(indexedFile, Option(lastOffsetForTriggerAvailableNow))
+        lessThanEnd(indexedFile, lastOffsetForTriggerAvailableNow)
     }
 
     /**

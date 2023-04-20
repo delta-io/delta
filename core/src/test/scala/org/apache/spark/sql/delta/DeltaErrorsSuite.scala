@@ -152,7 +152,7 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-  test("test DeltaErrors methods") {
+  test("test DeltaErrors methods -- part 1") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
@@ -1501,6 +1501,9 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Creating a bloom filter index on a column with type date is " +
         "unsupported: col1")
     }
+  }
+
+  test("test DeltaErrors methods -- part 2") {
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unsupportedDataTypes(

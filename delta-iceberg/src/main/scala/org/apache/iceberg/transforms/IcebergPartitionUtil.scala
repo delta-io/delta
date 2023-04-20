@@ -59,8 +59,8 @@ object IcebergPartitionUtil {
    *
    * Truncate
    *  - Iceberg source code: https://github.com/apache/iceberg/blob/4c98a0f6408d4ccd0d47b076b2f7743d836d28ec/api/src/main/java/org/apache/iceberg/transforms/Truncate.java
-   *  - Source column type: string
-   *  - Stored partition value type: string
+   *  - Source column type: string, long and int
+   *  - Stored partition value type: string, long and int
    *  - String value generation: directly use toString
    */
   // scalastyle:on line.size.limit
@@ -126,6 +126,7 @@ object IcebergPartitionUtil {
 
         val metadataBuilder = new MetadataBuilder()
 
+        // TODO: Support truncate[Decimal] in partition
         val (transformExpr, targetType) = partField.transform() match {
           // binary partition values are problematic in Delta, so we block converting if the iceberg
           // table has a binary type partition column
@@ -144,6 +145,11 @@ object IcebergPartitionUtil {
 
           case t: Truncate[_] if sourceType.typeId() == TypeID.STRING =>
             (s"substring($sourceColumnName, 0, ${t.width()})", StringType)
+
+          case t: Truncate[_]
+            if sourceType.typeId() == TypeID.LONG || sourceType.typeId() == TypeID.INTEGER =>
+            (icebergNumericTruncateExpression(sourceColumnName, t.width().toLong),
+              SparkSchemaUtil.convert(sourceType))
 
           case Timestamps.MONTH | Dates.MONTH =>
             (s"date_format($sourceColumnName, 'yyyy-MM')", StringType)
@@ -173,4 +179,15 @@ object IcebergPartitionUtil {
           metadata = metadata)
     }
   }
+
+  /**
+   * Returns the iceberg transform function of truncate[Integer] and truncate[Long] as an
+   * expression string, please check the iceberg documents for more details:
+   *
+   *    https://iceberg.apache.org/spec/#truncate-transform-details
+   *
+   * TODO: make this partition expression optimizable.
+   */
+  private def icebergNumericTruncateExpression(colName: String, width: Long): String =
+    s"$colName - (($colName % $width) + $width) % $width"
 }

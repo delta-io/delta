@@ -404,29 +404,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newMetadataTmp,
       isCreatingNewTable)
 
-    // Check for existence of TimestampNTZ in the schema and throw an error if the feature
-    // is not enabled.
-    if (!protocolBeforeUpdate.isFeatureSupported(TimestampNTZTableFeature) &&
-        SchemaUtils.checkForTimestampNTZColumnsRecursively(newMetadataTmp.schema)) {
-      // The timestampNTZ feature is enabled if there is a table prop in this transaction,
-      // or if this is a new table
-      val isEnabled = isCreatingNewTable || TableFeatureProtocolUtils
-        .getSupportedFeaturesFromConfigs(
-          newMetadataTmp.configuration, TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
-        .contains(TimestampNTZTableFeature)
-
-      if (!isEnabled) {
-        throw DeltaErrors.schemaContainsTimestampNTZType(
-          newMetadataTmp.schema,
-          TimestampNTZTableFeature.minProtocolVersion.withFeature(TimestampNTZTableFeature),
-          snapshot.protocol
-        )
-      }
-    }
-
     if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
-      var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(newMetadataTmp.schema)
+      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
+        newMetadataTmp.schema)
       newMetadataTmp = newMetadataTmp.copy(schemaString = schema.json)
     }
 
@@ -449,16 +430,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocol = Some(Protocol.forNewTable(spark, Some(newMetadataTmp)))
     } else if (newMetadataTmp.configuration.contains(Protocol.MIN_READER_VERSION_PROP) ||
       newMetadataTmp.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP)) {
+      // Table features Part 1: bump protocol version numbers
+      //
       // Collect new reader and writer versions from table properties, which could be provided by
       // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
-      val readerVersionInNewMetadataTmp = newMetadataTmp.configuration
-        .get(Protocol.MIN_READER_VERSION_PROP)
-        .map(Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, _))
-        .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val writerVersionInNewMetadataTmp = newMetadataTmp.configuration
-        .get(Protocol.MIN_WRITER_VERSION_PROP)
-        .map(Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, _))
-        .getOrElse(protocolBeforeUpdate.minWriterVersion)
+      val readerVersionInNewMetadataTmp =
+        Protocol.getReaderVersionFromTableConf(newMetadataTmp.configuration)
+          .getOrElse(protocolBeforeUpdate.minReaderVersion)
+      val writerVersionInNewMetadataTmp =
+        Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration)
+          .getOrElse(protocolBeforeUpdate.minWriterVersion)
 
       // If the collected reader and writer versions are provided by the user, we must use them,
       // and throw ProtocolDowngradeException when they are lower than what the table have before
@@ -526,8 +507,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
-    // Enabling table features Part 1: add manually-supported features in table properties start
-    // with [[FEATURE_PROP_PREFIX]].
+    // Table features Part 2: add manually-supported features specified in table properties, aka
+    // those start with [[FEATURE_PROP_PREFIX]].
     //
     // This transaction's new metadata might contain some table properties to support some
     // features (props start with [[FEATURE_PROP_PREFIX]]). We silently add them to the `protocol`
@@ -535,9 +516,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // any reader-writer feature.
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
-      TableFeatureProtocolUtils.getSupportedFeaturesFromConfigs(
-        newMetadataTmp.configuration,
-        TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+      TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(newMetadataTmp.configuration)
     val readerVersionForNewProtocol =
       if (newFeaturesFromTableConf.exists(_.isReaderWriterFeature)) {
         TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
@@ -561,7 +540,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
     assertMetadata(newMetadataTmp)
 
-    // Enabling table features Part 2: add automatically-enabled features.
+    // Table features Part 3: add automatically-enabled features by looking at the new table
+    // metadata.
     //
     // This code path is for existing tables. The new table case has been handled by
     // [[Protocol.forNewTable]] earlier in this method.
@@ -633,7 +613,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
-    val requiredProtocolOpt = Protocol.checkProtocolRequirements(spark, metadata, protocol)
+    val requiredProtocolOpt =
+      Protocol.upgradeProtocolFromMetadataForExistingTable(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
     }

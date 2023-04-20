@@ -168,7 +168,7 @@ trait DeltaSourceBase extends Source
    * will process up. We may run multiple micro batches, but the query will stop itself when it
    * reaches this offset.
    */
-  protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = null
+  protected var lastOffsetForTriggerAvailableNow: Option[DeltaSourceOffset] = None
 
   private var isLastOffsetForTriggerAvailableNowInitialized = false
 
@@ -194,10 +194,9 @@ trait DeltaSourceBase extends Source
   protected def initLastOffsetForTriggerAvailableNow(
     startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
     val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
-    if (offset.isDefined) {
-      lastOffsetForTriggerAvailableNow = offset.get
-      logInfo("lastOffset for Trigger.AvailableNow has set to " +
-        s"${lastOffsetForTriggerAvailableNow.json}")
+    lastOffsetForTriggerAvailableNow = offset
+    lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
+      logInfo("lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
     }
   }
 
@@ -608,12 +607,11 @@ case class DeltaSource(
       }
     }
 
-    if (lastOffsetForTriggerAvailableNow != null) {
+    lastOffsetForTriggerAvailableNow.foreach { bound =>
       iter = iter.withClose { it =>
-        it.filter { case IndexedFile(version, index, _, _, _, _, _) =>
-          version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
-            (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
-              index <= lastOffsetForTriggerAvailableNow.index)
+        it.filter { case file =>
+          file.version < bound.reservoirVersion ||
+            (file.version == bound.reservoirVersion && file.index <= bound.index)
         }
       }
     }
