@@ -97,3 +97,25 @@ class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
   }
 
 }
+
+class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectorsForDeletes(spark)
+  }
+
+  override def excluded: Set[String] = super.excluded ++ Set(
+    // The following two tests must fail when DV is used. Covered by another test case:
+    // "throw error when non-pinned TahoeFileIndex snapshot is used".
+    "data and partition columns - Partition=true Skipping=false",
+    "data and partition columns - Partition=false Skipping=false",
+    // The scan schema contains additional row index filter columns.
+    "nested schema pruning on data condition")
+
+  // This works correctly with DVs, but fails in classic DELETE.
+  override def testSuperSetColsTempView(): Unit = {
+    testComplexTempViews("superset cols")(
+      text = "SELECT key, value, 1 FROM tab",
+      expectResult = Row(0, 3, 1) :: Nil)
+  }
+}
