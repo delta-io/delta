@@ -224,7 +224,9 @@ object TableFeature {
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
-        TestReaderWriterMetadataNoAutoUpdateFeature)
+        TestReaderWriterMetadataNoAutoUpdateFeature,
+        // Row IDs are still under development and only available in testing.
+        RowIdFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -334,6 +336,15 @@ object DeletionVectorsTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+}
+
+object RowIdFeature extends WriterFeature(name = "rowIds")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = DeltaConfigs.ROW_IDS_ENABLED.fromMetaData(metadata)
 }
 
 
