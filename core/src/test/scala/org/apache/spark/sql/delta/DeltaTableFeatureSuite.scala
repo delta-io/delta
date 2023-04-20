@@ -120,7 +120,8 @@ class DeltaTableFeatureSuite
         CheckConstraintsTableFeature,
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
-        TestLegacyWriterFeature))
+        TestLegacyWriterFeature,
+        TestLegacyReaderWriterFeature))
     assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlySupportedFeatures === Set())
     assert(
       Protocol(
@@ -131,17 +132,17 @@ class DeltaTableFeatureSuite
   test("implicit feature listing") {
     assert(
       intercept[DeltaTableFeatureException] {
-        Protocol(1, 5).withFeature(TestLegacyReaderWriterFeature)
+        Protocol(1, 4).withFeature(TestLegacyReaderWriterFeature)
       }.getMessage.contains(
         "Unable to enable table feature testLegacyReaderWriter because it requires a higher " +
           "reader protocol version (current 1)"))
 
     assert(
       intercept[DeltaTableFeatureException] {
-        Protocol(2, 5).withFeature(TestLegacyReaderWriterFeature)
+        Protocol(1, 4).withFeature(TestLegacyReaderWriterFeature)
       }.getMessage.contains(
         "Unable to enable table feature testLegacyReaderWriter because it requires a higher " +
-          "writer protocol version (current 5)"))
+          "writer protocol version (current 4)"))
 
     assert(
       intercept[DeltaTableFeatureException] {
@@ -329,7 +330,8 @@ class DeltaTableFeatureSuite
             ChangeDataFeedTableFeature.name,
             GeneratedColumnsTableFeature.name,
             TestWriterFeature.name,
-            TestLegacyWriterFeature.name))
+            TestLegacyWriterFeature.name,
+            TestLegacyReaderWriterFeature.name))
         }
       }
     }
