@@ -235,7 +235,7 @@ class DeletionVectorsSuite extends QueryTest
 
         // Verify "tightBounds" is false for files that have DVs
         for (f <- afterDeleteFilesWithDVs) {
-          assert(f.stats.contains("\"tightBounds\":false"))
+          assert(f.tightBounds.get === false)
         }
 
         // Verify all stats are the same except "tightBounds".
@@ -281,7 +281,7 @@ class DeletionVectorsSuite extends QueryTest
           newDVs.map(_.deletionVector.cardinality).sum
         )
         for (f <- newDVs) {
-          assert(f.stats.contains("\"tightBounds\":false"))
+          assert(f.tightBounds.get === false)
         }
 
         // Check the data is valid
@@ -399,7 +399,7 @@ class DeletionVectorsSuite extends QueryTest
       // target log should not contain DVs
       for (f <- allFiles) {
         assert(f.deletionVector == null)
-        assert(f.stats.contains("\"tightBounds\":true"))
+        assert(f.tightBounds.get)
       }
 
       // Target table should contain "table2 records + 10000" and "table1 records \ table2 records".
@@ -414,11 +414,12 @@ class DeletionVectorsSuite extends QueryTest
   test("UPDATE with DVs - update rewrite files with DVs") {
     withTempDir { tempDir =>
       FileUtils.copyDirectory(new File(table2Path), tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
 
       io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
         .update(col("value") === 1, Map("value" -> (col("value") + 1)))
 
-      val snapshot = DeltaLog.forTable(spark, tempDir).update()
+      val snapshot = deltaLog.update()
       val allFiles = snapshot.allFiles.collect()
       val tombstones = snapshot.tombstones.collect()
       // DVs are removed
@@ -428,7 +429,7 @@ class DeletionVectorsSuite extends QueryTest
       // target log should not contain DVs
       for (f <- allFiles) {
         assert(f.deletionVector == null)
-        assert(f.stats.contains("\"tightBounds\":true"))
+        assert(f.tightBounds.get)
       }
     }
   }
@@ -436,14 +437,15 @@ class DeletionVectorsSuite extends QueryTest
   test("UPDATE with DVs - update deleted rows updates nothing") {
     withTempDir { tempDir =>
       FileUtils.copyDirectory(new File(table2Path), tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
 
-      val snapshotBeforeUpdate = DeltaLog.forTable(spark, tempDir).update()
+      val snapshotBeforeUpdate = deltaLog.update()
       val allFilesBeforeUpdate = snapshotBeforeUpdate.allFiles.collect()
 
       io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
         .update(col("value")  === 0, Map("value" -> (col("value") + 1)))
 
-      val snapshot = DeltaLog.forTable(spark, tempDir).update()
+      val snapshot = deltaLog.update()
       val allFiles = snapshot.allFiles.collect()
       val tombstones = snapshot.tombstones.collect()
       // nothing changed
@@ -460,7 +462,7 @@ class DeletionVectorsSuite extends QueryTest
   test("INSERT + DELETE + MERGE + UPDATE with DVs") {
     withTempDir { tempDir =>
       val path = tempDir.getAbsolutePath
-      val log = DeltaLog.forTable(spark, path)
+      val deltaLog = DeltaLog.forTable(spark, path)
 
       def checkTableContents(rows: DataFrame): Unit =
         checkAnswer(sql(s"SELECT * FROM delta.`$path`"), rows)
@@ -471,10 +473,10 @@ class DeletionVectorsSuite extends QueryTest
           DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
           spark.range(10).repartition(2).write.format("delta").save(path)
         }
-        val snapshot = log.update()
+        val snapshot = deltaLog.update()
         assert(snapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature))
         for (f <- snapshot.allFiles.collect()) {
-          assert(f.stats.contains("\"tightBounds\":true"))
+          assert(f.tightBounds.get)
         }
       }
       // Version 1: DELETE one row from each file
@@ -482,12 +484,12 @@ class DeletionVectorsSuite extends QueryTest
         withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
           sql(s"DELETE FROM delta.`$path` WHERE id IN (1, 8)")
         }
-        val (add, _) = getFileActionsInLastVersion(log)
+        val (add, _) = getFileActionsInLastVersion(deltaLog)
         for (a <- add) {
           assert(a.deletionVector !== null)
           assert(a.deletionVector.cardinality === 1)
           assert(a.numPhysicalRecords.get === a.numLogicalRecords.get + 1)
-          assert(a.stats.contains("\"tightBounds\":false"))
+          assert(a.tightBounds.get === false)
         }
 
         checkTableContents(Seq(0, 2, 3, 4, 5, 6, 7, 9).toDF())
@@ -495,13 +497,13 @@ class DeletionVectorsSuite extends QueryTest
       // Version 2: UPDATE one row in the first file
       {
         sql(s"UPDATE delta.`$path` SET id = -1 WHERE id = 0")
-        val (added, removed) = getFileActionsInLastVersion(log)
+        val (added, removed) = getFileActionsInLastVersion(deltaLog)
         assert(added.length === 1)
         assert(removed.length === 1)
         // Removed files must contain DV, added files must not
         for (a <- added) {
           assert(a.deletionVector === null)
-          assert(a.stats.contains("\"tightBounds\":true"))
+          assert(a.tightBounds.get)
         }
         for (r <- removed) {
           assert(r.deletionVector !== null)
@@ -518,12 +520,12 @@ class DeletionVectorsSuite extends QueryTest
           .whenMatched()
           .updateExpr(Map("id" -> "source.value"))
           .whenNotMatchedBySource().delete().execute()
-        val (added, removed) = getFileActionsInLastVersion(log)
+        val (added, removed) = getFileActionsInLastVersion(deltaLog)
         assert(added.length === 2)
         assert(removed.length === 2)
         for (a <- added) {
           assert(a.deletionVector === null)
-          assert(a.stats.contains("\"tightBounds\":true"))
+          assert(a.tightBounds.get)
         }
         // One of two removed files has DV
         assert(removed.count(_.deletionVector != null) === 1)
@@ -536,12 +538,12 @@ class DeletionVectorsSuite extends QueryTest
         withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
           sql(s"DELETE FROM delta.`$path` WHERE id IN (4)")
         }
-        val (add, _) = getFileActionsInLastVersion(log)
+        val (add, _) = getFileActionsInLastVersion(deltaLog)
         for (a <- add) {
           assert(a.deletionVector !== null)
           assert(a.deletionVector.cardinality === 1)
           assert(a.numPhysicalRecords.get === a.numLogicalRecords.get + 1)
-          assert(a.stats.contains("\"tightBounds\":false"))
+          assert(a.tightBounds.get === false)
         }
 
         // -1 and 9 are deleted by "when not matched by source"
@@ -552,10 +554,10 @@ class DeletionVectorsSuite extends QueryTest
 
   private def getFileActionsInLastVersion(log: DeltaLog): (Seq[AddFile], Seq[RemoveFile]) = {
     val version = log.update().version
-    val (add, remove) = log.getChanges(version).toSeq.head._2
-      .filter(a => a.isInstanceOf[AddFile] || a.isInstanceOf[RemoveFile])
-      .partition(_.isInstanceOf[AddFile])
-    (add.map(_.asInstanceOf[AddFile]), remove.map(_.asInstanceOf[RemoveFile]))
+    val allFiles = log.getChanges(version).toSeq.head._2
+    val add = allFiles.collect { case a: AddFile => a }
+    val remove = allFiles.collect { case r: RemoveFile => r }
+    (add, remove)
   }
 
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {

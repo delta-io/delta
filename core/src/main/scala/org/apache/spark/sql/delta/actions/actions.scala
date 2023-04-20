@@ -551,7 +551,8 @@ case class AddFile(
   override def getFileSize: Long = size
 
   private case class ParsedStatsFields(
-      numLogicalRecords: Option[Long]
+      numLogicalRecords: Option[Long],
+      tightBounds: Option[Boolean]
   )
 
   /**
@@ -576,9 +577,11 @@ case class AddFile(
           .map(_ - numDeletedRecords)
       } else None
 
-      Some(ParsedStatsFields(
-        numLogicalRecords
-      ))
+      val tightBounds = if (node.has("tightBounds")) {
+        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
+      } else None
+
+      Some(ParsedStatsFields(numLogicalRecords, tightBounds))
     }
   }
 
@@ -609,6 +612,10 @@ case class AddFile(
   /** Returns the ratio of number of deleted records to the total number of records. */
   @JsonIgnore
   def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
+
+  @JsonIgnore
+  @transient
+  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 object AddFile {
