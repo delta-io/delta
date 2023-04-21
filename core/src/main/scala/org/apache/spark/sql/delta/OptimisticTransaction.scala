@@ -549,6 +549,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
+
+    newMetadataTmp = RowId.verifyAndUpdateMetadata(
+      spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
+
     DeletionVectorUtils.assertDeletionVectorsNotEnabled(spark, newMetadataTmp, protocol)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)

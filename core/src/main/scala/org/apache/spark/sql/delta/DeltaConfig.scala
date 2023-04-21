@@ -591,6 +591,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ == Serializable,
     "must be Serializable"
   )
+
+  /**
+   * Indicates whether row IDs are enabled. When this flag is turned on, all rows are guaranteed to
+   * have row IDs assigned to them.
+   */
+  val ROW_IDS_ENABLED = buildConfig[Boolean](
+    key = "enableRowIds",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

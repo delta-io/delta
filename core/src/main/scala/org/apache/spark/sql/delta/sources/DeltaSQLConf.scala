@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.sources
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -24,6 +23,7 @@ import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.Utils
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -1121,6 +1121,19 @@ trait DeltaSQLConfBase {
              |after every write. This is false by default.
              |""".stripMargin)
       .booleanConf
+      .createWithDefault(false)
+
+  val ROW_IDS_ALLOWED =
+    buildConf("rowIds.allowForDevOnly")
+      .internal()
+      .doc(
+        """Controls whether Row Ids can be written to Delta tables and read from Delta tables.
+          |This flag should always be false for now, except in tests. Row Ids are an in-development
+          |feature and this flag ensures that we never try to read row ids using a partial
+          |implementation.
+          """.stripMargin)
+      .booleanConf
+      .checkValue(v => !v || Utils.isTesting, "Row Ids are only allowed in testing.")
       .createWithDefault(false)
 
   val DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO =
