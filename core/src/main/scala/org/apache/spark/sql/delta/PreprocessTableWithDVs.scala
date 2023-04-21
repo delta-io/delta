@@ -169,9 +169,10 @@ object ScanWithDeletionVectors {
 
   private def createBroadcastDVMap(
       spark: SparkSession,
-      tahoeFileIndex: TahoeFileIndex
-  ): Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]] = {
+      tahoeFileIndex: TahoeFileIndex)
+    : Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]] = {
     val filterTypes = tahoeFileIndex.rowIndexFilters.getOrElse(Map.empty)
+
     // Given there is no way to find the final filters, just select all files in the
     // file index and create the DV map.
     val filesWithDVs = tahoeFileIndex
