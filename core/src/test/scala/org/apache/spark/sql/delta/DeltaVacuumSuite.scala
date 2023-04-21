@@ -1008,6 +1008,25 @@ class DeltaVacuumSuite
     testCDCVacuumForTombstones()
   }
 
+  test("enable auto vacuum") {
+    withEnvironment { (tempDir, clock) =>
+      withSQLConf("spark.databricks.delta.autoVacuum.enabled" -> "true",
+        "spark.databricks.delta.autoVacuum.retentionHours" -> "0") {
+        spark.range(10)
+          .write.mode("overwrite").format("delta")
+          .save(tempDir)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val files = deltaLog.unsafeVolatileSnapshot.allFiles.collect().toSeq.map(_.path)
+        spark.range(10)
+          .write.mode("overwrite").format("delta")
+          .save(tempDir)
+        gcTest(deltaLog, clock)(
+          CheckFiles(files, false)
+        )
+      }
+    }
+  }
+
   private def getFromHistory(history: DataFrame, key: String, pos: Integer): Map[String, String] = {
     val op = history.select(key).take(pos + 1)
     if (pos == 0) {
