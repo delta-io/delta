@@ -138,6 +138,19 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     }
 
     @Override
+    public CloseableIterator<String> read(Path path, Configuration hadoopConf) throws IOException {
+        return new RetryableCloseableIterator(() -> {
+            try {
+                return super.read(path, hadoopConf);
+            } catch (IOException e) {
+                // There was an issue resolving the file system. Nothing to do with a
+                // RemoteFileChangedException.
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    @Override
     protected long getExpirationDelaySeconds() {
         return expirationDelaySeconds;
     }
