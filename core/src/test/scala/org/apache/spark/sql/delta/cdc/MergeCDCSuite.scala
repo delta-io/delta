@@ -27,6 +27,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 class MergeCDCSuite extends MergeCDCTests
 
@@ -41,6 +42,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
+  // scalastyle:off argcount
   /**
    * Utility method for simpler test writing when there's at most clause of each type.
    */
@@ -66,6 +68,7 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       expectErrorContains = expectErrorContains,
       confs = confs)
   }
+  // scalastyle:on argcount
 
   private def testMergeCdcUnlimitedClauses(name: String)(
       target: => DataFrame,
@@ -75,9 +78,13 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       expectedTableData: => DataFrame = null,
       expectedCdcDataWithoutVersion: => DataFrame = null,
       expectErrorContains: String = null,
-      confs: Seq[(String, String)] = Seq()): Unit = {
+      confs: Seq[(String, String)] = Seq(),
+      targetTableSchema: Option[StructType] = None): Unit = {
     test(s"merge CDC - $name") {
       withSQLConf(confs: _*) {
+        targetTableSchema.foreach { schema =>
+          io.delta.tables.DeltaTable.create(spark).location(tempPath).addColumns(schema).execute()
+        }
         append(target)
         withTempView("source") {
           source.createOrReplaceTempView("source")
@@ -203,6 +210,45 @@ trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
       .asInstanceOf[List[(Integer, Integer, String, String)]]
       .toDF("key", "targetVal", "srcVal", "_change_type"),
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
+  )
+
+  testMergeCdcUnlimitedClauses("schema evolution with non-nullable schema")(
+    target = ((0, 0) :: (1, 10) :: (3, 30) :: Nil).toDF("key", "n"),
+    source = ((1, 1, "a") :: (2, 2, "b") :: (3, -1, "c") :: Nil).toDF("key", "n", "text"),
+    mergeCondition = "t.key = s.key",
+    clauses = delete(condition = "s.key = 3") :: update("*") :: insert("*") :: Nil,
+    expectedTableData = ((0, 0, null) :: (1, 1, "a") :: (2, 2, "b") :: Nil)
+      .asInstanceOf[Seq[(Int, Int, String)]].toDF(),
+    expectedCdcDataWithoutVersion = (
+      (1, 10, null, "update_preimage") ::
+        (1, 1, "a", "update_postimage") ::
+        (2, 2, "b", "insert") ::
+        (3, 30, null, "delete") :: Nil)
+      .asInstanceOf[List[(Integer, Integer, String, String)]]
+      .toDF("key", "targetVal", "srcVal", "_change_type"),
+    confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil,
+    targetTableSchema = Some(StructType(Seq(
+      StructField("key", IntegerType, nullable = false),
+      StructField("n", IntegerType, nullable = false))))
+  )
+
+  testMergeCdcUnlimitedClauses("schema evolution with non-nullable schema - matched only")(
+    target = ((0, 0) :: (1, 10) :: (3, 30) :: Nil).toDF("key", "n"),
+    source = ((1, 1, "a") :: (2, 2, "b") :: (3, -1, "c") :: Nil).toDF("key", "n", "text"),
+    mergeCondition = "t.key = s.key",
+    clauses = delete(condition = "s.key = 3") :: update("*") :: Nil,
+    expectedTableData = ((0, 0, null) :: (1, 1, "a") :: Nil)
+      .asInstanceOf[Seq[(Int, Int, String)]].toDF(),
+    expectedCdcDataWithoutVersion = (
+      (1, 10, null, "update_preimage") ::
+        (1, 1, "a", "update_postimage") ::
+        (3, 30, null, "delete") :: Nil)
+      .asInstanceOf[List[(Integer, Integer, String, String)]]
+      .toDF("key", "targetVal", "srcVal", "_change_type"),
+    confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil,
+    targetTableSchema = Some(StructType(Seq(
+      StructField("key", IntegerType, nullable = false),
+      StructField("n", IntegerType, nullable = false))))
   )
 
   testMergeCdcUnlimitedClauses("unconditional delete only with duplicate matches")(
