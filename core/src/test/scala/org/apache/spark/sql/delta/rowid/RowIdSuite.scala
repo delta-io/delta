@@ -24,8 +24,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 class RowIdSuite extends QueryTest
-  with SharedSparkSession
-  with RowIdTestUtils {
+    with SharedSparkSession
+    with RowIdTestUtils {
   test("Creating a new table with row ID table feature sets row IDs as readable") {
     withRowIdsEnabled(enabled = false) {
       withTable("tbl") {

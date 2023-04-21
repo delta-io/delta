@@ -1104,17 +1104,17 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val ROW_IDS_ALLOWED =
-  buildConf("rowIds.allowForDevOnly")
-    .internal()
-    .doc(
-      """Controls whether Row Ids can be written to Delta tables and read from Delta tables.
-        |This flag should always be false for now, except in tests. Row Ids are an in-development
-        |feature and this flag ensures that we never try to read row ids using a partial
-        |implementation.
-        """.stripMargin)
-    .booleanConf
-    .checkValue(v => !v || Utils.isTesting, "Row Ids are only allowed in testing.")
-    .createWithDefault(false)
+    buildConf("rowIds.allowForDevOnly")
+      .internal()
+      .doc(
+        """Controls whether Row Ids can be written to Delta tables and read from Delta tables.
+          |This flag should always be false for now, except in tests. Row Ids are an in-development
+          |feature and this flag ensures that we never try to read row ids using a partial
+          |implementation.
+          """.stripMargin)
+      .booleanConf
+      .checkValue(v => !v || Utils.isTesting, "Row Ids are only allowed in testing.")
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO =
     buildConf("optimize.maxDeletedRowsRatio")

@@ -593,7 +593,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   )
 
   /**
-   * Indicates whether row IDs are enabled. When this flag is turned on, all files are guaranteed to
+   * Indicates whether row IDs are enabled. When this flag is turned on, all rows are guaranteed to
    * have row IDs assigned to them.
    */
   val ROW_IDS_ENABLED = buildConfig[Boolean](
