@@ -32,6 +32,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.io.CountingOutputStream;
 import io.delta.storage.internal.FileNameUtils;
+import io.delta.storage.internal.LockUtils;
 import io.delta.storage.internal.S3LogStoreUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -94,39 +95,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         CacheBuilder.newBuilder()
             .expireAfterAccess(120, TimeUnit.MINUTES)
             .build();
-
-    /**
-     * Release the lock for the path after writing.
-     *
-     * Note: the caller should resolve the path to make sure we are locking the correct absolute
-     * path.
-     */
-    private static void releasePathLock(Path resolvedPath) {
-        final Object lock = pathLock.remove(resolvedPath);
-        synchronized(lock) {
-            lock.notifyAll();
-        }
-    }
-
-    /**
-     * Acquire a lock for the path before writing.
-     *
-     * Note: the caller should resolve the path to make sure we are locking the correct absolute
-     * path.
-     */
-    private static void acquirePathLock(Path resolvedPath) throws InterruptedException {
-        while (true) {
-            final Object lock = pathLock.putIfAbsent(resolvedPath, new Object());
-            if (lock == null) {
-                return;
-            }
-            synchronized (lock) {
-                while (pathLock.get(resolvedPath) == lock) {
-                    lock.wait();
-                }
-            }
-        }
-    }
 
     /////////////////////////////////////////////
     // Constructor and Instance Helper Methods //
@@ -283,11 +251,10 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             Iterator<String> actions,
             Boolean overwrite,
             Configuration hadoopConf) throws IOException {
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Path resolvedPath = resolvePath(fs, path);
         try {
-            final FileSystem fs = path.getFileSystem(hadoopConf);
-            final Path resolvedPath = resolvePath(fs, path);
-            acquirePathLock(resolvedPath);
-
+            LockUtils.acquirePathLock(pathLock, resolvedPath);
             try {
                 if (exists(fs, resolvedPath) && !overwrite) {
                     throw new java.nio.file.FileAlreadyExistsException(
@@ -325,11 +292,11 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
                 // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
                 throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
-            } finally {
-                releasePathLock(resolvedPath);
             }
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
+        } finally {
+            LockUtils.releasePathLock(pathLock, resolvedPath);
         }
     }
 
