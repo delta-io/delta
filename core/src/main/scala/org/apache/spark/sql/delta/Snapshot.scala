@@ -45,6 +45,7 @@ trait SnapshotDescriptor {
   def protocol: Protocol
 
   def schema: StructType = metadata.schema
+
 }
 
 /**

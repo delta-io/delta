@@ -1358,4 +1358,14 @@ class DeltaSourceSchemaEvolutionIdColumnMappingSuite
   override def isCdcTest: Boolean = false
 }
 
-// TODO: add CDC tests
+class DeltaSourceSchemaEvolutionCDCNameColumnMappingSuite
+  extends StreamingSchemaEvolutionSuiteBase
+    with DeltaColumnMappingEnableNameMode {
+  override def isCdcTest: Boolean = true
+}
+
+class DeltaSourceSchemaEvolutionCDCIdColumnMappingSuite
+  extends StreamingSchemaEvolutionSuiteBase
+    with DeltaColumnMappingEnableIdMode {
+  override def isCdcTest: Boolean = true
+}
