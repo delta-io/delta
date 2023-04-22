@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -315,25 +316,37 @@ case class CreateDeltaTableCommand(
         // However, if in column mapping mode, we can safely ignore the related metadata fields in
         // existing metadata because new table desc will not have related metadata assigned yet
         val differences = SchemaUtils.reportDifferences(
-          DeltaColumnMapping.dropColumnMappingMetadata(existingMetadata.schema),
+          dropColumnMappingMetadata(existingMetadata.schema),
           tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
             path, tableDesc.schema, existingMetadata.schema, differences)
         }
+
+        // If schema is specified, we must make sure the partitioning matches, even the partitioning
+        // is not specified.
+        if (tableDesc.partitionColumnNames != existingMetadata.partitionColumns) {
+          throw DeltaErrors.createTableWithDifferentPartitioningException(
+            path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
+        }
       }
 
-      // If schema is specified, we must make sure the partitioning matches, even the partitioning
-      // is not specified.
-      if (tableDesc.schema.nonEmpty &&
-        tableDesc.partitionColumnNames != existingMetadata.partitionColumns) {
-        throw DeltaErrors.createTableWithDifferentPartitioningException(
-          path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
-      }
-
-      if (tableDesc.properties.nonEmpty && tableDesc.properties != existingMetadata.configuration) {
-        throw DeltaErrors.createTableWithDifferentPropertiesException(
-          path, tableDesc.properties, existingMetadata.configuration)
+      if (tableDesc.properties.nonEmpty) {
+        // When comparing properties of the existing table and the new table, remove some
+        // internal column mapping properties for the sake of comparison.
+        val filteredTableProperties = filterColumnMappingProperties(tableDesc.properties)
+        val filteredExistingProperties = filterColumnMappingProperties(
+          existingMetadata.configuration)
+        if (filteredTableProperties != filteredExistingProperties) {
+          throw DeltaErrors.createTableWithDifferentPropertiesException(
+            path, filteredTableProperties, filteredExistingProperties)
+        }
+        // If column mapping properties are present in both configs, verify they're the same value.
+        if (!DeltaColumnMapping.verifyInternalProperties(
+            tableDesc.properties, existingMetadata.configuration)) {
+          throw DeltaErrors.createTableWithDifferentPropertiesException(
+            path, tableDesc.properties, existingMetadata.configuration)
+        }
       }
     }
   }

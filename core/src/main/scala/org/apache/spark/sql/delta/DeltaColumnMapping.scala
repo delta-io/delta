@@ -415,6 +415,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
+  def filterColumnMappingProperties(properties: Map[String, String]): Map[String, String] = {
+    properties.filterKeys(_ != DeltaConfigs.COLUMN_MAPPING_MAX_ID.key).toMap
+  }
+
+  // Verify the values of internal column mapping properties are the same in two sets of config
+  // ONLY if the config is present in both sets of properties.
+  def verifyInternalProperties(one: Map[String, String], two: Map[String, String]): Boolean = {
+    val key = DeltaConfigs.COLUMN_MAPPING_MAX_ID.key
+    one.get(key).forall(value => value == two.getOrElse(key, value))
+  }
+
   /**
    * Create a physical schema for the given schema using the Delta table schema as a reference.
    *

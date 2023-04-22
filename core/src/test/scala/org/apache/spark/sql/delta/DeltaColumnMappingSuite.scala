@@ -1651,4 +1651,79 @@ class DeltaColumnMappingSuite extends QueryTest
       checkAnswer(read.select("a"), Row("str4"))
     }
   }
+
+  test("drop and recreate external Delta table with name column mapping enabled") {
+    withTempDir { dir =>
+      withTable("t1") {
+        val createExternalTblCmd: String =
+          s"""
+             |CREATE EXTERNAL TABLE t1 (a long)
+             |USING DELTA
+             |LOCATION '${dir.getCanonicalPath}'
+             |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin
+        sql(createExternalTblCmd)
+        // Add column and drop the old one to increment max column ID
+        sql(s"ALTER TABLE t1 ADD COLUMN (b long)")
+        sql(s"ALTER TABLE t1 DROP COLUMN a")
+        sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        val configBeforeDrop = log.update().metadata.configuration
+        assert(configBeforeDrop("delta.columnMapping.maxColumnId") == "2")
+        sql(s"DROP TABLE t1")
+        sql(createExternalTblCmd)
+        // Configuration after recreating the external table should match the config right
+        // before initially dropping it.
+        assert(log.update().metadata.configuration == configBeforeDrop)
+        // Adding another column picks up from the last maxColumnId and increments it
+        sql(s"ALTER TABLE t1 ADD COLUMN (c string)")
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
+      }
+    }
+  }
+
+  test("replace external Delta table with name column mapping enabled") {
+    withTempDir { dir =>
+      withTable("t1") {
+        val replaceExternalTblCmd: String =
+          s"""
+             |CREATE OR REPLACE TABLE t1 (a long)
+             |USING DELTA
+             |LOCATION '${dir.getCanonicalPath}'
+             |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin
+        sql(replaceExternalTblCmd)
+        // Add column and drop the old one to increment max column ID
+        sql(s"ALTER TABLE t1 ADD COLUMN (b long)")
+        sql(s"ALTER TABLE t1 DROP COLUMN a")
+        sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+        sql(replaceExternalTblCmd)
+        // Configuration after replacing existing table should be like the table has started new.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "1")
+      }
+    }
+  }
+
+  test("verify internal table properties only if property exists in spec and existing metadata") {
+    val withoutMaxColumnId = Map[String, String]("delta.columnMapping.mode" -> "name")
+    val maxColumnIdOne = Map[String, String](
+      "delta.columnMapping.mode" -> "name",
+      "delta.columnMapping.maxColumnId" -> "1"
+    )
+    val maxColumnIdOneWithOthers = Map[String, String](
+      "delta.columnMapping.mode" -> "name",
+      "delta.columnMapping.maxColumnId" -> "1",
+      "dummy.property" -> "dummy"
+    )
+    val maxColumnIdTwo = Map[String, String](
+      "delta.columnMapping.mode" -> "name",
+      "delta.columnMapping.maxColumnId" -> "2"
+    )
+    // Max column ID is missing in first set of configs. So don't block on verification.
+    assert(DeltaColumnMapping.verifyInternalProperties(withoutMaxColumnId, maxColumnIdOne))
+    // Max column ID matches.
+    assert(DeltaColumnMapping.verifyInternalProperties(maxColumnIdOne, maxColumnIdOneWithOthers))
+    // Max column IDs don't match
+    assert(!DeltaColumnMapping.verifyInternalProperties(maxColumnIdOne, maxColumnIdTwo))
+  }
 }
