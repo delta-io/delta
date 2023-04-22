@@ -38,7 +38,14 @@ import org.apache.spark.util.Utils
 trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   with DeltaSourceSuiteBase with DeltaColumnMappingSelectedTestMixin with DeltaSQLCommandTest {
 
-  override protected def runAllTests: Boolean = true
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "schema log initialization with additive schema changes",
+    "detect incompatible schema change while streaming",
+    "trigger.Once with deferred commit should work",
+    "trigger.AvailableNow should work",
+    "consecutive schema evolutions",
+    "latestOffset should not progress before schema evolved"
+  )
 
   override protected def sparkConf: SparkConf = {
     val conf = super.sparkConf
