@@ -1557,6 +1557,17 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" : {
+    "message" : [
+      "We've detected a non-additive schema change (<opType>) at Delta version <schemaChangeVersion> in the Delta streaming source. Please check if you want to manually propagate this schema change to the sink table before we proceed with stream processing.",
+      "Once you have fixed the schema of the sink table or have decided there is no need to fix, you can set (one of) the following SQL configurations to unblock this non-additive schema change and continue stream processing.",
+      "To unblock for this particular stream just for this single schema change: set `<allowCkptVerKey> = <allowCkptVerValue>`.",
+      "To unblock for this particular stream: set `<allowCkptKey> = <allowCkptValue>`",
+      "To unblock for all streams: set `<allowAllKey> = <allowAllValue>`.",
+      "Alternatively if applicable, you may replace the `<allowAllMode>` with `<opSpecificMode>` in the SQL conf to unblock stream for just this schema change type."
+    ],
+    "sqlState" : "KD002"
+  },
   "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT" : {
     "message" : [
       "Failed to obtain Delta log snapshot for the start version when checking column mapping schema changes. Please choose a different start version, or force enable streaming read at your own risk by setting '<config>' to 'true'."

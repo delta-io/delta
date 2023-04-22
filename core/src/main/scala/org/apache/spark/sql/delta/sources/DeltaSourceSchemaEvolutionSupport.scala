@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.util.Locale
+
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
@@ -70,6 +72,12 @@ import org.apache.spark.sql.types.StructType
  *    c) Whenever [[latestOffset]] sees a startOffset with a schema change barrier index, we can
  *       easily tell that we should not progress past the schema change, unless the schema change
  *       has actually happened.
+ * When a stream is restarted post a schema evolution (not initialization), it is guaranteed to have
+ * >= 2 entries in the schema log. To prevent users from shooting themselves in the foot while
+ * blindly restart stream without considering implications to downstream tables, by default we would
+ * not allow stream to restart without a magic SQL conf that user has to set to allow non-additive
+ * schema changes to propagate. We detect such non-additive schema changes during stream start by
+ * comparing the last schema log entry with the current one.
  */
 trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
   base: DeltaSource =>
@@ -278,6 +286,12 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
 
       // The offset must point to a schema change metadata action
       val schemaChange = collectSchemaChangeAtVersion(offset.reservoirVersion)
+      val schemaToPersist = PersistedSchema(
+        deltaLog.tableId,
+        offset.reservoirVersion,
+        schemaChange.schema,
+        schemaChange.partitionSchema
+      )
 
       // Evolve the schema when the schema is indeed different from the current stream schema. We
       // need to check this because we could potentially generate two offsets before schema
@@ -288,18 +302,125 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
       if (hasSchemaChangeComparedToStreamSchema(schemaChange.schema)) {
-        schemaTrackingLog.get.evolveSchema {
-          PersistedSchema(
-            deltaLog.tableId,
-            offset.reservoirVersion,
-            schemaChange.schema,
-            schemaChange.partitionSchema
-          )
-        }
+        // Update schema log
+        schemaTrackingLog.get.evolveSchema(schemaToPersist)
         // Fail the stream with schema evolution exception
         throw DeltaErrors.streamingSchemaEvolutionException(schemaChange.schema)
       }
     }
   }
 
+  // scalastyle:off
+  /**
+   * Given a non-additive operation type from a previous schema evolution, check we can process
+   * using the new schema given any SQL conf users have explicitly set to unblock.
+   * The SQL conf can take one of following formats:
+   * 1. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop = true
+   *    -> allows all non-additive schema changes to propagate.
+   * 2. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop.$checkpointHash = true
+   *    -> allows all non-additive schema changes to propagate for this particular stream
+   * 3. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop.$checkpointHash = $deltaVersion
+   *
+   * The `allowSourceColumnRenameAndDrop` can be replaced with:
+   * 1. `allowSourceColumnRename` to just allow column rename
+   * 2. `allowSourceColumnDrop` to just allow column drops
+   *
+   * We will check for any of these configs given the non-additive operation, and throw a proper
+   * error message to instruct the user to set the SQL conf if they would like to unblock.
+   *
+   * @param currentSchema The current persisted schema
+   * @param previousSchema The previous persisted schema
+   */
+  // scalastyle:on
+  protected def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+      currentSchema: PersistedSchema,
+      previousSchema: PersistedSchema): Unit = {
+    val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
+    val checkpointHash = metadataPath.hashCode
+    val allowAll = "allowSourceColumnRenameAndDrop"
+    val allowRename = "allowSourceColumnRename"
+    val allowDrop = "allowSourceColumnDrop"
+
+    def getConf(key: String): Option[String] =
+      Option(spark.sessionState.conf.getConfString(key, null))
+        .map(_.toLowerCase(Locale.ROOT))
+
+    def getConfPairsToAllowSchemaChange(
+        allowSchemaChange: String, schemaChangeVersion: Long): Seq[(String, String)] =
+      Seq(
+        (s"$sqlConfPrefix.$allowSchemaChange", "always"),
+        (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", "always"),
+        (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", schemaChangeVersion.toString)
+      )
+
+    val schemaChangeVersion = currentSchema.deltaCommitVersion
+    val confPairsToAllowAllSchemaChange =
+      getConfPairsToAllowSchemaChange(allowAll, schemaChangeVersion)
+
+    determineNonAdditiveSchemaChangeType(
+      currentSchema.dataSchema, previousSchema.dataSchema).foreach {
+      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP =>
+        val validConfKeysValuePair =
+          getConfPairsToAllowSchemaChange(allowDrop, schemaChangeVersion) ++
+            confPairsToAllowAllSchemaChange
+        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
+          // Throw error to prompt user to set the correct confs
+          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
+            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
+            schemaChangeVersion,
+            checkpointHash,
+            allowAll, allowDrop)
+        }
+      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME =>
+        val validConfKeysValuePair =
+          getConfPairsToAllowSchemaChange(allowRename, schemaChangeVersion) ++
+            confPairsToAllowAllSchemaChange
+        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
+          // Throw error to prompt user to set the correct confs
+          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
+            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME,
+            schemaChangeVersion,
+            checkpointHash,
+            allowAll, allowRename)
+        }
+      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP =>
+        val validConfKeysValuePair = confPairsToAllowAllSchemaChange
+        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
+          // Throw error to prompt user to set the correct confs
+          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
+            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
+            schemaChangeVersion,
+            checkpointHash,
+            allowAll, allowAll)
+        }
+    }
+  }
+
+  /**
+   * Determine the non-additive schema change type for an incoming schema change. None if it's
+   * additive.
+   */
+  private def determineNonAdditiveSchemaChangeType(
+      newSchema: StructType, oldSchema: StructType): Option[String] = {
+    val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
+    val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
+    if (isRenameColumn && isDropColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP)
+    } else if (isRenameColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME)
+    } else if (isDropColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP)
+    } else {
+      None
+    }
+  }
+}
+
+object NonAdditiveSchemaChangeTypes {
+  // Rename -> caused by a single column rename
+  val SCHEMA_CHANGE_RENAME = "RENAME COLUMN"
+  // Drop -> caused by a single column drop
+  val SCHEMA_CHANGE_DROP = "DROP COLUMN"
+  // A combination of rename and drop columns -> can be caused by a complete overwrite
+  val SCHEMA_CHANGE_RENAME_AND_DROP = "RENAME AND DROP COLUMN"
 }

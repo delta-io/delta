@@ -44,10 +44,21 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val conf = super.sparkConf
     // Enable for testing
     conf.set(DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION.key, "true")
+    conf.set(
+      s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.allowSourceColumnRenameAndDrop", "always")
     if (isCdcTest) {
       conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
     } else {
       conf
+    }
+  }
+
+  protected def testWithoutAllowStreamRestart(testName: String)(f: => Unit): Unit = {
+    test(testName) {
+      withSQLConf(s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming" +
+        s".allowSourceColumnRenameAndDrop" -> "false") {
+        f
+      }
     }
   }
 
@@ -1300,6 +1311,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       spark, log,
       new DeltaOptions(Map("startingVersion" -> "0"), spark.sessionState.conf),
       log.update(),
+      metadataPath = "",
       Some(getDefaultSchemaLog()))
 
     def getLatestOffset(source: DeltaSource, start: Option[Offset] = None): DeltaSourceOffset =
@@ -1343,6 +1355,130 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val ofs4 = getLatestOffset(source2, Some(ofs3))
     assert(ofs4.index == DeltaSourceOffset.BASE_INDEX &&
       ofs4.reservoirVersion == v1 + 1)
+  }
+
+  protected def expectSqlConfException(opType: String, ver: Long, checkpointHash: Int) = {
+    ExpectFailure[DeltaRuntimeException] { e =>
+      val se = e.asInstanceOf[DeltaRuntimeException]
+      assert {
+        se.getErrorClass == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
+          se.messageParameters(0) == opType && se.messageParameters(1) == ver.toString &&
+          se.messageParameters.exists(_.contains(checkpointHash.toString))
+      }
+    }
+  }
+
+  /**
+   * Initialize a simple streaming DF for a simple table with just one (0, 0) entry for schema <a,b>
+   * We also prepare an initialized schema log to skip the initialization phase.
+   */
+  protected def withSimpleStreamingDf(f: (() => DataFrame, DeltaLog) => Unit): Unit = {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      Seq(("0", "0")).toDF("a", "b")
+        .write.mode("append").format("delta").save(tablePath)
+      implicit val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val s0 = log.update()
+      val schemaLog = getDefaultSchemaLog()
+      schemaLog.evolveSchema(
+        PersistedSchema(log.tableId, s0.version,
+          s0.metadata.schema, s0.metadata.partitionSchema)
+      )
+
+      def read(): DataFrame =
+        readStream(
+          Some(getDefaultSchemaLocation.toString),
+          startingVersion = Some(s0.version))
+
+      // Initialize checkpoint
+      testStream(read())(
+        StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+        ProcessAllAvailable(),
+        CheckAnswer(("0", "0")),
+        StopStream
+      )
+
+      f(read, log)
+    }
+  }
+
+  testWithoutAllowStreamRestart("unblock with sql conf") {
+    def testStreamFlow(
+        changeSchema: DeltaLog => Unit,
+        schemaChangeType: String,
+        getConfKV: (Int, Long) => (String, String)): Unit = {
+      withSimpleStreamingDf { (readDf, log) =>
+        val ckptHash = (getDefaultCheckpoint(log).toString + "/sources/0").hashCode
+        changeSchema(log)
+        val v1 = log.update().version
+        addData(Seq(1))(log)
+        // Encounter schema evolution exception
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          ExpectSchemaEvolutionException
+        )
+        // Restart would fail due to SQL conf validation
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          expectSqlConfException(schemaChangeType, v1, ckptHash)
+        )
+        // Another restart still fails
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          expectSqlConfException(schemaChangeType, v1, ckptHash)
+        )
+        // With SQL Conf set we can move on
+        val (k, v) = getConfKV(ckptHash, v1)
+        withSQLConf(k -> v) {
+          testStream(readDf())(
+            StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+            ProcessAllAvailable()
+          )
+        }
+      }
+    }
+
+    // Test drop column
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnDrop").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => dropColumn("a")(log),
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => dropColumn("a")(log),
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(changeSchema, NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP, getConfKV)
+      }
+    }
+
+    // Test rename column
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnRename").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => renameColumn("b", "c")(log),
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => renameColumn("b", "c")(log),
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(changeSchema, NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME, getConfKV)
+      }
+    }
   }
 }
 

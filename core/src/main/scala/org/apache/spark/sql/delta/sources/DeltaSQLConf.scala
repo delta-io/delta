@@ -29,7 +29,9 @@ import org.apache.spark.util.Utils
  * [[SQLConf]] entries for Delta features.
  */
 trait DeltaSQLConfBase {
-  def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"spark.databricks.delta.$key")
+  val SQL_CONF_PREFIX = "spark.databricks.delta"
+
+  def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
 

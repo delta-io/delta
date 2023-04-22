@@ -137,7 +137,8 @@ class DeltaDataSource
       deltaLog,
       options,
       snapshot,
-      schemaTrackingLog = schemaTrackingLogOpt
+      metadataPath,
+      schemaTrackingLogOpt
     )
   }
 
