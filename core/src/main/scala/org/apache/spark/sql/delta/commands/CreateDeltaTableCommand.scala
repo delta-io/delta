@@ -29,6 +29,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StructType
@@ -331,7 +332,8 @@ case class CreateDeltaTableCommand(
           path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
       }
 
-      if (tableDesc.properties.nonEmpty && tableDesc.properties != existingMetadata.configuration) {
+      if (tableDesc.properties.nonEmpty &&
+        tableDesc.properties != CaseInsensitiveMap(existingMetadata.configuration)) {
         throw DeltaErrors.createTableWithDifferentPropertiesException(
           path, tableDesc.properties, existingMetadata.configuration)
       }
