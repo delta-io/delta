@@ -16,14 +16,14 @@
 
 package io.delta.storage;
 
+import io.delta.storage.internal.S3LogStoreUtil;
 import io.delta.storage.utils.ReflectionUtils;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.io.IOException;
 
@@ -107,6 +107,12 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private final String regionName;
     private final long expirationDelaySeconds;
 
+    /**
+     * Performance flags
+     */
+    private final boolean enableFastListFrom
+        = initHadoopConf().getBoolean("delta.enableFastS3AListFrom", false);
+
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
 
@@ -135,6 +141,20 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
         client = getClient();
         tryEnsureTableExists(hadoopConf);
+    }
+
+    @Override
+    protected Iterator<FileStatus> listFromInternal(
+            Path path,
+            Configuration hadoopConf) throws IOException {
+        if (enableFastListFrom) {
+            final FileSystem fs = path.getFileSystem(hadoopConf);
+            final Path resolvedPath = resolvePath(fs, path);
+            final Path parentPath = resolvedPath.getParent();
+            return S3LogStoreUtil.s3ListFromIter(fs, resolvedPath, parentPath);
+        } else {
+            return super.listFromInternal(path, hadoopConf);
+        }
     }
 
     @Override

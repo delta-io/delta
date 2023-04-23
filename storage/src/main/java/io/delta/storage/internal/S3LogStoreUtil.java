@@ -23,22 +23,26 @@ import org.apache.hadoop.fs.s3a.*;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
+import java.util.Iterator;
 
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
 
-
 /**
  * Static utility methods for the S3SingleDriverLogStore.
  *
- * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without needing to load this as
- * a dependency for tests in core.
+ * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without
+ * needing to load this as a dependency for tests in core.
  */
 public final class S3LogStoreUtil {
     private S3LogStoreUtil() {}
 
-    private static PathFilter ACCEPT_ALL = new PathFilter() {
+    /////////////
+    // Helpers //
+    /////////////
+
+    private static final PathFilter ACCEPT_ALL = new PathFilter() {
         @Override
         public boolean accept(Path file) {
             return true;
@@ -73,12 +77,58 @@ public final class S3LogStoreUtil {
         );
     }
 
+    /////////////////
+    // Public APIs //
+    /////////////////
+
     /**
      * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
      * which are lexicographically greater than resolvedPath.
      *
-     * Wraps s3ListFrom in an array. Contained in this class to avoid contaminating other
-     * classes with dependencies on recent Hadoop versions.
+     * Wraps s3ListFrom in an iter.
+     */
+    public static Iterator<FileStatus> s3ListFromIter(
+            FileSystem fs,
+            Path resolvedPath,
+            Path parentPath) throws IOException {
+        S3AFileSystem s3afs;
+        try {
+            s3afs = (S3AFileSystem) fs;
+        } catch (ClassCastException e) {
+            throw new UnsupportedOperationException(
+                "The Hadoop file system used for the S3LogStore must be castable to " +
+                    "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
+        }
+
+        return new Iterator<FileStatus>() {
+            private final RemoteIterator<S3AFileStatus> impl =
+                S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath);
+
+            @Override
+            public boolean hasNext() {
+                try {
+                    return impl.hasNext();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            @Override
+            public FileStatus next() {
+                try {
+                    return impl.next();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
+    }
+
+    /**
+     * Uses the S3ListRequest.v2 interface with the startAfter parameter to only list files
+     * which are lexicographically greater than resolvedPath.
+     *
+     * Wraps s3ListFrom in an array.
      *
      * TODO: Remove this method when iterators are used everywhere.
      */

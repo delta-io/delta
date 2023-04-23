@@ -103,7 +103,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      * First checks if there is any incomplete entry in the external store. If so, tries to perform
      * a recovery/fix.
      *
-     * Then, performs a normal listFrom user the `super` implementation.
+     * By default, performs a normal listFrom user the `super` implementation. That listFrom call
+     * can be overriden by the child.
      */
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
@@ -116,11 +117,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             fixDeltaLog(fs, entry.get());
         }
 
-        // This is predicated on the storage system providing consistent listing
-        // If there was a recovery performed in the `fixDeltaLog` call, then some temp file
-        // was just copied into some N.json in the delta log. Because of consistent listing,
-        // the `super.listFrom` is guaranteed to see N.json.
-        return super.listFrom(path, hadoopConf);
+        return listFromInternal(path, hadoopConf);
     }
 
     /**
@@ -229,9 +226,19 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         return false;
     }
 
-    /////////////////////////////////////////////////////////////
-    // Protected Members (for interaction with external store) //
-    /////////////////////////////////////////////////////////////
+    ///////////////////////
+    // Protected Members //
+    ///////////////////////
+
+    protected Iterator<FileStatus> listFromInternal(
+            Path path,
+            Configuration hadoopConf) throws IOException {
+        // This is predicated on the storage system providing consistent listing
+        // If there was a recovery performed in the `fixDeltaLog` call, then some temp file
+        // was just copied into some N.json in the delta log. Because of consistent listing,
+        // the `super.listFrom` is guaranteed to see N.json.
+        return super.listFrom(path, hadoopConf);
+    }
 
     /**
      * Write file with actions under a specific path.
@@ -382,32 +389,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             throw new java.nio.file.FileAlreadyExistsException(dst.toString());
         } finally {
             inputStream.close();
-        }
-    }
-
-    /**
-     * Returns path stripped user info.
-     */
-    private Path stripUserInfo(Path path) {
-        final URI uri = path.toUri();
-
-        try {
-            final URI newUri = new URI(
-                uri.getScheme(),
-                null, // userInfo
-                uri.getHost(),
-                uri.getPort(),
-                uri.getPath(),
-                uri.getQuery(),
-                uri.getFragment()
-            );
-
-            return new Path(newUri);
-        } catch (URISyntaxException e) {
-            // Propagating this URISyntaxException to callers would mean we would have to either
-            // include it in the public LogStore.java interface or wrap it in an
-            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
-            throw new IllegalArgumentException(e);
         }
     }
 }

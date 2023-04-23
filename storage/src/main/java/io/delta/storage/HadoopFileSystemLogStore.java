@@ -17,6 +17,8 @@
 package io.delta.storage;
 
 import java.io.*;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Arrays;
@@ -145,5 +147,32 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
             path.getParent(),
             String.format(".%s.%s.tmp", path.getName(), UUID.randomUUID())
         );
+    }
+
+    protected Path resolvePath(FileSystem fs, Path path) {
+        return stripUserInfo(fs.makeQualified(path));
+    }
+
+    protected Path stripUserInfo(Path path) {
+        final URI uri = path.toUri();
+
+        try {
+            final URI newUri = new URI(
+                uri.getScheme(),
+                null, // userInfo
+                uri.getHost(),
+                uri.getPort(),
+                uri.getPath(),
+                uri.getQuery(),
+                uri.getFragment()
+            );
+
+            return new Path(newUri);
+        } catch (URISyntaxException e) {
+            // Propagating this URISyntaxException to callers would mean we would have to either
+            // include it in the public LogStore.java interface or wrap it in an
+            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
+            throw new IllegalArgumentException(e);
+        }
     }
 }
