@@ -940,7 +940,7 @@
   },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
-      "Delta protocol version is too new for this version of Delta Lake: table requires <required>, client supports up to <supported>. Please upgrade to a newer release."
+      "Delta protocol version is not supported by this version of Delta Lake: table requires <required>, client supports <supported>. Please upgrade to a newer release."
     ],
     "sqlState" : "KD004"
   },

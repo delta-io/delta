@@ -57,7 +57,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
 
   // Return if `protocol` satisfies the requirement for IDENTITY columns.
   def satisfiesIdentityColumnProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(IdentityColumnsTableFeature)
+    protocol.minWriterVersion == 6 || protocol.writerFeatureNames.contains("identityColumns")
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
   // insertion list).

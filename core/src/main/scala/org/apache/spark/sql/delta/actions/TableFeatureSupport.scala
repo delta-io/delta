@@ -195,6 +195,12 @@ trait TableFeatureSupport { this: Protocol =>
     }
   }
 
+  /**
+   * Get all features that are supported by this protocol, implicitly and explicitly. When the
+   * protocol supports table features, this method returns the same set of features as
+   * [[readerAndWriterFeatureNames]]; when the protocol does not support table features, this
+   * method becomes equivalent to [[implicitlySupportedFeatures]].
+   */
   @JsonIgnore
   lazy val implicitlyAndExplicitlySupportedFeatures: Set[TableFeature] = {
     readerAndWriterFeatureNames.flatMap(TableFeature.featureNameToFeature) ++

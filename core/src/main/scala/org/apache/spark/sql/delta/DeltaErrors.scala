@@ -2250,10 +2250,6 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
-  def identityColumnNotSupported(): Throwable = {
-    new AnalysisException("IDENTITY column is not supported")
-  }
-
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
@@ -3005,10 +3001,10 @@ class DeltaIndexOutOfBoundsException(
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
-class InvalidProtocolVersionException(requiredVersion: Int, supportedVersion: Int)
+class InvalidProtocolVersionException(requiredVersion: Int, supportedVersions: Seq[Int])
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
-    messageParameters = Array(requiredVersion.toString, supportedVersion.toString)))
+    messageParameters = Array(requiredVersion.toString, supportedVersions.sorted.mkString(", "))))
   with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
 }

@@ -28,7 +28,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
@@ -64,6 +64,30 @@ object Action {
       protocolVersion.withFeatures(TableFeature.allSupportedFeaturesMap.values)
     } else {
       protocolVersion
+    }
+  }
+
+  /** All reader protocol version numbers supported by the system. */
+  private[delta] lazy val supportedReaderVersionNumbers: Set[Int] = {
+    val allVersions =
+      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minReaderVersion) +
+      1 // Version 1 does not introduce new feature, it's always supported.
+    if (DeltaUtils.isTesting) {
+      allVersions + 0 // Allow Version 0 in tests
+    } else {
+      allVersions - 0 // Delete 0 produced by writer-only features
+    }
+  }
+
+  /** All writer protocol version numbers supported by the system. */
+  private[delta] lazy val supportedWriterVersionNumbers: Set[Int] = {
+    val allVersions =
+      supportedProtocolVersion().implicitlyAndExplicitlySupportedFeatures.map(_.minWriterVersion) +
+        1 // Version 1 does not introduce new feature, it's always supported.
+    if (DeltaUtils.isTesting) {
+      allVersions + 0 // Allow Version 0 in tests
+    } else {
+      allVersions - 0 // Delete 0 produced by reader-only features - we don't have any - for safety
     }
   }
 
@@ -220,10 +244,6 @@ object Protocol {
           enabledFeatures += feature
         }
       case _ => () // Do nothing. We only care about features that can be activated in metadata.
-    }
-
-    if (IdentityColumnsTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-      throw DeltaErrors.identityColumnNotSupported()
     }
     enabledFeatures.toSet
   }
