@@ -75,6 +75,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             if (numRetries < MAX_RETRIES) {
                 numRetries++;
                 replayIterToLastSuccessfulIndex();
+                // Now, the currentImpl has been recreated and iterated to the same index
                 return hasNext();
             } else {
                 throw new RuntimeException(ex);
@@ -103,6 +104,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             if (numRetries < MAX_RETRIES) {
                 numRetries++;
                 replayIterToLastSuccessfulIndex();
+                // Now, the currentImpl has been recreated and iterated to the same index
                 return next();
             } else {
                 throw new RuntimeException(ex);
@@ -124,6 +126,13 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
      *       with that for now - that would require handling exception inception.
      */
     private void replayIterToLastSuccessfulIndex() {
+        // We still need to close the currentImpl, even though it threw
+        try {
+            currentImpl.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
         LOG.info("Replaying until (inclusive) index {}", lastSuccessfullIndex);
         currentImpl = implSupplier.get(); // this last impl threw an exception and is useless!
 
