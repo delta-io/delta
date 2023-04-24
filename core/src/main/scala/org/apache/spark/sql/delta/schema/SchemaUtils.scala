@@ -921,7 +921,7 @@ object SchemaUtils extends DeltaLogging {
     names.foreach { name =>
       // ,;{}()\n\t= and space are special characters in Delta schema
       if (name.matches(".*[ ,;{}()\n\t=].*")) {
-        throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
+        throw QueryCompilationErrors.invalidColumnNameAsPathError("delta", name)
       }
     }
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be

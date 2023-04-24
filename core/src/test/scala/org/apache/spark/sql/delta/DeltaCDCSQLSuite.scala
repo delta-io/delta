@@ -275,16 +275,20 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
-
   test("resolution of complex expression should throw an error") {
     val tbl = "tbl"
     withTable(tbl) {
       spark.range(10).write.format("delta").saveAsTable(tbl)
-      val e = intercept[AnalysisException] {
-        sql(s"SELECT * FROM table_changes('$tbl', 0, id)")
-      }
-      assert(e.getErrorClass == "MISSING_COLUMN")
-      assert(e.getMessage.contains("Column 'id' does not exist"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"SELECT * FROM table_changes('$tbl', 0, id)")
+        },
+        errorClass = "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
+        parameters = Map("objectName" -> "`id`"),
+        queryContext = Array(ExpectedContext(
+          fragment = "id",
+          start = 38,
+          stop = 39)))
     }
   }
 

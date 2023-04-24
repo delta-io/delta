@@ -424,7 +424,14 @@ object DeltaMergeInto {
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
         val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
-        a.failAnalysis(msg = s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
+        // todo: added a new Delta error for this to avoid rewriting tests, but existing
+        //   spark error _LEGACY_ERROR_TEMP_2309 is very similar
+        //   If we use that, we could keep .failAnalysis and not alter DeltaAnalysisException. But
+        //   we would have to rewrite 100ish test cases
+        throw new DeltaAnalysisException(
+          errorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+          messageParameters = Array(a.sql, mergeClauseType, cols),
+          origin = Some(a.origin))
       }
       resolvedExpr
     }
@@ -536,7 +543,8 @@ object DeltaMergeInto {
             Seq(d)
 
           case _ =>
-            action.failAnalysis(msg = s"Unexpected action expression '$action' in clause $clause")
+            action.failAnalysis("INTERNAL_ERROR",
+              Map("message" -> s"Unexpected action expression '$action' in clause $clause"))
         }
       }
 
@@ -625,9 +633,12 @@ object DeltaMergeInto {
     if (resolvedMerge.missingInput.nonEmpty) {
       val missingAttributes = resolvedMerge.missingInput.mkString(",")
       val input = resolvedMerge.inputSet.mkString(",")
-      val msgForMissingAttributes = s"Resolved attribute(s) $missingAttributes missing " +
-        s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
-      resolvedMerge.failAnalysis(msg = msgForMissingAttributes)
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_MERGE_RESOLVED_ATTRIBUTE_MISSING_FROM_INPUT",
+        messageParameters = Array(missingAttributes, input,
+          resolvedMerge.simpleString(SQLConf.get.maxToStringFields)),
+        origin = Some(resolvedMerge.origin)
+      )
     }
 
     resolvedMerge

@@ -76,6 +76,7 @@ trait MergeIntoMaterializeSourceTests
   }
 
 
+
   test("merge logs out of disk errors") {
     val injectEx = new java.io.IOException("No space left on device")
     testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, errorOpt) =>
@@ -402,99 +403,6 @@ trait MergeIntoMaterializeSourceTests
           assert(hints(1).hints == HintInfo(strategy = Some(SHUFFLE_MERGE)))
           // top one takes effect
           assert(joinHint == JoinHint(Some(HintInfo(strategy = Some(BROADCAST))), None))
-        }
-      }
-    }
-  }
-
-  // FIXME: Tests can be removed once Delta adopts Spark 3.4 as constraints and statistics are
-  // automatically propagated when materializing
-  // The following test should fail as soon as statistics are correctly propagated, and acts as a
-  // reminder to remove the manually added filter and broadcast hint once Spark 3.4 is adopted
-  test("Source in materialized merge has missing stats") {
-    // AQE has to be disabled as we might not find the Join in the adaptive plan
-    withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
-      withTable("A", "T") {
-        sql("select id, id as v from range(50)").write.format("delta").saveAsTable("T")
-        sql("select id, id+2 as v from range(10)").write.format("csv").saveAsTable("A")
-        val plans = DeltaTestUtils.withAllPlansCaptured(spark) {
-          sql("MERGE INTO T USING A as s ON T.id = s.id" +
-            " WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
-        }
-        plans.map(_.optimized).foreach { p =>
-          p.foreach {
-            case j: Join =>
-              // The source is very small, the only way we'd be above the broadcast join threshold
-              // is if we lost statistics on the size of the source.
-              val sourceStats = j.left.stats.sizeInBytes
-              val broadcastJoinThreshold = spark.conf.get(SQLConf.AUTO_BROADCASTJOIN_THRESHOLD)
-              assert(sourceStats >= broadcastJoinThreshold)
-            case _ =>
-          }
-        }
-      }
-    }
-  }
-
-  test("Filter gets added if there is a constraint") {
-    // AQE has to be disabled as we might not find the filter in the adaptive plan
-    withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
-      withTable("A", "T") {
-        spark.range(50).toDF("tgtid").write.format("delta").saveAsTable("T")
-        spark.range(50).toDF("srcid").write.format("delta").saveAsTable("A")
-
-        val plans = DeltaTestUtils.withAllPlansCaptured(spark) {
-          sql("MERGE INTO T USING (SELECT * FROM A WHERE srcid = 10) as s ON T.tgtid = s.srcid" +
-            " WHEN MATCHED THEN UPDATE SET tgtid = s.srcid" +
-            " WHEN NOT MATCHED THEN INSERT (tgtid) values (s.srcid)")
-        }
-        // Check whether the executed plan contains a filter that filters by tgtId that could be
-        // used to infer constraints  lost during materialization
-        val hastgtIdCondition = (condition: Expression) => {
-          condition.find {
-            case EqualTo(AttributeReference("tgtid", _, _, _), Literal(10, _)) => true
-            case _ => false
-          }.isDefined
-        }
-        val touchedFilesPlan = getfindTouchedFilesJobPlans(plans)
-        val filter = touchedFilesPlan.find {
-          case f: FilterExec => hastgtIdCondition(f.condition)
-          case _ => false
-        }
-        assert(filter.isDefined,
-          s"Didn't find Filter on tgtid=10 in touched files plan:\n$touchedFilesPlan")
-      }
-    }
-  }
-
-  test("Broadcast hint gets added when there is a small source table") {
-    withTable("A", "T") {
-      sql("select id, id as v from range(50000)").write.format("delta").saveAsTable("T")
-      sql("select id, id+2 as v from range(10000)").write.format("csv").saveAsTable("A")
-      val hints = getHints(
-        sql("MERGE INTO T USING A as s ON T.id = s.id" +
-          " WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
-      )
-      hints.foreach { case (hints, joinHint) =>
-        assert(hints.length == 1)
-        assert(hints.head.hints == HintInfo(strategy = Some(BROADCAST)))
-        assert(joinHint == JoinHint(Some(HintInfo(strategy = Some(BROADCAST))), None))
-      }
-    }
-  }
-
-  test("Broadcast hint does not get added when there is a large table") {
-    withTable("A", "T") {
-      sql("select id, id as v from range(50000)").write.format("delta").saveAsTable("T")
-      sql("select id, id+2 as v from range(10000)").write.format("csv").saveAsTable("A")
-      withSQLConf((SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key, "1KB")) {
-        val hints = getHints(
-          sql("MERGE INTO T USING A as s ON T.id = s.id" +
-            " WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
-        )
-        hints.foreach { case (hints, joinHint) =>
-          assert(hints.length == 0)
-          assert(joinHint == JoinHint(None, None))
         }
       }
     }

@@ -1023,11 +1023,21 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_MERGE_RESOLVED_ATTRIBUTE_MISSING_FROM_INPUT" : {
+    "message" : [
+      "Resolved attribute(s) <missingAttributes> missing from <input> in operator <merge>"
+    ]
+  },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [
       "Unexpected assignment key: <unexpectedKeyClass> - <unexpectedKeyObject>"
     ],
     "sqlState" : "22005"
+  },
+  "DELTA_MERGE_UNRESOLVED_EXPRESSION" : {
+    "message" : [
+      "Cannot resolve <sqlExpr> in <clause> given <cols>"
+    ]
   },
   "DELTA_METADATA_ABSENT" : {
     "message" : [

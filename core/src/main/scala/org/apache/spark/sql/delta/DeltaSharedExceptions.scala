@@ -16,13 +16,23 @@
 
 package org.apache.spark.sql.delta
 
+import org.antlr.v4.runtime.ParserRuleContext
+
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
+import org.apache.spark.sql.catalyst.trees.Origin
 
 class DeltaAnalysisException(
-    errorClass: String, messageParameters: Array[String], cause: Option[Throwable] = None)
+    errorClass: String,
+    messageParameters: Array[String],
+    cause: Option[Throwable] = None,
+    origin: Option[Origin] = None)
   extends AnalysisException(
-    DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+    message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
     errorClass = Some(errorClass),
+    line = origin.flatMap(_.line),
+    startPosition = origin.flatMap(_.startPosition),
+    context = origin.map(_.getQueryContext).getOrElse(Array.empty),
     cause = cause)
   with DeltaThrowable {
   def getMessageParametersArray: Array[String] = messageParameters
@@ -48,3 +58,17 @@ class DeltaUnsupportedOperationException(
     override def getErrorClass: String = errorClass
     def getMessageParametersArray: Array[String] = messageParameters
 }
+
+// todo: we had to add this since in Spark 3.4 ParseException(message, ...) was replaced by
+//   ParseException(errorClass, ...)
+//   Instead of passing just a message here, we could enforce creating an errorClass for each
+//   invocation and make this DeltaParseException(errorClass, ctx)
+class DeltaParseException(
+    message: String,
+    ctx: ParserRuleContext)
+  extends ParseException(
+      Option(ParserUtils.command(ctx)),
+      message,
+      ParserUtils.position(ctx.getStart),
+      ParserUtils.position(ctx.getStop)
+    ) with DeltaThrowable

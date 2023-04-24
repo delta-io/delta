@@ -35,11 +35,6 @@ import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
 
-  override protected def verifyDescribeTable(tblName: String): Unit = {
-    val res = sql(s"DESCRIBE TABLE $tblName").collect()
-    assert(res.takeRight(2).map(_.getString(1)) === Seq("name", "dept"))
-  }
-
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
   }
@@ -93,7 +88,10 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._
 
-  protected def verifyDescribeTable(tblName: String): Unit
+  protected def verifyDescribeTable(tblName: String): Unit = {
+    val res = sql(s"DESCRIBE TABLE $tblName").collect()
+    assert(res.takeRight(2).map(_.getString(0)) === Seq("name", "dept"))
+  }
 
   protected def verifyNullabilityFailure(exception: AnalysisException): Unit
 

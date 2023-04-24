@@ -257,7 +257,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case replaceHeader: ReplaceTableHeaderContext =>
         (visitTableIdentifier(replaceHeader.table), replaceHeader.CREATE() != null, true, false)
       case _ =>
-        throw new ParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
+        throw new DeltaParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
     }
   }
 
@@ -273,7 +273,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val (target, isCreate, isReplace, ifNotExists) = visitCloneTableHeader(ctx.cloneTableHeader())
 
     if (!isCreate && ifNotExists) {
-      throw new ParseException(
+      throw new DeltaParseException(
         "IF NOT EXISTS cannot be used together with REPLACE", ctx.cloneTableHeader())
     }
 
@@ -340,7 +340,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.path == null && ctx.table == null) {
-      throw new ParseException("OPTIMIZE command requires a file path or table name.", ctx)
+      throw new DeltaParseException("OPTIMIZE command requires a file path or table name.", ctx)
     }
     val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
@@ -406,7 +406,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ctx.identifier.asScala.toSeq match {
       case Seq(tbl) => TableIdentifier(tbl.getText)
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
-      case _ => throw new ParseException(s"Illegal table name ${ctx.getText}", ctx)
+      case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
   }
 
@@ -537,7 +537,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case ("interval", Nil) => CalendarIntervalType
       case (dt, params) =>
         val dtStr = if (params.nonEmpty) s"$dt(${params.mkString(",")})" else dt
-        throw new ParseException(s"DataType $dtStr is not supported.", ctx)
+        throw new DeltaParseException(s"DataType $dtStr is not supported.", ctx)
     }
   }
 }

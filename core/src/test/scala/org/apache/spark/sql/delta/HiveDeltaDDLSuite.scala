@@ -26,11 +26,6 @@ abstract class HiveDeltaDDLSuiteBase
   extends DeltaDDLTestBase {
   import testImplicits._
 
-  override protected def verifyDescribeTable(tblName: String): Unit = {
-    val res = sql(s"DESCRIBE TABLE $tblName").collect()
-    assert(res.takeRight(2).map(_.getString(1)) === Seq("name", "dept"))
-  }
-
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("not supported for changing column")
   }
