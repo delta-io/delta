@@ -10,7 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Iterates over the given iterator supplied in the constructor.
+ * This class presents an iterator view over the iterator supplier in the constructor.
+ *
+ * This class assumes that the iterator supplied by the supplier can throw, and that subsequent
+ * supplier.get() calls will return an iterator over the same data.
  *
  * If there are any RemoteFileChangedException during `next` and `hasNext` calls, will retry
  * at most `MAX_RETRIES` times.
@@ -25,7 +28,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
     /** Visible for testing. */
     public static final int MAX_RETRIES = 3;
 
-    private final Supplier<CloseableIterator<String>> implSupplier;
+    private final Supplier<CloseableIterator<String>> iterSupplier;
 
     /**
      * Index of the last element successfully returned without an exception. A value of -1 means
@@ -35,12 +38,12 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     private int numRetries = 0;
 
-    private CloseableIterator<String> currentImpl;
+    private CloseableIterator<String> currentIter;
 
-    public RetryableCloseableIterator(Supplier<CloseableIterator<String>> implSupplier) {
-        this.implSupplier = Objects.requireNonNull(implSupplier);
+    public RetryableCloseableIterator(Supplier<CloseableIterator<String>> iterSupplier) {
+        this.iterSupplier = Objects.requireNonNull(iterSupplier);
         this.lastSuccessfullIndex = -1;
-        this.currentImpl = this.implSupplier.get();
+        this.currentIter = this.iterSupplier.get();
     }
 
     /** Visible for testing. */
@@ -55,8 +58,8 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     @Override
     public void close() throws IOException {
-        if (currentImpl != null) {
-            currentImpl.close();
+        if (currentIter != null) {
+            currentIter.close();
         }
     }
 
@@ -85,7 +88,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     /** Throw a checked exception so we can catch this in the caller. */
     private boolean hasNextInternal() throws RemoteFileChangedException {
-        return currentImpl.hasNext();
+        return currentIter.hasNext();
     }
 
     @Override
@@ -114,7 +117,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     /** Throw a checked exception so we can catch this in the caller. */
     private String nextInternal() throws RemoteFileChangedException {
-        return currentImpl.next();
+        return currentIter.next();
     }
 
     /**
@@ -128,13 +131,13 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
     private void replayIterToLastSuccessfulIndex() {
         // We still need to close the currentImpl, even though it threw
         try {
-            currentImpl.close();
+            currentIter.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
 
         LOG.info("Replaying until (inclusive) index {}", lastSuccessfullIndex);
-        currentImpl = implSupplier.get(); // this last impl threw an exception and is useless!
+        currentIter = iterSupplier.get(); // this last impl threw an exception and is useless!
 
         // Note: we iterate until `i` == `lastSuccessfullIndex`, so that index `i` is the last
         // successfully returned index.
@@ -148,7 +151,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
         for (int i = -1; i < lastSuccessfullIndex; i++) {
             // Note: this does NOT touch RetryableCloseableIterator::next and so does not change
             //       the index
-            currentImpl.next();
+            currentIter.next();
         }
 
         LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
