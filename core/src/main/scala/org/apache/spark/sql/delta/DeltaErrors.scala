@@ -2249,10 +2249,6 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
-  def identityColumnNotSupported(): Throwable = {
-    new AnalysisException("IDENTITY column is not supported")
-  }
-
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
