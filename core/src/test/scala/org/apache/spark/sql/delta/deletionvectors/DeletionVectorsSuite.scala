@@ -472,7 +472,7 @@ class DeletionVectorsSuite extends QueryTest
       {
         withSQLConf(
           DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
-          spark.range(10).repartition(2).write.format("delta").save(path)
+          spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
         }
         val snapshot = deltaLog.update()
         assert(snapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature))
