@@ -47,11 +47,11 @@ import org.slf4j.LoggerFactory;
  * the mutual exclusion that the cloud store is lacking.
  *
  * Notation:
- * - N -> the target commit version we are writing. e.g. 00010.json ==> N = 10.
- * - N.json -> the actual target commit we want to write.
- * - T(N) -> the temp file path for commit N used during the prepare-commit-acknowledge `write`
- *           algorithm below. We will eventually copy T(N) into N.json
- * - E(N, T(N), complete=true/false) -> the entry we will atomically commit into the external
+ * - N: the target commit version we are writing. e.g. 00010.json ==> N = 10.
+ * - N.json: the actual target commit we want to write.
+ * - T(N): the temp file path for commit N used during the prepare-commit-acknowledge `write`
+ *         algorithm below. We will eventually copy T(N) into N.json
+ * - E(N, T(N), complete=true/false): the entry we will atomically commit into the external
  *                                      cache.
  */
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
