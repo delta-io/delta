@@ -23,7 +23,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -32,7 +31,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.io.CountingOutputStream;
 import io.delta.storage.internal.FileNameUtils;
-import io.delta.storage.internal.LockUtils;
+import io.delta.storage.internal.PathLock;
 import io.delta.storage.internal.S3LogStoreUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -84,7 +83,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      * A global path lock to ensure that no concurrent writers writing to the same path in the same
      * JVM.
      */
-    private static final ConcurrentHashMap<Path, Object> pathLock = new ConcurrentHashMap<>();
+    private static final PathLock pathLock = new PathLock();
 
     /**
      * A global cache that records the metadata of the files recently written.
@@ -254,7 +253,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = resolvePath(fs, path);
         try {
-            LockUtils.acquirePathLock(pathLock, resolvedPath);
+            pathLock.acquire(resolvedPath);
             try {
                 if (exists(fs, resolvedPath) && !overwrite) {
                     throw new java.nio.file.FileAlreadyExistsException(
@@ -296,7 +295,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
         } finally {
-            LockUtils.releasePathLock(pathLock, resolvedPath);
+            pathLock.release(resolvedPath);
         }
     }
 

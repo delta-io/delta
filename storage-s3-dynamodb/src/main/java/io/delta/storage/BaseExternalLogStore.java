@@ -23,12 +23,11 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.storage.internal.FileNameUtils;
-import io.delta.storage.internal.LockUtils;
+import io.delta.storage.internal.PathLock;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -46,6 +45,14 @@ import org.slf4j.LoggerFactory;
  * <p>
  * This implementation depends on child methods, particularly `putExternalEntry`, to provide
  * the mutual exclusion that the cloud store is lacking.
+ *
+ * Notation:
+ * - N -> the target commit version we are writing. e.g. 00010.json ==> N = 10.
+ * - N.json -> the actual target commit we want to write.
+ * - T(N) -> the temp file path for commit N used during the prepare-commit-acknowledge `write`
+ *           algorithm below. We will eventually copy T(N) into N.json
+ * - E(N, T(N), complete=true/false) -> the entry we will atomically commit into the external
+ *                                      cache.
  */
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(BaseExternalLogStore.class);
@@ -57,7 +64,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
      *   external entry E(complete=false) and so starts a recovery operation
      * - while two readers see E(complete=false) and so both start a recovery operation
      */
-    private static final ConcurrentHashMap<Path, Object> pathLock = new ConcurrentHashMap<>();
+    private static final PathLock pathLock = new PathLock();
 
     /**
      * The delay, in seconds, after an external entry has been committed to the delta log at which
@@ -171,7 +178,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             //
             // Also note that this lock path (resolvedPath) is for N.json, while the lock path used
             // below in the recovery `fixDeltaLog` path is for N-1.json. Thus, no deadlock.
-            LockUtils.acquirePathLock(pathLock, resolvedPath);
+            pathLock.acquire(resolvedPath);
 
             if (overwrite) {
                 writeActions(fs, path, actions);
@@ -253,7 +260,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
         } finally {
-            LockUtils.releasePathLock(pathLock, resolvedPath);
+            pathLock.release(resolvedPath);
         }
     }
 
@@ -375,7 +382,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
 
         final Path targetPath = entry.absoluteFilePath();
         try {
-            LockUtils.acquirePathLock(pathLock, targetPath);
+            pathLock.acquire(targetPath);
 
             int retry = 0;
             boolean copied = false;
@@ -400,7 +407,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
         } finally {
-            LockUtils.releasePathLock(pathLock, targetPath);
+            pathLock.release(targetPath);
         }
     }
 
