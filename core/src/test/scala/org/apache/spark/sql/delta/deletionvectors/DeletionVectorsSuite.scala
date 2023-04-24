@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.node.ObjectNode
+import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -379,7 +380,7 @@ class DeletionVectorsSuite extends QueryTest
       val target = new File(tempDir, "mergeTest")
       FileUtils.copyDirectory(new File(table2Path), target)
 
-      io.delta.tables.DeltaTable.forPath(spark, target.getAbsolutePath).as("target")
+      DeltaTable.forPath(spark, target.getAbsolutePath).as("target")
         .merge(
           spark.read.format("delta").load(source.getAbsolutePath).as("source"),
           "source.value = target.value")
@@ -416,7 +417,7 @@ class DeletionVectorsSuite extends QueryTest
       FileUtils.copyDirectory(new File(table2Path), tempDir)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
 
-      io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+      DeltaTable.forPath(spark, tempDir.getAbsolutePath)
         .update(col("value") === 1, Map("value" -> (col("value") + 1)))
 
       val snapshot = deltaLog.update()
@@ -442,7 +443,7 @@ class DeletionVectorsSuite extends QueryTest
       val snapshotBeforeUpdate = deltaLog.update()
       val allFilesBeforeUpdate = snapshotBeforeUpdate.allFiles.collect()
 
-      io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+      DeltaTable.forPath(spark, tempDir.getAbsolutePath)
         .update(col("value")  === 0, Map("value" -> (col("value") + 1)))
 
       val snapshot = deltaLog.update()
@@ -513,7 +514,7 @@ class DeletionVectorsSuite extends QueryTest
       }
       // Version 3: MERGE into the table using table2
       {
-        io.delta.tables.DeltaTable.forPath(spark, path).as("target")
+        DeltaTable.forPath(spark, path).as("target")
           .merge(
             spark.read.format("delta").load(table2Path).as("source"),
             "source.value = target.id")
