@@ -213,8 +213,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   test("upgrade to support table features - many features") {
     withTempDir { path =>
-      val log = createTableWithProtocol(Protocol(2, 6), path)
-      assert(log.snapshot.protocol === Protocol(2, 6))
+      val log = createTableWithProtocol(Protocol(2, 5), path)
+      assert(log.snapshot.protocol === Protocol(2, 5))
       val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
       table.upgradeTableProtocol(2, TABLE_FEATURES_MIN_WRITER_VERSION)
       assert(
@@ -228,7 +228,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             CheckConstraintsTableFeature,
             ColumnMappingTableFeature,
             GeneratedColumnsTableFeature,
-            IdentityColumnsTableFeature,
             InvariantsTableFeature,
             TestLegacyWriterFeature,
             TestLegacyReaderWriterFeature)
@@ -252,7 +251,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               CheckConstraintsTableFeature,
               ColumnMappingTableFeature,
               GeneratedColumnsTableFeature,
-              IdentityColumnsTableFeature,
               InvariantsTableFeature,
               TestLegacyWriterFeature,
               TestLegacyReaderWriterFeature,
@@ -1385,7 +1383,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion='delta rulz')")
       }
-      assert(e.getMessage.contains("integer"))
+      assert(e.getMessage.contains(" one of "))
 
       val e2 = intercept[AnalysisException] {
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
@@ -1395,9 +1393,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       val e3 = intercept[IllegalArgumentException] {
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
-          "TBLPROPERTIES (delta.minWriterVersion=0)")
+          "TBLPROPERTIES (delta.minWriterVersion='-1')")
       }
-      assert(e3.getMessage.contains("integer"))
+      assert(e3.getMessage.contains(" one of "))
     }
   }
 
@@ -1557,10 +1555,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(log.update().protocol === Protocol(1, 2))
       withSQLConf(
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "2",
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "6") {
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "5") {
         replaceTableAs(path)
       }
-      assert(log.update().protocol === Protocol(2, 6))
+      assert(log.update().protocol === Protocol(2, 5))
       withSQLConf(
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "3",
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "7",
@@ -1569,11 +1567,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       assert(
         log.update().protocol ===
-          Protocol(2, 6).merge(Protocol(3, 7)).withFeature(TestReaderWriterFeature))
+          Protocol(2, 5).merge(Protocol(3, 7)).withFeature(TestReaderWriterFeature))
     }
   }
 
-  for (p <- Seq(Protocol(2, 6), Protocol(3, 7).withFeature(TestReaderWriterFeature)))
+  for (p <- Seq(Protocol(2, 5), Protocol(3, 7).withFeature(TestReaderWriterFeature)))
     test(s"REPLACE AS keeps protocol when defaults are lower ($p)") {
       withTempDir { path =>
         spark
@@ -1629,6 +1627,40 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(
         !log.update().metadata.configuration
           .contains(DeltaConfigs.CREATE_TABLE_IGNORE_PROTOCOL_DEFAULTS.key))
+    }
+  }
+
+  test("can't write to a table with identity columns (legacy protocol)") {
+    withTempDir { dir =>
+      val writerVersion = 6
+      createTableWithProtocol(Protocol(1, writerVersion), dir)
+
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`${dir.getCanonicalPath}`"),
+        spark.range(0).toDF)
+      assert(intercept[InvalidProtocolVersionException] {
+        sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
+      }.getMessage.contains(s"table requires 6"))
+    }
+  }
+
+  test("can't write to a table with identity columns (table features)") {
+    withTempDir { dir =>
+      val featureName = "identityColumns"
+      createTableWithProtocol(
+        Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION,
+          readerFeatures = Some(Set.empty),
+          writerFeatures = Some(Set(featureName))),
+        dir)
+
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`${dir.getCanonicalPath}`"),
+        spark.range(0).toDF)
+      assert(intercept[DeltaTableFeatureException] {
+        sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
+      }.getMessage.contains(s"unsupported by this version of Delta Lake: $featureName"))
     }
   }
 

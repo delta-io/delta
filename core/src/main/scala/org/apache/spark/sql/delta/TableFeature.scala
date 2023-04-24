@@ -193,7 +193,6 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
-      IdentityColumnsTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
@@ -286,16 +285,6 @@ object ColumnMappingTableFeature
   }
 }
 
-object IdentityColumnsTableFeature
-  extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
-  with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata,
-      spark: SparkSession): Boolean = {
-    ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
-  }
-}
-
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
   with FeatureAutomaticallyEnabledByMetadata {
@@ -321,7 +310,7 @@ object TestLegacyReaderWriterFeature
   extends LegacyReaderWriterFeature(
     name = "testLegacyReaderWriter",
     minReaderVersion = 2,
-    minWriterVersion = 6)
+    minWriterVersion = 5)
 
 object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
 
