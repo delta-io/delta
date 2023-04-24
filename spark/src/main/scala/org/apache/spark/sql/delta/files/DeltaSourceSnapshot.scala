@@ -58,8 +58,14 @@ class DeltaSourceSnapshot(
     import spark.implicits.rddToDatasetHolder
     import org.apache.spark.sql.delta.implicits._
 
+    val numPartitions = snapshot.getNumPartitions
+
     cacheDS(
-      snapshot.allFiles.sort("modificationTime", "path")
+      snapshot.allFiles
+        // This allows us to control the number of partitions created from the sort instead of
+        // using the shufflePartitions setting
+        .repartitionByRange(numPartitions, col("modificationTime"), col("path"))
+        .sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
         // Stats aren't used for streaming reads right now, so decrease
