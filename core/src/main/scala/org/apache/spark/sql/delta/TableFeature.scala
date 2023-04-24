@@ -193,7 +193,6 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
-      IdentityColumnsTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
@@ -286,13 +285,11 @@ object ColumnMappingTableFeature
   }
 }
 
-object IdentityColumnsTableFeature
-  extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
-  with FeatureAutomaticallyEnabledByMetadata {
+object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
+    with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata,
-      spark: SparkSession): Boolean = {
-    ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
 }
 
@@ -321,7 +318,7 @@ object TestLegacyReaderWriterFeature
   extends LegacyReaderWriterFeature(
     name = "testLegacyReaderWriter",
     minReaderVersion = 2,
-    minWriterVersion = 6)
+    minWriterVersion = 5)
 
 object TestReaderWriterFeature extends ReaderWriterFeature(name = "testReaderWriter")
 

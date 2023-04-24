@@ -326,15 +326,15 @@ class DeltaLog private(
     val clientSupportedProtocol = Action.supportedProtocolVersion()
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
-    val (clientSupportedVersion, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
+    val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
       case "read" => (
-          clientSupportedProtocol.minReaderVersion,
-          tableProtocol.minReaderVersion,
-          (f: Protocol) => f.readerFeatureNames)
+        Action.supportedReaderVersionNumbers,
+        tableProtocol.minReaderVersion,
+        (f: Protocol) => f.readerFeatureNames)
       case "write" => (
-          clientSupportedProtocol.minWriterVersion,
-          tableProtocol.minWriterVersion,
-          (f: Protocol) => f.writerFeatureNames)
+        Action.supportedWriterVersionNumbers,
+        tableProtocol.minWriterVersion,
+        (f: Protocol) => f.writerFeatureNames)
       case _ =>
         throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
     }
@@ -343,7 +343,7 @@ class DeltaLog private(
     val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
     val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
     if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
-      clientSupportedVersion >= tableRequiredVersion) {
+      clientSupportedVersions.contains(tableRequiredVersion)) {
       return
     }
 
@@ -366,12 +366,12 @@ class DeltaLog private(
       this,
       opType,
       data = Map(
-        "clientVersion" -> clientSupportedVersion,
+        "clientVersion" -> clientSupportedVersions.max,
         versionKey -> tableRequiredVersion,
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
-    if (clientSupportedVersion < tableRequiredVersion) {
-      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersion)
+    if (!clientSupportedVersions.contains(tableRequiredVersion)) {
+      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersions.toSeq)
     } else {
       throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }

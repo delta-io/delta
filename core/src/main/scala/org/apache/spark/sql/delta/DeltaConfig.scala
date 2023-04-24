@@ -307,8 +307,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     "minReaderVersion",
     Action.supportedProtocolVersion().minReaderVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.supportedProtocolVersion().minReaderVersion,
-    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minReaderVersion}].")
+    v => Action.supportedReaderVersionNumbers.contains(v),
+    s"needs to be one of ${Action.supportedReaderVersionNumbers.toSeq.sorted.mkString(", ")}.")
 
   /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
@@ -319,8 +319,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     "minWriterVersion",
     Action.supportedProtocolVersion().minWriterVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.supportedProtocolVersion().minWriterVersion,
-    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minWriterVersion}].")
+    v => Action.supportedWriterVersionNumbers.contains(v),
+    s"needs to be one of ${Action.supportedWriterVersionNumbers.toSeq.sorted.mkString(", ")}.")
 
   /**
    * Ignore protocol-related configs set in SQL config.
