@@ -156,17 +156,30 @@ object CDCReader extends CDCReaderImpl
       version: Long,
       timestamp: Timestamp,
       actions: Seq[T],
-      commitInfo: Option[CommitInfo])
-
-  case class FileVersion(version: Long, timestamp: Timestamp) {
-    def this(wp: FileVersionWithPath) = this(wp.version, wp.timestamp)
+      commitInfo: Option[CommitInfo]) {
+    def this(
+        tableVersion: TableVersion,
+        actions: Seq[T],
+        commitInfo: Option[CommitInfo]) = {
+      this(
+        tableVersion.version,
+        tableVersion.timestamp,
+        actions,
+        commitInfo)
+    }
   }
 
-  case class FileVersionWithPath(
-      version: Long,
-      timestamp: Timestamp,
-      path: String,
-      commitInfo: Option[CommitInfo])
+  /** A version number of a Delta table, with the version's timestamp. */
+  case class TableVersion(version: Long, timestamp: Timestamp) {
+    def this(wp: FilePathWithTableVersion) = this(wp.version, wp.timestamp)
+  }
+
+    /** Path of a file of a Delta table, together with it's origin table version & timestamp. */
+    case class FilePathWithTableVersion(
+        path: String,
+        commitInfo: Option[CommitInfo],
+        version: Long,
+        timestamp: Timestamp)
 }
 
 trait CDCReaderImpl extends DeltaLogging {
@@ -646,7 +659,7 @@ trait CDCReaderImpl extends DeltaLogging {
       spec.commitInfo.ifDefined { ci => versionToCommitInfo(spec.version) = ci }
       spec.actions.map { action =>
         val key =
-          FileVersionWithPath(spec.version, spec.timestamp, action.path, spec.commitInfo)
+          FilePathWithTableVersion(action.path, spec.commitInfo, spec.version, spec.timestamp)
         key -> action
       }
     }.toMap
@@ -654,25 +667,25 @@ trait CDCReaderImpl extends DeltaLogging {
       spec.commitInfo.ifDefined { ci => versionToCommitInfo(spec.version) = ci }
       spec.actions.map { action =>
         val key =
-          FileVersionWithPath(spec.version, spec.timestamp, action.path, spec.commitInfo)
+          FilePathWithTableVersion(action.path, spec.commitInfo, spec.version, spec.timestamp)
         key -> action
       }
     }.toMap
 
-    val finalAddFiles = MutableMap[FileVersion, ListBuffer[AddFile]]()
-    val finalRemoveFiles = MutableMap[FileVersion, ListBuffer[RemoveFile]]()
+    val finalAddFiles = MutableMap[TableVersion, ListBuffer[AddFile]]()
+    val finalRemoveFiles = MutableMap[TableVersion, ListBuffer[RemoveFile]]()
 
     // If a path is only being added, then scan it normally as inserted rows
     (addFilesMap.keySet -- removeFilesMap.keySet).foreach { addKey =>
       finalAddFiles
-        .getOrElseUpdate(new FileVersion(addKey), ListBuffer())
+        .getOrElseUpdate(new TableVersion(addKey), ListBuffer())
         .append(addFilesMap(addKey))
     }
 
     // If a path is only being removed, then scan it normally as removed rows
     (removeFilesMap.keySet -- addFilesMap.keySet).foreach { removeKey =>
       finalRemoveFiles
-        .getOrElseUpdate(new FileVersion(removeKey), ListBuffer())
+        .getOrElseUpdate(new TableVersion(removeKey), ListBuffer())
         .append(removeFilesMap(removeKey))
     }
 
@@ -685,11 +698,7 @@ trait CDCReaderImpl extends DeltaLogging {
           spark,
           new CdcAddFileIndex(
             spark,
-            Seq(CDCDataSpec(
-              fileVersion.version,
-              fileVersion.timestamp,
-              addFiles.toSeq,
-              commitInfo)),
+            Seq(new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)),
             deltaLog,
             deltaLog.dataPath,
             snapshot),
@@ -705,11 +714,7 @@ trait CDCReaderImpl extends DeltaLogging {
           spark,
           new TahoeRemoveFileIndex(
             spark,
-            Seq(CDCDataSpec(
-              fileVersion.version,
-              fileVersion.timestamp,
-              removeFiles.toSeq,
-              commitInfo)),
+            Seq(new CDCDataSpec(fileVersion, removeFiles.toSeq, commitInfo)),
             deltaLog,
             deltaLog.dataPath,
             snapshot),
@@ -731,15 +736,15 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   def processDeletionVectorActions(
-      addFilesMap: Map[FileVersionWithPath, AddFile],
-      removeFilesMap: Map[FileVersionWithPath, RemoveFile],
+      addFilesMap: Map[FilePathWithTableVersion, AddFile],
+      removeFilesMap: Map[FilePathWithTableVersion, RemoveFile],
       versionToCommitInfo: Map[Long, CommitInfo],
       deltaLog: DeltaLog,
       snapshot: Snapshot,
       isStreaming: Boolean,
       spark: SparkSession): Seq[DataFrame] = {
-    val finalReplaceAddFiles = MutableMap[FileVersion, ListBuffer[AddFile]]()
-    val finalReplaceRemoveFiles = MutableMap[FileVersion, ListBuffer[RemoveFile]]()
+    val finalReplaceAddFiles = MutableMap[TableVersion, ListBuffer[AddFile]]()
+    val finalReplaceRemoveFiles = MutableMap[TableVersion, ListBuffer[RemoveFile]]()
 
     val dvStore = DeletionVectorStore.createInstance(deltaLog.newDeltaHadoopConf())
     (addFilesMap.keySet intersect removeFilesMap.keySet).foreach { key =>
@@ -749,14 +754,14 @@ trait CDCReaderImpl extends DeltaLogging {
       generatedActions.foreach {
         case action: AddFile =>
           finalReplaceAddFiles
-            .getOrElseUpdate(new FileVersion(key), ListBuffer())
+            .getOrElseUpdate(new TableVersion(key), ListBuffer())
             .append(action)
         case action: RemoveFile =>
           finalReplaceRemoveFiles
-            .getOrElseUpdate(new FileVersion(key), ListBuffer())
+            .getOrElseUpdate(new TableVersion(key), ListBuffer())
             .append(action)
         case _ =>
-          throw new Exception("Unreachable code path reached.")
+          throw new Exception("Expecting AddFile or RemoveFile.")
       }
     }
 
@@ -770,11 +775,7 @@ trait CDCReaderImpl extends DeltaLogging {
           spark,
           new CdcAddFileIndex(
             spark,
-            Seq(CDCDataSpec(
-              fileVersion.version,
-              fileVersion.timestamp,
-              addFiles.toSeq,
-              commitInfo)),
+            Seq(new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)),
             deltaLog,
             deltaLog.dataPath,
             snapshot,
@@ -794,11 +795,7 @@ trait CDCReaderImpl extends DeltaLogging {
           spark,
           new TahoeRemoveFileIndex(
             spark,
-            Seq(CDCDataSpec(
-              fileVersion.version,
-              fileVersion.timestamp,
-              removeFiles.toSeq,
-              commitInfo)),
+            Seq(new CDCDataSpec(fileVersion, removeFiles.toSeq, commitInfo)),
             deltaLog,
             deltaLog.dataPath,
             snapshot,
@@ -955,7 +952,7 @@ trait CDCReaderImpl extends DeltaLogging {
     //   b) Rows masked by DV1 but not DV2 are re-added. May happen when restoring a table.
     (removeDvOpt, addDvOpt) match {
       case (None, None) =>
-        throw new Exception("Unreadable code path reached.")
+        throw new Exception("Expecting one or both of add and remove contain DV.")
       case (None, Some(addDv)) =>
         newActions += remove.copy(deletionVector = addDv)
       case (Some(removeDv), None) =>

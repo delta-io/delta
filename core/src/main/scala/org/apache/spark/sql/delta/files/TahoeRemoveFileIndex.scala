@@ -30,6 +30,12 @@ import org.apache.spark.sql.types.StructType
 /**
  * A [[TahoeFileIndex]] for scanning a sequence of removed files as CDC. Similar to
  * [[TahoeBatchFileIndex]], the equivalent for reading [[AddFile]] actions.
+ * @param spark The Spark session.
+ * @param filesByVersion Grouped FileActions, one per table version.
+ * @param deltaLog The delta log instance.
+ * @param path The table's data path.
+ * @param snapshot The snapshot where we read CDC from.
+ * @param rowIndexFilters Map from <b>URI-encoded</b> file path to a row index filter type.
  */
 class TahoeRemoveFileIndex(
     spark: SparkSession,
