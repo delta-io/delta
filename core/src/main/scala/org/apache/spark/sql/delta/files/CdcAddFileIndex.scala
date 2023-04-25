@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.files
 import java.text.SimpleDateFormat
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
@@ -39,7 +40,7 @@ class CdcAddFileIndex(
     filesByVersion: Seq[CDCDataSpec[AddFile]],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot
+    snapshot: SnapshotDescriptor
   ) extends TahoeBatchFileIndex(
     spark, "cdcRead", filesByVersion.flatMap(_.actions), deltaLog, path, snapshot) {
 

@@ -23,7 +23,7 @@ import scala.collection.mutable.ListBuffer
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
@@ -379,7 +379,7 @@ trait CDCReaderImpl extends DeltaLogging {
    *         related to the changes
    */
   def changesToDF(
-      readSchemaSnapshot: Snapshot,
+      readSchemaSnapshot: SnapshotDescriptor,
       start: Long,
       end: Long,
       changes: Iterator[(Long, Seq[Action])],
@@ -584,21 +584,18 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeChangeFileIndex(
           spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, readSchemaSnapshot),
-        readSchemaSnapshot.protocol,
-        readSchemaSnapshot.metadata,
         isStreaming))
     }
 
-    val deletedAndAddedRows = getDeletedAndAddedRows(addFiles.toSeq, removeFiles.toSeq, deltaLog,
+    val deletedAndAddedRows = getDeletedAndAddedRows(
+      addFiles.toSeq, removeFiles.toSeq, deltaLog,
       readSchemaSnapshot, isStreaming, spark)
     dfs.append(deletedAndAddedRows: _*)
 
     val readSchema = cdcReadSchema(readSchemaSnapshot.metadata.schema)
     // build an empty DS. This DS retains the table schema and the isStreaming property
     val emptyDf = spark.sqlContext.internalCreateDataFrame(
-      spark.sparkContext.emptyRDD[InternalRow],
-      readSchema,
-      isStreaming)
+      spark.sparkContext.emptyRDD[InternalRow], readSchema, isStreaming)
 
     CDCVersionDiffInfo(
       (emptyDf +: dfs).reduce((df1, df2) => df1.union(
@@ -612,7 +609,7 @@ trait CDCReaderImpl extends DeltaLogging {
       addFileSpecs: Seq[CDCDataSpec[AddFile]],
       removeFileSpecs: Seq[CDCDataSpec[RemoveFile]],
       deltaLog: DeltaLog,
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       isStreaming: Boolean,
       spark: SparkSession): Seq[DataFrame] = {
     val dfs = ListBuffer[DataFrame]()
@@ -621,8 +618,6 @@ trait CDCReaderImpl extends DeltaLogging {
       dfs.append(scanIndex(
         spark,
         new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        snapshot.protocol,
-        snapshot.metadata,
         isStreaming))
     }
     if (removeFileSpecs.nonEmpty) {
@@ -630,8 +625,6 @@ trait CDCReaderImpl extends DeltaLogging {
         spark,
         new TahoeRemoveFileIndex(
           spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        snapshot.protocol,
-        snapshot.metadata,
         isStreaming))
     }
 
@@ -703,19 +696,20 @@ trait CDCReaderImpl extends DeltaLogging {
   /**
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
+   *
+   * It can optionally take a customReadSchema for the dataframe generated.
    */
   protected def scanIndex(
       spark: SparkSession,
-      index: TahoeFileIndex,
-      protocol: Protocol,
-      metadata: Metadata,
+      index: TahoeFileIndexWithSnapshotDescriptor,
       isStreaming: Boolean = false): DataFrame = {
+
     val relation = HadoopFsRelation(
       index,
       index.partitionSchema,
-      cdcReadSchema(metadata.schema),
+      cdcReadSchema(index.schema),
       bucketSpec = None,
-      new DeltaParquetFileFormat(protocol, metadata),
+      new DeltaParquetFileFormat(index.protocol, index.metadata),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
     Dataset.ofRows(spark, plan)

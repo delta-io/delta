@@ -169,13 +169,21 @@ trait DeltaSourceBase extends Source
     }
 
   /**
-   * The read schema version for this source during initialization, taking in account of SchemaLog.
+   * Create a snapshot descriptor, customizing its schema using schema tracking if necessary
    */
-  protected val readSchemaVersionAtSourceInit: Long =
-    persistedSchemaAtSourceInit.map(_.deltaCommitVersion).getOrElse {
-      snapshotAtSourceInit.version
-    }
-
+  protected val readSchemaSnapshotDescriptor: SnapshotDescriptor =
+    persistedSchemaAtSourceInit.map { customDataSchema =>
+      // Construct a snapshot descriptor with custom schema inline
+      new SnapshotDescriptor {
+        val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
+        val version: Long = snapshotAtSourceInit.version
+        val metadata: Metadata =
+          snapshotAtSourceInit.metadata.copy(schemaString = customDataSchema.dataSchemaJson)
+        val protocol: Protocol = snapshotAtSourceInit.protocol
+        val numOfFilesIfKnown = snapshotAtSourceInit.numOfFilesIfKnown
+        val sizeInBytesIfKnown = snapshotAtSourceInit.sizeInBytesIfKnown
+      }
+    }.getOrElse(snapshotAtSourceInit)
 
   /**
    * A global flag to mark whether we have done a per-stream start check for column mapping
@@ -314,10 +322,9 @@ trait DeltaSourceBase extends Source
         .asInstanceOf[Iterator[AddFile]].toArray
 
     deltaLog.createDataFrame(
-      snapshotAtSourceInit,
+      readSchemaSnapshotDescriptor,
       addFilesList,
-      isStreaming = true,
-      customDataSchema = persistedSchemaAtSourceInit.map(_.dataSchema)
+      isStreaming = true
     )
   }
 

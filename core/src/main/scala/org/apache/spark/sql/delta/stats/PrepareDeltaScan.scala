@@ -22,7 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
-import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshot, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshotDescriptor, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -320,7 +320,7 @@ case class PreparedDeltaFileIndex(
     override val path: Path,
     preparedScan: DeltaScan,
     versionScanned: Option[Long])
-  extends TahoeFileIndexWithSnapshot(spark, deltaLog, path, preparedScan.scannedSnapshot)
+  extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, preparedScan.scannedSnapshot)
   with DeltaLogging {
 
   /**
