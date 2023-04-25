@@ -1,6 +1,7 @@
 package io.delta.storage;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -16,11 +17,11 @@ import org.slf4j.LoggerFactory;
  * supplier.get() calls will return an iterator over the same data.
  *
  * If there are any RemoteFileChangedException during `next` and `hasNext` calls, will retry
- * at most `MAX_RETRIES` times.
+ * at most `MAX_RETRIES` times. If there are similar exceptions during the retry, those are handled
+ * and count towards the MAX_RETRIES.
  *
  * Internally, keeps track of the last-successfully-returned index. Upon retry, will iterate back
- * to that same position. If another RemoteFileChangedException occurs during that retry, will fail.
- * We can solve that exception inception later (iterators within iterators).
+ * to that same position.
  */
 public class RetryableCloseableIterator implements CloseableIterator<String> {
     private static final Logger LOG = LoggerFactory.getLogger(RetryableCloseableIterator.class);
@@ -70,24 +71,25 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
     public boolean hasNext() {
         try {
             return hasNextInternal();
-        } catch (RemoteFileChangedException ex) {
-            LOG.warn(
-                "Caught a RemoteFileChangedException in `hastNext`. NumRetries is {} / {}.\n{}",
-                numRetries + 1, MAX_RETRIES, ex.toString()
-            );
-            if (numRetries < MAX_RETRIES) {
-                numRetries++;
-                replayIterToLastSuccessfulIndex();
-                // Now, the currentImpl has been recreated and iterated to the same index
+        } catch (IOException ex) {
+            // `endsWith` should still work if the class is shaded.
+            final String exClassName = ex.getClass().getName();
+            if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+                try {
+                    replayIterToLastSuccessfulIndex(ex);
+                } catch (IOException ex2) {
+                    throw new RuntimeException(ex2);
+                }
                 return hasNext();
             } else {
-                throw new RuntimeException(ex);
+                throw new UncheckedIOException(ex);
             }
+
         }
     }
 
     /** Throw a checked exception so we can catch this in the caller. */
-    private boolean hasNextInternal() throws RemoteFileChangedException {
+    private boolean hasNextInternal() throws IOException {
         return currentIter.hasNext();
     }
 
@@ -99,61 +101,82 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             final String ret = nextInternal();
             lastSuccessfullIndex++;
             return ret;
-        } catch (RemoteFileChangedException ex) {
-            LOG.warn(
-                "Caught a RemoteFileChangedException in `next`. NumRetries is {} / {}.\n{}",
-                numRetries + 1, MAX_RETRIES, ex.toString()
-            );
-            if (numRetries < MAX_RETRIES) {
-                numRetries++;
-                replayIterToLastSuccessfulIndex();
-                // Now, the currentImpl has been recreated and iterated to the same index
+        } catch (IOException ex) {
+            // `endsWith` should still work if the class is shaded.
+            final String exClassName = ex.getClass().getName();
+            if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+                try {
+                    replayIterToLastSuccessfulIndex(ex);
+                } catch (IOException ex2) {
+                    throw new RuntimeException(ex2);
+                }
                 return next();
             } else {
-                throw new RuntimeException(ex);
+                throw new UncheckedIOException(ex);
             }
         }
     }
 
     /** Throw a checked exception so we can catch this in the caller. */
-    private String nextInternal() throws RemoteFileChangedException {
+    private String nextInternal() throws IOException {
         return currentIter.next();
     }
 
     /**
      * Called after a RemoteFileChangedException was thrown. Tries to replay the underlying
      * iter implementation (supplied by the `implSupplier`) to the last successful index, so that
-     * the previous error open (hasNext, or next) can be retried.
-     *
-     * NOTE: This iter replay **itself** can throw a RemoteFileChangedException. Let's not deal
-     *       with that for now - that would require handling exception inception.
+     * the previous error open (hasNext, or next) can be retried. If a RemoteFileChangedException
+     * is thrown while replaying the iter, we just increment the `numRetries` counter and try again.
      */
-    private void replayIterToLastSuccessfulIndex() {
-        // We still need to close the currentImpl, even though it threw
-        try {
-            currentIter.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+    private void replayIterToLastSuccessfulIndex(IOException topLevelEx) throws IOException {
+        LOG.warn(
+            "Caught a RemoteFileChangedException in `next`. NumRetries is {} / {}.\n{}",
+            numRetries + 1, MAX_RETRIES, topLevelEx
+        );
+        currentIter.close();
+
+        while (numRetries < MAX_RETRIES) {
+            numRetries++;
+            LOG.info("Replaying until (inclusive) index {}", lastSuccessfullIndex);
+            currentIter = iterSupplier.get();
+            int replayIndex = 0;
+            try {
+                while (replayIndex < lastSuccessfullIndex) {
+                    if (currentIter.hasNext()) {
+                        currentIter.next(); // Disregard data that has been read
+                        replayIndex++;
+                    } else {
+                        throw new IllegalStateException(
+                            "a retried iterator doesn't have enough data (currentIndex=" +
+                                replayIndex + ", lastSuccessfullIndex=" + lastSuccessfullIndex + ")");
+                    }
+                }
+
+                // Just like how in RetryableCloseableIterator::next we have to handle
+                // RemoteFileChangedException, we must also hadnle that here during the replay.
+                // `currentIter.next()` isn't declared to throw a RemoteFileChangedException, so we
+                // trick the compiler into thinking this block can throw RemoteFileChangedException
+                // via `fakeIOException`. That way, we can catch it, and retry replaying the iter.
+                fakeIOException();
+
+                return;
+            } catch (IOException ex) {
+                final String exClassName = ex.getClass().getName();
+                if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+                    // Ignore and try replaying the iter again at the top of the while loop
+                } else {
+                    throw ex;
+                }
+            }
+            LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
         }
 
-        LOG.info("Replaying until (inclusive) index {}", lastSuccessfullIndex);
-        currentIter = iterSupplier.get(); // this last impl threw an exception and is useless!
+        throw new IOException(topLevelEx);
+    }
 
-        // Note: we iterate until `i` == `lastSuccessfullIndex`, so that index `i` is the last
-        // successfully returned index.
-        //
-        // e.g. `i` starts at -1. after the 1st currentImpl.next() call, i will be incremented to 0.
-        //      This makes sense as per the `lastSuccessfullIndex` semantics, since 0 is the last
-        //      index to be successfully returned.
-        // e.g. suppose `lastSuccessfulIndex` is 25. Then we have read 26 items, with indices 0 to
-        //      25 inclusive. Then we want to iterate while i < lastSuccessfullIndex. After that,
-        //      i will increment to 25 and we will exit the for loop.
-        for (int i = -1; i < lastSuccessfullIndex; i++) {
-            // Note: this does NOT touch RetryableCloseableIterator::next and so does not change
-            //       the index
-            currentIter.next();
+    private void fakeIOException() throws IOException {
+        if (false) {
+            throw new IOException();
         }
-
-        LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
     }
 }

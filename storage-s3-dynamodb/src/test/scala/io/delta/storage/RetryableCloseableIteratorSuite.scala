@@ -127,6 +127,10 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     assert(!testIter2.hasNext)
   }
 
+  test("handles exceptions while retrying") {
+
+  }
+
   test("throws after MAX_RETRIES exceptions") {
     // Here, we will try to iterate from [0, 200] but getFailingIterSupplier fails at indices
     // 25, 50, 75, 110.
