@@ -26,10 +26,11 @@ import org.slf4j.LoggerFactory;
 public class RetryableCloseableIterator implements CloseableIterator<String> {
     private static final Logger LOG = LoggerFactory.getLogger(RetryableCloseableIterator.class);
 
-    /** Visible for testing. */
-    public static final int MAX_RETRIES = 3;
+    public static final int DEFAULT_MAX_RETRIES = 3;
 
     private final Supplier<CloseableIterator<String>> iterSupplier;
+
+    private final int maxRetries;
 
     /**
      * Index of the last element successfully returned without an exception. A value of -1 means
@@ -41,10 +42,19 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     private CloseableIterator<String> currentIter;
 
-    public RetryableCloseableIterator(Supplier<CloseableIterator<String>> iterSupplier) {
+    public RetryableCloseableIterator(
+            Supplier<CloseableIterator<String>> iterSupplier,
+            int maxRetries) {
+        if (maxRetries < 0) throw new IllegalArgumentException("maxRetries can't be negative");
+
         this.iterSupplier = Objects.requireNonNull(iterSupplier);
+        this.maxRetries = maxRetries;
         this.lastSuccessfullIndex = -1;
         this.currentIter = this.iterSupplier.get();
+    }
+
+    public RetryableCloseableIterator(Supplier<CloseableIterator<String>> iterSupplier) {
+        this(iterSupplier, DEFAULT_MAX_RETRIES);
     }
 
     /** Visible for testing. */
@@ -131,15 +141,15 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
     private void replayIterToLastSuccessfulIndex(IOException topLevelEx) throws IOException {
         LOG.warn(
             "Caught a RemoteFileChangedException in `next`. NumRetries is {} / {}.\n{}",
-            numRetries + 1, MAX_RETRIES, topLevelEx
+            numRetries + 1, maxRetries, topLevelEx
         );
         currentIter.close();
 
-        while (numRetries < MAX_RETRIES) {
+        while (numRetries < maxRetries) {
             numRetries++;
             LOG.info(
                 "Replaying until (inclusive) index {}. NumRetries is {} / {}.",
-                lastSuccessfullIndex, numRetries + 1, MAX_RETRIES
+                lastSuccessfullIndex, numRetries + 1, maxRetries
             );
             currentIter = iterSupplier.get();
 

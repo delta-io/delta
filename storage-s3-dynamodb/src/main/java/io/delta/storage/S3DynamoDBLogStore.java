@@ -80,6 +80,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
      */
     public static final String SPARK_CONF_PREFIX = "spark.io.delta.storage.S3DynamoDBLogStore";
     public static final String BASE_CONF_PREFIX = "io.delta.storage.S3DynamoDBLogStore";
+    public static final String READ_RETRIES = "read.retries";
     public static final String DDB_CLIENT_TABLE = "ddb.tableName";
     public static final String DDB_CLIENT_REGION = "ddb.region";
     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
@@ -139,15 +140,31 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
     @Override
     public CloseableIterator<String> read(Path path, Configuration hadoopConf) throws IOException {
-        return new RetryableCloseableIterator(() -> {
-            try {
-                return super.read(path, hadoopConf);
-            } catch (IOException e) {
-                // There was an issue resolving the file system. Nothing to do with a
-                // RemoteFileChangedException.
-                throw new RuntimeException(e);
-            }
-        });
+        // With many concurrent readers/writers, there's a chance that concurrent 'recovery'
+        // operations occur on the same file, i.e. the same temp file T(N) is copied into the target
+        // N.json file more than once. Though data loss will *NOT* occur, readers of N.json may
+        // receive a RemoteFileChangedException from S3 as the ETag of N.json was changed. This is
+        // safe to retry, so we do so here.
+        final int maxRetries = Integer.parseInt(
+            getParam(
+                hadoopConf,
+                READ_RETRIES,
+                Integer.toString(RetryableCloseableIterator.DEFAULT_MAX_RETRIES)
+            )
+        );
+
+        return new RetryableCloseableIterator(
+            () -> {
+                try {
+                    return super.read(path, hadoopConf);
+                } catch (IOException e) {
+                    // There was an issue resolving the file system. Nothing to do with a
+                    // RemoteFileChangedException.
+                    throw new RuntimeException(e);
+                }
+            },
+            maxRetries
+        );
     }
 
     @Override

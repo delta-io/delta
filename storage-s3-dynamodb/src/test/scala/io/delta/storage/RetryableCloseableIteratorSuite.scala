@@ -1,6 +1,5 @@
 package io.delta.storage
 
-import java.io.UncheckedIOException
 import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
@@ -131,13 +130,13 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     // Iterates normally until index 50 (return [0, 49] successfully). Then fails.
     // Successfully replayed to 49, starts returning results from index 50 (inclusive)
     // Fails at index 50 (returned [50, 69]). Tries to replay, but fails at 5
-    // Successfully replayes until 69, then normally returns results from 70
+    // Successfully replays until 69, then normally returns results from 70
     val testIter2 =
       new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(50, 70, 5)))
     assert(testIter2.asScala.toList.map(_.toInt) == (0 to 100).toList)
   }
 
-  test("throws after MAX_RETRIES exceptions") {
+  test("throws after maxRetries exceptions") {
     val testIter =
       new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(20, 49, 60, 80)))
 
@@ -147,6 +146,31 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     assert(testIter.getNumRetries == 3)
     val ex = intercept[RuntimeException] {
       testIter.next()
+    }
+    assert(ex.getCause.isInstanceOf[RemoteFileChangedException])
+  }
+
+  test("can specify maxRetries") {
+    val testIter1 =
+      new RetryableCloseableIterator(
+        getFailingIterSupplier(0 to 100, Seq(5, 10, 15, 20, 25, 30, 35, 40, 45, 50)),
+        10 // maxRetries
+      )
+
+    assert(testIter1.asScala.toList.map(_.toInt) == (0 to 100).toList)
+
+    val testIter2 =
+      new RetryableCloseableIterator(
+        getFailingIterSupplier(0 to 100, Seq(5, 10, 15, 20, 25, 30)),
+        5 // maxRetries
+      )
+
+    for (i <- 0 to 29) {
+      assert(testIter2.next().toInt == i)
+    }
+    assert(testIter2.getNumRetries == 5)
+    val ex = intercept[RuntimeException] {
+      testIter2.next()
     }
     assert(ex.getCause.isInstanceOf[RemoteFileChangedException])
   }
