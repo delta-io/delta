@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Clone
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.convert.{ConvertTargetTable, ConvertUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -229,7 +230,7 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
       convertTargetTable.fileManifest.allFiles.mapPartitions { targetFile =>
         val basePath = new Path(baseDir)
         val fs = basePath.getFileSystem(conf.value.value)
-        targetFile.map(ConvertToDeltaCommand.createAddFile(
+        targetFile.map(ConvertUtils.createAddFile(
           _, basePath, fs, SQLConf.get, Some(partitionSchema)))
       }
     }
@@ -257,7 +258,7 @@ case class CloneParquetSource(
 
   override lazy val convertTargetTable: ConvertTargetTable = {
     val baseDir = catalogTable.map(_.location.toString).getOrElse(tableIdentifier.table)
-    ConvertToDeltaCommand.getParquetTable(spark, baseDir, catalogTable, None)
+    ConvertUtils.getParquetTable(spark, baseDir, catalogTable, None)
   }
 
   override def format: String = CloneSourceFormat.PARQUET
@@ -276,7 +277,7 @@ case class CloneIcebergSource(
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertToDeltaCommand.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
+    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
 
   override def format: String = CloneSourceFormat.ICEBERG
 

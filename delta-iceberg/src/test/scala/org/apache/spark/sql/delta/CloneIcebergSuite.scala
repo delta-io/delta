@@ -22,6 +22,7 @@ import java.sql.Date
 import scala.collection.JavaConverters._
 import scala.util.Try
 
+import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
@@ -408,5 +409,36 @@ class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
 class CloneIcebergByNameSuite extends CloneIcebergSuiteBase
 {
   override def sourceIdentifier: String = table
+
+  test("missing iceberg library should throw a sensical error") {
+    val validIcebergSparkTableClassPath = ConvertUtils.icebergSparkTableClassPath
+    val validIcebergLibTableClassPath = ConvertUtils.icebergLibTableClassPath
+
+    Seq(
+      () => {
+        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath + "2"
+      },
+      () => {
+        ConvertUtils.icebergLibTableClassPath = validIcebergLibTableClassPath + "2"
+      }
+    ).foreach { makeInvalid =>
+      try {
+        makeInvalid()
+        withTable(table, cloneTable) {
+          spark.sql(
+            s"""CREATE TABLE $table (`1 id` bigint, 2data string)
+               |USING iceberg PARTITIONED BY (2data)""".stripMargin)
+          spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+          val e = intercept[DeltaIllegalStateException] {
+            runCreateOrReplace("SHALLOW", sourceIdentifier)
+          }
+          assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
+        }
+      } finally {
+        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath
+        ConvertUtils.icebergLibTableClassPath = validIcebergLibTableClassPath
+      }
+    }
+  }
 }
 

@@ -20,7 +20,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.delta.{DeltaHistory, DeltaHistoryManager, SerializableFileStatus, SnapshotState}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.commands.ConvertTargetFile
+import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
 import org.apache.spark.sql.Encoder
