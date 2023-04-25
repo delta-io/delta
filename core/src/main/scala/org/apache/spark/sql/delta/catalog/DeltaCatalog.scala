@@ -432,6 +432,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     private var asSelectQuery: Option[DataFrame] = None
     private var writeOptions: Map[String, String] = Map.empty
 
+    override def partitioning(): Array[Transform] = partitions
+
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
