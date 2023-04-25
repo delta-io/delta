@@ -140,7 +140,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
      */
     private void replayIterToLastSuccessfulIndex(IOException topLevelEx) throws IOException {
         LOG.warn(
-            "Caught a RemoteFileChangedException in `next`. NumRetries is {} / {}.\n{}",
+            "Caught a RemoteFileChangedException. NumRetries is {} / {}.\n{}",
             numRetries + 1, maxRetries, topLevelEx
         );
         currentIter.close();
