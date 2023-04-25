@@ -1,5 +1,6 @@
 package io.delta.storage
 
+import java.io.UncheckedIOException
 import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
@@ -12,7 +13,7 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
 
   private def getIter(
       range: Range,
-      throwAtIndices: Seq[Int] = Seq.empty): CloseableIterator[String] =
+      throwAtIndex: Option[Int] = None): CloseableIterator[String] =
     new CloseableIterator[String] {
       var index = 0
       val impl = range.iterator.asJava
@@ -20,7 +21,7 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
       override def close(): Unit = { }
 
       override def hasNext: Boolean = {
-        if (throwAtIndices.contains(index)) {
+        if (throwAtIndex.contains(index)) {
           println(s"`hasNext` throwing for index $index")
           throw new RemoteFileChangedException(s"path -> index $index", "operation", "msg");
         }
@@ -29,7 +30,7 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
       }
 
       override def next(): String = {
-        if (throwAtIndices.contains(index)) {
+        if (throwAtIndex.contains(index)) {
           println(s"`next` throwing for index $index")
           throw new RemoteFileChangedException(s"path -> index $index", "operation", "msg");
         }
@@ -46,32 +47,20 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
    * Provide a suitable input range to get the # of failures you want. e.g. range 0 to 100 will fail
    * 3 times.
    */
-  def getFailingIterSupplier(range: Range): Supplier[CloseableIterator[String]] =
+  def getFailingIterSupplier(
+      range: Range,
+      failIndices: Seq[Int] = Seq.empty): Supplier[CloseableIterator[String]] =
     new Supplier[CloseableIterator[String]] {
       var numGetCalls = 0
 
-      override def get(): CloseableIterator[String] = numGetCalls match {
-        case 0 =>
-          // The 1st time this has been called! This will fail at index 25
+      override def get(): CloseableIterator[String] = {
+        if (numGetCalls < failIndices.length) {
+          val result = getIter(range, Some(failIndices(numGetCalls)))
           numGetCalls = numGetCalls + 1
-          getIter(range, Seq(25, 50, 75, 110))
-        case 1 =>
-          // The 2nd time this has been called! The underlying RetryableCloseableIterator should
-          // replay until index 25, and then continue.
-          numGetCalls = numGetCalls + 1
-          getIter(range, Seq(50, 75, 110))
-        case 2 =>
-          // The 3rd time this has been called! The underlying RetryableCloseableIterator should
-          // replay until index 50, and then continue.
-          numGetCalls = numGetCalls + 1
-          getIter(range, Seq(75, 110))
-        case 3 =>
-          // The 4th time this has been called! The underlying RetryableCloseableIterator should
-          // replay until index 75, and then continue.
-          numGetCalls = numGetCalls + 1
-          getIter(range, Seq(110))
-        case _ => throw new RuntimeException("Should never all a 5th time - there's only 4 (1st " +
-          "call + 3 retries) allowed!")
+          result
+        } else {
+          getIter(range)
+        }
       }
     }
 
@@ -90,14 +79,16 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
 
   test("complex case - replays underlying iter back to correct index after error") {
     // Here, we just do the simplest verification
-    val testIter1 = new RetryableCloseableIterator(getFailingIterSupplier(0 to 100))
-    val output1 = testIter1.asScala.toList
+    val testIter1 = new RetryableCloseableIterator(
+      getFailingIterSupplier(0 to 100, Seq(25, 50, 75)))
 
     // this asserts the size, order, and elements of the testIter1
-    assert(output1.map(_.toInt) == (0 to 100).toList)
+    assert(testIter1.asScala.toList.map(_.toInt) == (0 to 100).toList)
 
     // Here, we do more complex verification
-    val testIter2 = new RetryableCloseableIterator(getFailingIterSupplier(0 to 100))
+    val testIter2 = new RetryableCloseableIterator(
+      getFailingIterSupplier(0 to 100, Seq(25, 50, 75)))
+
     for (_ <- 0 to 24) { testIter2.next() }
     assert(testIter2.getLastSuccessfullIndex == 24)
     assert(testIter2.getNumRetries == 0)
@@ -128,15 +119,29 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
   }
 
   test("handles exceptions while retrying") {
+    // Iterates normally until index 50 (return [0, 49] successfully). Then fails.
+    // Tries to replay, but fails at 30
+    // Tries to replay again, but fails at 20
+    // Successfully replays to 49, starts returning results from index 50 (inclusive) again
+    val testIter1 =
+      new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(50, 30, 20)))
 
+    assert(testIter1.asScala.toList.map(_.toInt) == (0 to 100).toList)
+
+    // Iterates normally until index 50 (return [0, 49] successfully). Then fails.
+    // Successfully replayed to 49, starts returning results from index 50 (inclusive)
+    // Fails at index 50 (returned [50, 69]). Tries to replay, but fails at 5
+    // Successfully replayes until 69, then normally returns results from 70
+    val testIter2 =
+      new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(50, 70, 5)))
+    assert(testIter2.asScala.toList.map(_.toInt) == (0 to 100).toList)
   }
 
   test("throws after MAX_RETRIES exceptions") {
-    // Here, we will try to iterate from [0, 200] but getFailingIterSupplier fails at indices
-    // 25, 50, 75, 110.
-    val testIter = new RetryableCloseableIterator(getFailingIterSupplier(0 to 200))
+    val testIter =
+      new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(20, 49, 60, 80)))
 
-    for (i <- 0 to 109) {
+    for (i <- 0 to 79) {
       assert(testIter.next().toInt == i)
     }
     assert(testIter.getNumRetries == 3)

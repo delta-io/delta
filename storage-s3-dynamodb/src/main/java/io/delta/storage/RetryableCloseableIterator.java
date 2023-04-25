@@ -78,7 +78,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
                 try {
                     replayIterToLastSuccessfulIndex(ex);
                 } catch (IOException ex2) {
-                    throw new RuntimeException(ex2);
+                    throw new UncheckedIOException(ex2);
                 }
                 return hasNext();
             } else {
@@ -108,7 +108,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
                 try {
                     replayIterToLastSuccessfulIndex(ex);
                 } catch (IOException ex2) {
-                    throw new RuntimeException(ex2);
+                    throw new UncheckedIOException(ex2);
                 }
                 return next();
             } else {
@@ -137,9 +137,15 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
         while (numRetries < MAX_RETRIES) {
             numRetries++;
-            LOG.info("Replaying until (inclusive) index {}", lastSuccessfullIndex);
+            LOG.info(
+                "Replaying until (inclusive) index {}. NumRetries is {} / {}.",
+                lastSuccessfullIndex, numRetries + 1, MAX_RETRIES
+            );
             currentIter = iterSupplier.get();
-            int replayIndex = 0;
+
+            // Last successful index replayed. Starts at -1, and not 0, because 0 means we've
+            // already replayed the 1st element!
+            int replayIndex = -1;
             try {
                 while (replayIndex < lastSuccessfullIndex) {
                     if (currentIter.hasNext()) {
@@ -147,8 +153,13 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
                         replayIndex++;
                     } else {
                         throw new IllegalStateException(
-                            "a retried iterator doesn't have enough data (currentIndex=" +
-                                replayIndex + ", lastSuccessfullIndex=" + lastSuccessfullIndex + ")");
+                            String.format(
+                                "A retried iterator doesn't have enough data " +
+                                    "(replayIndex=%s, lastSuccessfullIndex=%s)",
+                                replayIndex,
+                                lastSuccessfullIndex
+                            )
+                        );
                     }
                 }
 
@@ -171,7 +182,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
         }
 
-        throw new IOException(topLevelEx);
+        throw topLevelEx;
     }
 
     private void fakeIOException() throws IOException {

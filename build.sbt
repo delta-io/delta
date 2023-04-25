@@ -178,6 +178,9 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
+
+      // Test Deps
+      "org.scalatest" %% "scalatest" % "3.2.11" % "test",
     )
   )
 
@@ -195,8 +198,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
 
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
-      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided", // RemoteFileChangedException
 
+      // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "test", // RemoteFileChangedException
     )
   )
