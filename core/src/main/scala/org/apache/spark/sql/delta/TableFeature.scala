@@ -285,14 +285,6 @@ object ColumnMappingTableFeature
   }
 }
 
-object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
-    with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata, spark: SparkSession): Boolean = {
-    SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
-  }
-}
-
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
   with FeatureAutomaticallyEnabledByMetadata {
