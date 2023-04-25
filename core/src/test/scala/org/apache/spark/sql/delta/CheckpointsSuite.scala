@@ -56,9 +56,8 @@ class CheckpointsSuite extends QueryTest
       val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
       assert(lastCheckpointOpt.nonEmpty)
       assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
-      val expectedCheckpointSchema = Seq("txn", "add", "remove", "metaData", "protocol")
       assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
-        expectedCheckpointSchema)
+        Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark"))
 
       spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
       withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
@@ -207,8 +206,10 @@ class CheckpointsSuite extends QueryTest
           deltaLog.checkpoint()
           val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
           val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
-          val expectedCheckpointSchema = Seq("txn", "add", "remove", "metaData", "protocol")
-          assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
+          val expectedCheckpointSchema =
+
+          assert(checkpointSchema.fieldNames.toSeq ==
+            Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark"))
         }
       }
     }
@@ -223,7 +224,8 @@ class CheckpointsSuite extends QueryTest
         "extendedFileMetadata",
         "partitionValues",
         "size",
-        "deletionVector")
+        "deletionVector",
+        "baseRowId")
 
       val tablePath = tempDir.getAbsolutePath
       // Append rows [0, 9] to table and merge tablePath.

@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.RowIdHighWaterMark
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql.DataFrame
@@ -306,6 +307,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           false
         case _: SetTransaction =>
           false
+        case _: RowIdHighWaterMark => false
         case null => // Some crazy future feature. Ignore
           false
       }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile)

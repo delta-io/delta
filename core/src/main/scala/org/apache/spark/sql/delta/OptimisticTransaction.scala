@@ -968,6 +968,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         onlyAddFiles && !dependsOnFiles
       }
 
+      val readRowIdHighWatermark =
+        RowId.extractHighWatermark(spark, snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
+
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
         op.name,
@@ -988,9 +991,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
+        protocol = protocol,
         actions = preparedActions,
         readSnapshot = snapshot,
-        commitInfo = Option(commitInfo))
+        commitInfo = Option(commitInfo),
+        readRowIdHighWatermark)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1099,6 +1104,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         }
         action
       }
+
+      allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions)
+
       if (readVersion < 0) {
         deltaLog.createLogDirectory()
       }
@@ -1314,6 +1322,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     deltaLog.protocolWrite(snapshot.protocol)
+
+    RowId.verifyRowIdHighWaterMarkNotSet(finalActions)
+    finalActions =
+      RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.

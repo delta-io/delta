@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RowIdHighWaterMark}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -26,6 +26,9 @@ import org.apache.spark.sql.SparkSession
  * Collection of helpers to handle Row IDs.
  */
 object RowId {
+
+  val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark =
+    RowIdHighWaterMark(highWaterMark = -1L, preservedRowIds = false)
 
   /**
    * Returns whether Row IDs can be written to Delta tables and read from Delta tables. This acts as
@@ -86,5 +89,121 @@ object RowId {
         "Cannot enable Row IDs on an existing table.")
     }
     latestMetadata
+  }
+
+  /**
+   * Iterator to assign fresh row IDs to AddFiles in an iterator of actions.
+   */
+  private class RowIdAssigningIterator(
+      actions: Iterator[Action],
+      highWatermark: Option[Long]) extends Iterator[Action] {
+
+    val oldHighWatermark: Long = highWatermark.getOrElse(-1L)
+    var newHighWatermark: Long = oldHighWatermark
+
+    override def hasNext: Boolean = actions.hasNext || (newHighWatermark != oldHighWatermark)
+
+    override def next(): Action = {
+      if (actions.hasNext) {
+        actions.next() match {
+          case a: AddFile if a.baseRowId.isEmpty =>
+            val baseRowId = newHighWatermark + 1L
+            if (a.numPhysicalRecords.isEmpty) {
+              throw new UnsupportedOperationException(
+                "Cannot assign row IDs without row count statistics.")
+            }
+            newHighWatermark += a.numPhysicalRecords.get
+            a.copy(baseRowId = Some(baseRowId))
+          case a => a
+        }
+      } else {
+        val watermarkToCommit = newHighWatermark
+        newHighWatermark = oldHighWatermark // reset high watermark to make hasNext return false
+        RowIdHighWaterMark(watermarkToCommit, preservedRowIds = false)
+      }
+    }
+  }
+
+  /**
+   * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet.
+   */
+  private[delta] def assignFreshRowIds(
+      spark: SparkSession,
+      protocol: Protocol,
+      snapshot: Snapshot,
+      actions: Iterator[Action]): Iterator[Action] = {
+    if (rowIdsAllowed(spark) && rowIdsSupported(protocol)) {
+      val highWatermark = extractHighWatermark(spark, snapshot).map(_.highWaterMark)
+      new RowIdAssigningIterator(actions, highWatermark)
+    } else {
+      actions
+    }
+  }
+
+  /**
+   * Reassigns newly assigned Row IDs (i.e. Row IDs above `readHighWaterMark`) of all AddFile
+   * actions in `actions`  to be above `winningHighWaterMarkOpt` (if it is defined), and
+   * updates the high watermark in `actions`.
+   */
+  private[delta] def reassignOverlappingRowIds(
+      readHighWaterMark: Long,
+      winningHighWaterMarkOpt: Option[Long],
+      actions: Seq[Action]): Seq[Action] = {
+    if (winningHighWaterMarkOpt.isEmpty) {
+      // The winning transaction did not assign any new row IDs, so there is no need to check for
+      // duplicate row IDs.
+      return actions
+    }
+    val winningHighWaterMark = winningHighWaterMarkOpt.get
+
+    assert(winningHighWaterMark >= readHighWaterMark)
+    val watermarkDiff = winningHighWaterMark - readHighWaterMark
+    actions.map {
+      case a: AddFile =>
+        // We should only update the row IDs that were assigned by this transaction, and not the
+        // row IDs that were assigned by an earlier transaction and merely copied over to a new
+        // AddFile as part of this transaction. I.e., we should only update the base row IDs that
+        // are larger than the read high watermark.
+        a.baseRowId match {
+          case Some(baseRowId) if baseRowId > readHighWaterMark =>
+            val newBaseRowId = baseRowId + watermarkDiff
+            a.copy(baseRowId = Some(newBaseRowId))
+          case _ =>
+            a
+        }
+
+      case RowIdHighWaterMark(v, preservedRowIds) =>
+        RowIdHighWaterMark(v + watermarkDiff, preservedRowIds)
+
+      case a =>
+        a
+    }
+  }
+
+  /**
+   * Extracts the high watermark of row IDs from a snapshot.
+   */
+  private[delta] def extractHighWatermark(
+      spark: SparkSession, snapshot: Snapshot): Option[RowIdHighWaterMark] = {
+    if (rowIdsAllowed(spark)) {
+      snapshot.rowIdHighWaterMarkOpt
+    } else {
+      None
+    }
+  }
+
+  private[delta] def extractHighWatermark(
+      spark: SparkSession, actions: Seq[Action]): Option[RowIdHighWaterMark] = {
+    if (rowIdsAllowed(spark)) {
+      actions.collectFirst { case r: RowIdHighWaterMark => r }
+    } else {
+      None
+    }
+  }
+
+  private[delta] def verifyRowIdHighWaterMarkNotSet(actions: Seq[Action]): Unit = {
+    if (actions.exists(_.isInstanceOf[RowIdHighWaterMark])) {
+      throw new IllegalStateException("Manually setting the Row ID high water mark is not allowed")
+    }
   }
 }

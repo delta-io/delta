@@ -506,6 +506,15 @@ case class SetTransaction(
   override def wrap: SingleAction = SingleAction(txn = this)
 }
 
+/**
+ * Stores the highest (inclusive) ID that has been assigned to a row in during history of the table.
+ * `preservedRowIds`, when set to true, indicates that all modified rows of this commit preserved
+ * their original row ID.
+ */
+case class RowIdHighWaterMark(highWaterMark: Long, preservedRowIds: Boolean) extends Action {
+  override def wrap: SingleAction = SingleAction(rowIdHighWaterMark = this)
+}
+
 /** Actions pertaining to the addition and removal of files. */
 sealed trait FileAction extends Action {
   val path: String
@@ -547,7 +556,9 @@ case class AddFile(
     override val dataChange: Boolean,
     stats: String = null,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null
+    deletionVector: DeletionVectorDescriptor = null,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    baseRowId: Option[Long] = None
 ) extends FileAction {
   require(path.nonEmpty)
 
@@ -564,7 +575,8 @@ case class AddFile(
     val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
-      deletionVector = deletionVector
+      deletionVector = deletionVector,
+      baseRowId = baseRowId
     )
     removedFile.numLogicalRecords = numLogicalRecords
     removedFile.estLogicalFileSize = estLogicalFileSize
@@ -758,7 +770,9 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null
+    deletionVector: DeletionVectorDescriptor = null,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    baseRowId: Option[Long] = None
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1064,6 +1078,7 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
+    rowIdHighWaterMark: RowIdHighWaterMark = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -1079,6 +1094,8 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
+    } else if (rowIdHighWaterMark != null) {
+      rowIdHighWaterMark
     } else if (commitInfo != null) {
       commitInfo
     } else {

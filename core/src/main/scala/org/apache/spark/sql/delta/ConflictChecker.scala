@@ -47,9 +47,40 @@ private[delta] class CurrentTransactionInfo(
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
     val metadata: Metadata,
+    val protocol: Protocol,
     val actions: Seq[Action],
     val readSnapshot: Snapshot,
-    val commitInfo: Option[CommitInfo]) {
+    val commitInfo: Option[CommitInfo],
+    val readRowIdHighWatermark: RowIdHighWaterMark) {
+
+  // scalastyle:off argcount
+  def copy(
+      txnId: String = txnId,
+      readPredicates: Seq[DeltaTableReadPredicate] = readPredicates,
+      readFiles: Set[AddFile] = readFiles,
+      readWholeTable: Boolean = readWholeTable,
+      readAppIds: Set[String] = readAppIds,
+      metadata: Metadata = metadata,
+      protocol: Protocol = protocol,
+      actions: Seq[Action] = actions,
+      readSnapshot: Snapshot = readSnapshot,
+      commitInfo: Option[CommitInfo] = commitInfo,
+      readRowIdHighWatermark: RowIdHighWaterMark = readRowIdHighWatermark)
+    : CurrentTransactionInfo =
+    new CurrentTransactionInfo(
+      txnId,
+      readPredicates,
+      readFiles,
+      readWholeTable,
+      readAppIds,
+      metadata,
+      protocol,
+      actions,
+      readSnapshot,
+      commitInfo,
+      readRowIdHighWatermark)
+  // scalastyle:on argcount
+
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -120,7 +151,12 @@ private[delta] class ConflictChecker(
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
-  def currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+  protected var _currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+  protected def currentTransactionInfo: CurrentTransactionInfo = _currentTransactionInfo
+  protected def updateCurrentTransactionInfo(info: CurrentTransactionInfo): Unit = {
+    _currentTransactionInfo = info
+  }
+
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**
@@ -135,6 +171,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+    reassignOverlappingRowIds()
     logMetrics()
     currentTransactionInfo
   }
@@ -309,6 +346,34 @@ private[delta] class ConflictChecker(
     if (winningCommitSummary.appLevelTransactions.exists(currentTransactionInfo.isConflict(_))) {
       throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
     }
+  }
+
+  /**
+   * Checks whether the row IDs assigned by the current transaction overlap with the row IDs
+   * assigned by the winning transaction. I.e. this function checks whether both the winning and the
+   * current transaction assigned new row IDs. If this the case, then this check assigns new row IDs
+   * to the new files added by the current transaction so that they no longer overlap.
+   */
+  private def reassignOverlappingRowIds(): Unit = {
+    if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) {
+      // The current transaction could not have assigned row IDs since row IDs are not supported.
+      return
+    }
+
+    // Figure out which high watermark we should have used instead.
+    val winningWatermarkOpt = RowId.extractHighWatermark(spark, winningCommitSummary.actions)
+
+    // The winning transaction assigned conflicting row IDs. Adjust the row IDs assigned by the
+    // current transaction as if it had read the result of the winning transaction.
+    val newActions = RowId.reassignOverlappingRowIds(
+      readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark,
+      winningHighWaterMarkOpt = winningWatermarkOpt.map(_.highWaterMark),
+      actions = currentTransactionInfo.actions)
+    val newHighWaterMark =
+      RowId.extractHighWatermark(spark, newActions).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
+
+    updateCurrentTransactionInfo(
+      currentTransactionInfo.copy(actions = newActions, readRowIdHighWatermark = newHighWaterMark))
   }
 
   /** A helper function for pretty printing a specific partition directory. */
