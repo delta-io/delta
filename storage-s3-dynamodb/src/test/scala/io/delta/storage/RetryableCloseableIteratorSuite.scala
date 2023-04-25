@@ -175,4 +175,28 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     assert(ex.getCause.isInstanceOf[RemoteFileChangedException])
   }
 
+  test("retried iterator doesn't have enough data (underlying data changed!)") {
+    val testIter = new RetryableCloseableIterator(
+      new Supplier[CloseableIterator[String]] {
+        var getCount = 0
+
+        override def get(): CloseableIterator[String] = getCount match {
+          case 0 =>
+            getCount = getCount + 1
+            getIter(0 to 100, Some(50)) // try to iterate 0->100, fail at 50
+
+          case 1 =>
+            getCount = getCount + 1
+            getIter(0 to 30) // try to replay 0 to 50, but no elements after 30!
+        }
+      }
+    )
+
+    for (_ <- 0 to 49) { testIter.next() }
+    val e = intercept[IllegalStateException] {
+      testIter.next()
+    }
+    assert(e.getMessage.contains("A retried iterator doesn't have enough data"))
+  }
+
 }
