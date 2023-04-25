@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta.commands.cdc
 
 import java.sql.Timestamp
 
-import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
@@ -153,7 +156,30 @@ object CDCReader extends CDCReaderImpl
       version: Long,
       timestamp: Timestamp,
       actions: Seq[T],
-      commitInfo: Option[CommitInfo])
+      commitInfo: Option[CommitInfo]) {
+    def this(
+        tableVersion: TableVersion,
+        actions: Seq[T],
+        commitInfo: Option[CommitInfo]) = {
+      this(
+        tableVersion.version,
+        tableVersion.timestamp,
+        actions,
+        commitInfo)
+    }
+  }
+
+  /** A version number of a Delta table, with the version's timestamp. */
+  case class TableVersion(version: Long, timestamp: Timestamp) {
+    def this(wp: FilePathWithTableVersion) = this(wp.version, wp.timestamp)
+  }
+
+  /** Path of a file of a Delta table, together with it's origin table version & timestamp. */
+  case class FilePathWithTableVersion(
+      path: String,
+      commitInfo: Option[CommitInfo],
+      version: Long,
+      timestamp: Timestamp)
 }
 
 trait CDCReaderImpl extends DeltaLogging {
@@ -405,10 +431,6 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
-    if (DeletionVectorUtils.deletionVectorsReadable(startVersionSnapshot)) {
-      throw DeltaErrors.changeDataFeedNotSupportedWithDeletionVectors(start)
-    }
-
     // Check schema read-compatibility
     val forceEnableUnsafeBatchReadOnIncompatibleSchemaChanges =
       spark.sessionState.conf.getConf(
@@ -605,6 +627,21 @@ trait CDCReaderImpl extends DeltaLogging {
       totalBytes)
   }
 
+  /**
+   * Generate CDC rows by looking at added and removed files, together with Deletion Vectors they
+   * may have.
+   *
+   * When DV is used, the same file can be removed then added in the same version, and the only
+   * difference is the assigned DVs. The base method does not consider DVs in this case, thus will
+   * produce CDC that *all* rows in file being removed then *some* re-added. The correct answer,
+   * however, is to compare two DVs and apply the diff to the file to get removed and re-added rows.
+   *
+   * Currently it is always the case that in the log "remove" comes first, followed by "add" --
+   * which means that the file stays alive with a new DV. There's another possibility, though not
+   * make many senses, that a file is "added" to log then "removed" in the same version. If this
+   * becomes possible in future, we have to reconstruct the timeline considering the order of
+   * actions rather than simply matching files by path.
+   */
   protected def getDeletedAndAddedRows(
       addFileSpecs: Seq[CDCDataSpec[AddFile]],
       removeFileSpecs: Seq[CDCDataSpec[RemoveFile]],
@@ -612,20 +649,152 @@ trait CDCReaderImpl extends DeltaLogging {
       snapshot: SnapshotDescriptor,
       isStreaming: Boolean,
       spark: SparkSession): Seq[DataFrame] = {
-    val dfs = ListBuffer[DataFrame]()
+    // Transform inputs to maps indexed by version and path and map each version to a CommitInfo
+    // object.
+    val versionToCommitInfo = MutableMap.empty[Long, CommitInfo]
+    val addFilesMap = addFileSpecs.flatMap { spec =>
+      spec.commitInfo.ifDefined { ci => versionToCommitInfo(spec.version) = ci }
+      spec.actions.map { action =>
+        val key =
+          FilePathWithTableVersion(action.path, spec.commitInfo, spec.version, spec.timestamp)
+        key -> action
+      }
+    }.toMap
+    val removeFilesMap = removeFileSpecs.flatMap { spec =>
+      spec.commitInfo.ifDefined { ci => versionToCommitInfo(spec.version) = ci }
+      spec.actions.map { action =>
+        val key =
+          FilePathWithTableVersion(action.path, spec.commitInfo, spec.version, spec.timestamp)
+        key -> action
+      }
+    }.toMap
 
-    if (addFileSpecs.nonEmpty) {
-      dfs.append(scanIndex(
-        spark,
-        new CdcAddFileIndex(spark, addFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        isStreaming))
+    val finalAddFiles = MutableMap[TableVersion, ListBuffer[AddFile]]()
+    val finalRemoveFiles = MutableMap[TableVersion, ListBuffer[RemoveFile]]()
+
+    // If a path is only being added, then scan it normally as inserted rows
+    (addFilesMap.keySet -- removeFilesMap.keySet).foreach { addKey =>
+      finalAddFiles
+        .getOrElseUpdate(new TableVersion(addKey), ListBuffer())
+        .append(addFilesMap(addKey))
     }
-    if (removeFileSpecs.nonEmpty) {
-      dfs.append(scanIndex(
-        spark,
-        new TahoeRemoveFileIndex(
-          spark, removeFileSpecs.toSeq, deltaLog, deltaLog.dataPath, snapshot),
-        isStreaming))
+
+    // If a path is only being removed, then scan it normally as removed rows
+    (removeFilesMap.keySet -- addFilesMap.keySet).foreach { removeKey =>
+      finalRemoveFiles
+        .getOrElseUpdate(new TableVersion(removeKey), ListBuffer())
+        .append(removeFilesMap(removeKey))
+    }
+
+    val dfAddsAndRemoves = ListBuffer[DataFrame]()
+
+    finalAddFiles.foreach { case (tableVersion, addFiles) =>
+      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+      dfAddsAndRemoves.append(
+        scanIndex(
+          spark,
+          new CdcAddFileIndex(
+            spark,
+            Seq(new CDCDataSpec(tableVersion, addFiles.toSeq, commitInfo)),
+            deltaLog,
+            deltaLog.dataPath,
+            snapshot),
+          isStreaming))
+    }
+
+    finalRemoveFiles.foreach { case (tableVersion, removeFiles) =>
+      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+      dfAddsAndRemoves.append(
+        scanIndex(
+          spark,
+          new TahoeRemoveFileIndex(
+            spark,
+            Seq(new CDCDataSpec(tableVersion, removeFiles.toSeq, commitInfo)),
+            deltaLog,
+            deltaLog.dataPath,
+            snapshot),
+          isStreaming))
+    }
+
+    val dfGeneratedDvScanActions = processDeletionVectorActions(
+      addFilesMap,
+      removeFilesMap,
+      versionToCommitInfo.toMap,
+      deltaLog,
+      snapshot,
+      isStreaming,
+      spark)
+
+    dfAddsAndRemoves.toSeq ++ dfGeneratedDvScanActions
+  }
+
+  def processDeletionVectorActions(
+      addFilesMap: Map[FilePathWithTableVersion, AddFile],
+      removeFilesMap: Map[FilePathWithTableVersion, RemoveFile],
+      versionToCommitInfo: Map[Long, CommitInfo],
+      deltaLog: DeltaLog,
+      snapshot: SnapshotDescriptor,
+      isStreaming: Boolean,
+      spark: SparkSession): Seq[DataFrame] = {
+    val finalReplaceAddFiles = MutableMap[TableVersion, ListBuffer[AddFile]]()
+    val finalReplaceRemoveFiles = MutableMap[TableVersion, ListBuffer[RemoveFile]]()
+
+    val dvStore = DeletionVectorStore.createInstance(deltaLog.newDeltaHadoopConf())
+    (addFilesMap.keySet intersect removeFilesMap.keySet).foreach { key =>
+      val add = addFilesMap(key)
+      val remove = removeFilesMap(key)
+      val generatedActions = generateFileActionsWithInlineDv(add, remove, dvStore, deltaLog)
+      generatedActions.foreach {
+        case action: AddFile =>
+          finalReplaceAddFiles
+            .getOrElseUpdate(new TableVersion(key), ListBuffer())
+            .append(action)
+        case action: RemoveFile =>
+          finalReplaceRemoveFiles
+            .getOrElseUpdate(new TableVersion(key), ListBuffer())
+            .append(action)
+        case _ =>
+          throw new Exception("Expecting AddFile or RemoveFile.")
+      }
+    }
+
+    val dfs = ListBuffer[DataFrame]()
+    // Scan for masked rows as change_type = "insert",
+    // see explanation in [[generateFileActionWithInlineDv]].
+    finalReplaceAddFiles.foreach { case (tableVersion, addFiles) =>
+      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+      dfs.append(
+        scanIndex(
+          spark,
+          new CdcAddFileIndex(
+            spark,
+            Seq(new CDCDataSpec(tableVersion, addFiles.toSeq, commitInfo)),
+            deltaLog,
+            deltaLog.dataPath,
+            snapshot,
+            rowIndexFilters =
+              Some(fileActionsToRowIndexFilters(addFiles.toSeq, useIfContainedFilters = true))),
+
+          isStreaming))
+    }
+
+    // Scan for masked rows as change_type = "delete",
+    // see explanation in [[generateFileActionWithInlineDv]].
+    finalReplaceRemoveFiles.foreach { case (tableVersion, removeFiles) =>
+      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+      dfs.append(
+        scanIndex(
+          spark,
+          new TahoeRemoveFileIndex(
+            spark,
+            Seq(new CDCDataSpec(tableVersion, removeFiles.toSeq, commitInfo)),
+            deltaLog,
+            deltaLog.dataPath,
+            snapshot,
+            rowIndexFilters =
+              Some(fileActionsToRowIndexFilters(removeFiles.toSeq, useIfContainedFilters = false))),
+
+          isStreaming))
     }
 
     dfs.toSeq
@@ -743,6 +912,88 @@ trait CDCReaderImpl extends DeltaLogging {
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
     ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
+  }
+
+  /**
+   * Given `add` and `remove` actions of the same file, manipulate DVs to get rows that are deleted
+   * and re-added from `add` to `remove`.
+   *
+   * @return One or more [[AddFile]] and [[RemoveFile]], corresponding to CDC change_type "insert"
+   *         and "delete". Rows masked by inline DVs are changed rows.
+   */
+  private def generateFileActionsWithInlineDv(
+      add: AddFile,
+      remove: RemoveFile,
+      dvStore: DeletionVectorStore,
+      deltaLog: DeltaLog): Seq[FileAction] = {
+
+    val removeDvOpt = Option(remove.deletionVector)
+    val addDvOpt = Option(add.deletionVector)
+
+    val newActions = ListBuffer[FileAction]()
+
+    // Four cases:
+    // 1) Remove without DV, add without DV:
+    //    Not possible. This case has been handled before.
+    // 2) Remove without DV, add with DV1:
+    //    Rows masked by DV1 are deleted.
+    // 3) Remove with DV1, add without DV:
+    //    Rows masked by DV1 are added. May happen when restoring a table.
+    // 4) Remove with DV1, add with DV2:
+    //   a) Rows masked by DV2 but not DV1 are deleted.
+    //   b) Rows masked by DV1 but not DV2 are re-added. May happen when restoring a table.
+    (removeDvOpt, addDvOpt) match {
+      case (None, None) =>
+        throw new Exception("Expecting one or both of add and remove contain DV.")
+      case (None, Some(addDv)) =>
+        newActions += remove.copy(deletionVector = addDv)
+      case (Some(removeDv), None) =>
+        newActions += add.copy(deletionVector = removeDv)
+      case (Some(removeDv), Some(addDv)) =>
+        val removeBitmap = dvStore.read(removeDv, deltaLog.dataPath)
+        val addBitmap = dvStore.read(addDv, deltaLog.dataPath)
+
+        // Case 4a
+        val finalRemovedRowsBitmap = getDeletionVectorsDiff(addBitmap, removeBitmap)
+        // Case 4b
+        val finalReAddedRowsBitmap = getDeletionVectorsDiff(removeBitmap, addBitmap)
+
+        val finalRemovedRowsDv = DeletionVectorDescriptor.inlineInLog(
+          finalRemovedRowsBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          finalRemovedRowsBitmap.cardinality)
+        val finalReAddedRowsDv = DeletionVectorDescriptor.inlineInLog(
+          finalReAddedRowsBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          finalReAddedRowsBitmap.cardinality)
+
+        newActions += remove.copy(deletionVector = finalRemovedRowsDv)
+        newActions += add.copy(deletionVector = finalReAddedRowsDv)
+    }
+
+    newActions.toSeq
+  }
+
+  /**
+   * Return a map of file paths to IfContained or IfNotContained row index filters, depending on
+   * the value of `indexFilterType`.
+   */
+  private def fileActionsToRowIndexFilters(
+      actions: Seq[FileAction],
+      useIfContainedFilters: Boolean): Map[String, RowIndexFilterType] = {
+    val indexFilterType =
+      if (useIfContainedFilters) RowIndexFilterType.IF_CONTAINED
+      else RowIndexFilterType.IF_NOT_CONTAINED
+    actions.map(f => f.path -> indexFilterType).toMap
+  }
+
+  /**
+   * Get a new [[RoaringBitmapArray]] copy storing values that are in `left` but not in `right`.
+   */
+  private def getDeletionVectorsDiff(
+      left: RoaringBitmapArray,
+      right: RoaringBitmapArray): RoaringBitmapArray = {
+    val leftCopy = left.copy()
+    leftCopy.diff(right)
+    leftCopy
   }
 
   /**

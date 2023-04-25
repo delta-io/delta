@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
@@ -30,13 +30,20 @@ import org.apache.spark.sql.types.StructType
 /**
  * A [[TahoeFileIndex]] for scanning a sequence of removed files as CDC. Similar to
  * [[TahoeBatchFileIndex]], the equivalent for reading [[AddFile]] actions.
+ * @param spark The Spark session.
+ * @param filesByVersion Grouped FileActions, one per table version.
+ * @param deltaLog The delta log instance.
+ * @param path The table's data path.
+ * @param snapshot The snapshot where we read CDC from.
+ * @param rowIndexFilters Map from <b>URI-encoded</b> file path to a row index filter type.
  */
 class TahoeRemoveFileIndex(
     spark: SparkSession,
     val filesByVersion: Seq[CDCDataSpec[RemoveFile]],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: SnapshotDescriptor
+    snapshot: SnapshotDescriptor,
+    override val rowIndexFilters: Option[Map[String, RowIndexFilterType]] = None
   ) extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, snapshot) {
 
   override def matchingFiles(
@@ -59,7 +66,14 @@ class TahoeRemoveFileIndex(
             (CDC_COMMIT_VERSION -> version.toString) +
             (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
             (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
-          AddFile(r.path, newPartitionVals, r.size.getOrElse(0L), 0, r.dataChange, tags = r.tags
+          AddFile(
+            path = r.path,
+            partitionValues = newPartitionVals,
+            size = r.size.getOrElse(0L),
+            modificationTime = 0,
+            dataChange = r.dataChange,
+            tags = r.tags,
+            deletionVector = r.deletionVector
           )
         }
     }

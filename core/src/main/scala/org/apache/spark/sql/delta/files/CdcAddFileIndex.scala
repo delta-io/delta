@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta.files
 
 import java.text.SimpleDateFormat
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.SnapshotDescriptor
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
@@ -34,13 +33,20 @@ import org.apache.spark.sql.types.StructType
  * A [[TahoeFileIndex]] for scanning a sequence of added files as CDC. Similar to
  * [[TahoeBatchFileIndex]], with a bit of special handling to attach the log version
  * and CDC type on a per-file basis.
+ * @param spark The Spark session.
+ * @param filesByVersion Grouped FileActions, one per table version.
+ * @param deltaLog The delta log instance.
+ * @param path The table's data path.
+ * @param snapshot The snapshot where we read CDC from.
+ * @param rowIndexFilters Map from <b>URI-encoded</b> file path to a row index filter type.
  */
 class CdcAddFileIndex(
     spark: SparkSession,
     filesByVersion: Seq[CDCDataSpec[AddFile]],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: SnapshotDescriptor
+    snapshot: SnapshotDescriptor,
+    override val rowIndexFilters: Option[Map[String, RowIndexFilterType]] = None
   ) extends TahoeBatchFileIndex(
     spark, "cdcRead", filesByVersion.flatMap(_.actions), deltaLog, path, snapshot) {
 
