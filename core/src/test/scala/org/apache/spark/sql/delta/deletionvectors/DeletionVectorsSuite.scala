@@ -18,15 +18,16 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.node.ObjectNode
+import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -235,7 +236,7 @@ class DeletionVectorsSuite extends QueryTest
 
         // Verify "tightBounds" is false for files that have DVs
         for (f <- afterDeleteFilesWithDVs) {
-          assert(f.stats.contains("\"tightBounds\":false"))
+          assert(f.tightBounds.get === false)
         }
 
         // Verify all stats are the same except "tightBounds".
@@ -281,7 +282,7 @@ class DeletionVectorsSuite extends QueryTest
           newDVs.map(_.deletionVector.cardinality).sum
         )
         for (f <- newDVs) {
-          assert(f.stats.contains("\"tightBounds\":false"))
+          assert(f.tightBounds.get === false)
         }
 
         // Check the data is valid
@@ -347,6 +348,215 @@ class DeletionVectorsSuite extends QueryTest
         }
       }
     }
+  }
+
+  test("JOIN with DVs - self-join a table with DVs") {
+    val tableDf = spark.read.format("delta").load(table2Path)
+    val leftDf = tableDf.withColumn("key", col("value") % 2)
+    val rightDf = tableDf.withColumn("key", col("value") % 2 + 1)
+
+    checkAnswer(
+      leftDf.as("left").join(rightDf.as("right"), "key").drop("key"),
+      Seq(1, 3, 5, 7).flatMap(l => Seq(2, 4, 6, 8).map(r => (l, r))).toDF()
+    )
+  }
+
+  test("JOIN with DVs - non-DV table joins DV table") {
+    val tableDf = spark.read.format("delta").load(table2Path)
+    val tableDfV0 = spark.read.format("delta").option("versionAsOf", "0").load(table2Path)
+    val leftDf = tableDf.withColumn("key", col("value") % 2)
+    val rightDf = tableDfV0.withColumn("key", col("value") % 2 + 1)
+
+    // Right has two more rows 0 and 9. 0 will be left in the join result.
+    checkAnswer(
+      leftDf.as("left").join(rightDf.as("right"), "key").drop("key"),
+      Seq(1, 3, 5, 7).flatMap(l => Seq(0, 2, 4, 6, 8).map(r => (l, r))).toDF()
+    )
+  }
+
+  test("MERGE with DVs - merge into DV table") {
+    withTempDir { tempDir =>
+      val source = new File(table1Path)
+      val target = new File(tempDir, "mergeTest")
+      FileUtils.copyDirectory(new File(table2Path), target)
+
+      DeltaTable.forPath(spark, target.getAbsolutePath).as("target")
+        .merge(
+          spark.read.format("delta").load(source.getAbsolutePath).as("source"),
+          "source.value = target.value")
+        .whenMatched()
+        .updateExpr(Map("value" -> "source.value + 10000"))
+        .whenNotMatched()
+        .insertExpr(Map("value" -> "source.value"))
+        .execute()
+
+      val snapshot = DeltaLog.forTable(spark, target).update()
+      val allFiles = snapshot.allFiles.collect()
+      val tombstones = snapshot.tombstones.collect()
+      // DVs are removed
+      for (ts <- tombstones) {
+        assert(ts.deletionVector != null)
+      }
+      // target log should not contain DVs
+      for (f <- allFiles) {
+        assert(f.deletionVector == null)
+        assert(f.tightBounds.get)
+      }
+
+      // Target table should contain "table2 records + 10000" and "table1 records \ table2 records".
+      checkAnswer(
+        spark.read.format("delta").load(target.getAbsolutePath),
+        (expectedTable2DataV1.map(_ + 10000) ++
+          expectedTable1DataV4.filterNot(expectedTable2DataV1.contains)).toDF()
+      )
+    }
+  }
+
+  test("UPDATE with DVs - update rewrite files with DVs") {
+    withTempDir { tempDir =>
+      FileUtils.copyDirectory(new File(table2Path), tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+
+      DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+        .update(col("value") === 1, Map("value" -> (col("value") + 1)))
+
+      val snapshot = deltaLog.update()
+      val allFiles = snapshot.allFiles.collect()
+      val tombstones = snapshot.tombstones.collect()
+      // DVs are removed
+      for (ts <- tombstones) {
+        assert(ts.deletionVector != null)
+      }
+      // target log should not contain DVs
+      for (f <- allFiles) {
+        assert(f.deletionVector == null)
+        assert(f.tightBounds.get)
+      }
+    }
+  }
+
+  test("UPDATE with DVs - update deleted rows updates nothing") {
+    withTempDir { tempDir =>
+      FileUtils.copyDirectory(new File(table2Path), tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+
+      val snapshotBeforeUpdate = deltaLog.update()
+      val allFilesBeforeUpdate = snapshotBeforeUpdate.allFiles.collect()
+
+      DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+        .update(col("value")  === 0, Map("value" -> (col("value") + 1)))
+
+      val snapshot = deltaLog.update()
+      val allFiles = snapshot.allFiles.collect()
+      val tombstones = snapshot.tombstones.collect()
+      // nothing changed
+      assert(tombstones.length === 0)
+      assert(allFiles === allFilesBeforeUpdate)
+
+      checkAnswer(
+        spark.read.format("delta").load(tempDir.getAbsolutePath),
+        expectedTable2DataV1.toDF()
+      )
+    }
+  }
+
+  test("INSERT + DELETE + MERGE + UPDATE with DVs") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      val deltaLog = DeltaLog.forTable(spark, path)
+
+      def checkTableContents(rows: DataFrame): Unit =
+        checkAnswer(sql(s"SELECT * FROM delta.`$path`"), rows)
+
+      // Version 0: DV is enabled on table
+      {
+        withSQLConf(
+          DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+          spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
+        }
+        val snapshot = deltaLog.update()
+        assert(snapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature))
+        for (f <- snapshot.allFiles.collect()) {
+          assert(f.tightBounds.get)
+        }
+      }
+      // Version 1: DELETE one row from each file
+      {
+        withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          sql(s"DELETE FROM delta.`$path` WHERE id IN (1, 8)")
+        }
+        val (add, _) = getFileActionsInLastVersion(deltaLog)
+        for (a <- add) {
+          assert(a.deletionVector !== null)
+          assert(a.deletionVector.cardinality === 1)
+          assert(a.numPhysicalRecords.get === a.numLogicalRecords.get + 1)
+          assert(a.tightBounds.get === false)
+        }
+
+        checkTableContents(Seq(0, 2, 3, 4, 5, 6, 7, 9).toDF())
+      }
+      // Version 2: UPDATE one row in the first file
+      {
+        sql(s"UPDATE delta.`$path` SET id = -1 WHERE id = 0")
+        val (added, removed) = getFileActionsInLastVersion(deltaLog)
+        assert(added.length === 1)
+        assert(removed.length === 1)
+        // Removed files must contain DV, added files must not
+        for (a <- added) {
+          assert(a.deletionVector === null)
+          assert(a.tightBounds.get)
+        }
+        for (r <- removed) {
+          assert(r.deletionVector !== null)
+        }
+
+        checkTableContents(Seq(-1, 2, 3, 4, 5, 6, 7, 9).toDF())
+      }
+      // Version 3: MERGE into the table using table2
+      {
+        DeltaTable.forPath(spark, path).as("target")
+          .merge(
+            spark.read.format("delta").load(table2Path).as("source"),
+            "source.value = target.id")
+          .whenMatched()
+          .updateExpr(Map("id" -> "source.value"))
+          .whenNotMatchedBySource().delete().execute()
+        val (added, removed) = getFileActionsInLastVersion(deltaLog)
+        assert(removed.length === 2)
+        for (a <- added) {
+          assert(a.deletionVector === null)
+          assert(a.tightBounds.get)
+        }
+        // One of two removed files has DV
+        assert(removed.count(_.deletionVector != null) === 1)
+
+        // -1 and 9 are deleted by "when not matched by source"
+        checkTableContents(Seq(2, 3, 4, 5, 6, 7).toDF())
+      }
+      // Version 4: DELETE one row again
+      {
+        withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          sql(s"DELETE FROM delta.`$path` WHERE id IN (4)")
+        }
+        val (add, _) = getFileActionsInLastVersion(deltaLog)
+        for (a <- add) {
+          assert(a.deletionVector !== null)
+          assert(a.deletionVector.cardinality === 1)
+          assert(a.numPhysicalRecords.get === a.numLogicalRecords.get + 1)
+          assert(a.tightBounds.get === false)
+        }
+
+        checkTableContents(Seq(2, 3, 5, 6, 7).toDF())
+      }
+    }
+  }
+
+  private def getFileActionsInLastVersion(log: DeltaLog): (Seq[AddFile], Seq[RemoveFile]) = {
+    val version = log.update().version
+    val allFiles = log.getChanges(version).toSeq.head._2
+    val add = allFiles.collect { case a: AddFile => a }
+    val remove = allFiles.collect { case r: RemoveFile => r }
+    (add, remove)
   }
 
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {
