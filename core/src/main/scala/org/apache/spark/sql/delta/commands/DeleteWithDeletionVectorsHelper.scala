@@ -322,7 +322,10 @@ object DeletionVectorBitmapGenerator {
   }
 }
 
-/** Holds a mapping from a file path to an (optional) serialized Deletion Vector descriptor. */
+/**
+ * Holds a mapping from a file path (url-encoded) to an (optional) serialized Deletion Vector
+ * descriptor.
+ */
 case class FileToDvDescriptor(path: String, deletionVectorId: Option[String])
 
 object FileToDvDescriptor {
