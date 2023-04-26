@@ -365,6 +365,14 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
         expectedStartVersion = None,
         expectedEndVersion = None)
     }
+    // duplicates in versions
+    intercept[IllegalStateException] {
+      verifyDeltaVersions(
+        spark,
+        versions = Array(1, 2, 2, 3),
+        expectedStartVersion = None,
+        expectedEndVersion = None)
+    }
     // unsorted versions
     intercept[IllegalStateException] {
       verifyDeltaVersions(
