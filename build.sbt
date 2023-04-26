@@ -171,10 +171,14 @@ lazy val storage = (project in file("storage"))
     commonSettings,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
-      // versions with known vulnerabilities.
-      "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
-      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
+      // For hadoop-common, user can provide any 2.x or 3.x version. We don't use any new fancy
+      // APIs. Watch out for versions with known vulnerabilities.
+      "org.apache.hadoop" % "hadoop-common" % "3.3.2" % "provided",
+
+      // For hadoop-aws, this is only used by `S3LogStoreUtil` when the `delta.fastS3AListFrom`
+      // feature flag is enabled, and uses specific hadoop-aws:3.3.2  APIs that are not, for
+      // example, compatible with hadoop-aws:3.3.1.
+      "org.apache.hadoop" % "hadoop-aws" % "3.3.2" % "provided",
 
       // Test Deps
       "org.scalatest" %% "scalatest" % "3.2.11" % "test",

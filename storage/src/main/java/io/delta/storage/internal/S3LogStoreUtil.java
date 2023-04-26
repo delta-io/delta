@@ -19,6 +19,8 @@ package io.delta.storage.internal;
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.s3a.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,14 +30,16 @@ import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
 
-
 /**
  * Static utility methods for the S3SingleDriverLogStore.
  *
- * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without needing to load this as
- * a dependency for tests in core.
+ * Used to trick the class loader so we can use methods of org.apache.hadoop:hadoop-aws without
+ * needing to load this as a dependency for tests in core.
  */
 public final class S3LogStoreUtil {
+
+    private static final Logger LOG = LoggerFactory.getLogger(S3LogStoreUtil.class);
+
     private S3LogStoreUtil() {}
 
     private static PathFilter ACCEPT_ALL = new PathFilter() {
@@ -58,18 +62,29 @@ public final class S3LogStoreUtil {
             S3AFileSystem s3afs,
             Path resolvedPath,
             Path parentPath) throws IOException {
+        final String prefixKey = s3afs.pathToKey(parentPath);
+        final String startAfterKey = keyBefore(s3afs.pathToKey(resolvedPath));
+        LOG.info(
+            "Performing fast S3 LIST with prefixKey {} and startAfterKey {}",
+            prefixKey,
+            startAfterKey
+        );
+
         int maxKeys = S3AUtils.intOption(s3afs.getConf(), MAX_PAGING_KEYS, DEFAULT_MAX_PAGING_KEYS, 1);
         Listing listing = s3afs.getListing();
         // List files lexicographically after resolvedPath inclusive within the same directory
-        return listing.createFileStatusListingIterator(resolvedPath,
+        return listing.createFileStatusListingIterator(
+                resolvedPath,
                 S3ListRequest.v2(
                         new ListObjectsV2Request()
                                 .withBucketName(s3afs.getBucket())
                                 .withMaxKeys(maxKeys)
-                                .withPrefix(s3afs.pathToKey(parentPath))
-                                .withStartAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
+                                .withPrefix(prefixKey)
+                                .withStartAfter(startAfterKey)
                 ), ACCEPT_ALL,
-                new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
+                new Listing.AcceptAllButSelfAndS3nDirs(parentPath),
+                // This is required in hadoop-aws 3.3.2 but doesn't exist in 3.3.1
+                listing.getAuditSpan()
         );
     }
 
@@ -89,6 +104,7 @@ public final class S3LogStoreUtil {
         S3AFileSystem s3afs;
         try {
              s3afs = (S3AFileSystem) fs;
+             Log
         } catch (ClassCastException e) {
             throw new UnsupportedOperationException(
                     "The Hadoop file system used for the S3LogStore must be castable to " +
