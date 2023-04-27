@@ -21,7 +21,6 @@ from pyspark.errors.exceptions import captured
 from pyspark.errors.exceptions.captured import CapturedException
 from pyspark.sql.utils import (
     AnalysisException,
-    CapturedException,
     IllegalArgumentException,
     ParseException
 )
