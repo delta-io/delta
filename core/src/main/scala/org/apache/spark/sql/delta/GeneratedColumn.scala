@@ -171,10 +171,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * - A generated column references another generated column
    */
   def validateColumnReferences(
-    spark: SparkSession,
-    fieldName: String,
-    expression: Expression,
-    schema: StructType): Unit = {
+      spark: SparkSession,
+      fieldName: String,
+      expression: Expression,
+      schema: StructType): Unit = {
     val allowedBaseColumns = schema
       .filterNot(_.name == fieldName) // Can't reference itself
       .filterNot(isGeneratedColumn) // Can't reference other generated columns

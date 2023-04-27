@@ -770,9 +770,9 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   private def insertIntoByNameMissingColumn(
-    query: LogicalPlan,
-    targetAttrs: Seq[Attribute],
-    deltaTable: DeltaTableV2): Unit = {
+      query: LogicalPlan,
+      targetAttrs: Seq[Attribute],
+      deltaTable: DeltaTableV2): Unit = {
     if (query.output.length < targetAttrs.length) {
       // Some columns are not specified. We don't allow schema evolution in INSERT INTO BY NAME, so
       // we need to ensure the missing columns must be generated columns.
