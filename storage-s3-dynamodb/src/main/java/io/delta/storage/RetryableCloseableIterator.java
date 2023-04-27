@@ -6,7 +6,6 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import org.apache.hadoop.fs.s3a.RemoteFileChangedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,21 +56,13 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
         this(iterSupplier, DEFAULT_MAX_RETRIES);
     }
 
-    /** Visible for testing. */
-    public int getLastSuccessfullIndex() {
-        return lastSuccessfullIndex;
-    }
-
-    /** Visible for testing. */
-    public int getNumRetries() {
-        return numRetries;
-    }
+    /////////////////
+    // Public APIs //
+    /////////////////
 
     @Override
     public void close() throws IOException {
-        if (currentIter != null) {
-            currentIter.close();
-        }
+        currentIter.close();
     }
 
     /**
@@ -82,9 +73,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
         try {
             return hasNextInternal();
         } catch (IOException ex) {
-            // `endsWith` should still work if the class is shaded.
-            final String exClassName = ex.getClass().getName();
-            if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+            if (isRemoteFileChangedException(ex)) {
                 try {
                     replayIterToLastSuccessfulIndex(ex);
                 } catch (IOException ex2) {
@@ -98,11 +87,6 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
         }
     }
 
-    /** Throw a checked exception so we can catch this in the caller. */
-    private boolean hasNextInternal() throws IOException {
-        return currentIter.hasNext();
-    }
-
     @Override
     public String next() {
         if (!hasNext()) throw new NoSuchElementException();
@@ -112,19 +96,51 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             lastSuccessfullIndex++;
             return ret;
         } catch (IOException ex) {
-            // `endsWith` should still work if the class is shaded.
-            final String exClassName = ex.getClass().getName();
-            if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+            if (isRemoteFileChangedException(ex)) {
                 try {
                     replayIterToLastSuccessfulIndex(ex);
                 } catch (IOException ex2) {
                     throw new UncheckedIOException(ex2);
                 }
+
+                if (!hasNext()) {
+                    throw new IllegalStateException(
+                        String.format(
+                            "A retried iterator doesn't have enough data " +
+                                "(hasNext=false, lastSuccessfullIndex=%s)",
+                            lastSuccessfullIndex
+                        )
+                    );
+                }
+
                 return next();
             } else {
                 throw new UncheckedIOException(ex);
             }
         }
+    }
+
+    //////////////////////////////////////
+    // Package-private APIs for testing //
+    //////////////////////////////////////
+
+    /** Visible for testing. */
+    int getLastSuccessfullIndex() {
+        return lastSuccessfullIndex;
+    }
+
+    /** Visible for testing. */
+    int getNumRetries() {
+        return numRetries;
+    }
+
+    ////////////////////
+    // Helper Methods //
+    ////////////////////
+
+    /** Throw a checked exception so we can catch this in the caller. */
+    private boolean hasNextInternal() throws IOException {
+        return currentIter.hasNext();
     }
 
     /** Throw a checked exception so we can catch this in the caller. */
@@ -180,19 +196,26 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
                 // via `fakeIOException`. That way, we can catch it, and retry replaying the iter.
                 fakeIOException();
 
+                LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
+
                 return;
             } catch (IOException ex) {
-                final String exClassName = ex.getClass().getName();
-                if (exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException")) {
+                if (isRemoteFileChangedException(ex)) {
                     // Ignore and try replaying the iter again at the top of the while loop
+                    LOG.warn("Caught a RemoteFileChangedException while replaying the iterator");
                 } else {
                     throw ex;
                 }
             }
-            LOG.info("Successfully replayed until (inclusive) index {}", lastSuccessfullIndex);
         }
 
         throw topLevelEx;
+    }
+
+    private boolean isRemoteFileChangedException(IOException ex) {
+        // `endsWith` should still work if the class is shaded.
+        final String exClassName = ex.getClass().getName();
+        return exClassName.endsWith("org.apache.hadoop.fs.s3a.RemoteFileChangedException");
     }
 
     private void fakeIOException() throws IOException {

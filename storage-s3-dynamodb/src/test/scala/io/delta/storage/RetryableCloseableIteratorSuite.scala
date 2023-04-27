@@ -7,7 +7,6 @@ import scala.collection.JavaConverters._
 import org.apache.hadoop.fs.s3a.RemoteFileChangedException
 import org.scalatest.funsuite.AnyFunSuite
 
-// scalastyle:off println
 class RetryableCloseableIteratorSuite extends AnyFunSuite {
 
   private def getIter(
@@ -20,17 +19,11 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
       override def close(): Unit = { }
 
       override def hasNext: Boolean = {
-        if (throwAtIndex.contains(index)) {
-          println(s"`hasNext` throwing for index $index")
-          throw new RemoteFileChangedException(s"path -> index $index", "operation", "msg");
-        }
-
         impl.hasNext
       }
 
       override def next(): String = {
         if (throwAtIndex.contains(index)) {
-          println(s"`next` throwing for index $index")
           throw new RemoteFileChangedException(s"path -> index $index", "operation", "msg");
         }
 
@@ -197,6 +190,35 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
       testIter.next()
     }
     assert(e.getMessage.contains("A retried iterator doesn't have enough data"))
+  }
+
+  test("after replaying the iter, hasNext is false") {
+    val testIter = new RetryableCloseableIterator(
+      new Supplier[CloseableIterator[String]] {
+        var getCount = 0
+
+        override def get(): CloseableIterator[String] = getCount match {
+          case 0 =>
+            getCount = getCount + 1
+            getIter(0 to 100, Some(50)) // try to iterate 0->100, fail at 50
+
+          case 1 =>
+            getCount = getCount + 1
+            // when we failed at index 50 above, the lastSuccessfulIndex was 49. here, we can
+            // replay back to index 49, but the `hasNext` call will be false!
+            getIter(0 to 49)
+        }
+      }
+    )
+
+    for (_ <- 0 to 49) { testIter.next() }
+    assert(testIter.getLastSuccessfullIndex == 49)
+
+    val e = intercept[IllegalStateException] {
+      testIter.next()
+    }
+    assert(e.getMessage.contains("A retried iterator doesn't have enough data (hasNext=false, " +
+      "lastSuccessfullIndex=49)"))
   }
 
 }

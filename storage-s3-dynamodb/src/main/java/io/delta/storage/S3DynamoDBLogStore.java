@@ -20,6 +20,7 @@ import io.delta.storage.utils.ReflectionUtils;
 import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -160,7 +161,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                 } catch (IOException e) {
                     // There was an issue resolving the file system. Nothing to do with a
                     // RemoteFileChangedException.
-                    throw new RuntimeException(e);
+                    throw new UncheckedIOException(e);
                 }
             },
             maxRetries
