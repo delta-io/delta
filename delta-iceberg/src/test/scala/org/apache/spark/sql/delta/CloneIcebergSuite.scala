@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
-import org.apache.iceberg
 import org.apache.iceberg.hadoop.HadoopTables
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -234,7 +233,8 @@ trait CloneIcebergSuiteBase extends QueryTest
       val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema = iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
+      val icebergTableSchema =
+        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
 
       val df1 = spark.createDataFrame(
         Seq(
@@ -284,7 +284,8 @@ trait CloneIcebergSuiteBase extends QueryTest
       val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema = iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
+      val icebergTableSchema =
+        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
 
       val df1 = spark.createDataFrame(
         Seq(
@@ -333,7 +334,8 @@ trait CloneIcebergSuiteBase extends QueryTest
       val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema = iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
+      val icebergTableSchema =
+        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
 
       val df1 = spark.createDataFrame(
         Seq(
@@ -353,7 +355,7 @@ trait CloneIcebergSuiteBase extends QueryTest
       // Replace the partition field "date" with a transformed field "month(date)"
       icebergTable.refresh()
       icebergTable.updateSpec().removeField("date")
-        .addField(iceberg.expressions.Expressions.month("date")).commit()
+        .addField(org.apache.iceberg.expressions.Expressions.month("date")).commit()
 
       // Invalidate cache and load the updated partition spec
       spark.sql(s"REFRESH TABLE $table")
