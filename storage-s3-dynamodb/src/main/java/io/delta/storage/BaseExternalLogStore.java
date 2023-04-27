@@ -167,6 +167,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     prevFileName
                 );
                 if (prevEntry.isPresent() && !prevEntry.get().complete) {
+                    // This will never throw a java.nio.file.FileAlreadyExistsException for N-1.json
+                    // (which would be confusing for the writer trying to write N.json).
                     fixDeltaLog(fs, prevEntry.get());
                 } else {
                     if (!fs.exists(prevPath)) {
@@ -334,6 +336,12 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Method for assuring consistency on filesystem according to the external cache.
      * Method tries to rewrite TransactionLog entry from temporary path if it does not exist.
+     *
+     * Should never throw a java.nio.file.FileAlreadyExistsException:
+     * - if N.json already exists, we either don't copy T(N) -> N.json, or we swallow the
+     *   FileAlreadyExistsException
+     * - we won't receive a FileAlreadyExistsException when writing to the external cache, as
+     *   overwrite will be true
      */
     private void fixDeltaLog(FileSystem fs, ExternalCommitEntry entry) throws IOException {
         if (entry.complete) {
@@ -351,7 +359,12 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                 fixDeltaLogPutCompleteDbEntry(entry);
                 LOG.info("fixed {}", entry.fileName);
                 return;
-            } catch(Throwable e) {
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                LOG.info("{}:", e.getClass().getSimpleName(), e);
+                copied = true;
+
+                // Never re-throw a FileAlreadyExistsException
+            } catch (IOException e) {
                 LOG.info("{}:", e.getClass().getSimpleName(), e);
                 if (retry >= 3) {
                     throw e;
