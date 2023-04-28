@@ -44,7 +44,7 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
