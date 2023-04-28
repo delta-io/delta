@@ -174,6 +174,9 @@ lazy val storage = (project in file("storage"))
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
       "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
+
+      // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
+      // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
 
       // Test Deps
@@ -194,7 +197,10 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
+
+      // Test Deps
+      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "test", // RemoteFileChangedException
     )
   )
 
