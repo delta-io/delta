@@ -769,6 +769,12 @@ class DeltaAnalysis(session: SparkSession)
       !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType)
   }
 
+  /**
+   * Checks for missing columns in a insert by name query and throws an exception if found.
+   * Delta does not require users to provide values for generated columns, so any columns missing
+   * from the query output must have a default expression.
+   * See [[ColumnWithDefaultExprUtils.columnHasDefaultExpr]].
+   */
   private def insertIntoByNameMissingColumn(
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],

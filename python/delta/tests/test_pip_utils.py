@@ -74,7 +74,7 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
 
     def test_maven_jar_loaded(self) -> None:
         packagesConf: Optional[str] = self.spark.conf.get("spark.jars.packages")
-        assert packagesConf is not None  # mypi needs this to assign type str
+        assert packagesConf is not None  # mypi needs this to assign type str from Optional[str]
         packages: str = packagesConf
         packagesList: List[str] = packages.split(",")
         # Check `spark.jars.packages` contains `extra_packages`

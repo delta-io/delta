@@ -424,8 +424,6 @@ object DeltaMergeInto {
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
         val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
-        // todo: added a new Delta error for this to avoid rewriting tests, but existing
-        //   spark error _LEGACY_ERROR_TEMP_2309 is very similar
         throw new DeltaAnalysisException(
           errorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
           messageParameters = Array(a.sql, mergeClauseType, cols),
