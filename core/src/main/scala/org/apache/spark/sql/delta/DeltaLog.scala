@@ -84,6 +84,7 @@ class DeltaLog private(
   with DeltaFileFormat
   with ReadChecksum {
 
+  import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
 
 
@@ -467,24 +468,7 @@ class DeltaLog private(
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-
-    val hadoopOptions = snapshot.metadata.format.options ++ options
-    val partitionSchema = snapshot.metadata.partitionSchema
-    var metadata = snapshot.metadata
-
-    val relation = HadoopFsRelation(
-      fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, partitionSchema)),
-      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
-      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
-      // append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, metadata.schema)),
-      bucketSpec = None,
-      fileFormat(snapshot.protocol, metadata),
-      hadoopOptions)(spark)
-
+    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -520,22 +504,16 @@ class DeltaLog private(
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
+
+    val r = buildHadoopFsRelationWithFileIndex(snapshotToUse, fileIndex, bucketSpec = bucketSpec)
     new HadoopFsRelation(
-      fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        snapshotToUse.metadata.partitionSchema),
-      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
-      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
-      // append them to the end of `dataSchema`
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
-      bucketSpec = bucketSpec,
-      fileFormat(snapshotToUse.protocol, snapshotToUse.metadata),
-      // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
-      // store any file system options since they may contain credentials. Hence, it will never
-      // conflict with `DeltaLog.options`.
-      snapshotToUse.metadata.format.options ++ options)(spark) with InsertableRelation {
+      r.location,
+      r.partitionSchema,
+      r.dataSchema,
+      r.bucketSpec,
+      r.fileFormat,
+      r.options
+    )(spark) with InsertableRelation {
       def insert(data: DataFrame, overwrite: Boolean): Unit = {
         val mode = if (overwrite) SaveMode.Overwrite else SaveMode.Append
         WriteIntoDelta(
@@ -547,6 +525,26 @@ class DeltaLog private(
           data = data).run(spark)
       }
     }
+  }
+
+  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+    HadoopFsRelation(
+      fileIndex,
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        snapshot.metadata.partitionSchema),
+      // We pass all table columns as `dataSchema` so that Spark will preserve the partition
+      // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
+      // just append them to the end of `dataSchema`.
+      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalMetadata(spark,
+          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+      bucketSpec = bucketSpec,
+      fileFormat(snapshot.protocol, snapshot.metadata),
+      // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
+      // store any file system options since they may contain credentials. Hence, it will never
+      // conflict with `DeltaLog.options`.
+      snapshot.metadata.format.options ++ options)(spark)
   }
 
   /**

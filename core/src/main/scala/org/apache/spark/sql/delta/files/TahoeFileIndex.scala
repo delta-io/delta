@@ -77,12 +77,7 @@ abstract class TahoeFileIndex(
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-        val rowValues: Array[Any] = partitionSchema.map { p =>
-          val colName = DeltaColumnMapping.getPhysicalName(p)
-          val partValue = Literal(partitionValues.get(colName).orNull)
-          Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
-        }.toArray
-
+        val partitionValuesRow = getPartitionValuesRow(partitionValues)
 
         val fileStatuses = files.map { f =>
           new FileStatus(
@@ -94,8 +89,18 @@ abstract class TahoeFileIndex(
             absolutePath(f.path))
         }.toArray
 
-        PartitionDirectory(new GenericInternalRow(rowValues), fileStatuses)
+        PartitionDirectory(partitionValuesRow, fileStatuses)
     }
+  }
+
+  protected def getPartitionValuesRow(partitionValues: Map[String, String]): GenericInternalRow = {
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+    val partitionRowValues = partitionSchema.map { p =>
+      val colName = DeltaColumnMapping.getPhysicalName(p)
+      val partValue = Literal(partitionValues.get(colName).orNull)
+      Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
+    }.toArray
+    new GenericInternalRow(partitionRowValues)
   }
 
   override def partitionSchema: StructType = metadata.partitionSchema
