@@ -538,7 +538,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
     }
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
-    assertMetadata(newMetadataTmp)
 
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
@@ -554,6 +553,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     DeletionVectorUtils.assertDeletionVectorsNotEnabled(spark, newMetadataTmp, protocol)
+    assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
   }
@@ -1095,6 +1095,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _: SetTransaction =>
             numSetTransaction += 1
+          case m: Metadata =>
+            assertMetadata(m)
           case _ =>
         }
         action
