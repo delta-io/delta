@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, QueryTest, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
@@ -84,6 +84,16 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       val targetLog = DeltaLog.forTable(spark, tablePath)
       fn(targetTable, targetLog)
     }
+  }
+
+  /** Enable persistent deletion vectors in new Delta tables. */
+  def enableDeletionVectorsInNewTables(conf: RuntimeConfig): Unit =
+    conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "true")
+
+  /** Enable persistent deletion vectors in new tables and all DML commands. */
+  def enableDeletionVectors(conf: RuntimeConfig): Unit = {
+    enableDeletionVectorsInNewTables(conf)
+    conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, "true")
   }
 
   /** Helper that verifies whether a defined number of DVs exist */
