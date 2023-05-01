@@ -6,6 +6,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.Supplier;
 
+import io.delta.storage.utils.ThrowingSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +28,7 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
 
     public static final int DEFAULT_MAX_RETRIES = 3;
 
-    private final Supplier<CloseableIterator<String>> iterSupplier;
+    private final ThrowingSupplier<CloseableIterator<String>, IOException> iterSupplier;
 
     private final int maxRetries;
 
@@ -42,8 +43,8 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
     private CloseableIterator<String> currentIter;
 
     public RetryableCloseableIterator(
-            Supplier<CloseableIterator<String>> iterSupplier,
-            int maxRetries) {
+            ThrowingSupplier<CloseableIterator<String>, IOException> iterSupplier,
+            int maxRetries) throws IOException {
         if (maxRetries < 0) throw new IllegalArgumentException("maxRetries can't be negative");
 
         this.iterSupplier = Objects.requireNonNull(iterSupplier);
@@ -52,7 +53,10 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
         this.currentIter = this.iterSupplier.get();
     }
 
-    public RetryableCloseableIterator(Supplier<CloseableIterator<String>> iterSupplier) {
+    public RetryableCloseableIterator(
+            ThrowingSupplier<CloseableIterator<String>, IOException> iterSupplier)
+        throws IOException {
+
         this(iterSupplier, DEFAULT_MAX_RETRIES);
     }
 
