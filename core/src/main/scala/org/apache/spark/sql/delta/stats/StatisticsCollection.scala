@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -244,72 +245,6 @@ trait StatisticsCollection extends DeltaLogging {
     struct(statCols: _*).as('stats)
   }
 
-  def withExpr(expr: Expression): Column = { new Column(expr) }
-
-  def cast(e: Column, t: DataType): Column = withExpr { Cast(e.expr, t) }
-
-  lazy val statsOnLoadCollector: Column = {
-    // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
-    val tightBoundsColOpt =
-      Option.when(deletionVectorsSupported &&
-        !spark.sessionState.conf.getConf(DeltaSQLConf.TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED)) {
-        lit(true).as(TIGHT_BOUNDS)
-      }
-
-    val statCols = Seq(
-      count(new Column("*")) as NUM_RECORDS,
-      collectStats("min", tableDataSchema, true) {
-        // Minimum value is not collected for String columns
-        case (c, StatsOnLoadMinMaxEligibleDataType(StringType), true) =>
-          lit(null)
-
-        // Collect all numeric min values
-        case (c, StatsOnLoadMinMaxEligibleDataType(_), true) =>
-          min(c)
-      },
-      collectStats("max", tableDataSchema, true) {
-        // Maximum value is not collected for String columns
-        case (c, StatsOnLoadMinMaxEligibleDataType(StringType), true) =>
-          lit(null)
-
-        // Collect all numeric max values
-        case (c, StatsOnLoadMinMaxEligibleDataType(_), true) =>
-          max(c)
-      },
-      collectStats(NULL_COUNT, tableDataSchema, true) {
-        case (c, _, true) => sum(when(c.isNull, 1).otherwise(0))
-        case (_, _, false) => count(new Column("*"))
-      },
-      collectStats("avgLen", tableDataSchema, true) {
-        /**
-         * Currently, the expression that computes average column length for String columns is not
-         * photonized. Therefore, this is commented out. Uncomment this after fixing this issue
-         * tracked using STATS-33:
-         *
-         * case (c, SkippingEligibleDataType(StringType), true) =>
-         * coalesce(Seq(ceil(avg(length(c))), lit(StringType.defaultSize)): _*)
-         */
-        case (c, f, true) =>
-          lit(f.dataType.defaultSize)
-      },
-      collectStats("maxLen", tableDataSchema, true) {
-        /**
-         * Currently, the expression that computes maximum column length for String columns is not
-         * photonized. Therefore, this is commented out. Uncomment this after fixing this issue
-         * tracked using STATS-33:
-         *
-         * case (c, SkippingEligibleDataType(StringType), true) =>
-         * coalesce(Seq(cast(max(length(c)), LongType), lit(StringType.defaultSize)): _*)
-         */
-        case (c, f, true) =>
-          lit(f.dataType.defaultSize)
-      },
-      collectStats("distinctCount", tableDataSchema, true) { case (c, f, true) =>
-        lit(f.dataType.defaultSize)
-      }).++(tightBoundsColOpt)
-
-    struct(statCols: _*).as('stats)
-  }
 
   /** Returns schema of the statistics collected. */
   lazy val statsSchema: StructType = {
@@ -512,23 +447,3 @@ object StatisticsCollection extends DeltaCommand {
   }
 }
 
-/**
- * Select data types eligible for collecting statistics on load. Called only for minimum and
- * maximum column values
- *
- */
-object StatsOnLoadMinMaxEligibleDataType {
-  // Call this directly, e.g. `StatsOnLoadMinMaxEligibleDataType(dataType)`
-  def apply(dataType: DataType): Boolean = dataType match {
-    case BooleanType => true
-    case _: NumericType | DateType | TimestampType | StringType => true
-    case _ => false
-  }
-
-  // Use these in `match` statements
-  def unapply(dataType: DataType): Option[DataType] = {
-    if (StatsOnLoadMinMaxEligibleDataType(dataType)) Some(dataType) else None
-  }
-
-  def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
-}

@@ -281,22 +281,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       .queryExecution.analyzed.expressions.head
   }
 
-  /** get statistics on load expressions */
-  protected def getStatsOnLoadColExpr(
-      statsDataSchema: Seq[Attribute],
-      statsCollection: StatisticsCollection): Expression = {
-    // TODO: Avoid converting to JSON so that we there will be no need for serialization and
-    //       deserialization. Tracked as STATS-30
-    // make sure that codegen is enabled
-    assert(spark.sessionState.conf.wholeStageEnabled)
-    Dataset
-      .ofRows(spark, LocalRelation(statsDataSchema))
-      .select(to_json(statsCollection.statsOnLoadCollector))
-      .queryExecution
-      .analyzed
-      .expressions
-      .head
-  }
 
   /** Return the pair of optional stats tracker and stats collection class */
   protected def getOptionalStatsTrackerAndStatsCollection(
