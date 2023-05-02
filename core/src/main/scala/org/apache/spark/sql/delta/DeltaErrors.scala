@@ -1959,7 +1959,7 @@ trait DeltaErrorsBase
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
-  def dropNestedColumnsFromNonStructTypeException(struct : StructField) : Throwable = {
+  def dropNestedColumnsFromNonStructTypeException(struct : DataType) : Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
       messageParameters = Array(s"$struct")
