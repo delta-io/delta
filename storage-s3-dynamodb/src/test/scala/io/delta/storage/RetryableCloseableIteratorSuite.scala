@@ -1,9 +1,10 @@
 package io.delta.storage
 
-import java.util.function.Supplier
+import java.io.{FileNotFoundException, IOException}
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.utils.ThrowingSupplier
 import org.apache.hadoop.fs.s3a.RemoteFileChangedException
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -41,8 +42,8 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
    */
   def getFailingIterSupplier(
       range: Range,
-      failIndices: Seq[Int] = Seq.empty): Supplier[CloseableIterator[String]] =
-    new Supplier[CloseableIterator[String]] {
+      failIndices: Seq[Int] = Seq.empty): ThrowingSupplier[CloseableIterator[String], IOException] =
+    new ThrowingSupplier[CloseableIterator[String], IOException] {
       var numGetCalls = 0
 
       override def get(): CloseableIterator[String] = {
@@ -170,7 +171,7 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
 
   test("retried iterator doesn't have enough data (underlying data changed!)") {
     val testIter = new RetryableCloseableIterator(
-      new Supplier[CloseableIterator[String]] {
+      new ThrowingSupplier[CloseableIterator[String], IOException] {
         var getCount = 0
 
         override def get(): CloseableIterator[String] = getCount match {
@@ -194,7 +195,7 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
 
   test("after replaying the iter, hasNext is false") {
     val testIter = new RetryableCloseableIterator(
-      new Supplier[CloseableIterator[String]] {
+      new ThrowingSupplier[CloseableIterator[String], IOException] {
         var getCount = 0
 
         override def get(): CloseableIterator[String] = getCount match {
@@ -219,6 +220,12 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     }
     assert(e.getMessage.contains("A retried iterator doesn't have enough data (hasNext=false, " +
       "lastSuccessfullIndex=49)"))
+  }
+
+  test("throws FileNotFoundException (i.e. not UncheckedIOException) if file not found") {
+    intercept[FileNotFoundException] {
+      new RetryableCloseableIterator(() => { throw new FileNotFoundException() })
+    }
   }
 
 }
