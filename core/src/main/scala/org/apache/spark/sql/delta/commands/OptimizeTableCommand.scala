@@ -109,7 +109,8 @@ case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
     userPartitionPredicates: Seq[String],
-    options: Map[String, String])(val zOrderBy: Seq[UnresolvedAttribute])
+    options: Map[String, String],
+    isPurge: Boolean = false)(val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase with LeafRunnableCommand {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
@@ -154,7 +155,8 @@ class OptimizeExecutor(
     sparkSession: SparkSession,
     txn: OptimisticTransaction,
     partitionPredicate: Seq[Expression],
-    zOrderByColumns: Seq[String])
+    zOrderByColumns: Seq[String],
+    isPurge: Boolean = false)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
   /** Timestamp to use in [[FileAction]] */
@@ -174,8 +176,11 @@ class OptimizeExecutor(
       val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      val maxDeletedRowsRatio = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
+      val maxDeletedRowsRatio = if (isPurge) {
+        0d
+      } else {
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
+      }
       val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
