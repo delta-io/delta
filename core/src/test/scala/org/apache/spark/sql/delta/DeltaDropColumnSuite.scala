@@ -366,17 +366,15 @@ class DeltaDropColumnSuite extends QueryTest
   def testDropNestedField(testName: String)(
       initialColumnType: String,
       fieldToDrop: String,
-      updatedColumnType: String): Unit = {
-    for {
-      columnMapping <- Seq(NameMapping, IdMapping)
-    } test(s"ALTER TABLE DROP COLUMNS - nested $testName - columnMapping: ${columnMapping.name}") {
+      updatedColumnType: String): Unit =
+    testColumnMapping(s"ALTER TABLE DROP COLUMNS - nested $testName") { mode =>
       withTempDir { dir =>
         withTable("delta_test") {
           sql(
             s"""
                |CREATE TABLE delta_test (data $initialColumnType)
                |USING delta
-               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '${columnMapping.name}')
+               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '$mode')
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
 
           val expectedInitialType = initialColumnType.filterNot(_.isWhitespace)
@@ -394,7 +392,6 @@ class DeltaDropColumnSuite extends QueryTest
         }
       }
     }
-  }
 
   testDropNestedField("struct in map key")(
     initialColumnType = "map<struct<a: int, b: string>, int>",

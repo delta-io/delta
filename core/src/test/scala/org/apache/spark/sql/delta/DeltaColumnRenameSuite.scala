@@ -425,17 +425,15 @@ class DeltaColumnRenameSuite extends QueryTest
   def testRenameNestedField(testName: String)(
       initialColumnType: String,
       fieldToRename: (String, String),
-      updatedColumnType: String): Unit = {
-    for {
-      columnMapping <- Seq(NameMapping, IdMapping)
-    } test(s"ALTER TABLE RENAME COLUMN - nested $testName - columnMapping: ${columnMapping.name}") {
+      updatedColumnType: String): Unit =
+    testColumnMapping(s"ALTER TABLE RENAME COLUMN - nested $testName") { mode =>
       withTempDir { dir =>
         withTable("delta_test") {
           sql(
             s"""
                |CREATE TABLE delta_test (data $initialColumnType)
                |USING delta
-               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '${columnMapping.name}')
+               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '${mode}')
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
 
           val expectedInitialType = initialColumnType.filterNot(_.isWhitespace)
@@ -453,7 +451,6 @@ class DeltaColumnRenameSuite extends QueryTest
         }
       }
     }
-  }
 
   testRenameNestedField("struct in map key")(
     initialColumnType = "map<struct<a: int, b: string>, int>",

@@ -539,31 +539,40 @@ object SchemaUtils extends DeltaLogging {
       column: Seq[String],
       schema: StructType,
       resolver: Resolver = DELTA_COL_RESOLVER): Seq[Int] = {
-    def find(
+    def findRecursively(
         searchPath: Seq[String],
         currentType: DataType,
         currentPath: Seq[String] = Nil): Seq[Int] = {
       if (searchPath.isEmpty) return Nil
 
       val currentFieldName = searchPath.head
-      val path = currentPath :+ currentFieldName
+      val currentPathWithNestedField = currentPath :+ currentFieldName
       (currentType, currentFieldName) match {
         case (struct: StructType, _) =>
-          lazy val columnPath = UnresolvedAttribute(path).name
+          lazy val columnPath = UnresolvedAttribute(currentPathWithNestedField).name
           val pos = struct.indexWhere(f => resolver(f.name, currentFieldName))
           if (pos == -1) {
-            throw new IndexOutOfBoundsException(columnPath)
+            throw DeltaErrors.columnNotInSchemaException(columnPath, schema)
           }
-          val childPath = find(searchPath.tail, struct(pos).dataType, path)
-          pos +: childPath
+          val childPosition = findRecursively(
+            searchPath = searchPath.tail,
+            currentType = struct(pos).dataType,
+            currentPath = currentPathWithNestedField)
+          pos +: childPosition
 
         case (map: MapType, "key") =>
-          val childPath = find(searchPath.tail, map.keyType, path)
-          MAP_KEY_INDEX +: childPath
+          val childPosition = findRecursively(
+            searchPath = searchPath.tail,
+            currentType = map.keyType,
+            currentPath = currentPathWithNestedField)
+          MAP_KEY_INDEX +: childPosition
 
         case (map: MapType, "value") =>
-          val childPath = find(searchPath.tail, map.valueType, path)
-          MAP_VALUE_INDEX +: childPath
+          val childPosition = findRecursively(
+            searchPath = searchPath.tail,
+            currentType = map.valueType,
+            currentPath = currentPathWithNestedField)
+          MAP_VALUE_INDEX +: childPosition
 
         case (_: MapType, _) =>
           throw DeltaErrors.foundMapTypeColumnException(
@@ -571,8 +580,11 @@ object SchemaUtils extends DeltaLogging {
             prettyFieldName(currentPath :+ "value"))
 
         case (array: ArrayType, "element") =>
-          val childPath = find(searchPath.tail, array.elementType, path)
-          ARRAY_ELEMENT_INDEX +: childPath
+          val childPosition = findRecursively(
+            searchPath = searchPath.tail,
+            currentType = array.elementType,
+            currentPath = currentPathWithNestedField)
+          ARRAY_ELEMENT_INDEX +: childPosition
 
         case (_: ArrayType, _) =>
           throw DeltaErrors.incorrectArrayAccessByName(
@@ -584,10 +596,8 @@ object SchemaUtils extends DeltaLogging {
     }
 
     try {
-      find(column, schema)
+      findRecursively(column, schema)
     } catch {
-      case i: IndexOutOfBoundsException =>
-        throw DeltaErrors.columnNotInSchemaException(i.getMessage, schema)
       case e: AnalysisException =>
         throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
     }
@@ -684,16 +694,16 @@ object SchemaUtils extends DeltaLogging {
       }
       return StructType(schema :+ column)
     }
-    val pre = schema.take(slicePosition)
+    val (pre, post) = schema.splitAt(slicePosition)
     if (position.length > 1) {
-      val field = schema(slicePosition)
+      val field = post.head
       if (!column.nullable && field.nullable) {
         throw DeltaErrors.nullableParentWithNotNullNestedField
       }
       val mid = field.copy(dataType = addColumnInChild(field.dataType, column, position.tail))
-      StructType(pre ++ Seq(mid) ++ schema.drop(slicePosition + 1))
+      StructType(pre ++ Seq(mid) ++ post.tail)
     } else {
-      StructType(pre ++ Seq(column) ++ schema.drop(slicePosition))
+      StructType(pre ++ Seq(column) ++ post)
     }
   }
 
@@ -738,19 +748,19 @@ object SchemaUtils extends DeltaLogging {
     if (slicePosition >= length) {
       throw DeltaErrors.indexLargerOrEqualThanStruct(slicePosition, length)
     }
-    val pre = schema.take(slicePosition)
-    val field = schema(slicePosition)
+    val (pre, post) = schema.splitAt(slicePosition)
+    val field = post.head
     if (position.length > 1) {
       val (newType, droppedColumn) = dropColumnInChild(field.dataType, position.tail)
       val mid = field.copy(dataType = newType)
 
-      (StructType(pre ++ Seq(mid) ++ schema.drop(slicePosition + 1)), droppedColumn)
+      StructType(pre ++ Seq(mid) ++ post.tail) -> droppedColumn
     } else {
       if (length == 1) {
         throw new AnalysisException(
           "Cannot drop column from a struct type with a single field: " + schema)
       }
-      (StructType(pre ++ schema.drop(slicePosition + 1)), schema(slicePosition))
+      StructType(pre ++ post.tail) -> field
     }
   }
 

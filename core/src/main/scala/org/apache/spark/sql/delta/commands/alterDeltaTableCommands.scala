@@ -220,12 +220,12 @@ case class AlterTableAddColumnsDeltaCommand(
       val newSchema = colsToAddWithPosition.foldLeft(oldSchema) {
         case (schema, QualifiedColTypeWithPosition(columnPath, column, None)) =>
           val parentPosition = SchemaUtils.findColumnPosition(columnPath, schema, resolver)
-          val lastSize = SchemaUtils.getNestedTypeFromPosition(schema, parentPosition) match {
+          val insertPosition = SchemaUtils.getNestedTypeFromPosition(schema, parentPosition) match {
             case s: StructType => s.size
             case other =>
                throw DeltaErrors.addColumnParentNotStructException(column, other)
           }
-          SchemaUtils.addColumn(schema, column, parentPosition :+ lastSize)
+          SchemaUtils.addColumn(schema, column, parentPosition :+ insertPosition)
         case (schema, QualifiedColTypeWithPosition(columnPath, column, Some(_: First))) =>
           val parentPosition = SchemaUtils.findColumnPosition(columnPath, schema, resolver)
           SchemaUtils.addColumn(schema, column, parentPosition :+ 0)
