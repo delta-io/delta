@@ -321,8 +321,8 @@ object DeletionVectorBitmapGenerator {
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
       assert(joinedDf.count() == matchedRowsDf.count(),
         s"""
-           |The joined DataFrame should contain the same number of entries as the original DataFrame.
-           |It is likely that _metadata.file_path is not encoded by Spark as expected.
+           |The joined DataFrame should contain the same number of entries as the original
+           |DataFrame. It is likely that _metadata.file_path is not encoded by Spark as expected.
            |Joined DataFrame count: ${joinedDf.count()}
            |matchedRowsDf count: ${matchedRowsDf.count()}
            |""".stripMargin)
