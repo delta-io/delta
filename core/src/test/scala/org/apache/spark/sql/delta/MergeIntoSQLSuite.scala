@@ -204,7 +204,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           |WHEN NOT MATCHED THEN
           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
         """.stripMargin))
-      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition"))
+      assert(e.getMessage.contains(
+        "only the last NOT MATCHED [BY TARGET] clause can omit the condition"))
     }
   }
 

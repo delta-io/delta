@@ -94,6 +94,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
+      case "option.path" => false
       case _ => true
     }.toMap
     val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
@@ -255,6 +256,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
       super.createTable(ident, schema, partitions, properties)
   }
 
+
+  override def createTable(
+      ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
+    createTable(
+      ident,
+      org.apache.spark.sql.connector.catalog.CatalogV2Util.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
 
   override def createTable(
       ident: Identifier,
@@ -539,7 +552,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
               col.dataType(),
               col.isNullable,
               Option(col.comment()),
-              Option(col.position()).map(UnresolvedFieldPosition)
+              Option(col.position()).map(UnresolvedFieldPosition),
+              Option(col.defaultValue()).map(_.getSql())
             )
           }).run(spark)
 

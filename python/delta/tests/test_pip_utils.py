@@ -18,7 +18,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from typing import List
+from typing import List, Optional
 
 from pyspark.sql import SparkSession
 import delta
@@ -73,10 +73,12 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
         shutil.rmtree(self.tempPath)
 
     def test_maven_jar_loaded(self) -> None:
-        packages: List[str] = self.spark.conf.get("spark.jars.packages").split(",")
-
+        packagesConf: Optional[str] = self.spark.conf.get("spark.jars.packages")
+        assert packagesConf is not None  # mypi needs this to assign type str from Optional[str]
+        packages: str = packagesConf
+        packagesList: List[str] = packages.split(",")
         # Check `spark.jars.packages` contains `extra_packages`
-        self.assertTrue(len(packages) == 2, "There should only be 2 packages")
+        self.assertTrue(len(packagesList) == 2, "There should only be 2 packages")
 
         # Read and write Delta table to check that the maven jars are loaded and Delta works.
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)

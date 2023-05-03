@@ -119,12 +119,14 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
     val ex = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE not_exists")
     }
-    assert(ex.getMessage.contains("Table not found"))
+    assert(ex.getMessage.contains("Table not found") ||
+      ex.getMessage.contains("The table or view `not_exists` cannot be found"))
 
     val ex2 = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE not_exists VERSION AS OF 0")
     }
-    assert(ex2.getMessage.contains("Table not found"))
+    assert(ex2.getMessage.contains("Table not found") ||
+      ex2.getMessage.contains("The table or view `not_exists` cannot be found"))
   }
 
   cloneTest("cloning a view") { (tblExt, _) =>

@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
@@ -162,6 +163,37 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   }
 
   /**
+   * SPARK-27561 added support for lateral column alias. This means generation expressions that
+   * reference other generated columns no longer fail analysis in `validateGeneratedColumns`.
+   *
+   * This method checks for and throws an error if:
+   * - A generated column references itself
+   * - A generated column references another generated column
+   */
+  def validateColumnReferences(
+      spark: SparkSession,
+      fieldName: String,
+      expression: Expression,
+      schema: StructType): Unit = {
+    val allowedBaseColumns = schema
+      .filterNot(_.name == fieldName) // Can't reference itself
+      .filterNot(isGeneratedColumn) // Can't reference other generated columns
+    val relation = new LocalRelation(StructType(allowedBaseColumns).toAttributes)
+    try {
+      val analyzer: Analyzer = spark.sessionState.analyzer
+      val analyzed = analyzer.execute(Project(Seq(Alias(expression, fieldName)()), relation))
+      analyzer.checkAnalysis(analyzed)
+    } catch {
+      case ex: AnalysisException =>
+        // Improve error message if possible
+        if (ex.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION") {
+          throw DeltaErrors.generatedColumnsReferToWrongColumns(ex)
+        }
+        throw ex
+    }
+  }
+
+  /**
    * If the schema contains generated columns, check the following unsupported cases:
    * - Refer to a non-existent column or another generated column.
    * - Use an unsupported expression.
@@ -179,6 +211,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
           val expr = parseGenerationExpression(spark, exprString)
+          validateColumnReferences(spark, f.name, expr, schema)
           new Column(expr).alias(f.name)
         case None =>
           // Should not happen

@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
@@ -70,15 +71,6 @@ object DeltaFullTable {
     case DeltaRelation(lr) => unapply(lr)
     case _ =>
       None
-  }
-}
-
-// TODO: remove this after Spark 3.4 is released.
-object NodeWithOnlyDeterministicProjectAndFilter {
-  def unapply(plan: LogicalPlan): Option[LogicalPlan] = plan match {
-    case Project(projectList, child) if projectList.forall(_.deterministic) => unapply(child)
-    case Filter(cond, child) if cond.deterministic => unapply(child)
-    case _ => Some(plan)
   }
 }
 

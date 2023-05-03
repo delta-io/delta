@@ -42,7 +42,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{FileSourceOptions, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
@@ -177,14 +177,9 @@ class DeltaLog private(
     // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
     // entire table unusable. Hard-wire that into the file source options so the user can't override
     // it by setting spark.sql.files.ignoreCorruptFiles or spark.sql.files.ignoreMissingFiles.
-    //
-    // NOTE: This should ideally be [[FileSourceOptions.IGNORE_CORRUPT_FILES]] etc., but those
-    // constants are only available since spark-3.4. By hard-coding the values here instead, we
-    // preserve backward compatibility when compiling Delta against older spark versions (tho
-    // obviously the desired protection would be missing in that case).
     val allOptions = options ++ formatSpecificOptions ++ Map(
-      "ignoreCorruptFiles" -> "false",
-      "ignoreMissingFiles" -> "false"
+      FileSourceOptions.IGNORE_CORRUPT_FILES -> "false",
+      FileSourceOptions.IGNORE_MISSING_FILES -> "false"
     )
     val fsRelation = HadoopFsRelation(
       index, index.partitionSchema, schema, None, index.format, allOptions)(spark)

@@ -1442,10 +1442,13 @@ class SchemaUtilsSuite extends QueryTest
 
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
-        val e = intercept[AnalysisException] {
-          SchemaUtils.checkFieldNames(Seq(name))
-        }
-        assert(e.getMessage.contains("invalid character"))
+        checkError(
+          exception = intercept[AnalysisException] {
+            SchemaUtils.checkFieldNames(Seq(name))
+          },
+          errorClass = "INVALID_COLUMN_NAME_AS_PATH",
+          parameters = Map("datasource" -> "delta", "columnName" -> s"`$name`")
+        )
       }
     }
 

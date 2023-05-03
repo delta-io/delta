@@ -21,7 +21,7 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, DeltaUDF, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -75,7 +75,8 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
     val additionalCols = Seq(
       AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)(),
-      FileFormat.createFileMetadataCol
+      // TODO: when upgrading to Spark 3.5 or 4.0 this should be FileFormat.createFileMetadataCol
+      FileSourceMetadataAttribute(FileFormat.METADATA_NAME, FileFormat.BASE_METADATA_STRUCT)
     )
 
     val newTarget = target transformDown {
@@ -293,8 +294,13 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
+    // TODO: fix this to work regardless of whether Spark encodes or doesn't encode
+    //  _metadata.file_path. See https://github.com/delta-io/delta/issues/1725
+    val uriEncode = DeltaUDF.stringFromString(path => {
+      new Path(path).toUri.toString
+    })
     val matchedRowsDf = targetDf
-      .withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
+      .withColumn(FILE_NAME_COL, uriEncode(col(s"${METADATA_NAME}.${FILE_PATH}")))
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
@@ -312,7 +318,15 @@ object DeletionVectorBitmapGenerator {
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
       val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
-      matchedRowsDf.join(filePathToDVDf, joinExpr)
+      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
+      assert(joinedDf.count() == matchedRowsDf.count(),
+        s"""
+           |The joined DataFrame should contain the same number of entries as the original
+           |DataFrame. It is likely that _metadata.file_path is not encoded by Spark as expected.
+           |Joined DataFrame count: ${joinedDf.count()}
+           |matchedRowsDf count: ${matchedRowsDf.count()}
+           |""".stripMargin)
+      joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
       matchedRowsDf.withColumn(FILE_DV_ID_COL, lit(null))

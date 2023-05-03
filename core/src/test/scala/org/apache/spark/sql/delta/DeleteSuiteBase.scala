@@ -394,11 +394,7 @@ abstract class DeleteSuiteBase extends QueryTest
       case f: FileSourceScanExec => f
     })
 
-    // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
-    // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
-    // after upgrading
-    // TODO: should be "nested STRUCT<key: int>" after Spark 3.4.
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
+    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
   }
 
   /**
@@ -528,8 +524,8 @@ abstract class DeleteSuiteBase extends QueryTest
   }
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "MISSING_COLUMN",
-    expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
   )
 
   // Need to be able to override this, because it works in some configurations.

@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y python3-pip
 # cryptography. Otherwise, building wheels for these packages fails.
 RUN pip3 install --upgrade pip
 
-RUN pip3 install pyspark==3.3.2
+RUN pip3 install pyspark==3.4.0
 
 RUN pip3 install mypy==0.910
 

@@ -62,7 +62,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   protected def catalogPrefix: String = {
-    ""
+    s"${CatalogManager.SESSION_CATALOG_NAME}."
   }
 
   protected def getProperties(table: Table): Map[String, String] = {

@@ -309,7 +309,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
             assert(e.getMessage.contains("Inserting into a view is not allowed") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
-              e.getMessage.contains("Table or view 'v' not found in database 'default'"))
+              e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
+              e.getMessage.contains("The table or view `default`.`v` cannot be found"))
         }
       }
     }
