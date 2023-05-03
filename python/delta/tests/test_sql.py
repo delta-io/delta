@@ -104,9 +104,9 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
+            self.assertEqual(read_table().count(), 0)
             self.spark.sql(f"CREATE TABLE {table}_part(a LONG, b String NOT NULL)"
                            " USING delta PARTITIONED BY (a)")
-            self.assertEqual(read_table().count(), 0)
 
             # Unpartitioned table does not include partitioning information in Spark 3.4+
             answer = [("a", "bigint"), ("b", "string")]

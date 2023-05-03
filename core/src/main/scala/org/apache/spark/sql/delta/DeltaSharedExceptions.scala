@@ -59,10 +59,6 @@ class DeltaUnsupportedOperationException(
     def getMessageParametersArray: Array[String] = messageParameters
 }
 
-// todo: we had to add this since in Spark 3.4 ParseException(message, ...) was replaced by
-//   ParseException(errorClass, ...)
-//   Instead of passing just a message here, we could enforce creating an errorClass for each
-//   invocation and make this DeltaParseException(errorClass, ctx)
 class DeltaParseException(
     message: String,
     ctx: ParserRuleContext)

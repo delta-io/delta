@@ -294,6 +294,8 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
+    // TODO: fix this to work regardless of whether Spark encodes or doesn't encode
+    //  _metadata.file_path. See https://github.com/delta-io/delta/issues/1725
     val uriEncode = DeltaUDF.stringFromString(path => {
       new Path(path).toUri.toString
     })
@@ -316,7 +318,15 @@ object DeletionVectorBitmapGenerator {
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
       val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
-      matchedRowsDf.join(filePathToDVDf, joinExpr)
+      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
+      assert(joinedDf.count() == matchedRowsDf.count(),
+        s"""
+           |The joined DataFrame should contain the same number of entries as the original DataFrame.
+           |It is likely that _metadata.file_path is not encoded by Spark as expected.
+           |Joined DataFrame count: ${joinedDf.count()}
+           |matchedRowsDf count: ${matchedRowsDf.count()}
+           |""".stripMargin)
+      joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
       matchedRowsDf.withColumn(FILE_DV_ID_COL, lit(null))
