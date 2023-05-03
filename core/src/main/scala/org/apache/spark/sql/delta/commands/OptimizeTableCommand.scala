@@ -139,7 +139,8 @@ case class OptimizeTableCommand(
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
-    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns).optimize()
+    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns, isPurge)
+      .optimize()
   }
 }
 
@@ -166,21 +167,22 @@ class OptimizeExecutor(
 
   def optimize(): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
-      val minFileSize = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE)
       val maxFileSize = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
-      require(minFileSize > 0, "minFileSize must be > 0")
       require(maxFileSize > 0, "maxFileSize must be > 0")
-
+      val (minFileSize, maxDeletedRowsRatio) = if (isPurge) {
+        (0L, 0d) // Only selects files with DV
+      } else {
+        val minFileSize = sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE)
+        val maxDeletedRowsRatio = sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
+        require(minFileSize > 0, "minFileSize must be > 0")
+        (minFileSize, maxDeletedRowsRatio)
+      }
       val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      val maxDeletedRowsRatio = if (isPurge) {
-        0d
-      } else {
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
-      }
       val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
