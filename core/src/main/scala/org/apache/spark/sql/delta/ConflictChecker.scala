@@ -151,11 +151,7 @@ private[delta] class ConflictChecker(
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
-  protected var _currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
-  protected def currentTransactionInfo: CurrentTransactionInfo = _currentTransactionInfo
-  protected def updateCurrentTransactionInfo(info: CurrentTransactionInfo): Unit = {
-    _currentTransactionInfo = info
-  }
+  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
 
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
@@ -349,31 +345,31 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * Checks whether the row IDs assigned by the current transaction overlap with the row IDs
+   * Checks whether the Row IDs assigned by the current transaction overlap with the Row IDs
    * assigned by the winning transaction. I.e. this function checks whether both the winning and the
-   * current transaction assigned new row IDs. If this the case, then this check assigns new row IDs
+   * current transaction assigned new Row IDs. If this the case, then this check assigns new Row IDs
    * to the new files added by the current transaction so that they no longer overlap.
    */
   private def reassignOverlappingRowIds(): Unit = {
     if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) {
-      // The current transaction could not have assigned row IDs since row IDs are not supported.
+      // The current transaction did not assign Row IDs since Row IDs are not supported.
       return
     }
 
-    // Figure out which high watermark we should have used instead.
-    val winningWatermarkOpt = RowId.extractHighWatermark(spark, winningCommitSummary.actions)
+    RowId.extractHighWatermark(spark, winningCommitSummary.actions)
+      .map(_.highWaterMark)
+      .foreach { winningHighWaterMark =>
+        // The winning transaction assigned conflicting Row IDs. Adjust the Row IDs assigned by the
+        // current transaction as if it had read the result of the winning transaction.
+        val (newActions, newHighWaterMark) = RowId.reassignOverlappingRowIds(
+          readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark,
+          winningHighWaterMark = winningHighWaterMark,
+          actions = currentTransactionInfo.actions)
 
-    // The winning transaction assigned conflicting row IDs. Adjust the row IDs assigned by the
-    // current transaction as if it had read the result of the winning transaction.
-    val newActions = RowId.reassignOverlappingRowIds(
-      readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark,
-      winningHighWaterMarkOpt = winningWatermarkOpt.map(_.highWaterMark),
-      actions = currentTransactionInfo.actions)
-    val newHighWaterMark =
-      RowId.extractHighWatermark(spark, newActions).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
-
-    updateCurrentTransactionInfo(
-      currentTransactionInfo.copy(actions = newActions, readRowIdHighWatermark = newHighWaterMark))
+        currentTransactionInfo = currentTransactionInfo.copy(
+          actions = newActions,
+          readRowIdHighWatermark = newHighWaterMark)
+      }
   }
 
   /** A helper function for pretty printing a specific partition directory. */

@@ -56,7 +56,7 @@ object RowId {
   def rowIdsEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
     val isEnabled = DeltaConfigs.ROW_IDS_ENABLED.fromMetaData(metadata)
     if (isEnabled && !rowIdsSupported(protocol)) {
-      throw new IllegalStateException(s"Table property '${DeltaConfigs.ROW_IDS_ENABLED.key}' is" +
+      throw new IllegalStateException(s"Table property '${DeltaConfigs.ROW_IDS_ENABLED.key}' is " +
         s"set on the table but this table version doesn't support table feature " +
         s"'${propertyKey(RowIdFeature)}'.")
     }
@@ -101,6 +101,8 @@ object RowId {
     val oldHighWatermark: Long = highWatermark.getOrElse(-1L)
     var newHighWatermark: Long = oldHighWatermark
 
+    // Keep iterating until we processed all actions and we emitted the new high-water mark if it
+    // changed.
     override def hasNext: Boolean = actions.hasNext || (newHighWatermark != oldHighWatermark)
 
     override def next(): Action = {
@@ -142,23 +144,16 @@ object RowId {
 
   /**
    * Reassigns newly assigned Row IDs (i.e. Row IDs above `readHighWaterMark`) of all AddFile
-   * actions in `actions`  to be above `winningHighWaterMarkOpt` (if it is defined), and
+   * actions in `actions` to be above `winningHighWaterMarkOpt` (if it is defined), and
    * updates the high watermark in `actions`.
    */
   private[delta] def reassignOverlappingRowIds(
       readHighWaterMark: Long,
-      winningHighWaterMarkOpt: Option[Long],
-      actions: Seq[Action]): Seq[Action] = {
-    if (winningHighWaterMarkOpt.isEmpty) {
-      // The winning transaction did not assign any new row IDs, so there is no need to check for
-      // duplicate row IDs.
-      return actions
-    }
-    val winningHighWaterMark = winningHighWaterMarkOpt.get
-
+      winningHighWaterMark: Long,
+      actions: Seq[Action]): (Seq[Action], RowIdHighWaterMark) = {
     assert(winningHighWaterMark >= readHighWaterMark)
     val watermarkDiff = winningHighWaterMark - readHighWaterMark
-    actions.map {
+    val newActions = actions.map {
       case a: AddFile =>
         // We should only update the row IDs that were assigned by this transaction, and not the
         // row IDs that were assigned by an earlier transaction and merely copied over to a new
@@ -175,9 +170,12 @@ object RowId {
       case RowIdHighWaterMark(v, preservedRowIds) =>
         RowIdHighWaterMark(v + watermarkDiff, preservedRowIds)
 
-      case a =>
-        a
+      case a => a
     }
+    val newHighWaterMark = actions
+      .collectFirst { case r: RowIdHighWaterMark => r }
+      .getOrElse(RowId.MISSING_HIGH_WATER_MARK)
+    newActions -> newHighWaterMark
   }
 
   /**

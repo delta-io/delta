@@ -112,6 +112,23 @@ class RowIdSuite extends QueryTest
     }
   }
 
+  test("row ids can be disabled") {
+    withRowIdsEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
+          .write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        assertRowIdsAreValid(log)
+
+        sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` " +
+          s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_IDS_ENABLED.key}' = false)")
+        checkAnswer(
+          spark.read.load(dir.getAbsolutePath),
+          (0 until 1000).map(Row(_)))
+      }
+    }
+  }
+
   test("high watermark survives checkpointing") {
     withRowIdsEnabled(enabled = true) {
       withTempDir { dir =>

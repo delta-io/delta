@@ -507,7 +507,7 @@ case class SetTransaction(
 }
 
 /**
- * Stores the highest (inclusive) ID that has been assigned to a row in during history of the table.
+ * Stores the highest (inclusive) ID that has been assigned to a row during history of the table.
  * `preservedRowIds`, when set to true, indicates that all modified rows of this commit preserved
  * their original row ID.
  */
