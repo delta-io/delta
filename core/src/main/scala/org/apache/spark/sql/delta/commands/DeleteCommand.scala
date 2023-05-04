@@ -22,7 +22,6 @@ import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FIN
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.Utils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -440,10 +439,8 @@ case class DeleteCommand(
 
   def shouldWritePersistentDeletionVectors(
       spark: SparkSession, txn: OptimisticTransaction): Boolean = {
-    // DELETE with DVs only enabled for tests.
-    Utils.isTesting &&
-      spark.conf.get(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS) &&
-        DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+    spark.conf.get(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
   }
 }
 
