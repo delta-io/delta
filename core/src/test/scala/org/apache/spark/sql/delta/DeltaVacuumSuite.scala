@@ -831,12 +831,10 @@ class DeltaVacuumSuite
   // Helper method to remove the DVs in Delta table and rewrite the data files
   def purgeDVs(tableName: String): Unit = {
     withSQLConf(
-      DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.0001",
-      DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> "2",
       // Set the max file size to low so that we always rewrite the single file without DVs
       // and not combining with other data files.
       DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "2") {
-      spark.sql(s"OPTIMIZE $tableName")
+      spark.sql(s"REORG TABLE $tableName APPLY (PURGE)")
     }
   }
 
