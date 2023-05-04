@@ -459,6 +459,18 @@ class DeltaAnalysis(session: SparkSession)
             s"${other.prettyName} clauses cannot be part of the WHEN NOT MATCHED clause in MERGE " +
              "INTO.")
       }
+      val notMatchedBySourceActions = merge.notMatchedBySourceActions.map {
+        case update: UpdateAction =>
+          DeltaMergeIntoNotMatchedBySourceUpdateClause(
+            update.condition,
+            DeltaMergeIntoClause.toActions(update.assignments))
+        case delete: DeleteAction =>
+          DeltaMergeIntoNotMatchedBySourceDeleteClause(delete.condition)
+        case other =>
+          throw new IllegalArgumentException(
+            s"${other.prettyName} clauses cannot be part of the WHEN NOT MATCHED BY SOURCE " +
+             "clause in MERGE INTO.")
+      }
       // rewrites Delta from V2 to V1
       val newTarget =
         stripTempViewForMergeWrapper(merge.targetTable).transformUp { case DeltaRelation(lr) => lr }
@@ -468,7 +480,7 @@ class DeltaAnalysis(session: SparkSession)
         newTarget,
         merge.sourceTable,
         merge.mergeCondition,
-        matchedActions ++ notMatchedActions
+        matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
       )
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
