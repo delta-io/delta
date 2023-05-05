@@ -18,11 +18,9 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.functions.struct
@@ -78,6 +76,10 @@ abstract class DeleteSuiteBase extends QueryTest
       tableName: Option[String] = None): Unit = {
     executeDelete(target = tableName.getOrElse(s"delta.`$tempPath`"), where = condition.orNull)
     checkAnswer(readDeltaTable(tempPath), expectedResults)
+  }
+
+  protected def readDeltaUserMetadataByPath(path: String): DataFrame = {
+    io.delta.tables.DeltaTable.forPath(spark, path).history().select("userMetadata")
   }
 
   Seq(true, false).foreach { isPartitioned =>

@@ -32,20 +32,22 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.StructType
 
 /**
- * Main class for programmatically interacting with Delta tables.
- * You can create DeltaTable instances using the static methods.
+ * Main class for programmatically interacting with Delta tables. You can create DeltaTable
+ * instances using the static methods.
  * {{{
  *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
  * }}}
  *
  * @since 0.3.0
  */
-class DeltaTable private[tables](
+class DeltaTable private[tables] (
     @transient private val _df: Dataset[Row],
     @transient private val table: DeltaTableV2)
-  extends DeltaTableOperations with Serializable {
+    extends DeltaTableOperations
+    with Serializable {
 
   protected def deltaLog: DeltaLog = {
+
     /** Assert the codes run in the driver. */
     if (table == null) {
       throw DeltaErrors.deltaTableFoundInExecutor()
@@ -55,6 +57,7 @@ class DeltaTable private[tables](
   }
 
   protected def df: Dataset[Row] = {
+
     /** Assert the codes run in the driver. */
     if (_df == null) {
       throw DeltaErrors.deltaTableFoundInExecutor()
@@ -64,16 +67,16 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
-   * SQL `tableName AS alias`.
+   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or SQL `tableName AS
+   * alias`.
    *
    * @since 0.3.0
    */
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), table)
 
   /**
-   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
-   * SQL `tableName AS alias`.
+   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or SQL `tableName AS
+   * alias`.
    *
    * @since 0.3.0
    */
@@ -91,9 +94,9 @@ class DeltaTable private[tables](
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
    *
-   * @param retentionHours The retention threshold in hours. Files required by the table for
-   *                       reading versions earlier than this will be preserved and the
-   *                       rest of them will be deleted.
+   * @param retentionHours
+   *   The retention threshold in hours. Files required by the table for reading versions earlier
+   *   than this will be preserved and the rest of them will be deleted.
    * @since 0.3.0
    */
   def vacuum(retentionHours: Double): DataFrame = {
@@ -114,10 +117,11 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
-   * The information is in reverse chronological order.
+   * Get the information of the latest `limit` commits on this table as a Spark DataFrame. The
+   * information is in reverse chronological order.
    *
-   * @param limit The number of previous commands to get history for
+   * @param limit
+   *   The number of previous commands to get history for
    *
    * @since 0.3.0
    */
@@ -126,8 +130,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Get the information available commits on this table as a Spark DataFrame.
-   * The information is in reverse chronological order.
+   * Get the information available commits on this table as a Spark DataFrame. The information is
+   * in reverse chronological order.
    *
    * @since 0.3.0
    */
@@ -150,11 +154,11 @@ class DeltaTable private[tables](
   /**
    * Generate a manifest for the given Delta Table
    *
-   * @param mode Specifies the mode for the generation of the manifest.
-   *             The valid modes are as follows (not case sensitive):
-   *              - "symlink_format_manifest" : This will generate manifests in symlink format
-   *                                            for Presto and Athena read support.
-   *             See the online documentation for more information.
+   * @param mode
+   *   Specifies the mode for the generation of the manifest. The valid modes are as follows (not
+   *   case sensitive):
+   *   - "symlink_format_manifest" : This will generate manifests in symlink format for Presto and
+   *     Athena read support. See the online documentation for more information.
    * @since 0.5.0
    */
   def generate(mode: String): Unit = {
@@ -165,23 +169,49 @@ class DeltaTable private[tables](
   /**
    * Delete data from the table that match the given `condition`.
    *
-   * @param condition Boolean SQL expression
+   * @param condition
+   *   Boolean SQL expression
    *
    * @since 0.3.0
    */
   def delete(condition: String): Unit = {
-    delete(functions.expr(condition))
+    delete(functions.expr(condition), None)
+  }
+
+  /**
+   * Delete data from the table that match the given `condition`, with metadata
+   *
+   * @param condition
+   *   Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  def delete(condition: String, userMetadata: Option[String]): Unit = {
+    delete(functions.expr(condition), userMetadata)
   }
 
   /**
    * Delete data from the table that match the given `condition`.
    *
-   * @param condition Boolean SQL expression
+   * @param condition
+   *   Boolean SQL expression
    *
    * @since 0.3.0
    */
   def delete(condition: Column): Unit = {
-    executeDelete(Some(condition.expr))
+    executeDelete(Some(condition.expr), None)
+  }
+
+  /**
+   * Delete data from the table that match the given `condition`, with metadata
+   *
+   * @param condition
+   *   Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  def delete(condition: Column, userMetadata: Option[String]): Unit = {
+    executeDelete(Some(condition.expr), userMetadata)
   }
 
   /**
@@ -189,22 +219,27 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  def delete(): Unit = {
-    executeDelete(None)
+  def delete(userMetadata: Option[String]): Unit = {
+    executeDelete(None, userMetadata)
   }
 
   /**
-   * Optimize the data layout of the table. This returns
-   * a [[DeltaOptimizeBuilder]] object that can be used to specify
-   * the partition filter to limit the scope of optimize and
-   * also execute different optimization techniques such as file
-   * compaction or order data using Z-Order curves.
+   * Delete data from the table, with metadata
    *
-   * See the [[DeltaOptimizeBuilder]] for a full description
-   * of this operation.
+   * @since 0.3.0
+   */
+  def delete(): Unit = {
+    executeDelete(None, None)
+  }
+
+  /**
+   * Optimize the data layout of the table. This returns a [[DeltaOptimizeBuilder]] object that
+   * can be used to specify the partition filter to limit the scope of optimize and also execute
+   * different optimization techniques such as file compaction or order data using Z-Order curves.
    *
-   * Scala example to run file compaction on a subset of
-   * partitions in the table:
+   * See the [[DeltaOptimizeBuilder]] for a full description of this operation.
+   *
+   * Scala example to run file compaction on a subset of partitions in the table:
    * {{{
    *    deltaTable
    *     .optimize()
@@ -215,8 +250,10 @@ class DeltaTable private[tables](
    * @since 2.0.0
    */
   def optimize(): DeltaOptimizeBuilder = {
-    DeltaOptimizeBuilder(sparkSession,
-      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"), table.options)
+    DeltaOptimizeBuilder(
+      sparkSession,
+      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"),
+      table.options)
   }
 
   /**
@@ -229,12 +266,32 @@ class DeltaTable private[tables](
    *    deltaTable.update(Map("data" -> col("data") + 1))
    * }}}
    *
-   * @param set rules to update a row as a Scala map between target column names and
-   *            corresponding update expressions as Column objects.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as Column objects.
    * @since 0.3.0
    */
   def update(set: Map[String, Column]): Unit = {
-    executeUpdate(set, None)
+    executeUpdate(set, None, None)
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`, with metadata
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.functions._
+   *
+   *    deltaTable.update(Map("data" -> col("data") + 1))
+   * }}}
+   *
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as Column objects.
+   * @since 0.3.0
+   */
+  def update(set: Map[String, Column], userMetadata: Option[String]): Unit = {
+    executeUpdate(set, None, userMetadata)
   }
 
   /**
@@ -252,17 +309,42 @@ class DeltaTable private[tables](
    *    );
    * }}}
    *
-   * @param set rules to update a row as a Java map between target column names and
-   *            corresponding update expressions as Column objects.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as Column objects.
    * @since 0.3.0
    */
   def update(set: java.util.Map[String, Column]): Unit = {
-    executeUpdate(set.asScala, None)
+    executeUpdate(set.asScala, None, None)
   }
 
   /**
-   * Update data from the table on the rows that match the given `condition`
-   * based on the rules defined by `set`.
+   * Update rows in the table based on the rules defined by `set`, with metadata.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.Column;
+   *    import org.apache.spark.sql.functions;
+   *
+   *    deltaTable.update(
+   *      new HashMap<String, Column>() {{
+   *        put("data", functions.col("data").plus(1));
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as Column objects.
+   * @since 0.3.0
+   */
+  def update(set: java.util.Map[String, Column], userMetadata: Option[String]): Unit = {
+    executeUpdate(set.asScala, None, userMetadata)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition` based on the rules
+   * defined by `set`.
    *
    * Scala example to increment the column `data`.
    * {{{
@@ -273,18 +355,44 @@ class DeltaTable private[tables](
    *      Map("data" -> col("data") + 1))
    * }}}
    *
-   * @param condition boolean expression as Column object specifying which rows to update.
-   * @param set rules to update a row as a Scala map between target column names and
-   *            corresponding update expressions as Column objects.
+   * @param condition
+   *   boolean expression as Column object specifying which rows to update.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as Column objects.
    * @since 0.3.0
    */
   def update(condition: Column, set: Map[String, Column]): Unit = {
-    executeUpdate(set, Some(condition))
+    executeUpdate(set, Some(condition), None)
   }
 
   /**
-   * Update data from the table on the rows that match the given `condition`
-   * based on the rules defined by `set`.
+   * Update data from the table on the rows that match the given `condition`, with metadata based
+   * on the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.functions._
+   *
+   *    deltaTable.update(
+   *      col("date") > "2018-01-01",
+   *      Map("data" -> col("data") + 1))
+   * }}}
+   *
+   * @param condition
+   *   boolean expression as Column object specifying which rows to update.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as Column objects.
+   * @since 0.3.0
+   */
+  def update(condition: Column, set: Map[String, Column], userMetadata: Option[String]): Unit = {
+    executeUpdate(set, Some(condition), userMetadata)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition` based on the rules
+   * defined by `set`.
    *
    * Java example to increment the column `data`.
    * {{{
@@ -299,13 +407,48 @@ class DeltaTable private[tables](
    *    );
    * }}}
    *
-   * @param condition boolean expression as Column object specifying which rows to update.
-   * @param set rules to update a row as a Java map between target column names and
-   *            corresponding update expressions as Column objects.
+   * @param condition
+   *   boolean expression as Column object specifying which rows to update.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as Column objects.
    * @since 0.3.0
    */
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
-    executeUpdate(set.asScala, Some(condition))
+    executeUpdate(set.asScala, Some(condition), None)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`, with metadata based
+   * on the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.Column;
+   *    import org.apache.spark.sql.functions;
+   *
+   *    deltaTable.update(
+   *      functions.col("date").gt("2018-01-01"),
+   *      new HashMap<String, Column>() {{
+   *        put("data", functions.col("data").plus(1));
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param condition
+   *   boolean expression as Column object specifying which rows to update, with metadata.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as Column objects.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def update(
+      condition: Column,
+      set: java.util.Map[String, Column],
+      userMetadata: Option[String]): Unit = {
+    executeUpdate(set.asScala, Some(condition), userMetadata)
   }
 
   /**
@@ -316,12 +459,32 @@ class DeltaTable private[tables](
    *    deltaTable.updateExpr(Map("data" -> "data + 1")))
    * }}}
    *
-   * @param set rules to update a row as a Scala map between target column names and
-   *            corresponding update expressions as SQL formatted strings.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
    * @since 0.3.0
    */
   def updateExpr(set: Map[String, String]): Unit = {
-    executeUpdate(toStrColumnMap(set), None)
+    executeUpdate(toStrColumnMap(set), None, None)
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`, with metadata
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    deltaTable.updateExpr(Map("data" -> "data + 1")))
+   * }}}
+   *
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def updateExpr(set: Map[String, String], userMetadata: Option[String]): Unit = {
+    executeUpdate(toStrColumnMap(set), None, userMetadata)
   }
 
   /**
@@ -336,17 +499,41 @@ class DeltaTable private[tables](
    *    );
    * }}}
    *
-   * @param set rules to update a row as a Java map between target column names and
-   *            corresponding update expressions as SQL formatted strings.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
    * @since 0.3.0
    */
   def updateExpr(set: java.util.Map[String, String]): Unit = {
-    executeUpdate(toStrColumnMap(set.asScala), None)
+    executeUpdate(toStrColumnMap(set.asScala), None, None)
   }
 
   /**
-   * Update data from the table on the rows that match the given `condition`,
-   * which performs the rules defined by `set`.
+   * Update rows in the table based on the rules defined by `set`, with metadata
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    deltaTable.updateExpr(
+   *      new HashMap<String, String>() {{
+   *        put("data", "data + 1");
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as SQL formatted strings, with user metadata.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def updateExpr(set: java.util.Map[String, String], userMetadata: Option[String]): Unit = {
+    executeUpdate(toStrColumnMap(set.asScala), None, userMetadata)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`, which performs the
+   * rules defined by `set`.
    *
    * Scala example to increment the column `data`.
    * {{{
@@ -355,19 +542,48 @@ class DeltaTable private[tables](
    *      Map("data" -> "data + 1"))
    * }}}
    *
-   * @param condition boolean expression as SQL formatted string object specifying
-   *                  which rows to update.
-   * @param set rules to update a row as a Scala map between target column names and
-   *            corresponding update expressions as SQL formatted strings.
+   * @param condition
+   *   boolean expression as SQL formatted string object specifying which rows to update.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
    * @since 0.3.0
    */
   def updateExpr(condition: String, set: Map[String, String]): Unit = {
-    executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)))
+    executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)), None)
   }
 
   /**
-   * Update data from the table on the rows that match the given `condition`,
-   * which performs the rules defined by `set`.
+   * Update data from the table on the rows that match the given `condition`, with metadata which
+   * performs the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    deltaTable.update(
+   *      "date > '2018-01-01'",
+   *      Map("data" -> "data + 1"))
+   * }}}
+   *
+   * @param condition
+   *   boolean expression as SQL formatted string object specifying which rows to update,
+   *   with user metadata.
+   * @param set
+   *   rules to update a row as a Scala map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def updateExpr(
+      condition: String,
+      set: Map[String, String],
+      userMetadata: Option[String]): Unit = {
+    executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)), userMetadata)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`, which performs the
+   * rules defined by `set`.
    *
    * Java example to increment the column `data`.
    * {{{
@@ -379,23 +595,55 @@ class DeltaTable private[tables](
    *    );
    * }}}
    *
-   * @param condition boolean expression as SQL formatted string object specifying
-   *                  which rows to update.
-   * @param set rules to update a row as a Java map between target column names and
-   *            corresponding update expressions as SQL formatted strings.
+   * @param condition
+   *   boolean expression as SQL formatted string object specifying which rows to update.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
    * @since 0.3.0
    */
   def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
-    executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)))
+    executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)), None)
   }
 
   /**
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
-   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * Update data from the table on the rows that match the given `condition`, with metadata which
+   * performs the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    deltaTable.update(
+   *      "date > '2018-01-01'",
+   *      new HashMap<String, String>() {{
+   *        put("data", "data + 1");
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param condition
+   *   boolean expression as SQL formatted string object specifying which rows to update,
+   *   with user metadata.
+   * @param set
+   *   rules to update a row as a Java map between target column names and corresponding update
+   *   expressions as SQL formatted strings.
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def updateExpr(
+      condition: String,
+      set: java.util.Map[String, String],
+      userMetadata: Option[String]): Unit = {
+    executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)), userMetadata)
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns a
+   * [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
-   * update, delete and insert operations are allowed.
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations
+   * of update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
    * {{{
@@ -435,21 +683,85 @@ class DeltaTable private[tables](
    *     .execute();
    * }}}
    *
-   * @param source source Dataframe to be merged.
-   * @param condition boolean expression as SQL formatted string
+   * @param source
+   *   source Dataframe to be merged.
+   * @param condition
+   *   boolean expression as SQL formatted string
    * @since 0.3.0
    */
   def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
-    merge(source, functions.expr(condition))
+    merge(source, functions.expr(condition), None)
   }
 
   /**
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
-   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * Merge data from the `source` DataFrame based on the given merge `condition`, with metadata.
+   * This returns a [[DeltaMergeBuilder]] object that can be used to specify the update, delete,
+   * or insert actions to be performed on rows based on whether the rows matched the condition or
+   * not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations
+   * of update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value");
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute();
+   * }}}
+   *
+   * @param source
+   *   source Dataframe to be merged, with user metadata.
+   * @param condition
+   *   boolean expression as SQL formatted string
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def merge(
+      source: DataFrame,
+      condition: String,
+      userMetadata: Option[String]): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition), userMetadata)
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns a
+   * [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
-   * update, delete and insert operations are allowed.
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations
+   * of update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
    * {{{
@@ -489,19 +801,82 @@ class DeltaTable private[tables](
    *     .execute()
    * }}}
    *
-   * @param source source Dataframe to be merged.
-   * @param condition boolean expression as a Column object
+   * @param source
+   *   source Dataframe to be merged.
+   * @param condition
+   *   boolean expression as a Column object
    * @since 0.3.0
    */
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
-    DeltaMergeBuilder(this, source, condition)
+    DeltaMergeBuilder(this, source, condition, None)
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`, with metadata.
+   * This returns a [[DeltaMergeBuilder]] object that can be used to specify the update, delete,
+   * or insert actions to be performed on rows based on whether the rows matched the condition or
+   * not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations
+   * of update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value")
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute()
+   * }}}
+   *
+   * @param source
+   *   source Dataframe to be merged, with user metadata.
+   * @param condition
+   *   boolean expression as a Column object
+   * @param userMetadata
+   *   a text field to add to the user metadata of the commit
+   * @since 0.3.0
+   */
+  def merge(
+      source: DataFrame,
+      condition: Column,
+      userMetadata: Option[String]): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition, userMetadata)
   }
 
   /**
    * Restore the DeltaTable to an older version of the table specified by version number.
    *
-   * An example would be
-   * {{{ io.delta.tables.DeltaTable.restoreToVersion(7) }}}
+   * An example would be {{{io.delta.tables.DeltaTable.restoreToVersion(7)}}}
    *
    * @since 1.2.0
    */
@@ -514,8 +889,7 @@ class DeltaTable private[tables](
    *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
    *
-   * An example would be
-   * {{{ io.delta.tables.DeltaTable.restoreToTimestamp("2019-01-01") }}}
+   * An example would be {{{io.delta.tables.DeltaTable.restoreToTimestamp("2019-01-01")}}}
    *
    * @since 1.2.0
    */
@@ -526,8 +900,8 @@ class DeltaTable private[tables](
   /**
    * Updates the protocol version of the table to leverage new features. Upgrading the reader
    * version will prevent all clients that have an older version of Delta Lake from accessing this
-   * table. Upgrading the writer version will prevent older versions of Delta Lake to write to this
-   * table. The reader or writer version cannot be downgraded.
+   * table. Upgrading the writer version will prevent older versions of Delta Lake to write to
+   * this table. The reader or writer version cannot be downgraded.
    *
    * See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
    *
@@ -576,9 +950,8 @@ class DeltaTable private[tables](
 object DeltaTable {
 
   /**
-   * Create a DeltaTable from the given parquet table and partition schema.
-   * Takes an existing parquet table and constructs a delta transaction log in the base path of
-   * that table.
+   * Create a DeltaTable from the given parquet table and partition schema. Takes an existing
+   * parquet table and constructs a delta transaction log in the base path of that table.
    *
    * Note: Any changes to the table during the conversion process may not result in a consistent
    * state at the end of the conversion. Users should stop any changes to the table before the
@@ -603,9 +976,8 @@ object DeltaTable {
   }
 
   /**
-   * Create a DeltaTable from the given parquet table and partition schema.
-   * Takes an existing parquet table and constructs a delta transaction log in the base path of
-   * that table.
+   * Create a DeltaTable from the given parquet table and partition schema. Takes an existing
+   * parquet table and constructs a delta transaction log in the base path of that table.
    *
    * Note: Any changes to the table during the conversion process may not result in a consistent
    * state at the end of the conversion. Users should stop any changes to the table before the
@@ -646,17 +1018,15 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  def convertToDelta(
-      spark: SparkSession,
-      identifier: String): DeltaTable = {
+  def convertToDelta(spark: SparkSession, identifier: String): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, None, None)
   }
 
   /**
    * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
-   * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
-   * it throws a `not a Delta table` error.
+   * path is invalid (i.e. either no table exists or an existing table is not a Delta table), it
+   * throws a `not a Delta table` error.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -673,8 +1043,8 @@ object DeltaTable {
 
   /**
    * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
-   * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
-   * it throws a `not a Delta table` error.
+   * path is invalid (i.e. either no table exists or an existing table is not a Delta table), it
+   * throws a `not a Delta table` error.
    *
    * @since 0.3.0
    */
@@ -684,12 +1054,12 @@ object DeltaTable {
 
   /**
    * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
-   * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
-   * it throws a `not a Delta table` error.
+   * path is invalid (i.e. either no table exists or an existing table is not a Delta table), it
+   * throws a `not a Delta table` error.
    *
-   * @param hadoopConf Hadoop configuration starting with "fs." or "dfs." will be picked up
-   *                    by `DeltaTable` to access the file system when executing queries.
-   *                    Other configurations will not be allowed.
+   * @param hadoopConf
+   *   Hadoop configuration starting with "fs." or "dfs." will be picked up by `DeltaTable` to
+   *   access the file system when executing queries. Other configurations will not be allowed.
    *
    * {{{
    *   val hadoopConf = Map(
@@ -714,34 +1084,32 @@ object DeltaTable {
     val fileSystemOptions: Map[String, String] = hadoopConf.toMap
     val hdpPath = new Path(path)
     if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath, fileSystemOptions)) {
-      new DeltaTable(sparkSession.read.format("delta").options(fileSystemOptions).load(path),
-        DeltaTableV2(
-          spark = sparkSession,
-          path = hdpPath,
-          options = fileSystemOptions))
+      new DeltaTable(
+        sparkSession.read.format("delta").options(fileSystemOptions).load(path),
+        DeltaTableV2(spark = sparkSession, path = hdpPath, options = fileSystemOptions))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
   }
 
   /**
-  * Java friendly API to instantiate a [[DeltaTable]] object representing the data at the given
-  * path, If the given path is invalid (i.e. either no table exists or an existing table is not a
-  * Delta table), it throws a `not a Delta table` error.
-  *
-  * @param hadoopConf Hadoop configuration starting with "fs." or "dfs." will be picked up
-  *                    by `DeltaTable` to access the file system when executing queries.
-  *                    Other configurations will be ignored.
-  *
-  * {{{
-  *   val hadoopConf = Map(
-  *     "fs.s3a.access.key" -> "<access-key>",
-  *     "fs.s3a.secret.key", "<secret-key>"
-  *   )
-  *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
-  * }}}
-  * @since 2.2.0
-  */
+   * Java friendly API to instantiate a [[DeltaTable]] object representing the data at the given
+   * path, If the given path is invalid (i.e. either no table exists or an existing table is not a
+   * Delta table), it throws a `not a Delta table` error.
+   *
+   * @param hadoopConf
+   *   Hadoop configuration starting with "fs." or "dfs." will be picked up by `DeltaTable` to
+   *   access the file system when executing queries. Other configurations will be ignored.
+   *
+   * {{{
+   *   val hadoopConf = Map(
+   *     "fs.s3a.access.key" -> "<access-key>",
+   *     "fs.s3a.secret.key", "<secret-key>"
+   *   )
+   *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
+   * }}}
+   * @since 2.2.0
+   */
   def forPath(
       sparkSession: SparkSession,
       path: String,
@@ -752,12 +1120,12 @@ object DeltaTable {
 
   /**
    * Instantiate a [[DeltaTable]] object using the given table or view name. If the given
-   * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
-   * Delta table), it throws a `not a Delta table` error.
+   * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a Delta
+   * table), it throws a `not a Delta table` error.
    *
    * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
-   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
-   * the given path (consistent with the [[forPath]]).
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at the given
+   * path (consistent with the [[forPath]]).
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -776,8 +1144,8 @@ object DeltaTable {
    * existing table is not a Delta table), it throws a `not a Delta table` error.
    *
    * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
-   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
-   * the given path (consistent with the [[forPath]]).
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at the given
+   * path (consistent with the [[forPath]]).
    */
   def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
     val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
@@ -794,8 +1162,8 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table using the given SparkSession.
+   * Check if the provided `identifier` string, in this case a file path, is the root of a Delta
+   * table using the given SparkSession.
    *
    * An example would be
    * {{{
@@ -815,8 +1183,8 @@ object DeltaTable {
   }
 
   /**
-   * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table.
+   * Check if the provided `identifier` string, in this case a file path, is the root of a Delta
+   * table.
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -839,9 +1207,8 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
-   * error if the table exists (the same as SQL `CREATE TABLE`).
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table, error if the table
+   * exists (the same as SQL `CREATE TABLE`). Refer to [[DeltaTableBuilder]] for more details.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -860,11 +1227,11 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
-   * error if the table exists (the same as SQL `CREATE TABLE`).
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table, error if the table
+   * exists (the same as SQL `CREATE TABLE`). Refer to [[DeltaTableBuilder]] for more details.
    *
-   * @param spark sparkSession sparkSession passed by the user
+   * @param spark
+   *   sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
   @Evolving
@@ -875,9 +1242,9 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
-   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table, if it does not exists
+   * (the same as SQL `CREATE TABLE IF NOT EXISTS`). Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -896,11 +1263,12 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
-   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table, if it does not exists
+   * (the same as SQL `CREATE TABLE IF NOT EXISTS`). Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
-   * @param spark sparkSession sparkSession passed by the user
+   * @param spark
+   *   sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
   @Evolving
@@ -911,9 +1279,9 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
-   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table, error if the table
+   * doesn't exist (the same as SQL `REPLACE TABLE`) Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -932,11 +1300,12 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
-   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table, error if the table
+   * doesn't exist (the same as SQL `REPLACE TABLE`) Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
-   * @param spark sparkSession sparkSession passed by the user
+   * @param spark
+   *   sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
   @Evolving
@@ -947,9 +1316,9 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table
-   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table or create table if not
+   * exists (the same as SQL `CREATE OR REPLACE TABLE`) Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -968,11 +1337,12 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
-   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
-   * Refer to [[DeltaTableBuilder]] for more details.
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table, or create table if not
+   * exists (the same as SQL `CREATE OR REPLACE TABLE`) Refer to [[DeltaTableBuilder]] for more
+   * details.
    *
-   * @param spark sparkSession sparkSession passed by the user.
+   * @param spark
+   *   sparkSession sparkSession passed by the user.
    * @since 1.0.0
    */
   @Evolving
@@ -983,14 +1353,15 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
-   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column. Refer to
+   * [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @param colName string the column name
+   * @param colName
+   *   string the column name
    * @since 1.0.0
    */
   @Evolving
@@ -1004,11 +1375,13 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
-   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column. Refer to
+   * [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
    *
-   * @param spark sparkSession sparkSession passed by the user
-   * @param colName string the column name
+   * @param spark
+   *   sparkSession sparkSession passed by the user
+   * @param colName
+   *   string the column name
    * @since 1.0.0
    */
   @Evolving

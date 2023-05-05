@@ -93,6 +93,10 @@ abstract class MergeIntoSuiteBase
     withSQLConf(SQLConf.CROSS_JOINS_ENABLED.key -> "true") { body }
   }
 
+  protected def readDeltaUserMetadataByPath(path: String): DataFrame = {
+    io.delta.tables.DeltaTable.forPath(spark, path).history().select("userMetadata")
+  }
+
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
       withTable("source") {
