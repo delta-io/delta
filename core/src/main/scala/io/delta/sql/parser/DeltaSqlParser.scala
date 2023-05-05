@@ -354,7 +354,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * Creates a [[ReorgTable]] logical plan.
    * Examples:
    * {{{
-   *   -- Physically delete dropped columns of target table
+   *   -- Physically delete dropped rows and columns of target table
    *   REORG TABLE (delta.`/path/to/table` | delta_table_name)
    *    [WHERE partition_predicate] APPLY (PURGE)
    * }}}
@@ -364,8 +364,9 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       throw new ParseException("REORG command requires a file path or table name.", ctx)
     }
 
-    val targetIdentifier = visitMultipartIdentifier(ctx.table)
-    val targetTable = createUnresolvedTable(targetIdentifier, "REORG")
+    val targetIdentifier = visitTableIdentifier(ctx.table)
+    val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
+    val targetTable = createUnresolvedTable(tableNameParts, "REORG")
 
     ReorgTable(targetTable)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
   }

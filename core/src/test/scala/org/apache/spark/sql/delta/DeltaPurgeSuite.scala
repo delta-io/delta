@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.functions.col
 
 class DeltaPurgeSuite extends QueryTest
   with SharedSparkSession
@@ -34,19 +36,18 @@ class DeltaPurgeSuite extends QueryTest
     }
   }
 
-  testWithDVs("Purge DVs will combine small files") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, path)
-      spark
-        .range(0, 100, 1, numPartitions = 5)
-        .write
-        .format("delta")
-        .save(path)
+  test("Purge DVs will combine small files") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5).toDF
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+
       sql(s"DELETE FROM delta.`$path` WHERE id IN (0, 99)")
       assert(log.update().allFiles.filter(_.deletionVector != null).count() === 2)
-      executePurge(path)
+      withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "1073741824") { // 1gb
+        executePurge(path)
+      }
       val (addFiles, _) = getFileActionsInLastVersion(log)
+      assert(addFiles.size === 1, "files should be combined")
       assert(addFiles.forall(_.deletionVector === null))
       checkAnswer(
         sql(s"SELECT * FROM delta.`$path`"),
@@ -54,15 +55,11 @@ class DeltaPurgeSuite extends QueryTest
     }
   }
 
-  testWithDVs("Purge DVs") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, path)
-      spark
-        .range(0, 100, 1, numPartitions = 5)
-        .write
-        .format("delta")
-        .save(path)
+  test("Purge DVs") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5).toDF
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+
       sql(s"DELETE FROM delta.`$path` WHERE id IN (0, 99)")
       assert(log.update().allFiles.filter(_.deletionVector != null).count() === 2)
 
@@ -84,18 +81,31 @@ class DeltaPurgeSuite extends QueryTest
   }
 
   test("Purge a non-DV table is a noop") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, path)
-      spark
-        .range(0, 100, 1, numPartitions = 5)
-        .write
-        .format("delta")
-        .save(path)
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5).toDF
+    withTempDeltaTable(targetDf, enableDVs = false) { (_, log) =>
       val versionBefore = log.update().version
-      executePurge(path)
+      executePurge(log.dataPath.toString)
       val versionAfter = log.update().version
       assert(versionBefore === versionAfter)
+    }
+  }
+
+  test("Purge some partitions of a table with DV") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 1)
+      .withColumn("part", col("id") % 4)
+      .toDF
+    withTempDeltaTable(targetDf, partitionBy = Seq("part")) { (_, log) =>
+      val path = log.dataPath
+      // Delete one row from each partition
+      sql(s"DELETE FROM delta.`$path` WHERE id IN (48, 49, 50, 51)")
+      val (addFiles1, _) = getFileActionsInLastVersion(log)
+      assert(addFiles1.size === 4)
+      assert(addFiles1.forall(_.deletionVector !== null))
+      // PURGE two partitions
+      sql(s"REORG TABLE delta.`$path` WHERE part IN (0, 2) APPLY (PURGE)")
+      val (addFiles2, _) = getFileActionsInLastVersion(log)
+      assert(addFiles2.size === 2)
+      assert(addFiles2.forall(_.deletionVector === null))
     }
   }
 }

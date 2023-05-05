@@ -31,6 +31,9 @@ case class ReorgTable(target: LogicalPlan)(val predicates: Seq[String]) extends 
   override val otherCopyArgs: Seq[AnyRef] = predicates :: Nil
 }
 
+/**
+ * The PURGE command.
+ */
 case class ReorgTableCommand(target: DeltaTableV2)(val predicates: Seq[String])
   extends OptimizeTableCommandBase with LeafCommand with IgnoreCachedData {
 
@@ -42,7 +45,11 @@ case class ReorgTableCommand(target: DeltaTableV2)(val predicates: Seq[String])
       target.catalogTable.map(_.identifier),
       predicates,
       options = Map.empty,
-      isPurge = true)(zOrderBy = Nil)
+      optimizeContext = OptimizeContext(
+        isPurge = true,
+        minFileSize = Some(0L),
+        maxDeletedRowsRatio = Some(0d))
+    )(zOrderBy = Nil)
     command.run(sparkSession)
   }
 }
