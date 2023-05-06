@@ -583,7 +583,7 @@ removed | Boolean | When `true`, the action serves as a tombstone to logically d
 Enablement:
 - The table must be on Writer Version 7.
 - A feature name `domainMetadata` must exist in the table's `writerFeatures`.
-^
+
 #### Reader Requirements for Domain Metadata
 The reader should only read those domains they understand and ignore those it doesn't recognize.
 
