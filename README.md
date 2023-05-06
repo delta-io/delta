@@ -9,7 +9,7 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 * See the [Delta Lake Documentation](https://docs.delta.io) for details.
 * See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
 * See the [Delta Lake Docker](https://github.com/delta-io/delta-docs/tree/main/static/quickstart_docker) to get started with a Docker with Python, Spark (PySpark, Scala), Jupyter, Rust, and ROAPI.
-  * See the [Delta Lake DockerHub](https://hub.docker.com/repository/docker/deltaio/delta-docker/) to download the docker directly.
+  * See the [Delta Lake DockerHub](https://go.delta.io/dockerhub) to download the docker directly.
 * See [delta.io](https://delta.io) for more information
   * Join us on [Slack](https://go.delta.io/slack), [LinkedIn](https://go.delta.io/linkedin), [Groups](https://go.delta.io/groups) 
 * Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including 
