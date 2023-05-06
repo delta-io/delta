@@ -585,10 +585,13 @@ Enablement:
 - A feature name `domainMetadata` must exist in the table's `writerFeatures`.
 
 #### Reader Requirements for Domain Metadata
-The reader should only read those domains they understand and ignore those it doesn't recognize.
+- Readers must preserve all domains even if they don't understand them.
+- Any system-controlled domains that need special attention from a reader are required to be part of a table feature that can specify the desired behavior.
 
 #### Write Requirements for Domain Metadata
-The writer should propagate those domains it doesn't recognize.
+- Writers must not allow users to modify or delete system-controlled domains.
+- Writers must only modify or delete system-controlled domains they understand.
+- Any system-controlled domain that needs special attention from a writer are required to be part of a table feature that can specify the desired behavior.
 
 The following is an example `domainMetadata` action:
 ```json
