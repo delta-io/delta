@@ -476,7 +476,7 @@ Protocol versioning allows a newer client to exclude older readers and/or writer
 The _protocol version_ will be increased whenever non-forward-compatible changes are made to this specification.
 In the case where a client is running an invalid protocol version, an error should be thrown instructing the user to upgrade to a newer protocol version of their Delta client library.
 
-Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
+Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized actions, fields, and/or metadata domains are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
 
 Reader Version 3 and Writer Version 7 add two lists of table features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
 
@@ -578,20 +578,20 @@ Field Name | Data Type | Description
 -|-|-
 domain | String | Identifier for this domain (system- or user-provided)
 configuration | Map[String, String] | A map containing configuration for the metadata domain
-removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain
+removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain. Writers should preserve an accurate pre-image of the configuration.
 
 Enablement:
 - The table must be on Writer Version 7.
 - A feature name `domainMetadata` must exist in the table's `writerFeatures`.
 
 #### Reader Requirements for Domain Metadata
-- Readers must preserve all domains even if they don't understand them.
-- Any system-controlled domains that need special attention from a reader are required to be part of a table feature that can specify the desired behavior.
+- Readers must preserve all domains even if they don't understand them, i.e. the snapshot read must include them.
+- Any system-controlled domain that requires special attention from a reader is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
 
-#### Write Requirements for Domain Metadata
+#### Writer Requirements for Domain Metadata
 - Writers must not allow users to modify or delete system-controlled domains.
 - Writers must only modify or delete system-controlled domains they understand.
-- Any system-controlled domain that needs special attention from a writer are required to be part of a table feature that can specify the desired behavior.
+- Any system-controlled domain that needs special attention from a writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
 
 The following is an example `domainMetadata` action:
 ```json
