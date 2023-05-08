@@ -33,10 +33,11 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 class StatsCollectionSuite
-  extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils
-  with TestsStatistics
-  with DeltaSQLCommandTest {
+    extends QueryTest
+    with SharedSparkSession    with DeltaColumnMappingTestUtils
+    with TestsStatistics
+    with DeltaSQLCommandTest
+    with DeletionVectorsTestUtils {
 
   import testImplicits._
 
@@ -84,6 +85,25 @@ class StatsCollectionSuite
       withSQLConf("spark.sql.parquet.filterPushdown" -> "false") {
         assert(recordsScanned(df) == 9)
         assert(recordsScanned(df.where("id = 1")) == 1)
+      }
+    }
+  }
+
+  test("statistics re-computation throws error on Delta tables with DVs") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val df = spark.range(start = 0, end = 20).toDF().repartition(numPartitions = 4)
+        df.write.format("delta").save(dir.toString())
+
+        spark.sql(s"DELETE FROM delta.`${dir.toString}` WHERE id in (2, 15)")
+        val e = intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
+          val deltaLog = DeltaLog.forTable(spark, dir)
+          StatisticsCollection.recompute(spark, deltaLog)
+        }
+        assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS")
+        assert(e.getSqlState == "0AKDD")
+        assert(e.getMessage ==
+          "Statistics re-computation on a Delta table with deletion vectors is not yet supported.")
       }
     }
   }
@@ -344,7 +364,6 @@ class StatsCollectionSuite
     df.withColumnRenamed(numRecordsCol, "numRecords")
   }
 }
-
 
 class StatsCollectionNameColumnMappingSuite extends StatsCollectionSuite
   with DeltaColumnMappingEnableNameMode {

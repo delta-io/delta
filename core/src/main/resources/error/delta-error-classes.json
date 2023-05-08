@@ -17,6 +17,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED" : {
+    "message" : [
+      "All operations that add deletion vectors should set the tightBounds column in statistics to false. Please file a bug report."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to add column <columnName> is lower than 0"
@@ -1569,6 +1575,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_STATS_COLLECTION_COLUMN_NOT_FOUND" : {
+    "message" : [
+      "<statsType> stats not found for column in Parquet metadata: <columnPath>."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" : {
     "message" : [
       "We've detected a non-additive schema change (<opType>) at Delta version <schemaChangeVersion> in the Delta streaming source. Please check if you want to manually propagate this schema change to the sink table before we proceed with stream processing.",
@@ -2109,6 +2121,12 @@
   "DELTA_UNSUPPORTED_STATIC_PARTITIONS" : {
     "message" : [
       "Specifying static partitions in the partition spec is currently not supported during inserts"
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS" : {
+    "message" : [
+      "Statistics re-computation on a Delta table with deletion vectors is not yet supported."
     ],
     "sqlState" : "0AKDD"
   },
