@@ -139,7 +139,6 @@ class OptimisticTransaction
     (implicit override val clock: Clock)
   extends OptimisticTransactionImpl
   with DeltaLogging {
-  DeletionVectorUtils.assertDeletionVectorsNotReadable(spark, snapshot.metadata, snapshot.protocol)
 
   /** Creates a new OptimisticTransaction.
    *
@@ -552,7 +551,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadataTmp = RowId.verifyAndUpdateMetadata(
       spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
-    DeletionVectorUtils.assertDeletionVectorsNotEnabled(spark, newMetadataTmp, protocol)
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
