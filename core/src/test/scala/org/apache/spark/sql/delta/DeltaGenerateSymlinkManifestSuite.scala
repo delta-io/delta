@@ -601,7 +601,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
           setEnabledIncrementalManifest(tablePath, enabled = true)
         }
         // Run PURGE to delete the DVs and rewrite the data files
-        spark.sql(s"REORG TABLE delta.`$tablePath` APPLY (REORG)")
+        spark.sql(s"REORG TABLE delta.`$tablePath` APPLY (PURGE)")
         assert(getFilesWithDeletionVectors(deltaLog).isEmpty)
         // Now it should work.
         setEnabledIncrementalManifest(tablePath, enabled = true)
