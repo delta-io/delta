@@ -19,12 +19,15 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
@@ -33,6 +36,7 @@ import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
 trait DeltaTestUtilsBase {
+  import DeltaTestUtils.TableIdentifierOrPath
 
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
 
@@ -170,9 +174,37 @@ trait DeltaTestUtilsBase {
         case _ => false
       }.head
   }
+
+  /**
+   * Separate name- from path-based SQL table identifiers.
+   */
+  def getTableIdentifierOrPath(sqlIdentifier: String): TableIdentifierOrPath = {
+    // Match: delta.`path`[ alias] or tahoe.`path`[ alias]
+    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?: (.+))?".r
+    // Match: db.table[ alias]
+    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?: (.+))?".r
+    // Match: table[ alias]
+    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?: (.+))?".r
+    sqlIdentifier match {
+      case pathMatcher(path, alias) =>
+        TableIdentifierOrPath.Path(path, Option(alias))
+      case qualifiedDbMatcher(dbName, tableName, alias) =>
+        TableIdentifierOrPath.Identifier(TableIdentifier(tableName, Some(dbName)), Option(alias))
+      case unqualifiedNameMatcher(tableName, alias) =>
+        TableIdentifierOrPath.Identifier(TableIdentifier(tableName), Option(alias))
+    }
+  }
 }
 
 object DeltaTestUtils extends DeltaTestUtilsBase {
+
+  sealed trait TableIdentifierOrPath
+  object TableIdentifierOrPath {
+    case class Identifier(id: TableIdentifier, alias: Option[String])
+      extends TableIdentifierOrPath
+    case class Path(path: String, alias: Option[String]) extends TableIdentifierOrPath
+  }
+
   case class Plans(
       analyzed: LogicalPlan,
       optimized: LogicalPlan,
