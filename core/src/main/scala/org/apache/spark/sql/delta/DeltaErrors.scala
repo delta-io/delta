@@ -2275,6 +2275,13 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(errorClass = "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
   }
 
+  def deltaStatsCollectionColumnNotFound(statsType: String, columnPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STATS_COLLECTION_COLUMN_NOT_FOUND",
+      messageParameters = Array(statsType, columnPath)
+    )
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -2744,6 +2751,17 @@ trait DeltaErrorsBase
       messageParameters = Array.empty,
       pos = 0)
   }
+
+  def statsRecomputeNotSupportedOnDvTables(): Throwable = {
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS",
+      messageParameters = Array.empty
+    )
+  }
+
+  def addFileWithDVsAndTightBoundsException(): Throwable =
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED")
 
   def addFileWithDVsMissingNumRecordsException: Throwable =
     new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")

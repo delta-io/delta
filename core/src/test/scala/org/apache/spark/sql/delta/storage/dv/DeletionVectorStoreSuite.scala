@@ -169,7 +169,8 @@ trait DeletionVectorStoreSuiteBase
 
         val e = intercept[DeltaChecksumException] {
           file.removeRows(
-            dvDescriptorWithInvalidRowIndex
+            dvDescriptorWithInvalidRowIndex,
+            updateStats = false
           )
         }
         assert(e.getErrorClass == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")

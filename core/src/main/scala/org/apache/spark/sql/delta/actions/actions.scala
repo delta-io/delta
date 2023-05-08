@@ -34,6 +34,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
+import com.fasterxml.jackson.databind.node.ObjectNode
 
 import org.apache.hadoop.fs.Path
 
@@ -579,6 +580,7 @@ case class AddFile(
    */
   def removeRows(
         deletionVector: DeletionVectorDescriptor,
+        updateStats: Boolean,
         dataChange: Boolean = true): (AddFile, RemoveFile) = {
     // Verify DV does not contain any invalid row indexes. Note, maxRowIndex is optional
     // and not all commands may set it when updating DVs.
@@ -595,7 +597,11 @@ case class AddFile(
     }
     val withUpdatedDV =
       this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
-    val addFile = withUpdatedDV
+    val addFile = if (updateStats) {
+      withUpdatedDV.withoutTightBoundStats
+    } else {
+      withUpdatedDV
+    }
     val removeFile = this.removeWithTimestamp(dataChange = dataChange)
     (addFile, removeFile)
   }
@@ -609,6 +615,22 @@ case class AddFile(
   @JsonIgnore
   def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
 
+  /** Update stats to have tightBounds = false, if file has any stats. */
+  def withoutTightBoundStats: AddFile = {
+    if (stats == null || stats.isEmpty) {
+      this
+    } else {
+      val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
+      if (node.has("tightBounds") &&
+          !node.get("tightBounds").asBoolean(true)) {
+        this
+      } else {
+        node.put("tightBounds", false)
+        val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
+        this.copy(stats = newStatsString)
+      }
+    }
+  }
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
