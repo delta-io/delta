@@ -570,7 +570,7 @@ The domain metadata action contains a configuration (string-string map) for a na
 
 There are two types of metadata domains:
 1. **User-controlled metadata domains** have names that start with anything other than the `delta.` prefix. Any Delta client implementation or user application can modify these metadata domains, and can allow users to modify them arbitrarily. Delta clients and user applications are encouraged to use a naming convention designed to avoid conflicts with other clients' or users' metadata domains (e.g. `com.databricks.*` or `org.apache.*`).
-2. **System-controlled metadata domains** have names that start with the `delta.` prefix. This prefix is reserved for metadata domains mentioned in the Delta spec (i.e. as part of some table feature), and Delta client implementations must not allow users to modify the metadata for system-controlled domains. A Delta client implementation should only update metadata for system-controlled domains that it knows about and understands. System-controlled metadata domains are used by various table features and each table feature may impose additional semantics on the metadata domains it uses.
+2. **System-controlled metadata domains** have names that start with the `delta.` prefix. This prefix is reserved for metadata domains mentioned in the Delta spec, and Delta client implementations must not allow users to modify the metadata for system-controlled domains. A Delta client implementation should only update metadata for system-controlled domains that it knows about and understands. System-controlled metadata domains are used by various table features and each table feature may impose additional semantics on the metadata domains it uses.
 
 The schema of the `domainMetadata` action is as follows:
 
