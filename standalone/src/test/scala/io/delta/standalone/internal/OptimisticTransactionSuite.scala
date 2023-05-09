@@ -222,10 +222,6 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     val schema2 = schema1.add(new StructField("b", new IntegerType(), true))
     testSchemaChange(schema1, schema2, shouldThrow = false)
 
-    // add non-nullable field
-    val schema3 = schema1.add(new StructField("b", new IntegerType(), false))
-    testSchemaChange(schema1, schema3, shouldThrow = false)
-
     // relaxed nullability (from non-nullable to nullable)
     val schema4 = new StructType(Array(new StructField("a", new IntegerType(), true)))
     testSchemaChange(schema1, schema4, shouldThrow = false)
@@ -252,6 +248,10 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     // change of datatype
     val schema4 = new StructType(Array(new StructField("a", new StringType(), true)))
     testSchemaChange(schema2, schema4, shouldThrow = true)
+
+    // add non-nullable field
+    val schema5 = schema1.add(new StructField("c", new IntegerType(), false))
+    testSchemaChange(schema1, schema5, shouldThrow = true)
   }
 
   test("can change schema to 'invalid' schema - table empty or all files removed") {

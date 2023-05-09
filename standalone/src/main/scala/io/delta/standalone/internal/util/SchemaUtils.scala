@@ -85,6 +85,7 @@ private[standalone] object SchemaUtils {
    *   - Drops any column that is present in the current schema
    *   - Converts nullable=true to nullable=false for any column
    *   - Changes any datatype
+   *   - Adds a new column with nullable=false
    */
   def isWriteCompatible(existingSchema: StructType, newSchema: StructType): Boolean = {
 
@@ -121,14 +122,17 @@ private[standalone] object SchemaUtils {
         return false
       }
       _newSchema.getFields.forall { newField =>
-        // new fields are fine, they just won't be returned
-        existing.get(newField.getName).forall { existingField =>
-          // we know the name matches modulo case - now verify exact match
-          (existingField.getName == newField.getName
-            // if existing value is nullable, so should be the new value
-            && (!existingField.isNullable || newField.isNullable)
-            // and the type of the field must be compatible, too
-            && isDatatypeWriteCompatible(existingField.getDataType, newField.getDataType))
+        existing.get(newField.getName) match {
+          case Some(existingField) =>
+            // we know the name matches modulo case - now verify exact match
+            (existingField.getName == newField.getName
+              // if existing value is nullable, so should be the new value
+              && (!existingField.isNullable || newField.isNullable)
+              // and the type of the field must be compatible, too
+              && isDatatypeWriteCompatible(existingField.getDataType, newField.getDataType))
+          case None =>
+            // Cannot add a new column with nullable=false
+            newField.isNullable
         }
       }
     }

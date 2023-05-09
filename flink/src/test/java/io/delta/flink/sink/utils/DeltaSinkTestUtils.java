@@ -115,8 +115,12 @@ public class DeltaSinkTestUtils {
     }
 
     public static RowType addNewColumnToSchema(RowType schema) {
+        return addNewColumnToSchema(schema, true);
+    }
+
+    public static RowType addNewColumnToSchema(RowType schema, boolean isNullable) {
         List<RowType.RowField> fields = new ArrayList<>(schema.getFields());
-        fields.add(new RowType.RowField("someNewField", new IntType()));
+        fields.add(new RowType.RowField("someNewField", new IntType(isNullable)));
         return new RowType(fields);
     }
 

@@ -309,8 +309,8 @@ class SchemaUtilsSuite extends FunSuite {
     test(s"adding a nullable field should not fail write compatibility - $scenario") {
       assert(withoutExtra.isWriteCompatible(withExtraNullable))
     }
-    test(s"adding a non-nullable field should not fail write compatibility - $scenario") {
-      assert(withoutExtra.isWriteCompatible(withExtraNonNullable))
+    test(s"adding a non-nullable field should fail write compatibility - $scenario") {
+      assert(!withoutExtra.isWriteCompatible(withExtraNonNullable))
     }
     test(s"case variation of field name should fail write compatibility - $scenario") {
       assert(!withExtraNullable.isWriteCompatible(withExtraMixedCase))

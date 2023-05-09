@@ -199,19 +199,33 @@ public class DeltaGlobalCommitterTest {
     @Test
     public void testMergeIncompatibleSchema() throws Exception {
         //GIVEN
-        DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
+        DeltaTestUtils.initTestForNonPartitionedTable(tablePath.getPath());
         List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
-                3, DeltaSinkTestUtils.getTestPartitionSpec());
+                3, new LinkedHashMap<>());
+
 
         // new schema drops one of the previous columns
-        RowType updatedSchema =
-            DeltaSinkTestUtils.dropOneColumnFromSchema(DeltaSinkTestUtils.TEST_ROW_TYPE);
+        RowType updatedSchema1 = DeltaSinkTestUtils
+                .dropOneColumnFromSchema(DeltaSinkTestUtils.TEST_ROW_TYPE);
+        // new schema adds a non-null column
+        RowType updatedSchema2 = DeltaSinkTestUtils
+                .addNewColumnToSchema(DeltaSinkTestUtils.TEST_ROW_TYPE, false);
 
-        DeltaGlobalCommitter globalCommitter = getTestGlobalCommitter(updatedSchema);
-
-        // WHEN
-        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+        for (RowType newSchema: new RowType[]{updatedSchema1, updatedSchema2}) {
+            DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
+                DeltaTestUtils.getHadoopConf(),
+                tablePath,
+                newSchema,
+                true // mergeSchema
+            );
+            // WHEN
+            String errorMessage = assertThrows(
+                IllegalStateException.class,
+                () -> globalCommitter.commit(globalCommittables)
+            ).getMessage();
+            assert(errorMessage.contains("Detected incompatible schema change"));
+        }
     }
 
     @Test

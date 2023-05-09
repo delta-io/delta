@@ -210,6 +210,7 @@ public final class StructType extends DataType {
      *     <li>Drops any column that is present in the current schema</li>
      *     <li>Converts nullable=true to nullable=false for any column</li>
      *     <li>Changes any datatype</li>
+     *     <li>Adds a new column with nullable=false</li>
      * </ul>
      *
      * @param newSchema  the new schema to update the table with
