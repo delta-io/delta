@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
@@ -235,6 +236,37 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       case tableNameWithAlias(tableName, alias) => tableName -> Some(alias)
       case tableName => tableName -> None
     }
+  }
+
+  /**
+   * Implements an ordering where `x < y` iff both reader and writer versions of
+   * `x` are strictly less than those of `y`.
+   *
+   * Can be used to conveniently check that this relationship holds in tests/assertions
+   * without having to write out the conjunction of the two subconditions every time.
+   */
+  case object StrictProtocolOrdering extends PartialOrdering[Protocol] {
+    override def tryCompare(x: Protocol, y: Protocol): Option[Int] = {
+      if (x.minReaderVersion == y.minReaderVersion &&
+        x.minWriterVersion == y.minWriterVersion) {
+        Some(0)
+      } else if (x.minReaderVersion < y.minReaderVersion &&
+        x.minWriterVersion < y.minWriterVersion) {
+        Some(-1)
+      } else if (x.minReaderVersion > y.minReaderVersion &&
+        x.minWriterVersion > y.minWriterVersion) {
+        Some(1)
+      } else {
+        None
+      }
+    }
+
+    override def lteq(x: Protocol, y: Protocol): Boolean =
+      x.minReaderVersion <= y.minReaderVersion && x.minWriterVersion <= y.minWriterVersion
+
+    // Just a more readable version of `lteq`.
+    def fulfillsVersionRequirements(actual: Protocol, requirement: Protocol): Boolean =
+      lteq(requirement, actual)
   }
 }
 
