@@ -34,7 +34,6 @@ import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDSc
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
-import org.apache.spark.util.Utils
 
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
