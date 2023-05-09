@@ -24,6 +24,9 @@
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
     - [Increase Row ID High-Water Mark](#increase-row-id-high-watermark)
+    - [Domain Metadata](#domain-metadata)
+      - [Reader Requirements for Domain Metadata](#reader-requirements-for-domain-metadata)
+      - [Writer Requirements for Domain Metadata](#writer-requirements-for-domain-metadata)
 - [Action Reconciliation](#action-reconciliation)
 - [Table Features](#table-features)
   - [Table Features for new and Existing Tables](#table-features-for-new-and-existing-tables)
@@ -475,7 +478,7 @@ Protocol versioning allows a newer client to exclude older readers and/or writer
 The _protocol version_ will be increased whenever non-forward-compatible changes are made to this specification.
 In the case where a client is running an invalid protocol version, an error should be thrown instructing the user to upgrade to a newer protocol version of their Delta client library.
 
-Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
+Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized actions, fields, and/or metadata domains are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
 
 Reader Version 3 and Writer Version 7 add two lists of table features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
 
@@ -564,14 +567,54 @@ The following is an example `rowIdHighWaterMark` action:
 }
 ```
 
+### Domain Metadata
+The domain metadata action contains a configuration (string-string map) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
+
+There are two types of metadata domains:
+1. **User-controlled metadata domains** have names that start with anything other than the `delta.` prefix. Any Delta client implementation or user application can modify these metadata domains, and can allow users to modify them arbitrarily. Delta clients and user applications are encouraged to use a naming convention designed to avoid conflicts with other clients' or users' metadata domains (e.g. `com.databricks.*` or `org.apache.*`).
+2. **System-controlled metadata domains** have names that start with the `delta.` prefix. This prefix is reserved for metadata domains defined by the Delta spec, and Delta client implementations must not allow users to modify the metadata for system-controlled domains. A Delta client implementation should only update metadata for system-controlled domains that it knows about and understands. System-controlled metadata domains are used by various table features and each table feature may impose additional semantics on the metadata domains it uses.
+
+The schema of the `domainMetadata` action is as follows:
+
+Field Name | Data Type | Description
+-|-|-
+domain | String | Identifier for this domain (system- or user-provided)
+configuration | Map[String, String] | A map containing configuration for the metadata domain
+removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain. Writers should preserve an accurate pre-image of the configuration.
+
+Enablement:
+- The table must be on Writer Version 7.
+- A feature name `domainMetadata` must exist in the table's `writerFeatures`.
+
+#### Reader Requirements for Domain Metadata
+- Readers must preserve all domains even if they don't understand them, i.e. the snapshot read must include them.
+- Any system-controlled domain that requires special attention from a reader is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
+
+#### Writer Requirements for Domain Metadata
+- Writers must not allow users to modify or delete system-controlled domains.
+- Writers must only modify or delete system-controlled domains they understand.
+- Any system-controlled domain that needs special attention from a writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
+
+The following is an example `domainMetadata` action:
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.deltaTableFeatureX",
+    "configuration": {"key1": "..."},
+    "removed": false
+  }
+}
+```
+
 # Action Reconciliation
 A given snapshot of the table can be computed by replaying the events committed to the table in ascending order by commit version. A given snapshot of a Delta table consists of:
 
  - A single `protocol` action
  - A single `metaData` action
  - At most one `rowIdHighWaterMark` action
- - A map from `appId` to transaction `version`
- - A collection of `add` actions with unique `path`s.
+ - A collection of `txn` actions with unique `appId`s
+ - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
@@ -579,7 +622,8 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `protocol` action seen wins
  - The latest `metaData` action seen wins
  - The latest `rowIdHighWaterMark` action seen wins
- - For transaction identifiers, the latest `version` seen for a given `appId` wins
+ - For `txn` actions, the latest `version` seen for a given `appId` wins
+ - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
@@ -861,6 +905,7 @@ Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/
  * The [metadata](#Change-Metadata) of the table
  * Files that have been [added and removed](#Add-File-and-Remove-File)
  * [Transaction identifiers](#Transaction-Identifiers)
+ * [Domain Metadata](#Domain-Metadata)
 
 Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
 
@@ -1019,6 +1064,7 @@ Feature | Name | Readers or Writers?
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
 [Row IDs](#row-ids) | `rowIds` | Writers only
 [Timestamp without Timezone](#timestamp-ntz) | `timestampNTZ` | Readers and writers
+[Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 
 ## Deletion Vector Format
 
