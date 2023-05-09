@@ -351,7 +351,7 @@ stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., c
 tags | Map[String, String] | Map containing metadata about this logical file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
-firstCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
 
 The following is an example `add` action:
 ```json
@@ -363,7 +363,7 @@ The following is an example `add` action:
     "modificationTime": 1512909768000,
     "dataChange": true,
     "baseRowId": 4071,
-    "firstCommitVersion": 41,
+    "defaultRowCommitVersion": 41,
     "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
@@ -382,7 +382,7 @@ size| Long | The size of this data file in bytes | optional
 tags | Map[String, String] | Map containing metadata about this file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
-firstCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
 
 The following is an example `remove` action.
 ```json
@@ -391,7 +391,7 @@ The following is an example `remove` action.
     "path": "part-00001-9…..snappy.parquet",
     "deletionTimestamp": 1515488792485,
     "baseRowId": 4071,
-    "firstCommitVersion": 41,
+    "defaultRowCommitVersion": 41,
     "dataChange": true
   }
 }
@@ -823,8 +823,7 @@ The fresh and stable Row Commit Versions are not required to be equal.
 
 Commit Versions are stored in two ways:
 
-- **Default generated Row Commit Versions** are equal to the **First Commit Version** of the file containing a row.
-  The First Commit Versions use the `firstCommitVersion` field in `add` and `remove` actions.
+- **Default generated Row Commit Versions** use the `defaultRowCommitVersion` field in `add` and `remove` actions.
   Default generated Row Commit Versions require little storage overhead but are reassigned every time a row is updated or moved to a different file (for instance when a row is contained in a file that is compacted by OPTIMIZE).
 
 - **Materialized Row Commit Versions** are stored in a column in the data files.
@@ -846,7 +845,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 - When Row Commit Versions are requested, readers must reconstruct them as follows:
   1. Readers must use the materialized Row Commit Versions if the physical column determined by `delta.lastChangedVersion.physicalColumnName` is present in the data file and the column contains a non `null` value for a row.
   2. Otherwise, Readers must use the default generated Row Commit Versions of the `add` or `remove` action containing the row in all other cases.
-     I.e. readers must use the `firstCommitVersion` of the `add` or `remove` action for the file file containing the row.
+     I.e. readers must use the `defaultRowCommitVersion` of the `add` or `remove` action for the file file containing the row.
 - Readers cannot read Row IDs and Row Commit Versions while reading change data files from `cdc` actions.
 
 ## Writer Requirements for Row Tracking
@@ -861,8 +860,8 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
     The `highWaterMark` value of the `rowIdHighWaterMark` action must always be equal to or greater than the highest fresh Row ID committed so far.
     Writers can either commit the `rowIdHighWaterMark` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
 - Writer must assign fresh Row Commit Versions to all rows that they commit.
-  - Writers must set the `firstCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
-  - Writers must set the `firstCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `firstCommitVersion` of the last committed `add` action with the same `path`.
+  - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
+  - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
 
 Writers can enable Row Tracking by setting `delta.enableRowTracking` to `true` in the `configuration` of the table's `metaData`.
 This is only allowed if the following requirements are satisfied:
@@ -871,10 +870,10 @@ This is only allowed if the following requirements are satisfied:
   - The assigned column names must be unique. They must not be equal to the name of any other column in the table's schema.
     The assigned column names must remain unique in all future versions of the table.
     If [Column Mapping](#column-mapping) is enabled, then the assigned column name must be distinct from the physical column names of the table.
-- The `baseRowId` and `firstCommitVersion` fields are set for all active `add` actions in the version of the table in which `delta.enableRowTracking` is set to `true`.
-- If the `baseRowId` and `firstCommitVersion` fields are not set in some active `add` action in the table, then writers must first commit new `add` actions that set these fields to replace the `add` actions that do not have these fields set.
+- The `baseRowId` and `defaultRowCommitVersion` fields are set for all active `add` actions in the version of the table in which `delta.enableRowTracking` is set to `true`.
+- If the `baseRowId` and `defaultRowCommitVersion` fields are not set in some active `add` action in the table, then writers must first commit new `add` actions that set these fields to replace the `add` actions that do not have these fields set.
   This can be done in the commit that sets `delta.enableRowTracking` to `true` or in an earlier commit.
-  The assigned `baseRowId` and `firstCommitVersion` values must satisfy the same requirements as when assigning fresh Row IDs and fresh Row Commit Versions respectively.
+  The assigned `baseRowId` and `defaultRowCommitVersion` values must satisfy the same requirements as when assigning fresh Row IDs and fresh Row Commit Versions respectively.
 
 When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
 - Writers must assign stable Row IDs to all rows.
@@ -1386,7 +1385,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- stats: string
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
-|    |-- firstCommitVersion: long
+|    |-- defaultRowCommitVersion: long
 |    |-- partitionValues_parsed: struct
 |    |    |-- date: date
 |    |    |-- region: string
@@ -1462,7 +1461,7 @@ Checkpoint schema (just the `add` column):
 |    |-- stats: string
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
-|    |-- firstCommitVersion: long
+|    |-- defaultRowCommitVersion: long
 |    |-- partitionValues_parsed: struct
 |    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
 |    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string
