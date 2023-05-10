@@ -830,12 +830,6 @@ class DeltaAnalysis(session: SparkSession)
    */
   private def needsSchemaAdjustmentByName(query: LogicalPlan, targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2): Boolean = {
-    // TODO: update this to allow columns with default expressions to not be
-    //  specified (i.e. generated columns)
-    if (targetAttrs.length != query.output.length) {
-      throw QueryCompilationErrors.writeTableWithMismatchedColumnsError(
-        targetAttrs.length, query.output.length, query)
-    }
     insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
     val userSpecifiedNames = if (session.sessionState.conf.caseSensitiveAnalysis) {
       query.output.map(a => (a.name, a)).toMap
