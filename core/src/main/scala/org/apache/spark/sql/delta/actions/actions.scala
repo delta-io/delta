@@ -522,6 +522,10 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def getFileSize: Long
 
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  def estLogicalFileSize: Option[Long]
+
   /**
    * Return tag value if tags is not null and the tag present.
    */
@@ -700,9 +704,9 @@ case class AddFile(
   @JsonIgnore
   def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
-  /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
-  def estLogicalFileSize: Option[Long] = logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
+  override def estLogicalFileSize: Option[Long] =
+    logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
 
   /** Returns the ratio of the logical number of records to the total number of records. */
   @JsonIgnore
@@ -796,7 +800,6 @@ case class RemoveFile(
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
 
-  /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
   var estLogicalFileSize: Option[Long] = None
 
@@ -852,6 +855,9 @@ case class AddCDCFile(
 
   @JsonIgnore
   override def getFileSize: Long = size
+
+  @JsonIgnore
+  override def estLogicalFileSize: Option[Long] = None
 
   @JsonIgnore
   override def numLogicalRecords: Option[Long] = None
