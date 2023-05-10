@@ -73,7 +73,7 @@ lazy val core = (project in file("core"))
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    Antlr4 / antlr4Version:= "4.8",
+    Antlr4 / antlr4Version:= "4.9.3",
     Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
