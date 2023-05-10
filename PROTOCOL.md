@@ -797,7 +797,7 @@ Row IDs are stored in two ways:
 
 - **Materialized Row IDs** are stored in a column in the data files.
   This column is hidden from readers and writers, i.e. it is not part of the `schemaString` in the table's `metaData`.
-  Instead, the name of this column can be found in the value for the `delta.rowIds.physicalColumnName` key in the `configuration` of the table's `metaData` action.
+  Instead, the name of this column can be found in the value for the `delta.rowIds.materializedColumnName` key in the `configuration` of the table's `metaData` action.
   This column may contain `null` values meaning that the corresponding row has no materialized Row ID. This column may be omitted if all its values are `null` in the file.
   Materialized Row IDs provide a mechanism for writers to preserve stable Row IDs for rows that are updated or copied.
 
@@ -828,7 +828,7 @@ Commit Versions are stored in two ways:
 
 - **Materialized Row Commit Versions** are stored in a column in the data files.
   This column is hidden from readers and writers, i.e. it is not part of the `schemaString` in the table's `metaData`.
-  Instead, the name of this column can be found in the value for the `delta.rowCommitVersions.physicalColumnName` key in the `configuration` of the table's `metaData` action.
+  Instead, the name of this column can be found in the value for the `delta.rowCommitVersions.materializedColumnName` key in the `configuration` of the table's `metaData` action.
   This column may contain `null` values meaning that the corresponding row has no materialized Row Commit Version. This column may be omitted if all its values are `null` in the file.
   Materialized Row Commit Versions provide a mechanism for writers to preserve Row Commit Versions for rows that are copied.
 
@@ -839,11 +839,11 @@ The stable Row Commit Version of a row is equal to the materialized Row Commit V
 
 When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
 - When Row IDs are requested, readers must reconstruct stable Row IDs as follows:
-  1. Readers must use the materialized Row ID if the physical column determined by `delta.rowIds.physicalColumnName` is present in the data file and the column contains a non `null` value for a row.
+  1. Readers must use the materialized Row ID if the column determined by `delta.rowIds.materializedColumnName` is present in the data file and the column contains a non `null` value for a row.
   2. Otherwise, readers must use the default generated Row ID of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must add the index of the row in the file to the `baseRowId` of the `add` or `remove` action for the file containing the row.
 - When Row Commit Versions are requested, readers must reconstruct them as follows:
-  1. Readers must use the materialized Row Commit Versions if the physical column determined by `delta.lastChangedVersion.physicalColumnName` is present in the data file and the column contains a non `null` value for a row.
+  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.lastChangedVersion.materializedColumnName` is present in the data file and the column contains a non `null` value for a row.
   2. Otherwise, Readers must use the default generated Row Commit Versions of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must use the `defaultRowCommitVersion` of the `add` or `remove` action for the file file containing the row.
 - Readers cannot read Row IDs and Row Commit Versions while reading change data files from `cdc` actions.
@@ -866,7 +866,7 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
 Writers can enable Row Tracking by setting `delta.enableRowTracking` to `true` in the `configuration` of the table's `metaData`.
 This is only allowed if the following requirements are satisfied:
 - The feature `rowTracking` has been added to the `writerFeatures` field of a table's `protocol` action either in the same version of the table or in an earlier version of the table.
-- Physical column name for the materialized Row IDs and Row Commit Versions have been assigned and added to the `configuration` in the table's `metaData` action using the keys `delta.rowIds.physicalColumnName` and `delta.rowCommitVersions.physicalColumName` respectively.
+- The column name for the materialized Row IDs and Row Commit Versions have been assigned and added to the `configuration` in the table's `metaData` action using the keys `delta.rowIds.materializedColumnName` and `delta.rowCommitVersions.materializedColumnName` respectively.
   - The assigned column names must be unique. They must not be equal to the name of any other column in the table's schema.
     The assigned column names must remain unique in all future versions of the table.
     If [Column Mapping](#column-mapping) is enabled, then the assigned column name must be distinct from the physical column names of the table.
@@ -880,13 +880,13 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   - Stable Row IDs must be unique within a version of the table and must not be equal to the fresh Row IDs of other rows in the same version of the table.
   - Writers should preserve the stable Row IDs of rows that are updated or copied using materialized Row IDs.
     - The preserved stable Row ID (i.e. a stable Row ID that is not equal to the fresh Row ID of the same physical row) should be equal to the stable Row ID of the same logical row before it was updated or copied.
-    - Materialized Row IDs must be written to the physical column determined by `delta.rowIds.physicalColumnName` in the `configuration` of the table's `metaData` action.
-      The value in this physical column must be set to `NULL` for stable Row IDs that are not preserved.
+    - Materialized Row IDs must be written to the column determined by `delta.rowIds.materializedColumnName` in the `configuration` of the table's `metaData` action.
+      The value in this column must be set to `NULL` for stable Row IDs that are not preserved.
 - Writers must assign stable Row Commit Versions to all rows.
   - Writers should preserve the stable Row Commit Versions of rows that are copied (but not updated) using materialized Row Commit Versions.
     - The preserved stable Row Commit Version (i.e. a stable Row Commit Version that is not equal to the fresh Row Commit Version of the same physical row) should be equal to the stable Commit Version of the same logical row before it was copied.
-    - Materialized Row Commit Versions must be written to the physical column determined by `delta.rowCommitVersions.physicalColumnName` in the `configuration` of the table's `metaData` action.
-      The value in this physical column must be set to `NULL` for stable Row Commit Versions that are not preserved (i.e. that are equal to the fresh Row Commit Version).
+    - Materialized Row Commit Versions must be written to the column determined by `delta.rowCommitVersions.materializedColumnName` in the `configuration` of the table's `metaData` action.
+      The value in this column must be set to `NULL` for stable Row Commit Versions that are not preserved (i.e. that are equal to the fresh Row Commit Version).
 - Writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` whenever all the stable Row IDs of rows that are updated or copied and all the stable Row Commit Versions of rows that are copied were preserved.
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
