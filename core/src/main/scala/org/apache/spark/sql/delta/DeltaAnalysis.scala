@@ -485,6 +485,14 @@ class DeltaAnalysis(session: SparkSession)
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
+    case reorg@DeltaReorgTable(_@ResolvedTable(_, _, t, _)) =>
+      t match {
+        case table: DeltaTableV2 =>
+          DeltaReorgTableCommand(table)(reorg.predicates)
+        case _ =>
+          throw DeltaErrors.notADeltaTable(t.name())
+      }
+
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
