@@ -760,7 +760,7 @@ trait CDCReaderImpl extends DeltaLogging {
 
     val dfs = ListBuffer[DataFrame]()
     // Scan for masked rows as change_type = "insert",
-    // see explanation in [[generateFileActionWithInlineDv]].
+    // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceAddFiles.foreach { case (tableVersion, addFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
       dfs.append(
@@ -779,7 +779,7 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     // Scan for masked rows as change_type = "delete",
-    // see explanation in [[generateFileActionWithInlineDv]].
+    // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceRemoveFiles.foreach { case (tableVersion, removeFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
       dfs.append(
@@ -973,7 +973,7 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
-   * Return a map of file paths to IfNotContained row index filters, to keep all marked rows.
+   * Return a map of file paths to IfNotContained row index filters, to keep only the marked rows.
    */
   private def fileActionsToIfNotContainedRowIndexFilters(
       actions: Seq[FileAction]): Map[String, RowIndexFilterType] = {
