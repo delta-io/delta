@@ -65,11 +65,23 @@ trait DescribeDeltaHistorySuiteBase
   protected def checkLastOperation(
       basePath: String,
       expected: Seq[String],
-      columns: Seq[Column] = Seq($"operation", $"operationParameters.mode")): Unit = {
-    val df = io.delta.tables.DeltaTable.forPath(spark, basePath).history(1)
-    checkAnswer(df.select(columns: _*), Seq(Row(expected: _*)))
-    val df2 = spark.sql(s"DESCRIBE HISTORY delta.`$basePath` LIMIT 1")
-    checkAnswer(df2.select(columns: _*), Seq(Row(expected: _*)))
+      columns: Seq[Column] = Seq($"operation", $"operationParameters.mode"),
+      removeExpressionId: Boolean = false): Unit = {
+    var df = io.delta.tables.DeltaTable.forPath(spark, basePath).history(1)
+    df = df.select(columns: _*)
+    if (removeExpressionId) {
+      // As the expression ID is written as part of the column predicate (in the form of col#expId)
+      // but it is non-deterministic, we remove it here so that any comparison can just go against
+      // the column name
+      df = df.withColumn("predicate", regexp_replace(col("predicate"), "#[0-9]+", ""))
+    }
+    checkAnswer(df, Seq(Row(expected: _*)))
+    df = spark.sql(s"DESCRIBE HISTORY delta.`$basePath` LIMIT 1")
+    df = df.select(columns: _*)
+    if (removeExpressionId) {
+      df = df.withColumn("predicate", regexp_replace(col("predicate"), "#[0-9]+", ""))
+    }
+    checkAnswer(df, Seq(Row(expected: _*)))
   }
 
   protected def checkOperationMetrics(
@@ -487,7 +499,7 @@ trait DescribeDeltaHistorySuiteBase
     checkLastOperation(
       tempDir,
       Seq("DELETE", """["(id = 1)"]"""),
-      Seq($"operation", $"operationParameters.predicate"))
+      Seq($"operation", $"operationParameters.predicate"), removeExpressionId = true)
   }
 
   testWithFlag("old and new writers") {

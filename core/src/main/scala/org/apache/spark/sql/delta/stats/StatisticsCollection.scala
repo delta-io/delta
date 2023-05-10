@@ -432,7 +432,7 @@ object StatisticsCollection extends DeltaCommand {
       }
     }
 
-    txn.commit(newAddFiles, ComputeStats(predicates.map(_.sql)))
+    txn.commit(newAddFiles, ComputeStats(predicates))
   }
 
   /**

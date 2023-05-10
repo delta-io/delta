@@ -191,7 +191,7 @@ class OptimizeExecutor(
       val removedFiles = updates.collect { case r: RemoveFile => r }
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
-        val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql), zOrderByColumns)
+        val operation = DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
         commitAndRetry(txn, operation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
