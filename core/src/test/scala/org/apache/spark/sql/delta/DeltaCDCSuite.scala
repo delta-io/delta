@@ -963,6 +963,30 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
     }
   }
 
+  test("Repeated delete") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      spark.range(1, 10, 1, 1).write.format("delta").save(path)
+      sql(s"delete from delta.`$path` where id = 3")
+      sql(s"delete from delta.`$path` where id = 4")
+
+      checkCDCAnswer(
+        deltaLog,
+        cdcRead(new TablePath(path), StartingVersion("1"), EndingVersion("1")),
+        Row(3, "delete", 1) :: Nil)
+
+      checkCDCAnswer(
+        deltaLog,
+        cdcRead(new TablePath(path), StartingVersion("1"), EndingVersion("2")),
+        Row(3, "delete", 1) :: Row(4, "delete", 2) :: Nil)
+
+      checkCDCAnswer(
+        deltaLog,
+        cdcRead(new TablePath(path), StartingVersion("2"), EndingVersion("2")),
+        Row(4, "delete", 2) :: Nil)
+    }
+  }
 }
 
 class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite

@@ -773,7 +773,7 @@ trait CDCReaderImpl extends DeltaLogging {
             deltaLog.dataPath,
             snapshot,
             rowIndexFilters =
-              Some(fileActionsToRowIndexFilters(addFiles.toSeq, useIfContainedFilters = true))),
+              Some(fileActionsToIfNotContainedRowIndexFilters(addFiles.toSeq))),
 
           isStreaming))
     }
@@ -792,7 +792,7 @@ trait CDCReaderImpl extends DeltaLogging {
             deltaLog.dataPath,
             snapshot,
             rowIndexFilters =
-              Some(fileActionsToRowIndexFilters(removeFiles.toSeq, useIfContainedFilters = false))),
+              Some(fileActionsToIfNotContainedRowIndexFilters(removeFiles.toSeq))),
 
           isStreaming))
     }
@@ -973,16 +973,11 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
-   * Return a map of file paths to IfContained or IfNotContained row index filters, depending on
-   * the value of `indexFilterType`.
+   * Return a map of file paths to IfNotContained row index filters, to keep all marked rows.
    */
-  private def fileActionsToRowIndexFilters(
-      actions: Seq[FileAction],
-      useIfContainedFilters: Boolean): Map[String, RowIndexFilterType] = {
-    val indexFilterType =
-      if (useIfContainedFilters) RowIndexFilterType.IF_CONTAINED
-      else RowIndexFilterType.IF_NOT_CONTAINED
-    actions.map(f => f.path -> indexFilterType).toMap
+  private def fileActionsToIfNotContainedRowIndexFilters(
+      actions: Seq[FileAction]): Map[String, RowIndexFilterType] = {
+    actions.map(f => f.path -> RowIndexFilterType.IF_NOT_CONTAINED).toMap
   }
 
   /**
