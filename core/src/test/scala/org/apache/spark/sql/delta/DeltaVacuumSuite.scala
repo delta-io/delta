@@ -38,6 +38,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -198,7 +199,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
-        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
+        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))),
+          Delete(Seq(Literal.TrueLiteral)))
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
