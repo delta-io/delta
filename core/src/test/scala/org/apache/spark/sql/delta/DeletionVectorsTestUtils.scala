@@ -172,6 +172,14 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     txn.commit(actions, Truncate())
   }
 
+  protected def getFileActionsInLastVersion(log: DeltaLog): (Seq[AddFile], Seq[RemoveFile]) = {
+    val version = log.update().version
+    val allFiles = log.getChanges(version).toSeq.head._2
+    val add = allFiles.collect { case a: AddFile => a }
+    val remove = allFiles.collect { case r: RemoveFile => r }
+    (add, remove)
+  }
+
   protected def serializeRoaringBitmapArrayWithDefaultFormat(
       dv: RoaringBitmapArray): Array[Byte] = {
     val serializationFormat = RoaringBitmapArrayFormat.Portable

@@ -562,14 +562,6 @@ class DeletionVectorsSuite extends QueryTest
       Seq((count, sum)).toDF())
   }
 
-  private def getFileActionsInLastVersion(log: DeltaLog): (Seq[AddFile], Seq[RemoveFile]) = {
-    val version = log.update().version
-    val allFiles = log.getChanges(version).toSeq.head._2
-    val add = allFiles.collect { case a: AddFile => a }
-    val remove = allFiles.collect { case r: RemoveFile => r }
-    (add, remove)
-  }
-
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()
     assert(optimizedPlan.contains(expected), s"Plan is missing `$expected`: $optimizedPlan")
