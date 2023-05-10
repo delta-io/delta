@@ -220,6 +220,31 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
         );
     }
 
+    @Test
+    public void canDisableDeltaCheckpointing() throws Exception {
+        final org.apache.hadoop.conf.Configuration hadoopConf =
+            new org.apache.hadoop.conf.Configuration();
+        hadoopConf.set("io.delta.standalone.checkpointing.enabled", "false");
+
+        DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+
+        StreamExecutionEnvironment env = getTestStreamEnv(false); // no failover
+        env.addSource(new CheckpointCountingSource(1_000, 12))
+            .setParallelism(1)
+            .sinkTo(DeltaSinkTestUtils.createDeltaSink(deltaTablePath, false, hadoopConf))
+            .setParallelism(3);
+
+        StreamGraph streamGraph = env.getStreamGraph();
+        try (MiniCluster miniCluster = DeltaSinkTestUtils.getMiniCluster()) {
+            miniCluster.start();
+            miniCluster.executeJobBlocking(streamGraph.getJobGraph());
+        }
+
+        List<String> deltaCheckpointFiles = getDeltaCheckpointFiles(deltaTablePath);
+
+        assertThat("There should be no delta checkpoint written", deltaCheckpointFiles.isEmpty());
+    }
+
     /**
      * This test verifies if Flink Delta Source created Delta checkpoint after 10 commits.
      * This tests produces records using {@link CheckpointCountingSource} until at most 12 Flink

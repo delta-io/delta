@@ -37,4 +37,10 @@ private[internal] object StandaloneHadoopConf {
    */
   val PARTITION_FILTER_RECORD_CACHING_KEY =
     "io.delta.standalone.partitionFilterRecordCaching.enabled"
+
+  /**
+   * When set to true, Delta Standalone will checkpoint as normal. When set to false, Delta
+   * Standalone will explicitly skip checkpointing.
+   */
+  val CHECKPOINTING_ENABLED = "io.delta.standalone.checkpointing.enabled"
 }

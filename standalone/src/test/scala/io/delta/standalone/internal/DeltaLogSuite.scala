@@ -777,6 +777,47 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       // useless asserting the protocol, since they are the same
     }
   }
+
+  test("skips checkpointing when flag set to false") {
+    withTempDir { dir =>
+      def getFile(path: Path): File = {
+        new File(path.toString.stripPrefix("file:"))
+      }
+
+      val conf1 = new Configuration()
+      val log1 = DeltaLogImpl.forTable(conf1, dir.getCanonicalPath)
+
+      (0 to 10).foreach { i =>
+        val txn = log1.startTransaction()
+        if (i == 0) txn.updateMetadata(metadata)
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        txn.commit(files.map(ConversionUtils.convertAction).asJava, manualUpdate, engineInfo)
+      }
+
+      // writes out checkpoint as normal
+      assert(log1.lastCheckpoint.exists(_.version == 10))
+      assert(getFile(FileNames.deltaFile(log1.logPath, 10)).exists())
+      assert(getFile(FileNames.checkpointFileSingular(log1.logPath, 10)).exists())
+
+      val conf2 = new Configuration()
+      conf2.set("io.delta.standalone.checkpointing.enabled", "false")
+      val log2 = DeltaLogImpl.forTable(conf2, dir.getCanonicalPath)
+      (10 to 20).foreach { i =>
+        val txn = log2.startTransaction()
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        txn.commit(files.map(ConversionUtils.convertAction).asJava, manualUpdate, engineInfo)
+      }
+
+      // still the old one!
+      assert(log2.lastCheckpoint.exists(_.version == 10))
+
+      // new json file exists
+      assert(getFile(FileNames.deltaFile(log2.logPath, 20)).exists())
+
+      // new checkpoint file does NOT exist
+      assert(!getFile(FileNames.checkpointFileSingular(log2.logPath, 20)).exists())
+    }
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////

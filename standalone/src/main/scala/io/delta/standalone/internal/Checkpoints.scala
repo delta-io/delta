@@ -30,6 +30,7 @@ import org.apache.parquet.hadoop.metadata.CompressionCodecName
 import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
+import io.delta.standalone.internal.sources.StandaloneHadoopConf.CHECKPOINTING_ENABLED
 import io.delta.standalone.internal.util.FileNames._
 import io.delta.standalone.internal.util.JsonUtils
 
@@ -119,6 +120,10 @@ private[internal] trait Checkpoints {
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
    */
   def checkpoint(snapshotToCheckpoint: SnapshotImpl): Unit = {
+    if (!hadoopConf.getBoolean(CHECKPOINTING_ENABLED, true)) {
+      logInfo(s"Skipping writing Delta checkpoint for version ${snapshotToCheckpoint.version}")
+      return
+    }
     if (snapshotToCheckpoint.version < 0) {
       throw DeltaErrors.checkpointNonExistTable(dataPath)
     }
