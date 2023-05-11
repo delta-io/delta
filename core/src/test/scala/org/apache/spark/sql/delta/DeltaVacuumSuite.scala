@@ -38,6 +38,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -198,7 +199,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
-        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
+        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))),
+          Delete(Seq(Literal.TrueLiteral)))
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
@@ -831,12 +833,10 @@ class DeltaVacuumSuite
   // Helper method to remove the DVs in Delta table and rewrite the data files
   def purgeDVs(tableName: String): Unit = {
     withSQLConf(
-      DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.0001",
-      DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> "2",
       // Set the max file size to low so that we always rewrite the single file without DVs
       // and not combining with other data files.
       DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "2") {
-      spark.sql(s"OPTIMIZE $tableName")
+      spark.sql(s"REORG TABLE $tableName APPLY (PURGE)")
     }
   }
 
@@ -861,12 +861,14 @@ class DeltaVacuumSuite
           assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 5, dvFiles = 1, dataFiles = 5)
 
           // Delete all rows from the first file. An ephemeral DV will still be created.
+          Thread.sleep(1000) // Ensure it's been at least 1000 ms since V1
           spark.sql(s"DELETE FROM $tableName WHERE id < 10")
           val timestampV2 = deltaLog.update().timestamp
           assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 2, dataFiles = 5)
           val expectedAnswerV2 = Seq.range(0, 50).filterNot(deletedRows1.contains).filterNot(_ < 10)
 
           // Delete 1 more row from each file.
+          Thread.sleep(1000) // Ensure it's been at least 1000 ms since V2
           val deletedRows2 = Seq(11, 21, 31, 41)
           val deletedRowsStr2 = deletedRows2.mkString("(", ",", ")")
           spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr2")
@@ -875,6 +877,7 @@ class DeltaVacuumSuite
           val expectedAnswerV3 = expectedAnswerV2.filterNot(deletedRows2.contains)
 
           // Delete DVs by rewriting the data files with DVs.
+          Thread.sleep(1000) // Ensure it's been at least 1000 ms since V3
           purgeDVs(tableName)
 
           val numFilesAfterPurge = 4
@@ -889,13 +892,14 @@ class DeltaVacuumSuite
             dataFiles = 9)
 
           // Run VACUUM @ V1.
-          clock.setTime(timestampV1 + TimeUnit.HOURS.toMillis(1))
+          // We need to add 1000 ms for local filesystems that only write modificationTimes to the s
+          clock.setTime(timestampV1 + TimeUnit.HOURS.toMillis(1) + 1000)
           VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
           // Run VACUUM @ V2. It should delete the ephemeral DV and the removed Parquet file.
-          clock.setTime(timestampV2 + TimeUnit.HOURS.toMillis(1))
+          clock.setTime(timestampV2 + TimeUnit.HOURS.toMillis(1) + 1000)
           VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 2,
             dataFiles = 8)
@@ -903,7 +907,7 @@ class DeltaVacuumSuite
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 2"), expectedAnswerV2.toDF)
 
           // Run VACUUM @ V3. It should delete the persistent DVs from V1.
-          clock.setTime(timestampV3 + TimeUnit.HOURS.toMillis(1))
+          clock.setTime(timestampV3 + TimeUnit.HOURS.toMillis(1) + 1000)
           VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 1,
             dataFiles = 8)
@@ -911,7 +915,7 @@ class DeltaVacuumSuite
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 3"), expectedAnswerV3.toDF)
 
           // Run VACUUM @ V4. It should delete the Parquet files and DVs of V3.
-          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1))
+          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
           VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 0,
             dataFiles = 4)
@@ -919,7 +923,7 @@ class DeltaVacuumSuite
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 4"), expectedAnswerV3.toDF)
 
           // Run VACUUM with zero retention period. It should not delete anything.
-          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1))
+          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
           VacuumCommand.gc(spark, deltaLog, retentionHours = Some(0), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 0,
             dataFiles = 4)

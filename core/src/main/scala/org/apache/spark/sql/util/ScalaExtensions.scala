@@ -35,6 +35,12 @@ object ScalaExtensions {
      */
     def when[A](cond: Boolean)(a: => A): Option[A] = if (cond) Some(a) else None
 
+    /**
+     * When a given condition is false, evaluates the a argument and returns Some(a).
+     * When the condition is true, a is not evaluated and None is returned.
+     */
+    def whenNot[A](cond: Boolean)(a: => A): Option[A] = if (!cond) Some(a) else None
+
     /** Sum up all the `options`, substituting `default` for each `None`. */
     def sum[N : Numeric](default: N)(options: Option[N]*): N =
       options.map(_.getOrElse(default)).sum

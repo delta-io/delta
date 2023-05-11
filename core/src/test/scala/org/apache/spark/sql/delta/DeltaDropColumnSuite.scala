@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
 
@@ -355,5 +355,57 @@ class DeltaDropColumnSuite extends QueryTest
       assert(e.getMessage.contains("Dropping partition columns (a) is not allowed"))
     }
   }
+
+
+  /**
+   * Covers dropping a nested field using the ALTER TABLE command.
+   * @param initialColumnType Type of the single column used to create the initial test table.
+   * @param fieldToDrop       Name of the field to drop from the initial column type.
+   * @param updatedColumnType Expected type of the single column after dropping the nested field.
+   */
+  def testDropNestedField(testName: String)(
+      initialColumnType: String,
+      fieldToDrop: String,
+      updatedColumnType: String): Unit =
+    testColumnMapping(s"ALTER TABLE DROP COLUMNS - nested $testName") { mode =>
+      withTempDir { dir =>
+        withTable("delta_test") {
+          sql(
+            s"""
+               |CREATE TABLE delta_test (data $initialColumnType)
+               |USING delta
+               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '$mode')
+               |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
+
+          val expectedInitialType = initialColumnType.filterNot(_.isWhitespace)
+          val expectedUpdatedType = updatedColumnType.filterNot(_.isWhitespace)
+          val fieldName = s"data.${fieldToDrop}"
+
+          def columnType: DataFrame =
+            sql("DESCRIBE TABLE delta_test")
+              .filter("col_name = 'data'")
+              .select("data_type")
+          checkAnswer(columnType, Row(expectedInitialType))
+
+          sql(s"ALTER TABLE delta_test DROP COLUMNS ($fieldName)")
+          checkAnswer(columnType, Row(expectedUpdatedType))
+        }
+      }
+    }
+
+  testDropNestedField("struct in map key")(
+    initialColumnType = "map<struct<a: int, b: string>, int>",
+    fieldToDrop = "key.b",
+    updatedColumnType = "map<struct<a: int>, int>")
+
+  testDropNestedField("struct in map value")(
+    initialColumnType = "map<int, struct<a: int, b: string>>",
+    fieldToDrop = "value.b",
+    updatedColumnType = "map<int, struct<a: int>>")
+
+  testDropNestedField("struct in array")(
+    initialColumnType = "array<struct<a: int, b: string>>",
+    fieldToDrop = "element.b",
+    updatedColumnType = "array<struct<a: int>>")
 
 }

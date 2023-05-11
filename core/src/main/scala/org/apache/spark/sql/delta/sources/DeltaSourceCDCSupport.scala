@@ -224,7 +224,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt) =
-          filterCDCActions(actions, version, verifyMetadataAction && !trackingSchemaChange)
+          filterCDCActions(
+            actions, version, fromVersion, endOffset.map(_.reservoirVersion),
+            verifyMetadataAction && !trackingSchemaChange)
         val itr =
             Iterator(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
               getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
@@ -302,6 +304,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
   private def filterCDCActions(
       actions: Seq[Action],
       version: Long,
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
       verifyMetadataAction: Boolean = true): (Seq[FileAction], Boolean, Option[Metadata]) = {
     var shouldSkipIndexedFile = false
     var metadataAction: Option[Metadata] = None
@@ -318,7 +322,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           false
         case m: Metadata =>
           if (verifyMetadataAction) {
-            checkReadIncompatibleSchemaChanges(m, version)
+            checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
           }
           assert(metadataAction.isEmpty,
             "Should not encounter two metadata actions in the same commit")

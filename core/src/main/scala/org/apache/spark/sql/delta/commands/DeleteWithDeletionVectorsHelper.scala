@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBi
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
@@ -171,23 +172,24 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
 
     val dvUpdates = notFullyRemovedFiles.map { fileWithDVInfo =>
       fileWithDVInfo.fileLogEntry.removeRows(
-        deletionVector = fileWithDVInfo.newDeletionVector
+        deletionVector = fileWithDVInfo.newDeletionVector,
+        updateStats = false
       )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    val (filesWithDeletedRows, newFilesWithDVs) = dvUpdates.unzip
     fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
   }
 
   /** Fetch stats for `addFiles`. */
   private def getActionsWithStats(
       spark: SparkSession,
-      addFiles: Seq[AddFile],
+      addFilesWithNewDvs: Seq[AddFile],
       snapshot: Snapshot): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
     val statsColName = snapshot.getBaseStatsColumnName
-    val selectionCols = Seq(col("path"), col(statsColName))
+    val selectionPathAndStatsCols = Seq(col("path"), col(statsColName))
+    val addFilesWithNewDvsDf = addFilesWithNewDvs.toDF(spark)
 
     // These files originate from snapshot.filesForScan which resets column statistics.
     // Since these object don't carry stats and tags, if we were to use them as result actions of
@@ -195,13 +197,52 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     // we join the list of files with DVs with the log (allFiles) to retrieve statistics. This is
     // expected to have better performance than supporting full stats retrieval
     // in snapshot.filesForScan because it only affects a subset of the scanned files.
-    val allFiles = snapshot.withStats.select(selectionCols: _*)
-    val addFilesDf = addFiles.toDF(spark).drop("stats")
-    val addFilesWithStats = addFilesDf.join(allFiles, "path")
 
-    // Every operation that adds DVs needs to set tightBounds to false.
-    snapshot
-      .updateStatsToWideBounds(addFilesWithStats, statsColName)
+    // Find the current metadata with stats for all files with new DV
+    val addFileWithStatsDf = snapshot.withStats
+      .join(addFilesWithNewDvsDf.select("path"), "path")
+
+    // Update the existing stats to set the tightBounds to false and also set the appropriate
+    // null count. We want to set the bounds before the AddFile has DV descriptor attached.
+    // Attaching the DV descriptor here, causes wrong logical records computation in
+    // `updateStatsToWideBounds`.
+    val addFilesWithWideBoundsDf = snapshot
+      .updateStatsToWideBounds(addFileWithStatsDf, statsColName)
+
+    val (filesWithNoStats, filesWithExistingStats) = {
+      // numRecords is the only stat we really have to guarantee.
+      // If the others are missing, we do not need to fetch them.
+      addFilesWithWideBoundsDf.as[AddFile].collect().toSeq
+        .partition(_.numPhysicalRecords.isEmpty)
+    }
+
+    // If we encounter files with no stats we fetch the stats from the parquet footer.
+    // Files with persistent DVs *must* have (at least numRecords) stats according to the
+    // Delta spec.
+    val filesWithFetchedStats =
+      if (filesWithNoStats.nonEmpty) {
+        StatsCollectionUtils.computeStats(spark,
+          conf = snapshot.deltaLog.newDeltaHadoopConf(),
+          dataPath = snapshot.deltaLog.dataPath,
+          addFiles = filesWithNoStats.toDS(spark),
+          columnMappingMode = snapshot.metadata.columnMappingMode,
+          dataSchema = snapshot.dataSchema,
+          statsSchema = snapshot.statsSchema,
+          setBoundsToWide = true)
+          .collect()
+          .toSeq
+      } else {
+        Seq.empty
+      }
+
+    val allAddFilesWithUpdatedStats =
+      (filesWithExistingStats ++ filesWithFetchedStats).toSeq.toDF(spark)
+
+    // Now join the allAddFilesWithUpdatedStats with addFilesWithNewDvs
+    // so that the updated stats are joined with the new DV info
+    addFilesWithNewDvsDf.drop("stats")
+      .join(
+        allAddFilesWithUpdatedStats.select(selectionPathAndStatsCols: _*), "path")
       .as[AddFile]
       .collect()
       .toSeq

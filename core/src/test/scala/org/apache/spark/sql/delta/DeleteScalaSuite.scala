@@ -47,34 +47,18 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
   }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
-
-    def parse(tableNameWithAlias: String): (String, Option[String]) = {
-      tableNameWithAlias.split(" ").toList match {
-        case tableName :: Nil => tableName -> None // just table name
-        case tableName :: alias :: Nil => // tablename SPACE alias OR tab SPACE lename
-          val ordinary = (('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9')).toSet
-          if (!alias.forall(ordinary.contains(_))) {
-            (tableName + " " + alias) -> None
-          } else {
-            tableName -> Some(alias)
-          }
-        case _ =>
-          fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
+    import DeltaTestUtils.TableIdentifierOrPath
+    val deltaTable: io.delta.tables.DeltaTable =
+      DeltaTestUtils.getTableIdentifierOrPath(target) match {
+        case TableIdentifierOrPath.Identifier(id, optionalAlias) =>
+          val table = DeltaTableTestUtils.createTable(
+            spark.table(id.unquotedString),
+            DeltaLog.forTable(spark, id.unquotedString))
+          optionalAlias.map(table.as(_)).getOrElse(table)
+        case TableIdentifierOrPath.Path(path, optionalAlias) =>
+          val table = io.delta.tables.DeltaTable.forPath(spark, path)
+          optionalAlias.map(table.as(_)).getOrElse(table)
       }
-    }
-
-    val deltaTable: io.delta.tables.DeltaTable = {
-      val (tableNameOrPath, optionalAlias) = parse(target)
-      val isPath: Boolean = tableNameOrPath.startsWith("delta.")
-      val table = if (isPath) {
-        val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
-        io.delta.tables.DeltaTable.forPath(spark, path)
-      } else {
-        DeltaTableTestUtils.createTable(spark.table(tableNameOrPath),
-          DeltaLog.forTable(spark, tableNameOrPath))
-      }
-      optionalAlias.map(table.as(_)).getOrElse(table)
-    }
 
     if (where != null) {
       deltaTable.delete(where)

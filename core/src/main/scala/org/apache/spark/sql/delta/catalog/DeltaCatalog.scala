@@ -97,7 +97,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case "option.path" => false
       case _ => true
     }.toMap
-    val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
+    val (
+      partitionColumns, maybeBucketSpec
+      ) = convertTransforms(partitions)
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -361,7 +363,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
   // Copy of V2SessionCatalog.convertTransforms, which is private.
-  private def convertTransforms(partitions: Seq[Transform]): (Seq[String], Option[BucketSpec]) = {
+  private def convertTransforms(partitions: Seq[Transform]): (
+    Seq[String], Option[BucketSpec]
+    ) = {
     val identityCols = new mutable.ArrayBuffer[String]
     var bucketSpec = Option.empty[BucketSpec]
 
@@ -377,7 +381,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
     }
 
-    (identityCols.toSeq, bucketSpec)
+    (
+      identityCols.toSeq, bucketSpec
+    )
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */

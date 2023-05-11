@@ -139,7 +139,6 @@ class OptimisticTransaction
     (implicit override val clock: Clock)
   extends OptimisticTransactionImpl
   with DeltaLogging {
-  DeletionVectorUtils.assertDeletionVectorsNotReadable(spark, snapshot.metadata, snapshot.protocol)
 
   /** Creates a new OptimisticTransaction.
    *
@@ -327,6 +326,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var checkUnsupportedDataType: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
+  // Some operations (e.g. stats collection) may set files with DVs back to tight bounds.
+  // In that case they need to skip this check.
+  protected var checkDeletionVectorFilesHaveWideBounds: Boolean = true
+  /**
+   * Disable the check that ensures that all files with DVs added have tightBounds set to false.
+   *
+   * This is necessary when recomputing the stats on a table with DVs.
+   */
+  def disableDeletionVectorFilesHaveWideBoundsCheck(): Unit = {
+    checkDeletionVectorFilesHaveWideBounds = false
+  }
 
 
   /**
@@ -552,7 +562,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadataTmp = RowId.verifyAndUpdateMetadata(
       spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
-    DeletionVectorUtils.assertDeletionVectorsNotEnabled(spark, newMetadataTmp, protocol)
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
@@ -641,6 +650,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val deletionVectorDisallowedForAddFiles =
       commitCheckEnabled && !isComputeStatsOperation && !deletionVectorCreationAllowed
 
+    val addFileMustHaveWideBounds = deletionVectorCreationAllowed &&
+      checkDeletionVectorFilesHaveWideBounds
+
     action => action match {
       case a: AddFile =>
         if (deletionVectorDisallowedForAddFiles && a.deletionVector != null) {
@@ -650,6 +662,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         // 1. All files with DVs must have `stats` with `numRecords`.
         if (a.deletionVector != null && (a.stats == null || a.numPhysicalRecords.isEmpty)) {
           throw DeltaErrors.addFileWithDVsMissingNumRecordsException
+        }
+
+        // 2. All operations that add new DVs should always turn bounds to wide.
+        //    Operations that only update files with existing DVs may opt-out from this rule
+        //    via `disableDeletionVectorFilesHaveWideBoundsCheck()`.
+        //    (e.g. stats collection, metadata-only updates.)
+        //    Note, the absence of the tightBounds column when DVs exist is also an illegal state.
+        if (addFileMustHaveWideBounds &&
+            a.deletionVector != null &&
+            // Extra inversion to also catch absent `tightBounds`.
+            !a.tightBounds.contains(false)) {
+          throw DeltaErrors.addFileWithDVsAndTightBoundsException()
         }
       case _ => // Not an AddFile, nothing to do.
     }

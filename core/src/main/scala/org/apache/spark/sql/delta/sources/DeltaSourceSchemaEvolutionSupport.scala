@@ -97,9 +97,11 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
    * This should only be used for the first write to the schema log, after then, schema tracking
    * should not rely on this state any more.
    */
-  protected def readyToInitializeSchemaTracking: Boolean =
+  protected def readyToInitializeSchemaTrackingUponProvided: Boolean =
     !forceEnableStreamingReadOnColumnMappingSchemaChanges &&
-      schemaTrackingLog.exists(_.getCurrentTrackedSchema.isEmpty)
+      schemaTrackingLog.exists { log =>
+        log.getCurrentTrackedSchema.isEmpty && log.initSchemaLogEagerly
+      }
 
   /**
    * This is called from getFileChangesWithRateLimit() during latestOffset().
@@ -178,7 +180,7 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
    */
   private def resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(
       startVersion: Long, endVersion: Long): (Long, Metadata) = {
-    assert(readyToInitializeSchemaTracking)
+    assert(readyToInitializeSchemaTrackingUponProvided)
     val schemaChanges = collectMetadataActions(startVersion, endVersion)
     // If no schema changes in between, just serve the start version
     val startSchemaMetadata = getSnapshotFromDeltaLog(startVersion).metadata
@@ -249,26 +251,24 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
    *                           end offset, we need to double verify to ensure no read-incompatible
    *                           within the batch range.
    */
-  protected def initializeSchemaTrackingAndExitStreamIfNeeded(
+  protected def initializeSchemaTrackingAndExitStream(
       batchStartVersion: Long, batchEndVersionOpt: Option[Long] = None): Unit = {
     // If possible, initialize the schema log with the desired start schema instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
     // schema log.
-    if (readyToInitializeSchemaTracking) {
-      val (version, metadata) = batchEndVersionOpt.map(
-        resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(batchStartVersion, _))
-        .getOrElse {
-          val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
-          (startSnapshot.version, startSnapshot.metadata)
-        }
-      val schemaToUse = PersistedSchema(tableId, version, metadata.schema, metadata.partitionSchema)
-      // Always initialize the schema log
-      schemaTrackingLog.get.evolveSchema(schemaToUse)
-      if (hasSchemaChangeComparedToStreamSchema(metadata.schema)) {
-        // But trigger schema evolution exception when there's a difference
-        throw DeltaErrors.streamingSchemaEvolutionException(schemaToUse.dataSchema)
+    val (version, metadata) = batchEndVersionOpt.map(
+      resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(batchStartVersion, _))
+      .getOrElse {
+        val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
+        (startSnapshot.version, startSnapshot.metadata)
       }
+    val schemaToUse = PersistedSchema(tableId, version, metadata.schema, metadata.partitionSchema)
+    // Always initialize the schema log
+    schemaTrackingLog.get.evolveSchema(schemaToUse)
+    if (hasSchemaChangeComparedToStreamSchema(metadata.schema)) {
+      // But trigger schema evolution exception when there's a difference
+      throw DeltaErrors.streamingSchemaEvolutionException(schemaToUse.dataSchema)
     }
   }
 

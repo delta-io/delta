@@ -235,6 +235,10 @@ case class WriteIntoDelta(
       } else options.isDynamicPartitionOverwriteMode
     }
 
+    if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {
+      throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()
+    }
+
     // Validate partition predicates
     var containsDataFilters = false
     val replaceWhere = options.replaceWhere.flatMap { replace =>

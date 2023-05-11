@@ -228,6 +228,22 @@ object DeletionVectorDescriptor {
       cardinality = cardinality)
 
   /**
+   * This produces the same output as [[DeletionVectorDescriptor.uniqueId]] but as a column
+   * expression, so it can be used directly in a Spark query.
+   */
+  def uniqueIdExpression(deletionVectorCol: Column): Column = {
+    when(deletionVectorCol("offset").isNotNull,
+        concat(
+          deletionVectorCol("storageType"),
+          deletionVectorCol("pathOrInlineDv"),
+          lit('@'),
+          deletionVectorCol("offset")))
+      .otherwise(concat(
+        deletionVectorCol("storageType"),
+        deletionVectorCol("pathOrInlineDv")))
+  }
+
+  /**
    * Return the unique path under `parentPath` that is based on `id`.
    *
    * Optionally, prepend a `prefix` to the name.

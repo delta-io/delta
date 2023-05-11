@@ -450,7 +450,12 @@ object DeltaFileOperations extends DeltaLogging {
     files.mapPartitions { fileList =>
       fileList.map { addFile =>
         val fileSource = DeltaFileOperations.absolutePath(qualifiedTablePath, addFile.path)
+        if (addFile.deletionVector != null) {
+          val absoluteDV = addFile.deletionVector.copyWithAbsolutePath(new Path(qualifiedTablePath))
+          addFile.copy(path = fileSource.toUri.toString, deletionVector = absoluteDV)
+        } else {
           addFile.copy(path = fileSource.toUri.toString)
+        }
       }
     }
   }
