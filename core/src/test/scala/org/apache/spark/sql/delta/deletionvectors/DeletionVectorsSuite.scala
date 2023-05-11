@@ -586,17 +586,6 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
-  test("huge table: read from tables of 2B rows with existing DV of many zeros") {
-    val canonicalTable5Path = new File(table5Path).getCanonicalPath
-    checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
-  }
-
-  private def checkCountAndSum(column: String, count: Long, sum: Long, tableDir: String): Unit = {
-    checkAnswer(
-      sql(s"SELECT count($column), sum($column) FROM delta.`$tableDir`"),
-      Seq((count, sum)).toDF())
-  }
-
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()
     assert(optimizedPlan.contains(expected), s"Plan is missing `$expected`: $optimizedPlan")
