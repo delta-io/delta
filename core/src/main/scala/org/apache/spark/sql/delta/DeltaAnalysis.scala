@@ -427,10 +427,12 @@ class DeltaAnalysis(session: SparkSession)
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
           case Some(DeltaFullTable(index)) =>
+            DeltaUpdateTable(newTable, cols, expressions, condition)
           case o =>
-            throw DeltaErrors.notADeltaSourceException("UPDATE", o)
+            // not a Delta table
+            u
         }
-      DeltaUpdateTable(newTable, cols, expressions, condition)
+
 
     case merge: MergeIntoTable if merge.childrenResolved =>
       val matchedActions = merge.matchedActions.map {
