@@ -28,7 +28,7 @@ import org.apache.spark.sql.Column
  *
  * Note that the 'value' passed in for each of the interface should be [[SkippingEligibleLiteral]].
  */
-private [stats] trait DataSkippingPredicateBuilder {
+private [sql] trait DataSkippingPredicateBuilder {
   /** The predicate should match any file which contains the requested point. */
   def equalTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate]

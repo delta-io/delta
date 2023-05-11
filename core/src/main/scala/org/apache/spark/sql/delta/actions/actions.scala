@@ -34,6 +34,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
+import com.fasterxml.jackson.databind.node.ObjectNode
 
 import org.apache.hadoop.fs.Path
 
@@ -528,6 +529,10 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def getFileSize: Long
 
+  /** Returns the approx size of the remaining records after excluding the deleted ones. */
+  @JsonIgnore
+  def estLogicalFileSize: Option[Long]
+
   /**
    * Return tag value if tags is not null and the tag present.
    */
@@ -589,6 +594,7 @@ case class AddFile(
    */
   def removeRows(
         deletionVector: DeletionVectorDescriptor,
+        updateStats: Boolean,
         dataChange: Boolean = true): (AddFile, RemoveFile) = {
     // Verify DV does not contain any invalid row indexes. Note, maxRowIndex is optional
     // and not all commands may set it when updating DVs.
@@ -605,7 +611,11 @@ case class AddFile(
     }
     val withUpdatedDV =
       this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
-    val addFile = withUpdatedDV
+    val addFile = if (updateStats) {
+      withUpdatedDV.withoutTightBoundStats
+    } else {
+      withUpdatedDV
+    }
     val removeFile = this.removeWithTimestamp(dataChange = dataChange)
     (addFile, removeFile)
   }
@@ -619,6 +629,22 @@ case class AddFile(
   @JsonIgnore
   def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
 
+  /** Update stats to have tightBounds = false, if file has any stats. */
+  def withoutTightBoundStats: AddFile = {
+    if (stats == null || stats.isEmpty) {
+      this
+    } else {
+      val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
+      if (node.has("tightBounds") &&
+          !node.get("tightBounds").asBoolean(true)) {
+        this
+      } else {
+        node.put("tightBounds", false)
+        val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
+        this.copy(stats = newStatsString)
+      }
+    }
+  }
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
@@ -643,8 +669,8 @@ case class AddFile(
   override def getFileSize: Long = size
 
   private case class ParsedStatsFields(
-      numLogicalRecords: Option[Long]
-  )
+      numLogicalRecords: Option[Long],
+      tightBounds: Option[Boolean])
 
   /**
    * Before serializing make sure deletionVector.maxRowIndex is not defined.
@@ -667,10 +693,11 @@ case class AddFile(
         Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
           .map(_ - numDeletedRecords)
       } else None
+      val tightBounds = if (node.has("tightBounds")) {
+        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
+      } else None
 
-      Some(ParsedStatsFields(
-        numLogicalRecords
-      ))
+      Some(ParsedStatsFields(numLogicalRecords, tightBounds))
     }
   }
 
@@ -687,9 +714,9 @@ case class AddFile(
   @JsonIgnore
   def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
-  /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
-  def estLogicalFileSize: Option[Long] = logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
+  override def estLogicalFileSize: Option[Long] =
+    logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
 
   /** Returns the ratio of the logical number of records to the total number of records. */
   @JsonIgnore
@@ -701,6 +728,10 @@ case class AddFile(
   /** Returns the ratio of number of deleted records to the total number of records. */
   @JsonIgnore
   def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
+
+  @JsonIgnore
+  @transient
+  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 object AddFile {
@@ -781,7 +812,6 @@ case class RemoveFile(
   @JsonIgnore
   var numLogicalRecords: Option[Long] = None
 
-  /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
   var estLogicalFileSize: Option[Long] = None
 
@@ -837,6 +867,9 @@ case class AddCDCFile(
 
   @JsonIgnore
   override def getFileSize: Long = size
+
+  @JsonIgnore
+  override def estLogicalFileSize: Option[Long] = None
 
   @JsonIgnore
   override def numLogicalRecords: Option[Long] = None

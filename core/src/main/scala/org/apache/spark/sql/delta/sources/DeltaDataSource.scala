@@ -244,6 +244,7 @@ class DeltaDataSource
       sourceSnapshot: Snapshot,
       parameters: Map[String, String]): Option[DeltaSourceSchemaTrackingLog] = {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
+
     Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
       .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
       .map { schemaTrackingLocation =>
@@ -253,14 +254,10 @@ class DeltaDataSource
           throw new UnsupportedOperationException(
             "Schema tracking location is not supported for Delta streaming source")
         }
-        if (Option(options.get(DeltaOptions.CDC_READ_OPTION)).exists(_.toBoolean)) {
-          // TODO: remove once we support CDC streaming with schema log
-          throw new UnsupportedOperationException(
-            "Reading change data feed and streaming is not supported with schema tracking log")
-        }
         DeltaSourceSchemaTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)))
+          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
+        )
       }
   }
 

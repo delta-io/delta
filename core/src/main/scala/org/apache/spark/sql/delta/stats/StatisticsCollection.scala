@@ -19,9 +19,10 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaLog, DeltaUDF}
+import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaUDF}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -32,8 +33,10 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -148,8 +151,7 @@ trait StatisticsCollection extends DeltaLogging {
    *    2) "no-nulls" columns remain unchanged, i.e. zero nullCount is the same for both
    *       physical and logical representations.
    *    3) For "some-nulls" columns, we leave the existing value. In files with wide bounds,
-   *       the nullCount in SOME_NULLs columns is considered unknown and it is not taken
-   *       into account by data skipping and OptimizeMetadataOnlyDeltaQuery.
+   *       the nullCount in SOME_NULLs columns is considered unknown.
    *
    * The file's state can transition back to tight when statistics are recomputed. In that case,
    * TIGHT_BOUNDS is set back to true and nullCount back to the logical value.
@@ -243,6 +245,7 @@ trait StatisticsCollection extends DeltaLogging {
     struct(statCols: _*).as('stats)
   }
 
+
   /** Returns schema of the statistics collected. */
   lazy val statsSchema: StructType = {
     // In order to get the Delta min/max stats schema from table schema, we do 1) replace field
@@ -332,10 +335,12 @@ trait StatisticsCollection extends DeltaLogging {
    *                 column, a flag that indicates whether the column is in the data schema). Based
    *                 on the metadata and flag, the function can decide if the given statistic should
    *                 be collected on the column by returning the correct aggregate expression.
+   * @param includeAllColumns  should statistics all the columns be included?
    */
   private def collectStats(
       name: String,
-      schema: StructType)(
+      schema: StructType,
+      includeAllColumns: Boolean = false)(
       function: PartialFunction[(Column, StructField, Boolean), Column]): Column = {
 
     def collectStats(
@@ -370,7 +375,7 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     val allStats = collectStats(schema, None, Nil, function)
-    val stats = if (numIndexedCols > 0) {
+    val stats = if (numIndexedCols > 0 && !includeAllColumns) {
       allStats.take(numIndexedCols)
     } else {
       allStats
@@ -404,10 +409,17 @@ object StatisticsCollection extends DeltaCommand {
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)
     val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, files)
+    val persistentDVsReadable = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
     // Use the stats collector to recompute stats
     val dataPath = deltaLog.dataPath
-    val newAddFiles =
+    val newAddFiles = {
+      // Throw error when the table contains DVs, because existing method of stats
+      // recomputation doesn't work on tables with DVs. It needs to take into consideration of
+      // DV files (TODO).
+      if (persistentDVsReadable) {
+        throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
+      }
       {
         val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
           .groupBy(col("_metadata.file_path").as("path")).agg(to_json(txn.statsCollector))
@@ -418,8 +430,9 @@ object StatisticsCollection extends DeltaCommand {
           add.copy(dataChange = false, stats = r.getString(1))
         }
       }
+    }
 
-    txn.commit(newAddFiles, ComputeStats(predicates.map(_.sql)))
+    txn.commit(newAddFiles, ComputeStats(predicates))
   }
 
   /**
@@ -441,3 +454,4 @@ object StatisticsCollection extends DeltaCommand {
     }
   }
 }
+

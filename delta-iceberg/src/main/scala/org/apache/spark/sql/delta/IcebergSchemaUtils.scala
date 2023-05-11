@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.commands.convert
 
+import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.iceberg.Schema
 import org.apache.iceberg.spark.SparkSchemaUtil

@@ -1959,7 +1959,7 @@ trait DeltaErrorsBase
     new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
-  def dropNestedColumnsFromNonStructTypeException(struct : StructField) : Throwable = {
+  def dropNestedColumnsFromNonStructTypeException(struct : DataType) : Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
       messageParameters = Array(s"$struct")
@@ -2275,6 +2275,13 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(errorClass = "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
   }
 
+  def deltaStatsCollectionColumnNotFound(statsType: String, columnPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STATS_COLLECTION_COLUMN_NOT_FOUND",
+      messageParameters = Array(statsType, columnPath)
+    )
+  }
+
   def convertToDeltaRowTrackingEnabledWithoutStatsCollection: Throwable = {
     val statisticsCollectionPropertyKey = DeltaSQLConf.DELTA_COLLECT_STATS.key
     val rowTrackingTableFeatureDefaultKey =
@@ -2406,6 +2413,12 @@ trait DeltaErrorsBase
   def replaceWhereUsedWithDynamicPartitionOverwrite(): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE"
+    )
+  }
+
+  def overwriteSchemaUsedWithDynamicPartitionOverwrite(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE"
     )
   }
 
@@ -2583,9 +2596,9 @@ trait DeltaErrorsBase
   def failedToGetSnapshotDuringColumnMappingStreamingReadCheck(cause: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_STREAMING_CHECK_COLUMN_MAPPING_NO_SNAPSHOT",
-      Array(DeltaSQLConf
+      messageParameters = Array(DeltaSQLConf
         .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES.key),
-      Some(cause))
+      cause = Some(cause))
   }
 
   def showColumnsWithConflictDatabasesError(db: String, tableID: TableIdentifier): Throwable = {
@@ -2758,14 +2771,19 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def statsRecomputeNotSupportedOnDvTables(): Throwable = {
+    new DeltaCommandUnsupportedWithDeletionVectorsException(
+      errorClass = "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS",
+      messageParameters = Array.empty
+    )
+  }
+
+  def addFileWithDVsAndTightBoundsException(): Throwable =
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED")
+
   def addFileWithDVsMissingNumRecordsException: Throwable =
     new DeltaRuntimeException(errorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS")
-
-  def changeDataFeedNotSupportedWithDeletionVectors(version: Long): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS",
-      messageParameters = Array(version.toString))
-  }
 
   def generateNotSupportedWithDeletionVectors(): Throwable =
     new DeltaCommandUnsupportedWithDeletionVectorsException(
@@ -3099,7 +3117,7 @@ class DeltaTablePropertyValidationFailedException(
     table: String,
     subClass: DeltaTablePropertyValidationFailedSubClass)
   extends RuntimeException(DeltaThrowableHelper.getMessage(
-    errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
+    errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED" + "." + subClass.tag,
     messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
   override def getErrorClass: String =

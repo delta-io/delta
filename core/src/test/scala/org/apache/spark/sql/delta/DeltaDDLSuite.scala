@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
@@ -34,11 +34,6 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
-
-  override protected def verifyDescribeTable(tblName: String): Unit = {
-    val res = sql(s"DESCRIBE TABLE $tblName").collect()
-    assert(res.takeRight(2).map(_.getString(1)) === Seq("name", "dept"))
-  }
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
@@ -93,7 +88,10 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._
 
-  protected def verifyDescribeTable(tblName: String): Unit
+  protected def verifyDescribeTable(tblName: String): Unit = {
+    val res = sql(s"DESCRIBE TABLE $tblName").collect()
+    assert(res.takeRight(2).map(_.getString(0)) === Seq("name", "dept"))
+  }
 
   protected def verifyNullabilityFailure(exception: AnalysisException): Unit
 
@@ -332,6 +330,63 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       }
     }
   }
+
+  /**
+   * Covers adding and changing a nested field using the ALTER TABLE command.
+   * @param initialColumnType Type of the single column used to create the initial test table.
+   * @param fieldToAdd        Tuple (name, type) of the nested field to add and change.
+   * @param updatedColumnType Expected type of the single column after adding the nested field.
+   */
+  def testAlterTableNestedFields(testName: String)(
+      initialColumnType: String,
+      fieldToAdd: (String, String),
+      updatedColumnType: String): Unit = {
+    test(s"ALTER TABLE ADD/CHANGE COLUMNS - nested $testName") {
+      withTempDir { dir =>
+        withTable("delta_test") {
+          sql(
+            s"""
+               |CREATE TABLE delta_test (data $initialColumnType)
+               |USING delta
+               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name')
+               |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
+
+          val expectedInitialType = initialColumnType.filterNot(_.isWhitespace)
+          val expectedUpdatedType = updatedColumnType.filterNot(_.isWhitespace)
+          val fieldName = s"data.${fieldToAdd._1}"
+          val fieldType = fieldToAdd._2
+
+          def columnType: DataFrame =
+            sql("DESCRIBE TABLE delta_test")
+              .where("col_name = 'data'")
+              .select("data_type")
+          checkAnswer(columnType, Row(expectedInitialType))
+
+          sql(s"ALTER TABLE delta_test ADD COLUMNS ($fieldName $fieldType)")
+          checkAnswer(columnType, Row(expectedUpdatedType))
+
+          sql(s"ALTER TABLE delta_test CHANGE COLUMN $fieldName TYPE $fieldType")
+          checkAnswer(columnType, Row(expectedUpdatedType))
+        }
+      }
+    }
+  }
+
+  testAlterTableNestedFields("struct in map key")(
+    initialColumnType = "map<struct<a: int>, int>",
+    fieldToAdd = "key.b" -> "string",
+    updatedColumnType = "map<struct<a: int, b: string>, int>")
+
+  testAlterTableNestedFields("struct in map value")(
+    initialColumnType = "map<int, struct<a: int>>",
+    fieldToAdd = "value.b" -> "string",
+    updatedColumnType = "map<int, struct<a: int, b: string>>")
+
+  testAlterTableNestedFields("struct in array")(
+    initialColumnType = "array<struct<a: int>>",
+    fieldToAdd = "element.b" -> "string",
+    updatedColumnType = "array<struct<a: int, b: string>>")
+
 
   test("ALTER TABLE CHANGE COLUMN with nullability change in struct type - not supported") {
     withTempDir { dir =>

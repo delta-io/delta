@@ -79,7 +79,7 @@ private [stats] case class StatsColumn(
  * NOTE: It would be more accurate to call these "file keeping" predicates, because they specify the
  * set of files a query must examine, not the set of rows a query can safely skip.
  */
-private [stats] case class DataSkippingPredicate(
+private [sql] case class DataSkippingPredicate(
     expr: Column,
     referencedStats: Set[StatsColumn]
 )
@@ -96,7 +96,7 @@ private [stats] case class DataSkippingPredicate(
  *
  *   DataSkippingPredicate(pred, stat1, stat2)
  */
-private [stats] object DataSkippingPredicate {
+private [sql] object DataSkippingPredicate {
   def apply(filters: Column, referencedStats: StatsColumn*): DataSkippingPredicate = {
     DataSkippingPredicate(filters, referencedStats.toSet)
   }
@@ -242,6 +242,8 @@ trait DataSkippingReaderBase
       (nullCount, numRecords) => nullCount < numRecords
     }
   }
+
+  def withStatsDeduplicated: DataFrame = withStats
 
   /**
    * Builds the data filters for data skipping.

@@ -275,18 +275,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
     // We should still keep the hints from the input plan.
     checkpointedPlan = addHintsToPlan(source, checkpointedPlan)
 
-    // FIXME(SPARK-39834): Can be removed once Delta adopts Spark 3.4 and constraints are propagated
-    // Add filters to the logical plan so the optimizer can pick up the constraints even though
-    // they are lost when materializing.
-    checkpointedPlan = addFiltersForConstraintsToPlan(
-      sourceWithSelectedColumns.constraints, checkpointedPlan)
-
     sourceDF = Some(Dataset.ofRows(spark, checkpointedPlan))
 
-    // FIXME(SPARK-39834): This can be removed once Delta adopts Spark 3.4 as the statistics
-    //  will be materialized
-    // and the optimal join will be picked during planning
-    sourceDF = Some(addBroadcastHintToDF(sourceWithSelectedColumns, sourceDF.get))
 
     // Sets appropriate StorageLevel
     val storageLevel = StorageLevel.fromString(
@@ -325,29 +315,6 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       planWithHints
     } else {
       plan
-    }
-  }
-
-  private def addFiltersForConstraintsToPlan(
-      constraints: ExpressionSet,
-      plan: LogicalPlan): LogicalPlan = {
-    if (constraints.nonEmpty) {
-      val planWithConstraints =
-        constraints.foldRight[LogicalPlan](plan) {(expr, updatedPlan) =>
-          Filter(expr, updatedPlan)
-        }
-      planWithConstraints
-    } else {
-      plan
-    }
-  }
-
-  private def addBroadcastHintToDF(sourcePlan: LogicalPlan, df: Dataset[Row]): Dataset[Row] = {
-    val joinSelectionHelper = new Object with JoinSelectionHelper
-    if (joinSelectionHelper.canBroadcastBySize(sourcePlan, sourcePlan.conf)) {
-      df.hint("broadcast")
-    } else {
-      df
     }
   }
 

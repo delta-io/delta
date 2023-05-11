@@ -94,9 +94,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
+      case "option.path" => false
       case _ => true
     }.toMap
-    val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
+    val (
+      partitionColumns, maybeBucketSpec
+      ) = convertTransforms(partitions)
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -258,6 +261,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   override def createTable(
       ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
+    createTable(
+      ident,
+      org.apache.spark.sql.connector.catalog.CatalogV2Util.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
+  override def createTable(
+      ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]) : Table =
@@ -348,7 +363,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
   // Copy of V2SessionCatalog.convertTransforms, which is private.
-  private def convertTransforms(partitions: Seq[Transform]): (Seq[String], Option[BucketSpec]) = {
+  private def convertTransforms(partitions: Seq[Transform]): (
+    Seq[String], Option[BucketSpec]
+    ) = {
     val identityCols = new mutable.ArrayBuffer[String]
     var bucketSpec = Option.empty[BucketSpec]
 
@@ -364,7 +381,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
     }
 
-    (identityCols.toSeq, bucketSpec)
+    (
+      identityCols.toSeq, bucketSpec
+    )
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
@@ -431,6 +450,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     private var asSelectQuery: Option[DataFrame] = None
     private var writeOptions: Map[String, String] = Map.empty
+
+    override def partitioning(): Array[Transform] = partitions
 
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
@@ -537,7 +558,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
               col.dataType(),
               col.isNullable,
               Option(col.comment()),
-              Option(col.position()).map(UnresolvedFieldPosition)
+              Option(col.position()).map(UnresolvedFieldPosition),
+              Option(col.defaultValue()).map(_.getSql())
             )
           }).run(spark)
 

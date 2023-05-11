@@ -41,7 +41,7 @@ jobs:
           pyenv install 3.7.4
           pyenv global system 3.7.4
           pipenv --python 3.7 install
-          pipenv run pip install pyspark==3.3.2
+          pipenv run pip install pyspark==3.4.0
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
           pipenv run pip install importlib_metadata==3.10.0
           pipenv run pip install mypy==0.910

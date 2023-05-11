@@ -22,7 +22,7 @@ import java.nio.file.Files
 
 import scala.collection.immutable.SortedMap
 
-import org.apache.spark.sql.delta.DeltaThrowableHelper.{deltaErrorClassSource, deltaErrorClassToInfoMap, sparkErrorClassesMap}
+import org.apache.spark.sql.delta.DeltaThrowableHelper.{deltaErrorClassSource, sparkErrorClassSource}
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION
 import com.fasterxml.jackson.core.`type`.TypeReference
@@ -32,10 +32,18 @@ import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.commons.io.{FileUtils, IOUtils}
 
-import org.apache.spark.{ErrorInfo, SparkFunSuite}
+import org.apache.spark.{ErrorClassesJsonReader, ErrorInfo, SparkFunSuite}
 
 /** Test suite for Delta Throwables. */
 class DeltaThrowableSuite extends SparkFunSuite {
+
+  private lazy val sparkErrorClassesMap = {
+    new ErrorClassesJsonReader(Seq(sparkErrorClassSource)).errorInfoMap
+  }
+
+  private lazy val deltaErrorClassToInfoMap = {
+    new ErrorClassesJsonReader(Seq(deltaErrorClassSource)).errorInfoMap
+  }
 
    /* Used to regenerate the error class file. Run:
    {{{
@@ -43,8 +51,6 @@ class DeltaThrowableSuite extends SparkFunSuite {
         "sql/testOnly *DeltaThrowableSuite -- -t \"Error classes are correctly formatted\""
    }}}
    */
-
-  private val regenerateGoldenFiles: Boolean = System.getenv("SPARK_GENERATE_GOLDEN_FILES") == "1"
 
   def checkIfUnique(ss: Seq[Any]): Unit = {
     val duplicatedKeys = ss.groupBy(identity).mapValues(_.size).filter(_._2 > 1).keys.toSeq
@@ -108,8 +114,15 @@ class DeltaThrowableSuite extends SparkFunSuite {
   }
 
   test("Delta message format invariants") {
-    val messageFormats =
-    deltaErrorClassToInfoMap.values.toSeq.map(_.messageFormat)
+    val messageFormats = deltaErrorClassToInfoMap.values.toSeq.flatMap { i =>
+      i.subClass match {
+        // Has sub error class: the message template should be: base + sub
+        case Some(subs) =>
+          subs.values.toSeq.map(sub => s"${i.messageTemplate} ${sub.messageTemplate}")
+        // Does not have any sub error class: the message template is itself
+        case None => Seq(i.messageTemplate)
+      }
+    }
     checkCondition(messageFormats, s => s != null)
     checkIfUnique(messageFormats)
   }

@@ -77,12 +77,7 @@ abstract class TahoeFileIndex(
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-        val rowValues: Array[Any] = partitionSchema.map { p =>
-          val colName = DeltaColumnMapping.getPhysicalName(p)
-          val partValue = Literal(partitionValues.get(colName).orNull)
-          Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
-        }.toArray
-
+        val partitionValuesRow = getPartitionValuesRow(partitionValues)
 
         val fileStatuses = files.map { f =>
           new FileStatus(
@@ -94,8 +89,18 @@ abstract class TahoeFileIndex(
             absolutePath(f.path))
         }.toArray
 
-        PartitionDirectory(new GenericInternalRow(rowValues), fileStatuses)
+        PartitionDirectory(partitionValuesRow, fileStatuses)
     }
+  }
+
+  protected def getPartitionValuesRow(partitionValues: Map[String, String]): GenericInternalRow = {
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+    val partitionRowValues = partitionSchema.map { p =>
+      val colName = DeltaColumnMapping.getPhysicalName(p)
+      val partValue = Literal(partitionValues.get(colName).orNull)
+      Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
+    }.toArray
+    new GenericInternalRow(partitionRowValues)
   }
 
   override def partitionSchema: StructType = metadata.partitionSchema
@@ -138,24 +143,25 @@ abstract class TahoeFileIndex(
 
 }
 
-/** A [[TahoeFileIndex]] that works with a specific [[Snapshot]]. */
-abstract class TahoeFileIndexWithSnapshot(
+/** A [[TahoeFileIndex]] that works with a specific [[SnapshotDescriptor]]. */
+abstract class TahoeFileIndexWithSnapshotDescriptor(
     spark: SparkSession,
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
+    snapshot: SnapshotDescriptor) extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def version: Long = snapshot.version
   override def metadata: Metadata = snapshot.metadata
   override def protocol: Protocol = snapshot.protocol
+
 }
 
 
 /**
  * A [[TahoeFileIndex]] that generates the list of files from DeltaLog with given partition filters.
  *
- * NOTE: This is NOT a [[TahoeFileIndexWithSnapshot]] because we only use [[snapshotAtAnalysis]] for
- * actual data skipping if this is a time travel query.
+ * NOTE: This is NOT a [[TahoeFileIndexWithSnapshotDescriptor]] because we only use
+ * [[snapshotAtAnalysis]] for actual data skipping if this is a time travel query.
  */
 case class TahoeLogFileIndex(
     override val spark: SparkSession,
@@ -241,6 +247,7 @@ case class TahoeLogFileIndex(
   override def hashCode: scala.Int = {
     Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
   }
+
 }
 
 object TahoeLogFileIndex {
@@ -258,9 +265,9 @@ class TahoeBatchFileIndex(
     val addFiles: Seq[AddFile],
     deltaLog: DeltaLog,
     path: Path,
-    val snapshot: Snapshot,
+    val snapshot: SnapshotDescriptor,
     val partitionFiltersGenerated: Boolean = false)
-  extends TahoeFileIndexWithSnapshot(spark, deltaLog, path, snapshot) {
+  extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, snapshot) {
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],

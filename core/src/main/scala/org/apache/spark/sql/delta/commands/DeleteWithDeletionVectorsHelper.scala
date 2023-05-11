@@ -21,13 +21,14 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, DeltaUDF, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
@@ -75,7 +76,8 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
     val additionalCols = Seq(
       AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)(),
-      FileFormat.createFileMetadataCol
+      // TODO: when upgrading to Spark 3.5 or 4.0 this should be FileFormat.createFileMetadataCol
+      FileSourceMetadataAttribute(FileFormat.METADATA_NAME, FileFormat.BASE_METADATA_STRUCT)
     )
 
     val newTarget = target transformDown {
@@ -170,23 +172,24 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
 
     val dvUpdates = notFullyRemovedFiles.map { fileWithDVInfo =>
       fileWithDVInfo.fileLogEntry.removeRows(
-        deletionVector = fileWithDVInfo.newDeletionVector
+        deletionVector = fileWithDVInfo.newDeletionVector,
+        updateStats = false
       )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    val (filesWithDeletedRows, newFilesWithDVs) = dvUpdates.unzip
     fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
   }
 
   /** Fetch stats for `addFiles`. */
   private def getActionsWithStats(
       spark: SparkSession,
-      addFiles: Seq[AddFile],
+      addFilesWithNewDvs: Seq[AddFile],
       snapshot: Snapshot): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
     val statsColName = snapshot.getBaseStatsColumnName
-    val selectionCols = Seq(col("path"), col(statsColName))
+    val selectionPathAndStatsCols = Seq(col("path"), col(statsColName))
+    val addFilesWithNewDvsDf = addFilesWithNewDvs.toDF(spark)
 
     // These files originate from snapshot.filesForScan which resets column statistics.
     // Since these object don't carry stats and tags, if we were to use them as result actions of
@@ -194,13 +197,52 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     // we join the list of files with DVs with the log (allFiles) to retrieve statistics. This is
     // expected to have better performance than supporting full stats retrieval
     // in snapshot.filesForScan because it only affects a subset of the scanned files.
-    val allFiles = snapshot.withStats.select(selectionCols: _*)
-    val addFilesDf = addFiles.toDF(spark).drop("stats")
-    val addFilesWithStats = addFilesDf.join(allFiles, "path")
 
-    // Every operation that adds DVs needs to set tightBounds to false.
-    snapshot
-      .updateStatsToWideBounds(addFilesWithStats, statsColName)
+    // Find the current metadata with stats for all files with new DV
+    val addFileWithStatsDf = snapshot.withStats
+      .join(addFilesWithNewDvsDf.select("path"), "path")
+
+    // Update the existing stats to set the tightBounds to false and also set the appropriate
+    // null count. We want to set the bounds before the AddFile has DV descriptor attached.
+    // Attaching the DV descriptor here, causes wrong logical records computation in
+    // `updateStatsToWideBounds`.
+    val addFilesWithWideBoundsDf = snapshot
+      .updateStatsToWideBounds(addFileWithStatsDf, statsColName)
+
+    val (filesWithNoStats, filesWithExistingStats) = {
+      // numRecords is the only stat we really have to guarantee.
+      // If the others are missing, we do not need to fetch them.
+      addFilesWithWideBoundsDf.as[AddFile].collect().toSeq
+        .partition(_.numPhysicalRecords.isEmpty)
+    }
+
+    // If we encounter files with no stats we fetch the stats from the parquet footer.
+    // Files with persistent DVs *must* have (at least numRecords) stats according to the
+    // Delta spec.
+    val filesWithFetchedStats =
+      if (filesWithNoStats.nonEmpty) {
+        StatsCollectionUtils.computeStats(spark,
+          conf = snapshot.deltaLog.newDeltaHadoopConf(),
+          dataPath = snapshot.deltaLog.dataPath,
+          addFiles = filesWithNoStats.toDS(spark),
+          columnMappingMode = snapshot.metadata.columnMappingMode,
+          dataSchema = snapshot.dataSchema,
+          statsSchema = snapshot.statsSchema,
+          setBoundsToWide = true)
+          .collect()
+          .toSeq
+      } else {
+        Seq.empty
+      }
+
+    val allAddFilesWithUpdatedStats =
+      (filesWithExistingStats ++ filesWithFetchedStats).toSeq.toDF(spark)
+
+    // Now join the allAddFilesWithUpdatedStats with addFilesWithNewDvs
+    // so that the updated stats are joined with the new DV info
+    addFilesWithNewDvsDf.drop("stats")
+      .join(
+        allAddFilesWithUpdatedStats.select(selectionPathAndStatsCols: _*), "path")
       .as[AddFile]
       .collect()
       .toSeq
@@ -293,8 +335,13 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
+    // TODO: fix this to work regardless of whether Spark encodes or doesn't encode
+    //  _metadata.file_path. See https://github.com/delta-io/delta/issues/1725
+    val uriEncode = DeltaUDF.stringFromString(path => {
+      new Path(path).toUri.toString
+    })
     val matchedRowsDf = targetDf
-      .withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
+      .withColumn(FILE_NAME_COL, uriEncode(col(s"${METADATA_NAME}.${FILE_PATH}")))
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
@@ -312,7 +359,15 @@ object DeletionVectorBitmapGenerator {
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
       val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
-      matchedRowsDf.join(filePathToDVDf, joinExpr)
+      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
+      assert(joinedDf.count() == matchedRowsDf.count(),
+        s"""
+           |The joined DataFrame should contain the same number of entries as the original
+           |DataFrame. It is likely that _metadata.file_path is not encoded by Spark as expected.
+           |Joined DataFrame count: ${joinedDf.count()}
+           |matchedRowsDf count: ${matchedRowsDf.count()}
+           |""".stripMargin)
+      joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
       matchedRowsDf.withColumn(FILE_DV_ID_COL, lit(null))
@@ -322,7 +377,10 @@ object DeletionVectorBitmapGenerator {
   }
 }
 
-/** Holds a mapping from a file path to an (optional) serialized Deletion Vector descriptor. */
+/**
+ * Holds a mapping from a file path (url-encoded) to an (optional) serialized Deletion Vector
+ * descriptor.
+ */
 case class FileToDvDescriptor(path: String, deletionVectorId: Option[String])
 
 object FileToDvDescriptor {

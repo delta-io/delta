@@ -17,6 +17,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED" : {
+    "message" : [
+      "All operations that add deletion vectors should set the tightBounds column in statistics to false. Please file a bug report."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to add column <columnName> is lower than 0"
@@ -1039,11 +1045,23 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_MERGE_RESOLVED_ATTRIBUTE_MISSING_FROM_INPUT" : {
+    "message" : [
+      "Resolved attribute(s) <missingAttributes> missing from <input> in operator <merge>"
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [
       "Unexpected assignment key: <unexpectedKeyClass> - <unexpectedKeyObject>"
     ],
     "sqlState" : "22005"
+  },
+  "DELTA_MERGE_UNRESOLVED_EXPRESSION" : {
+    "message" : [
+      "Cannot resolve <sqlExpr> in <clause> given <cols>"
+    ],
+    "sqlState" : "42601"
   },
   "DELTA_METADATA_ABSENT" : {
     "message" : [
@@ -1344,6 +1362,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
+    "message" : [
+      "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
@@ -1572,6 +1596,12 @@
       "version: <version>. Did you manually delete files in the _delta_log directory?"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_STATS_COLLECTION_COLUMN_NOT_FOUND" : {
+    "message" : [
+      "<statsType> stats not found for column in Parquet metadata: <columnPath>."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" : {
     "message" : [
@@ -1901,12 +1931,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_CHANGE_DATA_FEED_WITH_DELETION_VECTORS" : {
-    "message" : [
-      "Reading Change Data Feed from Version {version}, which contains Deletion Vectors, is unsupported by this version of Delta Lake."
-    ],
-    "sqlState" : "0AKDC"
-  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",
@@ -2119,6 +2143,12 @@
   "DELTA_UNSUPPORTED_STATIC_PARTITIONS" : {
     "message" : [
       "Specifying static partitions in the partition spec is currently not supported during inserts"
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS" : {
+    "message" : [
+      "Statistics re-computation on a Delta table with deletion vectors is not yet supported."
     ],
     "sqlState" : "0AKDD"
   },

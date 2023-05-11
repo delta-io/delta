@@ -16,22 +16,27 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
-import org.apache.spark.util.Utils
 
 trait DeltaTestUtilsBase {
+  import DeltaTestUtils.TableIdentifierOrPath
 
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
 
@@ -169,9 +174,37 @@ trait DeltaTestUtilsBase {
         case _ => false
       }.head
   }
+
+  /**
+   * Separate name- from path-based SQL table identifiers.
+   */
+  def getTableIdentifierOrPath(sqlIdentifier: String): TableIdentifierOrPath = {
+    // Match: delta.`path`[ alias] or tahoe.`path`[ alias]
+    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?: (.+))?".r
+    // Match: db.table[ alias]
+    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?: (.+))?".r
+    // Match: table[ alias]
+    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?: (.+))?".r
+    sqlIdentifier match {
+      case pathMatcher(path, alias) =>
+        TableIdentifierOrPath.Path(path, Option(alias))
+      case qualifiedDbMatcher(dbName, tableName, alias) =>
+        TableIdentifierOrPath.Identifier(TableIdentifier(tableName, Some(dbName)), Option(alias))
+      case unqualifiedNameMatcher(tableName, alias) =>
+        TableIdentifierOrPath.Identifier(TableIdentifier(tableName), Option(alias))
+    }
+  }
 }
 
 object DeltaTestUtils extends DeltaTestUtilsBase {
+
+  sealed trait TableIdentifierOrPath
+  object TableIdentifierOrPath {
+    case class Identifier(id: TableIdentifier, alias: Option[String])
+      extends TableIdentifierOrPath
+    case class Path(path: String, alias: Option[String]) extends TableIdentifierOrPath
+  }
+
   case class Plans(
       analyzed: LogicalPlan,
       optimized: LogicalPlan,
@@ -202,6 +235,37 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       case tableNameWithAlias(tableName, alias) => tableName -> Some(alias)
       case tableName => tableName -> None
     }
+  }
+
+  /**
+   * Implements an ordering where `x < y` iff both reader and writer versions of
+   * `x` are strictly less than those of `y`.
+   *
+   * Can be used to conveniently check that this relationship holds in tests/assertions
+   * without having to write out the conjunction of the two subconditions every time.
+   */
+  case object StrictProtocolOrdering extends PartialOrdering[Protocol] {
+    override def tryCompare(x: Protocol, y: Protocol): Option[Int] = {
+      if (x.minReaderVersion == y.minReaderVersion &&
+        x.minWriterVersion == y.minWriterVersion) {
+        Some(0)
+      } else if (x.minReaderVersion < y.minReaderVersion &&
+        x.minWriterVersion < y.minWriterVersion) {
+        Some(-1)
+      } else if (x.minReaderVersion > y.minReaderVersion &&
+        x.minWriterVersion > y.minWriterVersion) {
+        Some(1)
+      } else {
+        None
+      }
+    }
+
+    override def lteq(x: Protocol, y: Protocol): Boolean =
+      x.minReaderVersion <= y.minReaderVersion && x.minWriterVersion <= y.minWriterVersion
+
+    // Just a more readable version of `lteq`.
+    def fulfillsVersionRequirements(actual: Protocol, requirement: Protocol): Boolean =
+      lteq(requirement, actual)
   }
 }
 
@@ -260,6 +324,10 @@ trait DeltaTestUtilsForTempViews
     }
   }
 
+  protected def errorContains(errMsg: String, str: String): Unit = {
+    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
   def testErrorMessageAndClass(
       isSQLTempView: Boolean,
       ex: AnalysisException,
@@ -269,14 +337,14 @@ trait DeltaTestUtilsForTempViews
       expectedErrorClassForDataSetTempView: String = null): Unit = {
     if (isSQLTempView) {
       if (expectedErrorMsgForSQLTempView != null) {
-        assert(ex.getMessage.contains(expectedErrorMsgForSQLTempView))
+        errorContains(ex.getMessage, expectedErrorMsgForSQLTempView)
       }
       if (expectedErrorClassForSQLTempView != null) {
         assert(ex.getErrorClass == expectedErrorClassForSQLTempView)
       }
     } else {
       if (expectedErrorMsgForDataSetTempView != null) {
-        assert(ex.getMessage.contains(expectedErrorMsgForDataSetTempView))
+        errorContains(ex.getMessage, expectedErrorMsgForDataSetTempView)
       }
       if (expectedErrorClassForDataSetTempView != null) {
         assert(ex.getErrorClass == expectedErrorClassForDataSetTempView, ex.getMessage)

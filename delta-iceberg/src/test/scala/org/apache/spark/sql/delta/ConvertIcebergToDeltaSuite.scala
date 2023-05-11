@@ -26,6 +26,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
+import org.apache.spark.sql.delta.commands.convert.{ConvertUtils, IcebergTable}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
@@ -178,12 +179,11 @@ trait ConvertIcebergToDeltaSuiteBase
 
 
   test("missing iceberg library should throw a sensical error") {
-    val validIcebergSparkTableClassPath = ConvertToDeltaCommand.icebergSparkTableClassPath
-    val validIcebergLibTableClassPath = ConvertToDeltaCommand.icebergLibTableClassPath
+    val validIcebergSparkTableClassPath = ConvertUtils.icebergSparkTableClassPath
 
     Seq(
       () => {
-        ConvertToDeltaCommand.icebergSparkTableClassPath = validIcebergSparkTableClassPath + "2"
+        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath + "2"
       }).foreach { makeInvalid =>
       try {
         makeInvalid()
@@ -198,8 +198,7 @@ trait ConvertIcebergToDeltaSuiteBase
           assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
         }
       } finally {
-        ConvertToDeltaCommand.icebergSparkTableClassPath = validIcebergSparkTableClassPath
-        ConvertToDeltaCommand.icebergLibTableClassPath = validIcebergLibTableClassPath
+        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath
       }
     }
   }

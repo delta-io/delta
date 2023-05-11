@@ -62,7 +62,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   protected def catalogPrefix: String = {
-    ""
+    s"${CatalogManager.SESSION_CATALOG_NAME}."
   }
 
   protected def getProperties(table: Table): Map[String, String] = {
@@ -538,6 +538,12 @@ class DeltaDataFrameWriterV2Suite
     checkAnswer(
       spark.table(s"delta.`$location`"),
       Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+
+    // allows missing columns
+    Seq(4L).toDF("id").writeTo(s"delta.`$location`").append()
+    checkAnswer(
+      spark.table(s"delta.`$location`"),
+      Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c"), Row(4L, null)))
   }
 
   test("Create: basic behavior by path") {

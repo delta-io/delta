@@ -20,7 +20,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.delta.{DeltaHistory, DeltaHistoryManager, SerializableFileStatus, SnapshotState}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.commands.ConvertTargetFile
+import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
 import org.apache.spark.sql.Encoder
@@ -82,6 +82,10 @@ private[delta] trait DeltaEncoders {
 
   private lazy val _addFileWithIndexEncoder = new DeltaEncoder[(AddFile, Long)]
   implicit def addFileWithIndexEncoder: Encoder[(AddFile, Long)] = _addFileWithIndexEncoder.get
+
+  private lazy val _addFileWithSourcePathEncoder = new DeltaEncoder[(AddFile, String)]
+  implicit def addFileWithSourcePathEncoder: Encoder[(AddFile, String)] =
+    _addFileWithSourcePathEncoder.get
 
   private lazy val _deltaHistoryEncoder = new DeltaEncoder[DeltaHistory]
   implicit def deltaHistoryEncoder: Encoder[DeltaHistory] = _deltaHistoryEncoder.get

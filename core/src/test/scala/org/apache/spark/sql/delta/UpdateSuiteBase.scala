@@ -702,10 +702,8 @@ abstract class UpdateSuiteBase
     val scans = executedPlans.flatMap(_.collect {
       case f: FileSourceScanExec => f
     })
-    // Currently nested schemas can't be pruned, but Spark 3.4 loosens some of the restrictions
-    // on non-determinstic expressions, and this should be pruned to just "nested STRUCT<key: int>"
-    // after upgrading
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int, value: int>"))
+
+    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
   }
 
   /**
@@ -893,8 +891,8 @@ abstract class UpdateSuiteBase
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "MISSING_COLUMN",
-    expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
   )
 
   testInvalidTempViews("superset cols")(

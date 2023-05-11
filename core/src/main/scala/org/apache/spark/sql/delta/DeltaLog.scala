@@ -42,9 +42,9 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{FileSourceOptions, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
@@ -84,6 +84,7 @@ class DeltaLog private(
   with DeltaFileFormat
   with ReadChecksum {
 
+  import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
 
 
@@ -176,14 +177,9 @@ class DeltaLog private(
     // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
     // entire table unusable. Hard-wire that into the file source options so the user can't override
     // it by setting spark.sql.files.ignoreCorruptFiles or spark.sql.files.ignoreMissingFiles.
-    //
-    // NOTE: This should ideally be [[FileSourceOptions.IGNORE_CORRUPT_FILES]] etc., but those
-    // constants are only available since spark-3.4. By hard-coding the values here instead, we
-    // preserve backward compatibility when compiling Delta against older spark versions (tho
-    // obviously the desired protection would be missing in that case).
     val allOptions = options ++ formatSpecificOptions ++ Map(
-      "ignoreCorruptFiles" -> "false",
-      "ignoreMissingFiles" -> "false"
+      FileSourceOptions.IGNORE_CORRUPT_FILES -> "false",
+      FileSourceOptions.IGNORE_MISSING_FILES -> "false"
     )
     val fsRelation = HadoopFsRelation(
       index, index.partitionSchema, schema, None, index.format, allOptions)(spark)
@@ -456,50 +452,18 @@ class DeltaLog private(
   /**
    * Returns a [[org.apache.spark.sql.DataFrame]] containing the new files within the specified
    * version range.
-   *
-   * @param customDataSchema Optional data schema that will be used to read the files.
-   *                         This is used when reading multiple snapshots using one all-encompassing
-   *                         schema, e.g. during streaming.
-   *                         This parameter only modifies the data schema. The partition schema is
-   *                         not updated, so the caller should ensure that it does not change
-   *                         compared to the snapshot.
    */
   def createDataFrame(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       addFiles: Seq[AddFile],
       isStreaming: Boolean = false,
-      actionTypeOpt: Option[String] = None,
-      customDataSchema: Option[StructType] = None): DataFrame = {
+      actionTypeOpt: Option[String] = None): DataFrame = {
     val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
     // It's ok to not pass down the partitionSchema to TahoeBatchFileIndex. Schema evolution will
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-
-    val hadoopOptions = snapshot.metadata.format.options ++ options
-    val partitionSchema = snapshot.metadata.partitionSchema
-    var metadata = snapshot.metadata
-
-    // Replace schema inside snapshot metadata so that later `fileFormat()` can generate the correct
-    // DeltaParquetFormat with the correct schema to references, the customDataSchema should also
-    // contain the correct column mapping metadata if needed after being loaded from schema log.
-    customDataSchema.foreach { readSchema =>
-      metadata = snapshot.metadata.copy(schemaString = readSchema.json)
-    }
-
-    val relation = HadoopFsRelation(
-      fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, partitionSchema)),
-      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
-      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
-      // append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, metadata.schema)),
-      bucketSpec = None,
-      fileFormat(snapshot.protocol, metadata),
-      hadoopOptions)(spark)
-
+    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -535,22 +499,16 @@ class DeltaLog private(
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
+
+    val r = buildHadoopFsRelationWithFileIndex(snapshotToUse, fileIndex, bucketSpec = bucketSpec)
     new HadoopFsRelation(
-      fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        snapshotToUse.metadata.partitionSchema),
-      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
-      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
-      // append them to the end of `dataSchema`
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
-      bucketSpec = bucketSpec,
-      fileFormat(snapshotToUse.protocol, snapshotToUse.metadata),
-      // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
-      // store any file system options since they may contain credentials. Hence, it will never
-      // conflict with `DeltaLog.options`.
-      snapshotToUse.metadata.format.options ++ options)(spark) with InsertableRelation {
+      r.location,
+      r.partitionSchema,
+      r.dataSchema,
+      r.bucketSpec,
+      r.fileFormat,
+      r.options
+    )(spark) with InsertableRelation {
       def insert(data: DataFrame, overwrite: Boolean): Unit = {
         val mode = if (overwrite) SaveMode.Overwrite else SaveMode.Append
         WriteIntoDelta(
@@ -562,6 +520,26 @@ class DeltaLog private(
           data = data).run(spark)
       }
     }
+  }
+
+  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+    HadoopFsRelation(
+      fileIndex,
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        snapshot.metadata.partitionSchema),
+      // We pass all table columns as `dataSchema` so that Spark will preserve the partition
+      // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
+      // just append them to the end of `dataSchema`.
+      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalMetadata(spark,
+          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+      bucketSpec = bucketSpec,
+      fileFormat(snapshot.protocol, snapshot.metadata),
+      // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
+      // store any file system options since they may contain credentials. Hence, it will never
+      // conflict with `DeltaLog.options`.
+      snapshot.metadata.format.options ++ options)(spark)
   }
 
   /**

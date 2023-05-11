@@ -35,9 +35,11 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
 import org.apache.spark.sql.functions.{col, to_json}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -194,7 +196,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val projectList: Seq[NamedExpression] = plan.output.map {
       case p if partSet.contains(p) && p.dataType == StringType =>
         needConvert = true
-        Alias(FileFormatWriter.Empty2Null(p), p.name)()
+        Alias(org.apache.spark.sql.catalyst.expressions.Empty2Null(p), p.name)()
       case attr => attr
     }
     if (needConvert) ProjectExec(projectList, plan) else plan
@@ -279,6 +281,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       .queryExecution.analyzed.expressions.head
   }
 
+
   /** Return the pair of optional stats tracker and stats collection class */
   protected def getOptionalStatsTrackerAndStatsCollection(
       output: Seq[Attribute],
@@ -321,6 +324,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
   }
 
+
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
@@ -346,6 +350,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     // StatisticsCollection
     val (optionalStatsTracker, _) = getOptionalStatsTrackerAndStatsCollection(output, outputPath,
       partitionSchema, data)
+
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
@@ -394,7 +399,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
-          statsTrackers = optionalStatsTracker.toSeq ++ statsTrackers,
+          statsTrackers = optionalStatsTracker.toSeq
+            ++ statsTrackers,
           options = options)
       } catch {
         case s: SparkException =>
@@ -421,6 +427,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       case a: AddFile => a.numLogicalRecords.forall(_ > 0)
       case _ => true
     }
+
 
     resultFiles.toSeq ++ committer.changeFiles
   }

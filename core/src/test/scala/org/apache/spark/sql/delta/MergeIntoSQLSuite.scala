@@ -30,7 +30,8 @@ import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
+class MergeIntoSQLSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+  with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
@@ -204,7 +205,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           |WHEN NOT MATCHED THEN
           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
         """.stripMargin))
-      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition"))
+      assert(e.getMessage.contains(
+        "only the last NOT MATCHED [BY TARGET] clause can omit the condition"))
     }
   }
 

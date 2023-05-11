@@ -19,11 +19,10 @@ package io.delta.sql.parser
 import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
-import org.apache.spark.sql.delta.commands.OptimizeTableCommand
-
+import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -118,6 +117,60 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  private def targetPlanForTable(tableParts: String*): UnresolvedTable =
+    UnresolvedTable(tableParts.toSeq, "REORG", relationTypeMismatchHint = None)
+
+  test("REORG command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+
+    assert(parser.parsePlan("REORG TABLE tbl APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+
+    assert(parser.parsePlan("REORG TABLE tbl_${system:spark.testing} APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("tbl_true"))(Seq.empty))
+
+    withSQLConf("tbl_var" -> "tbl") {
+      assert(parser.parsePlan("REORG TABLE ${tbl_var} APPLY (PURGE)") ===
+        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+
+      assert(parser.parsePlan("REORG TABLE ${spark:tbl_var} APPLY (PURGE)") ===
+        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+
+      assert(parser.parsePlan("REORG TABLE ${sparkconf:tbl_var} APPLY (PURGE)") ===
+        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+
+      assert(parser.parsePlan("REORG TABLE ${hiveconf:tbl_var} APPLY (PURGE)") ===
+        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+
+      assert(parser.parsePlan("REORG TABLE ${hivevar:tbl_var} APPLY (PURGE)") ===
+        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+    }
+
+    assert(parser.parsePlan("REORG TABLE delta.`/path/to/tbl` APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("delta", "/path/to/tbl"))(Seq.empty))
+
+    assert(parser.parsePlan("REORG TABLE tbl WHERE part = 1 APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("tbl"))(Seq("part = 1")))
+  }
+
+  test("REORG command new tokens are non-reserved keywords") {
+    // new keywords: REORG, APPLY, PURGE
+    val parser = new DeltaSqlParser(null)
+
+    // Use the new keywords in table name
+    assert(parser.parsePlan("REORG TABLE reorg APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("reorg"))(Seq.empty))
+    assert(parser.parsePlan("REORG TABLE apply APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("apply"))(Seq.empty))
+    assert(parser.parsePlan("REORG TABLE purge APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("purge"))(Seq.empty))
+
+    // Use the new keywords in column name
+    assert(parser.parsePlan(
+      "REORG TABLE tbl WHERE reorg = 1 AND apply = 2 AND purge = 3 APPLY (PURGE)") ===
+      DeltaReorgTable(targetPlanForTable("tbl"))(Seq("reorg = 1 AND apply =2 AND purge = 3")))
   }
 
   // scalastyle:off argcount

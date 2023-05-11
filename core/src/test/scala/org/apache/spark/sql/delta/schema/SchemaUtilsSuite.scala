@@ -805,52 +805,78 @@ class SchemaUtilsSuite extends QueryTest
 
   test("findColumnPosition") {
     val schema = new StructType()
-      .add("a", new StructType()
-        .add("b", IntegerType)
-        .add("c", IntegerType))
-      .add("d", ArrayType(new StructType()
-        .add("b", IntegerType)
-        .add("c", IntegerType)))
-      .add("e", StringType)
-      .add("f", MapType(
+      .add("struct", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType))
+      .add("array", ArrayType(new StructType()
+        .add("c", IntegerType)
+        .add("d", IntegerType)))
+      .add("field", StringType)
+      .add("map", MapType(
         new StructType()
-          .add("g", IntegerType),
+          .add("e", IntegerType),
         new StructType()
-          .add("h", IntegerType)))
-      .add("i", MapType(
+          .add("f", IntegerType)))
+      .add("mapStruct", MapType(
         IntegerType,
         new StructType()
-          .add("k", new StructType()
-          .add("l", IntegerType))))
-      .add("m", ArrayType(
-        MapType(StringType, StringType)))
-    assert(SchemaUtils.findColumnPosition(Seq("a"), schema) === ((Seq(0), 2)))
-    assert(SchemaUtils.findColumnPosition(Seq("A"), schema) === ((Seq(0), 2)))
+          .add("g", new StructType()
+          .add("h", IntegerType))))
+      .add("arrayMap", ArrayType(
+        MapType(
+          new StructType()
+            .add("i", IntegerType),
+          new StructType()
+            .add("j", IntegerType))))
+
+    val List(structIdx, arrayIdx, fieldIdx, mapIdx, mapStructIdx, arrayMapIdx) = (0 to 5).toList
+    val ARRAY_ELEMENT_INDEX = 0
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    def checkPosition(column: Seq[String], position: Seq[Int]): Unit =
+      assert(SchemaUtils.findColumnPosition(column, schema) === position)
+
+    checkPosition(Seq("struct"), Seq(structIdx))
+    checkPosition(Seq("STRucT"), Seq(structIdx))
     expectFailure("Couldn't find", schema.treeString) {
-      SchemaUtils.findColumnPosition(Seq("a", "d"), schema)
+      SchemaUtils.findColumnPosition(Seq("struct", "array"), schema)
     }
-    assert(SchemaUtils.findColumnPosition(Seq("a", "b"), schema) === ((Seq(0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("A", "b"), schema) === ((Seq(0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("a", "B"), schema) === ((Seq(0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("A", "B"), schema) === ((Seq(0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("a", "c"), schema) === ((Seq(0, 1), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("d"), schema) === ((Seq(1), 2)))
-    assert(SchemaUtils.findColumnPosition(Seq("d", "element", "B"), schema) === ((Seq(1, 0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("d", "element", "c"), schema) === ((Seq(1, 0, 1), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("e"), schema) === ((Seq(2), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("f"), schema) === ((Seq(3), 2)))
-    assert(SchemaUtils.findColumnPosition(Seq("f", "key", "g"), schema) === ((Seq(3, 0, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("f", "value", "h"), schema) === ((Seq(3, 1, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("f", "value", "H"), schema) === ((Seq(3, 1, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("i", "value", "k"), schema) === ((Seq(4, 1, 0), 1)))
-    assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("i", "value"), schema) === ((Seq(4, 1), 1)))
-    assert(SchemaUtils.findColumnPosition(Seq("m"), schema) === ((Seq(5), 0)))
+    checkPosition(Seq("struct", "a"), Seq(structIdx, 0))
+    checkPosition(Seq("STRucT", "a"), Seq(structIdx, 0))
+    checkPosition(Seq("struct", "A"), Seq(structIdx, 0))
+    checkPosition(Seq("STRucT", "A"), Seq(structIdx, 0))
+    checkPosition(Seq("struct", "b"), Seq(structIdx, 1))
+    checkPosition(Seq("array"), Seq(arrayIdx))
+    checkPosition(Seq("array", "element", "C"), Seq(arrayIdx, ARRAY_ELEMENT_INDEX, 0))
+    checkPosition(Seq("array", "element", "d"), Seq(arrayIdx, ARRAY_ELEMENT_INDEX, 1))
+    checkPosition(Seq("field"), Seq(fieldIdx))
+    checkPosition(Seq("map"), Seq(mapIdx))
+    checkPosition(Seq("map", "key", "e"), Seq(mapIdx, MAP_KEY_INDEX, 0))
+    checkPosition(Seq("map", "value", "f"), Seq(mapIdx, MAP_VALUE_INDEX, 0))
+    checkPosition(Seq("map", "value", "F"), Seq(mapIdx, MAP_VALUE_INDEX, 0))
+    checkPosition(Seq("mapStruct", "key"), Seq(mapStructIdx, MAP_KEY_INDEX))
+    checkPosition(Seq("mapStruct", "value", "g"), Seq(mapStructIdx, MAP_VALUE_INDEX, 0))
+    checkPosition(Seq("mapStruct", "key"), Seq(mapStructIdx, MAP_KEY_INDEX))
+    checkPosition(Seq("mapStruct", "value"), Seq(mapStructIdx, MAP_VALUE_INDEX))
+    checkPosition(Seq("arrayMap"), Seq(arrayMapIdx))
+    checkPosition(Seq("arrayMap", "element"), Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX))
+    checkPosition(
+      Seq("arrayMap", "element", "key"),
+      Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_KEY_INDEX))
+    checkPosition(
+      Seq("arrayMap", "element", "value"),
+      Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_VALUE_INDEX))
+    checkPosition(
+      Seq("arrayMap", "element", "key", "i"),
+      Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_KEY_INDEX, 0))
+    checkPosition(
+      Seq("arrayMap", "element", "value", "j"),
+      Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_VALUE_INDEX, 0))
 
     val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
-    Seq(Seq("A", "b"), Seq("a", "B"), Seq("d", "element", "B"), Seq("f", "key", "H"))
-        .foreach { column =>
+    Seq(Seq("STRucT", "b"), Seq("struct", "B"), Seq("array", "element", "C"),
+        Seq("map", "key", "E")).foreach { column =>
       expectFailure("Couldn't find", schema.treeString) {
         SchemaUtils.findColumnPosition(column, schema, resolver)
       }
@@ -869,7 +895,98 @@ class SchemaUtilsSuite extends QueryTest
       SchemaUtils.findColumnPosition(Seq("b", "c"), schema)
     }
     expectFailure("An ArrayType was found", "arrayType", schema.treeString) {
-      SchemaUtils.findColumnPosition(Seq("c", "element"), schema)
+      SchemaUtils.findColumnPosition(Seq("c", "b"), schema)
+    }
+  }
+
+  ////////////////////////////
+  // getNestedFieldFromPosition
+  ////////////////////////////
+
+  test("getNestedFieldFromPosition") {
+    val a = StructField("a", IntegerType)
+    val b = StructField("b", IntegerType)
+    val c = StructField("c", IntegerType)
+    val d = StructField("d", IntegerType)
+    val e = StructField("e", IntegerType)
+    val f = StructField("f", IntegerType)
+    val g = StructField("g", IntegerType)
+
+    val field = StructField("field", StringType)
+    val struct = StructField("struct", new StructType().add(a).add(b))
+    val arrayElement = StructField("element", new StructType().add(c))
+    val array = StructField("array", ArrayType(arrayElement.dataType))
+    val mapKey = StructField("key", new StructType().add(d))
+    val mapValue = StructField("value", new StructType().add(e))
+    val map = StructField("map", MapType(
+      keyType = mapKey.dataType,
+      valueType = mapValue.dataType))
+    val arrayMapKey = StructField("key", new StructType().add(f))
+    val arrayMapValue = StructField("value", new StructType().add(g))
+    val arrayMapElement = StructField("element", MapType(
+      keyType = arrayMapKey.dataType,
+      valueType = arrayMapValue.dataType))
+    val arrayMap = StructField("arrayMap", ArrayType(arrayMapElement.dataType))
+
+    val root = StructField("root", StructType(Seq(field, struct, array, map, arrayMap)))
+
+    val List(fieldIdx, structIdx, arrayIdx, mapIdx, arrayMapIdx) = (0 to 4).toList
+    val ARRAY_ELEMENT_INDEX = 0
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    def checkField(position: Seq[Int], expected: StructField): Unit =
+      assert(getNestedFieldFromPosition(root, position) === expected)
+
+    checkField(Seq.empty, root)
+    checkField(Seq(fieldIdx), field)
+    checkField(Seq(structIdx), struct)
+    checkField(Seq(structIdx, 0), a)
+    checkField(Seq(structIdx, 1), b)
+    checkField(Seq(arrayIdx), array)
+    checkField(Seq(arrayIdx, ARRAY_ELEMENT_INDEX), arrayElement)
+    checkField(Seq(arrayIdx, ARRAY_ELEMENT_INDEX, 0), c)
+    checkField(Seq(mapIdx), map)
+    checkField(Seq(mapIdx, MAP_KEY_INDEX), mapKey)
+    checkField(Seq(mapIdx, MAP_VALUE_INDEX), mapValue)
+    checkField(Seq(mapIdx, MAP_KEY_INDEX, 0), d)
+    checkField(Seq(mapIdx, MAP_VALUE_INDEX, 0), e)
+    checkField(Seq(arrayMapIdx), arrayMap)
+    checkField(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX), arrayMapElement)
+    checkField(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_KEY_INDEX), arrayMapKey)
+    checkField(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_VALUE_INDEX), arrayMapValue)
+    checkField(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_KEY_INDEX, 0), f)
+    checkField(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_VALUE_INDEX, 0), g)
+
+    def checkError(position: Seq[Int]): Unit =
+      assertThrows[IllegalArgumentException] {
+        getNestedFieldFromPosition(root, position)
+      }
+
+    checkError(Seq(-1))
+    checkError(Seq(fieldIdx, 0))
+    checkError(Seq(structIdx, -1))
+    checkError(Seq(structIdx, 2))
+    checkError(Seq(arrayIdx, ARRAY_ELEMENT_INDEX - 1))
+    checkError(Seq(arrayIdx, ARRAY_ELEMENT_INDEX + 1))
+    checkError(Seq(mapIdx, MAP_KEY_INDEX - 1))
+    checkError(Seq(mapIdx, MAP_VALUE_INDEX + 1))
+    checkError(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX - 1))
+    checkError(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX + 1))
+    checkError(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_KEY_INDEX - 1))
+    checkError(Seq(arrayMapIdx, ARRAY_ELEMENT_INDEX, MAP_VALUE_INDEX + 1))
+    checkError(Seq(arrayMapIdx + 1))
+  }
+
+  test("getNestedTypeFromPosition") {
+    val schema = new StructType().add("a", IntegerType)
+    assert(getNestedTypeFromPosition(schema, Seq.empty) === schema)
+    assert(getNestedTypeFromPosition(schema, Seq(0)) === IntegerType)
+    assertThrows[IllegalArgumentException] {
+      getNestedTypeFromPosition(schema, Seq(-1))
+    }
+    assertThrows[IllegalArgumentException] {
+      getNestedTypeFromPosition(schema, Seq(1))
     }
   }
 
@@ -901,16 +1018,31 @@ class SchemaUtilsSuite extends QueryTest
   test("addColumn - nested struct") {
     val a = StructField("a", IntegerType)
     val b = StructField("b", StringType)
-    val s = StructField("s", new StructType().add(a).add(b))
-    val schema = new StructType().add(s)
+    val first = StructField("first", new StructType().add(a).add(b))
+    val middle = StructField("middle", new StructType().add(a).add(b))
+    val last = StructField("last", new StructType().add(a).add(b))
+    val schema = new StructType().add(first).add(middle).add(last)
 
     val x = StructField("x", LongType)
-    assert(SchemaUtils.addColumn(schema, x, Seq(0)) === new StructType().add(x).add(s))
-    assert(SchemaUtils.addColumn(schema, x, Seq(0, 0)) ===
-      new StructType().add("s", new StructType().add(x).add(a).add(b)))
+    assert(SchemaUtils.addColumn(schema, x, Seq(0)) ===
+      new StructType().add(x).add(first).add(middle).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(1)) ===
+      new StructType().add(first).add(x).add(middle).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(2)) ===
+      new StructType().add(first).add(middle).add(x).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(3)) ===
+      new StructType().add(first).add(middle).add(last).add(x))
+
     assert(SchemaUtils.addColumn(schema, x, Seq(0, 2)) ===
-      new StructType().add("s", new StructType().add(a).add(b).add(x)))
-    assert(SchemaUtils.addColumn(schema, x, Seq(1)) === new StructType().add(s).add(x))
+      new StructType().add("first", new StructType().add(a).add(b).add(x)).add(middle).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      new StructType().add("first", new StructType().add(a).add(x).add(b)).add(middle).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 0)) ===
+      new StructType().add("first", new StructType().add(x).add(a).add(b)).add(middle).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(1, 0)) ===
+      new StructType().add(first).add("middle", new StructType().add(x).add(a).add(b)).add(last))
+    assert(SchemaUtils.addColumn(schema, x, Seq(2, 0)) ===
+      new StructType().add(first).add(middle).add("last", new StructType().add(x).add(a).add(b)))
 
     expectFailure("Index -1", "lower than 0") {
       SchemaUtils.addColumn(schema, x, Seq(0, -1))
@@ -923,6 +1055,152 @@ class SchemaUtilsSuite extends QueryTest
     }
     expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, 0, 0))
+    }
+  }
+
+  test("addColumn - nested map") {
+    val k = StructField("k", IntegerType)
+    val v = StructField("v", StringType)
+    val schema = new StructType().add("m", MapType(
+      keyType = new StructType().add(k),
+      valueType = new StructType().add(v)))
+
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX, 0)) ===
+      new StructType().add("m", MapType(
+        keyType = new StructType().add(x).add(k),
+        valueType = new StructType().add(v))))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX, 1)) ===
+      new StructType().add("m", MapType(
+        keyType = new StructType().add(k).add(x),
+        valueType = new StructType().add(v))))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, MAP_VALUE_INDEX, 0)) ===
+      new StructType().add("m", MapType(
+        keyType = new StructType().add(k),
+        valueType = new StructType().add(x).add(v))))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, MAP_VALUE_INDEX, 1)) ===
+      new StructType().add("m", MapType(
+        keyType = new StructType().add(k),
+        valueType = new StructType().add(v).add(x))))
+
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX - 1, 0))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_VALUE_INDEX + 1, 0))
+    }
+  }
+
+  test("addColumn - nested maps") {
+    // Helper method to create a 2-level deep nested map of structs. The tests below each cover
+    // adding a field to one of the leaf struct.
+    def schema(
+        kk: StructType = new StructType().add("kk", IntegerType),
+        kv: StructType = new StructType().add("kv", IntegerType),
+        vk: StructType = new StructType().add("vk", IntegerType),
+        vv: StructType = new StructType().add("vv", IntegerType))
+      : StructType = new StructType().add("m", MapType(
+        keyType = MapType(
+          keyType = kk,
+          valueType = kv),
+        valueType = MapType(
+          keyType = vk,
+          valueType = vv)))
+
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    val x = StructField("x", LongType)
+    // Add field `x` at the front of each leaf struct.
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX, 0)) ===
+      schema(kk = new StructType().add(x).add("kk", IntegerType)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_KEY_INDEX, 0)) ===
+      schema(vk = new StructType().add(x).add("vk", IntegerType)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX, 0)) ===
+      schema(kv = new StructType().add(x).add("kv", IntegerType)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 0)) ===
+      schema(vv = new StructType().add(x).add("vv", IntegerType)))
+
+    // Add field `x` at the back of each leaf struct.
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX, 1)) ===
+      schema(kk = new StructType().add("kk", IntegerType).add(x)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_KEY_INDEX, 1)) ===
+      schema(vk = new StructType().add("vk", IntegerType).add(x)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX, 1)) ===
+      schema(kv = new StructType().add("kv", IntegerType).add(x)))
+    assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1)) ===
+      schema(vv = new StructType().add("vv", IntegerType).add(x)))
+
+    // Invalid map access.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX - 1, MAP_KEY_INDEX, 0))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX + 1, 0))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX + 1, MAP_KEY_INDEX, 0))
+    }
+  }
+
+  test("addColumn - nested array") {
+    val e = StructField("e", IntegerType)
+    val schema = new StructType().add("a", ArrayType(new StructType().add(e)))
+    val x = StructField("x", LongType)
+
+    val ARRAY_ELEMENT_INDEX = 0
+
+    // Add field `x` at the front of the leaf struct.
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, 0)) ===
+      new StructType().add("a", ArrayType(new StructType().add(x).add(e))))
+    // Add field `x` at the back of the leaf struct.
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
+      new StructType().add("a", ArrayType(new StructType().add(e).add(x))))
+
+    // Invalid array access.
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX + 1, 0))
+    }
+  }
+
+  test("addColumn - nested arrays") {
+    val e = StructField("e", IntegerType)
+    val schema = new StructType().add("a", ArrayType(ArrayType(new StructType().add(e))))
+    val x = StructField("x", LongType)
+
+    val ARRAY_ELEMENT_INDEX = 0
+
+    // Add field `x` at the front of the leaf struct.
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 0)) ===
+      new StructType().add("a", ArrayType(ArrayType(new StructType().add(x).add(e)))))
+    // Add field `x` at the back of the leaf struct.
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
+      new StructType().add("a", ArrayType(ArrayType(new StructType().add(e).add(x)))))
+
+    // Invalid array access.
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX - 1, ARRAY_ELEMENT_INDEX, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX + 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX + 1, ARRAY_ELEMENT_INDEX, 0))
     }
   }
 
@@ -953,23 +1231,206 @@ class SchemaUtilsSuite extends QueryTest
     val a = StructField("a", IntegerType)
     val b = StructField("b", StringType)
     val c = StructField("c", StringType)
-    val s = StructField("s", new StructType().add(a).add(b))
-    val schema = new StructType().add(s).add(c)
+    val first = StructField("first", new StructType().add(a).add(b).add(c))
+    val middle = StructField("middle", new StructType().add(a).add(b).add(c))
+    val last = StructField("last", new StructType().add(a).add(b).add(c))
+    val schema = new StructType().add(first).add(middle).add(last)
 
-    assert(SchemaUtils.dropColumn(schema, Seq(0)) === ((new StructType().add(c), s)))
-    assert(SchemaUtils.dropColumn(schema, Seq(0, 0)) ===
-      ((new StructType().add("s", new StructType().add(b)).add(c), a)))
+    assert(SchemaUtils.dropColumn(schema, Seq(0)) ===
+      new StructType().add(middle).add(last) -> first)
+    assert(SchemaUtils.dropColumn(schema, Seq(1)) ===
+      new StructType().add(first).add(last) -> middle)
+    assert(SchemaUtils.dropColumn(schema, Seq(2)) ===
+      new StructType().add(first).add(middle) -> last)
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 2)) ===
+      new StructType().add("first", new StructType().add(a).add(b)).add(middle).add(last) -> c)
     assert(SchemaUtils.dropColumn(schema, Seq(0, 1)) ===
-      ((new StructType().add("s", new StructType().add(a)).add(c), b)))
+      new StructType().add("first", new StructType().add(a).add(c)).add(middle).add(last) -> b)
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0)) ===
+      new StructType().add("first", new StructType().add(b).add(c)).add(middle).add(last) -> a)
+    assert(SchemaUtils.dropColumn(schema, Seq(1, 0)) ===
+      new StructType().add(first).add("middle", new StructType().add(b).add(c)).add(last) -> a)
+    assert(SchemaUtils.dropColumn(schema, Seq(2, 0)) ===
+      new StructType().add(first).add(middle).add("last", new StructType().add(b).add(c)) -> a)
 
     expectFailure("Index -1", "lower than 0") {
       SchemaUtils.dropColumn(schema, Seq(0, -1))
     }
-    expectFailure("Index 2", "equals to or is larger than struct length: 2") {
-      SchemaUtils.dropColumn(schema, Seq(0, 2))
+    expectFailure("Index 3", "equals to or is larger than struct length: 3") {
+      SchemaUtils.dropColumn(schema, Seq(0, 3))
     }
     expectFailure("Can only drop nested columns from StructType") {
       SchemaUtils.dropColumn(schema, Seq(0, 0, 0))
+    }
+  }
+
+  test("dropColumn - nested map") {
+    val a = StructField("a", IntegerType)
+    val b = StructField("b", StringType)
+    val c = StructField("c", LongType)
+    val d = StructField("d", DateType)
+    val schema = new StructType().add("m", MapType(
+      keyType = new StructType().add(a).add(b),
+      valueType = new StructType().add(c).add(d)))
+
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX, 0)) ===
+      (new StructType().add("m", MapType(
+        keyType = new StructType().add(b),
+        valueType = new StructType().add(c).add(d))),
+      a))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX, 1)) ===
+      (new StructType().add("m", MapType(
+        keyType = new StructType().add(a),
+        valueType = new StructType().add(c).add(d))),
+      b))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, MAP_VALUE_INDEX, 0)) ===
+      (new StructType().add("m", MapType(
+        keyType = new StructType().add(a).add(b),
+        valueType = new StructType().add(d))),
+      c))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, MAP_VALUE_INDEX, 1)) ===
+      (new StructType().add("m", MapType(
+        keyType = new StructType().add(a).add(b),
+        valueType = new StructType().add(c))),
+      d))
+
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX - 1, 0))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_VALUE_INDEX + 1, 0))
+    }
+  }
+
+  test("dropColumn - nested maps") {
+    // Helper method to create a 2-level deep nested map of structs. The tests below each cover
+    // dropping a field to one of the leaf struct. Each test adds an extra field `a` at a specific
+    // position then drops it to end up with the default schema returned by `schema()`
+    def schema(
+        kk: StructType = new StructType().add("kk", IntegerType),
+        kv: StructType = new StructType().add("kv", IntegerType),
+        vk: StructType = new StructType().add("vk", IntegerType),
+        vv: StructType = new StructType().add("vv", IntegerType))
+      : StructType = new StructType().add("m", MapType(
+        keyType = MapType(
+          keyType = kk,
+          valueType = kv),
+        valueType = MapType(
+          keyType = vk,
+          valueType = vv)))
+
+    val a = StructField("a", LongType)
+
+    val MAP_KEY_INDEX = 0
+    val MAP_VALUE_INDEX = 1
+
+    def checkDrop(initialSchema: StructType, position: Seq[Int]): Unit =
+      assert(SchemaUtils.dropColumn(initialSchema, position) === (schema(), a))
+    // Drop field `a` from the front of each leaf struct.
+    checkDrop(
+      initialSchema = schema(kk = new StructType().add(a).add("kk", IntegerType)),
+      position = Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX, 0))
+
+    checkDrop(
+      initialSchema = schema(kv = new StructType().add(a).add("kv", IntegerType)),
+      position = Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX, 0))
+
+    checkDrop(
+      initialSchema = schema(vk = new StructType().add(a).add("vk", IntegerType)),
+      position = Seq(0, MAP_VALUE_INDEX, MAP_KEY_INDEX, 0))
+
+    checkDrop(
+      initialSchema = schema(vv = new StructType().add(a).add("vv", IntegerType)),
+      position = Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 0))
+
+    // Drop field `a` from the back of each leaf struct.
+    checkDrop(
+      initialSchema = schema(kk = new StructType().add("kk", IntegerType).add(a)),
+      position = Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX, 1))
+
+    checkDrop(
+      initialSchema = schema(kv = new StructType().add("kv", IntegerType).add(a)),
+      position = Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX, 1))
+
+    checkDrop(
+      initialSchema = schema(vk = new StructType().add("vk", IntegerType).add(a)),
+      position = Seq(0, MAP_VALUE_INDEX, MAP_KEY_INDEX, 1))
+
+    checkDrop(
+      initialSchema = schema(vv = new StructType().add("vv", IntegerType).add(a)),
+      position = Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1))
+
+    // Invalid map access.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX - 1, MAP_KEY_INDEX, 0))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX + 1, 0))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_VALUE_INDEX + 1, MAP_KEY_INDEX, 0))
+    }
+  }
+
+  test("dropColumn - nested array") {
+    val e = StructField("e", IntegerType)
+    val f = StructField("f", IntegerType)
+    val schema = new StructType().add("a", ArrayType(new StructType().add(e).add(f)))
+
+    val ARRAY_ELEMENT_INDEX = 0
+
+    // Drop field from the front of the leaf struct.
+    assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, 0)) ===
+      (new StructType().add("a", ArrayType(new StructType().add(f))), e))
+    // Drop field from the back of the leaf struct.
+    assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
+      (new StructType().add("a", ArrayType(new StructType().add(e))), f))
+
+    // Invalid array access.
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX + 1, 0))
+    }
+  }
+
+  test("dropColumn - nested arrays") {
+    val e = StructField("e", IntegerType)
+    val f = StructField("f", IntegerType)
+    val schema = new StructType().add("a", ArrayType(ArrayType(new StructType().add(e).add(f))))
+
+    val ARRAY_ELEMENT_INDEX = 0
+
+    // Drop field `x` from the front of the leaf struct.
+    assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 0)) ===
+      (new StructType().add("a", ArrayType(ArrayType(new StructType().add(f)))), e))
+    // Drop field `x` from the back of the leaf struct.
+    assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
+      (new StructType().add("a", ArrayType(ArrayType(new StructType().add(e)))), f))
+
+    // Invalid array access.
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX - 1, ARRAY_ELEMENT_INDEX, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX + 1, 0))
+    }
+    expectFailure("Incorrectly accessing an ArrayType") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX + 1, ARRAY_ELEMENT_INDEX, 0))
     }
   }
 
@@ -1442,10 +1903,13 @@ class SchemaUtilsSuite extends QueryTest
 
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
-        val e = intercept[AnalysisException] {
-          SchemaUtils.checkFieldNames(Seq(name))
-        }
-        assert(e.getMessage.contains("invalid character"))
+        checkError(
+          exception = intercept[AnalysisException] {
+            SchemaUtils.checkFieldNames(Seq(name))
+          },
+          errorClass = "INVALID_COLUMN_NAME_AS_PATH",
+          parameters = Map("datasource" -> "delta", "columnName" -> s"`$name`")
+        )
       }
     }
 

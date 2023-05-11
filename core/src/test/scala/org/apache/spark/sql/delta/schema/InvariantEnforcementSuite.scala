@@ -116,7 +116,7 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  testQuietly("reject non-nullable top level column") {
+  test("reject non-nullable top level column") {
     val schema = new StructType()
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
@@ -135,7 +135,7 @@ class InvariantEnforcementSuite extends QueryTest
     )
   }
 
-  testQuietly("reject non-nullable top level column - column doesn't exist") {
+  test("reject non-nullable top level column - column doesn't exist") {
     val schema = new StructType()
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
@@ -164,7 +164,7 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  testQuietly("write empty DataFrame - zero columns") {
+  test("write empty DataFrame - zero columns") {
     val schema = new StructType()
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
@@ -215,7 +215,7 @@ class InvariantEnforcementSuite extends QueryTest
     )
   }
 
-  testQuietly("reject expression invariant on top level column") {
+  test("reject expression invariant on top level column") {
     val expr = "value < 3"
     val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(expr))
     val metadata = new MetadataBuilder()
@@ -519,7 +519,7 @@ class InvariantEnforcementSuite extends QueryTest
     (implicit pos: org.scalactic.source.Position): Unit = {
     val fulLTestName = s"RuntimeReplaceable: ${targetFunc}"
     // Suppress exceptions output for invariant violations
-    super.testQuietly(fulLTestName) {
+    super.test(fulLTestName) {
       testFun
     }
   }

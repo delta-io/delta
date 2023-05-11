@@ -43,6 +43,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.streaming.{CheckpointFileManager, FileSystemBasedCheckpointFileManager, MemoryStream}
 import org.apache.spark.sql.functions.{col, floor, from_json}
@@ -214,7 +215,8 @@ trait CloneTableSuiteBase extends QueryTest
     // scalastyle:on deltahadoopconfiguration
     val qualifiedSourcePath = fs.makeQualified(sourcePath)
     val logSource = if (sourceIsTable) {
-      s"default.$source".toLowerCase(Locale.ROOT)
+      val catalog = CatalogManager.SESSION_CATALOG_NAME
+      s"$catalog.default.$source".toLowerCase(Locale.ROOT)
     } else {
       s"$sourceFormat.`$qualifiedSourcePath`"
     }
@@ -941,6 +943,77 @@ trait CloneTableSuiteBase extends QueryTest
 
       val targetLog = DeltaLog.forTable(spark, target)
       assert(targetLog.update().protocol.isFeatureSupported(TestWriterFeature))
+  }
+
+  // Delta properties that automatically cause a version upgrade when enabled via ALTER TABLE.
+  final val featuresWithAutomaticProtocolUpgrade: Seq[DeltaConfig[Boolean]] = Seq(
+    DeltaConfigs.CHANGE_DATA_FEED,
+    DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION
+  )
+  // This test ensures this upgrade also happens when enabled during a CLONE.
+  for (feature <- featuresWithAutomaticProtocolUpgrade)
+    testAllClones("Cloning a table with new table properties" +
+      s" that force protocol version upgrade - ${feature.key}"
+    ) { (source, target, isShallow) =>
+      import DeltaTestUtils.StrictProtocolOrdering
+
+      spark.range(5).write.format("delta").save(source)
+      val sourceDeltaLog = DeltaLog.forTable(spark, source)
+      val sourceSnapshot = sourceDeltaLog.update()
+      // This only works if the feature is not enabled by default.
+      assert(!feature.fromMetaData(sourceSnapshot.metadata))
+      // Check that the original version is not already sufficient for the feature.
+      assert(!StrictProtocolOrdering.fulfillsVersionRequirements(
+        actual = sourceSnapshot.protocol,
+        requirement = feature.minimumProtocolVersion.get
+      ))
+
+      // Clone the table, enabling the feature in an override.
+      val tblProperties = Map(feature.key -> "true")
+      cloneTable(
+        source,
+        target,
+        isReplace = true,
+        tableProperties = tblProperties)
+
+      val targetDeltaLog = DeltaLog.forTable(spark, target)
+      val targetSnapshot = targetDeltaLog.update()
+      assert(targetSnapshot.metadata.configuration ===
+        tblProperties ++ sourceSnapshot.metadata.configuration)
+      // Check that the protocol has been upgraded.
+      assert(StrictProtocolOrdering.fulfillsVersionRequirements(
+        actual = targetSnapshot.protocol,
+        requirement = feature.minimumProtocolVersion.get
+      ))
+    }
+
+  testAllClones("Cloning a table without DV property should not upgrade protocol version"
+  ) { (source, target, isShallow) =>
+    import DeltaTestUtils.StrictProtocolOrdering
+
+    spark.range(5).write.format("delta").save(source)
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+      val sourceDeltaLog = DeltaLog.forTable(spark, source)
+      val sourceSnapshot = sourceDeltaLog.update()
+      // Should not be enabled, just because it's allowed.
+      assert(!DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(sourceSnapshot.metadata))
+      // Check that the original version is not already sufficient for the feature.
+      assert(!StrictProtocolOrdering.fulfillsVersionRequirements(
+        actual = sourceSnapshot.protocol,
+        requirement = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.minimumProtocolVersion.get
+      ))
+
+      // Clone the table.
+      cloneTable(
+        source,
+        target,
+        isReplace = true)
+
+      val targetDeltaLog = DeltaLog.forTable(spark, target)
+      val targetSnapshot = targetDeltaLog.update()
+      // Protocol should not have been upgraded.
+      assert(sourceSnapshot.protocol === targetSnapshot.protocol)
+    }
   }
 }
 

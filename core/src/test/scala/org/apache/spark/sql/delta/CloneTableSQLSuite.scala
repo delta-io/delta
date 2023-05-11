@@ -16,6 +16,13 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.immutable.NumericRange
+
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
@@ -119,12 +126,14 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
     val ex = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE not_exists")
     }
-    assert(ex.getMessage.contains("Table not found"))
+    assert(ex.getMessage.contains("Table not found") ||
+      ex.getMessage.contains("The table or view `not_exists` cannot be found"))
 
     val ex2 = intercept[AnalysisException] {
       sql(s"CREATE TABLE delta.`$tblExt` SHALLOW CLONE not_exists VERSION AS OF 0")
     }
-    assert(ex2.getMessage.contains("Table not found"))
+    assert(ex2.getMessage.contains("Table not found") ||
+      ex2.getMessage.contains("The table or view `not_exists` cannot be found"))
   }
 
   cloneTest("cloning a view") { (tblExt, _) =>
@@ -273,4 +282,184 @@ object CloneTableSQLTestUtils {
     withProperties
   }
   // scalastyle:on argcount
+}
+
+class CloneTableScalaDeletionVectorSuite
+    extends CloneTableSQLSuite
+    with DeltaSQLCommandTest
+    with DeltaExcludedTestMixin
+    with DeletionVectorsTestUtils {
+
+  override def excluded: Seq[String] = super.excluded ++
+    Seq(
+      // These require the initial table protocol version to be low to work properly.
+      "Cloning a table with new table properties that force protocol version upgrade -" +
+        " delta.enableChangeDataFeed"
+      , "Cloning a table with new table properties that force protocol version upgrade -" +
+        " delta.enableDeletionVectors"
+      , "Cloning a table without DV property should not upgrade protocol version"
+      , "CLONE respects table features set by table property override, targetExists=true"
+      , "CLONE ignores reader/writer session defaults")
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectors(spark.conf)
+  }
+
+  override protected def uniqueFileActionGroupBy(action: FileAction): String = {
+    val filePath = action.pathAsUri.toString
+    val dvId = action match {
+      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
+      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
+      case _ => ""
+    }
+    filePath + dvId
+  }
+
+  testAllClones("Cloning table with persistent DVs") { (source, target, isShallow) =>
+    // Create source table
+    writeMultiFileSourceTable(
+      source,
+      fileRanges = Seq(0L until 30L, 30L until 60L, 60L until 90L))
+    // Add DVs to 2 files, leave 1 file without DVs.
+    spark.sql(s"DELETE FROM delta.`$source` WHERE id IN (24, 42)")
+    runAndValidateCloneWithDVs(
+      source,
+      target,
+      expectedNumFilesWithDVs = 2)
+  }
+
+  testAllClones("Cloning table with persistent DVs and absolute parquet paths"
+  ) { (source, target, isShallow) =>
+    withTempDir { originalSourceDir =>
+      val originalSource = originalSourceDir.getCanonicalPath
+      // Create source table, by writing to an upstream table and then shallow cloning before
+      // adding DVs.
+      writeMultiFileSourceTable(
+        source = originalSource,
+        fileRanges = Seq(0L until 30L, 30L until 60L, 60L until 90L))
+      spark.sql(s"CREATE OR REPLACE TABLE delta.`$source` SHALLOW CLONE delta.`$originalSource`")
+      // Add DVs to 2 files, leave 1 file without DVs.
+      spark.sql(s"DELETE FROM delta.`$source` WHERE id IN (24, 42)")
+      runAndValidateCloneWithDVs(
+        source,
+        target,
+        expectedNumFilesWithDVs = 2)
+    }
+  }
+
+  testAllClones("Cloning table with persistent DVs and absolute DV file paths"
+  ) { (source, target, isShallow) =>
+    withTempDir { originalSourceDir =>
+      val originalSource = originalSourceDir.getCanonicalPath
+      // Create source table, by writing to an upstream table, adding DVs and then shallow cloning.
+      writeMultiFileSourceTable(
+        source = originalSource,
+        fileRanges = Seq(0L until 30L, 30L until 60L, 60L until 90L))
+      // Add DVs to 2 files, leave 1 file without DVs.
+      spark.sql(s"DELETE FROM delta.`$originalSource` WHERE id IN (24, 42)")
+      val originalSourceTable = io.delta.tables.DeltaTable.forPath(spark, originalSource)
+      spark.sql(s"CREATE OR REPLACE TABLE delta.`$source` SHALLOW CLONE delta.`$originalSource`")
+      // Double check this clone was correct.
+      checkAnswer(
+        spark.read.format("delta").load(source), expectedAnswer = originalSourceTable.toDF)
+      runAndValidateCloneWithDVs(
+        source,
+        target,
+        expectedNumFilesWithDVs = 2)
+    }
+  }
+
+  cloneTest("Shallow clone round-trip with DVs") { (source, target) =>
+    // Create source table.
+    writeMultiFileSourceTable(
+      source = source,
+      fileRanges = Seq(
+        0L until 30L, // file 1
+        30L until 60L, // file 2
+        60L until 90L, //  file 3
+        90L until 120L)) // file 4
+    // Add DVs to files 1 and 2 and then shallow clone.
+    spark.sql(s"DELETE FROM delta.`$source` WHERE id IN (24, 42)")
+    runAndValidateCloneWithDVs(
+      source = source,
+      target = target,
+      expectedNumFilesWithDVs = 2)
+
+    // Add a new DV to file 3 and update the DV file 2,
+    // leaving file 4 without a DV and file 1 with the existing DV.
+    // Then shallow clone back into source.
+    spark.sql(s"DELETE FROM delta.`$target` WHERE id IN (43, 69)")
+    runAndValidateCloneWithDVs(
+      source = target,
+      target = source,
+      expectedNumFilesWithDVs = 3,
+      isReplaceOperation = true)
+  }
+
+  /** Write one file per range in `fileRanges`. */
+  private def writeMultiFileSourceTable(
+    source: String,
+    fileRanges: Seq[NumericRange.Exclusive[Long]]): Unit = {
+    for (range <- fileRanges) {
+      spark.range(start = range.start, end = range.end, step = 1L, numPartitions = 1).toDF("id")
+        .write.format("delta").mode("append").save(source)
+    }
+  }
+
+  private def runAndValidateCloneWithDVs(
+    source: String,
+    target: String,
+    expectedNumFilesWithDVs: Int,
+    isReplaceOperation: Boolean = false): Unit = {
+    val sourceDeltaLog = DeltaLog.forTable(spark, source)
+    val targetDeltaLog = DeltaLog.forTable(spark, source)
+    val filesWithDVsInSource = getFilesWithDeletionVectors(sourceDeltaLog)
+    assert(filesWithDVsInSource.size === expectedNumFilesWithDVs)
+    val numberOfUniqueDVFilesInSource = filesWithDVsInSource
+      .map(_.deletionVector.pathOrInlineDv)
+      .toSet
+      .size
+
+    runAndValidateClone(
+      source,
+      target,
+      isReplaceOperation = isReplaceOperation)()
+    val filesWithDVsInTarget = getFilesWithDeletionVectors(targetDeltaLog)
+    val numberOfUniqueDVFilesInTarget = filesWithDVsInTarget
+      .map(_.deletionVector.pathOrInlineDv)
+      .toSet
+      .size
+    // Make sure we didn't accidentally copy some file multiple times.
+    assert(numberOfUniqueDVFilesInSource === numberOfUniqueDVFilesInTarget)
+    // Check contents of the copied DV files.
+    val filesWithDVsInTargetByPath = filesWithDVsInTarget
+      .map(addFile => addFile.path -> addFile)
+      .toMap
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+    for (sourceFile <- filesWithDVsInSource) {
+      val targetFile = filesWithDVsInTargetByPath(sourceFile.path)
+      if (sourceFile.deletionVector.isInline) {
+        assert(targetFile.deletionVector.isInline)
+        assert(sourceFile.deletionVector.inlineData === targetFile.deletionVector.inlineData)
+      } else {
+        def readDVData(path: Path): Array[Byte] = {
+          val fs = path.getFileSystem(hadoopConf)
+          val size = fs.getFileStatus(path).getLen
+          val data = new Array[Byte](size.toInt)
+          Utils.tryWithResource(fs.open(path)) { reader =>
+            reader.readFully(data)
+          }
+          data
+        }
+        val sourceDVPath = sourceFile.deletionVector.absolutePath(sourceDeltaLog.dataPath)
+        val targetDVPath = targetFile.deletionVector.absolutePath(targetDeltaLog.dataPath)
+        val sourceData = readDVData(sourceDVPath)
+        val targetData = readDVData(targetDVPath)
+        assert(sourceData === targetData)
+      }
+    }
+  }
 }

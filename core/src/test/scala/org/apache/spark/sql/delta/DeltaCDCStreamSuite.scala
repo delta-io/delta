@@ -1008,6 +1008,14 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   }
 }
 
+class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
+  with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectorsForDeletes(spark)
+  }
+}
+
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
 abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
   with ColumnMappingStreamingBlockedWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {

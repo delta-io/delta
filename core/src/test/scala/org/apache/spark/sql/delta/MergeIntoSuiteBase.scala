@@ -590,10 +590,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  protected def errorContains(errMsg: String, str: String): Unit = {
-    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
-  }
-
   def errorNotContains(errMsg: String, str: String): Unit = {
     assert(!errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
@@ -2553,7 +2549,7 @@ abstract class MergeIntoSuiteBase
               executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
                 clauses.toSeq: _*)
             }
-            assert(ex.getMessage.contains(expectErrorContains))
+            errorContains(ex.getMessage, expectErrorContains)
           } else {
             executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
               clauses.toSeq: _*)
@@ -4702,8 +4698,9 @@ abstract class MergeIntoSuiteBase
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
     insert(condition = null, values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
-    errorStrs = "when there are more than one not matched clauses in a merge statement, " +
-      "only the last not matched clause can omit the condition" :: Nil)
+    errorStrs = "when there are more than one not matched" ::
+      "clauses in a merge statement, only the last not matched" ::
+      "clause can omit the condition" :: Nil)
 
   testAnalysisErrorsInUnlimitedClauses("error on multiple update clauses without condition")(
     mergeOn = "s.key = t.key",
@@ -4738,8 +4735,9 @@ abstract class MergeIntoSuiteBase
     update(condition = null, set = "key = s.key, value = srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
     insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
-    errorStrs = "when there are more than one not matched clauses in a merge statement, " +
-      "only the last not matched clause can omit the condition" :: Nil)
+    errorStrs = "when there are more than one not matched" ::
+      "clauses in a merge statement, only the last not matched" ::
+      "clause can omit the condition" :: Nil)
 
   /* end unlimited number of merge clauses tests */
 
@@ -5171,8 +5169,8 @@ abstract class MergeIntoSuiteBase
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorMsgForSQLTempView = "cannot resolve",
-    expectedErrorMsgForDataSetTempView = "cannot resolve"
+    expectedErrorMsgForSQLTempView = "cannot resolve v.value",
+    expectedErrorMsgForDataSetTempView = "cannot resolve v.value"
   )
 
   testInvalidTempViews("superset cols")(

@@ -198,8 +198,7 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    // TODO: use `SQLConf.READ_SIDE_CHAR_PADDING` after Spark 3.4 is released.
-    val charPadding = sparkSession.conf.get("spark.sql.readSideCharPadding", "false") == "true"
+    val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING.key, "false") == "true"
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
     val dataSchema = if (!charAsVarchar && charPadding) {
       data.schema
@@ -234,6 +233,10 @@ case class WriteIntoDelta(
           false
         }
       } else options.isDynamicPartitionOverwriteMode
+    }
+
+    if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {
+      throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()
     }
 
     // Validate partition predicates

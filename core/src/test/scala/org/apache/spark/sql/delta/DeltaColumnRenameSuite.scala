@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.types._
 
 class DeltaColumnRenameSuite extends QueryTest
@@ -415,4 +415,56 @@ class DeltaColumnRenameSuite extends QueryTest
       }
     }
   }
+
+  /**
+   * Covers renaming a nested field using the ALTER TABLE command.
+   * @param initialColumnType Type of the single column used to create the initial test table.
+   * @param fieldToRename     Old and new name of the field to rename.
+   * @param updatedColumnType Expected type of the single column after renaming the nested field.
+   */
+  def testRenameNestedField(testName: String)(
+      initialColumnType: String,
+      fieldToRename: (String, String),
+      updatedColumnType: String): Unit =
+    testColumnMapping(s"ALTER TABLE RENAME COLUMN - nested $testName") { mode =>
+      withTempDir { dir =>
+        withTable("delta_test") {
+          sql(
+            s"""
+               |CREATE TABLE delta_test (data $initialColumnType)
+               |USING delta
+               |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '${mode}')
+               |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
+
+          val expectedInitialType = initialColumnType.filterNot(_.isWhitespace)
+          val expectedUpdatedType = updatedColumnType.filterNot(_.isWhitespace)
+          val fieldName = s"data.${fieldToRename._1}"
+
+          def columnType: DataFrame =
+            sql("DESCRIBE TABLE delta_test")
+              .filter("col_name = 'data'")
+              .select("data_type")
+          checkAnswer(columnType, Row(expectedInitialType))
+
+          sql(s"ALTER TABLE delta_test RENAME COLUMN $fieldName TO ${fieldToRename._2}")
+          checkAnswer(columnType, Row(expectedUpdatedType))
+        }
+      }
+    }
+
+  testRenameNestedField("struct in map key")(
+    initialColumnType = "map<struct<a: int, b: string>, int>",
+    fieldToRename = "key.b" -> "c",
+    updatedColumnType = "map<struct<a: int, c: string>, int>")
+
+  testRenameNestedField("struct in map value")(
+    initialColumnType = "map<int, struct<a: int, b: string>>",
+    fieldToRename = "value.b" -> "c",
+    updatedColumnType = "map<int, struct<a: int, c: string>>")
+
+  testRenameNestedField("struct in array")(
+    initialColumnType = "array<struct<a: int, b: string>>",
+    fieldToRename = "element.b" -> "c",
+    updatedColumnType = "array<struct<a: int, c: string>>")
+
 }
