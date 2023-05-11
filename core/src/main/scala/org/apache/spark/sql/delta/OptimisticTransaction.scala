@@ -984,7 +984,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      val currentTransactionInfo = new CurrentTransactionInfo(
+      val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
@@ -995,7 +995,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         actions = preparedActions,
         readSnapshot = snapshot,
         commitInfo = Option(commitInfo),
-        readRowIdHighWatermark)
+        readRowIdHighWatermark = readRowIdHighWatermark)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1323,7 +1323,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     deltaLog.protocolWrite(snapshot.protocol)
 
-    RowId.verifyRowIdHighWaterMarkNotSet(finalActions)
     finalActions =
       RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
 
@@ -1437,8 +1436,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
-      isolationLevel: IsolationLevel
-  ): (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
+      isolationLevel: IsolationLevel)
+    : (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
 
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
@@ -1609,7 +1608,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       checkVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      commitIsolationLevel: IsolationLevel): (Long, CurrentTransactionInfo) = recordDeltaOperation(
+      commitIsolationLevel: IsolationLevel)
+    : (Long, CurrentTransactionInfo) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {

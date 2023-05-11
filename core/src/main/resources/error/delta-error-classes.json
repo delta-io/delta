@@ -422,6 +422,22 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot enable row tracking without collecting statistics.",
+      "If you want to enable row tracking, do the following:",
+      "  1. Enable statistics collection by running the command",
+      "     SET <statisticsCollectionPropertyKey> = true",
+      "  2. Run CONVERT TO DELTA without the NO STATISTICS option.",
+      "",
+      "If you do not want to collect statistics, disable row tracking:",
+      "  1. Deactivate enabling the table feature by default by running the command:",
+      "     RESET <rowTrackingTableFeatureDefaultKey>",
+      "  2. Deactivate the table property by default by running:",
+      "     SET <rowTrackingDefaultPropertyKey> = false"
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA" : {
     "message" : [
       "",

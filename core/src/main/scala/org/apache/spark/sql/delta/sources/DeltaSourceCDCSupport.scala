@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.actions.RowIdHighWaterMark
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, RowIdHighWaterMark, SetTransaction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql.DataFrame
@@ -292,8 +291,6 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           a.dataChange
         case r: RemoveFile =>
           r.dataChange
-        case cdc: AddCDCFile =>
-          false
         case m: Metadata =>
           if (verifyMetadataAction) {
             checkReadIncompatibleSchemaChanges(m, version)
@@ -305,7 +302,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case commitInfo: CommitInfo =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           false
-        case _: SetTransaction =>
+        case _: AddCDCFile | _: RowIdHighWaterMark | _: SetTransaction =>
           false
         case _: RowIdHighWaterMark => false
         case null => // Some crazy future feature. Ignore

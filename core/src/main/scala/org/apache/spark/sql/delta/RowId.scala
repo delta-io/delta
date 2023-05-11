@@ -27,8 +27,7 @@ import org.apache.spark.sql.SparkSession
  */
 object RowId {
 
-  val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark =
-    RowIdHighWaterMark(highWaterMark = -1L, preservedRowIds = false)
+  val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark = RowIdHighWaterMark(highWaterMark = -1L)
 
   /**
    * Returns whether Row IDs can be written to Delta tables and read from Delta tables. This acts as
@@ -92,90 +91,43 @@ object RowId {
   }
 
   /**
-   * Iterator to assign fresh row IDs to AddFiles in an iterator of actions.
-   */
-  private class RowIdAssigningIterator(
-      actions: Iterator[Action],
-      highWatermark: Option[Long]) extends Iterator[Action] {
-
-    val oldHighWatermark: Long = highWatermark.getOrElse(-1L)
-    var newHighWatermark: Long = oldHighWatermark
-
-    // Keep iterating until we processed all actions and we emitted the new high-water mark if it
-    // changed.
-    override def hasNext: Boolean = actions.hasNext || (newHighWatermark != oldHighWatermark)
-
-    override def next(): Action = {
-      if (actions.hasNext) {
-        actions.next() match {
-          case a: AddFile if a.baseRowId.isEmpty =>
-            val baseRowId = newHighWatermark + 1L
-            if (a.numPhysicalRecords.isEmpty) {
-              throw new UnsupportedOperationException(
-                "Cannot assign row IDs without row count statistics.")
-            }
-            newHighWatermark += a.numPhysicalRecords.get
-            a.copy(baseRowId = Some(baseRowId))
-          case a => a
-        }
-      } else {
-        val watermarkToCommit = newHighWatermark
-        newHighWatermark = oldHighWatermark // reset high watermark to make hasNext return false
-        RowIdHighWaterMark(watermarkToCommit, preservedRowIds = false)
-      }
-    }
-  }
-
-  /**
-   * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet.
+   * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet and emits
+   * a [[RowIdHighWaterMark]] action with the new high-water mark.
    */
   private[delta] def assignFreshRowIds(
       spark: SparkSession,
       protocol: Protocol,
       snapshot: Snapshot,
       actions: Iterator[Action]): Iterator[Action] = {
-    if (rowIdsAllowed(spark) && rowIdsSupported(protocol)) {
-      val highWatermark = extractHighWatermark(spark, snapshot).map(_.highWaterMark)
-      new RowIdAssigningIterator(actions, highWatermark)
-    } else {
-      actions
-    }
-  }
+    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return actions
 
-  /**
-   * Reassigns newly assigned Row IDs (i.e. Row IDs above `readHighWaterMark`) of all AddFile
-   * actions in `actions` to be above `winningHighWaterMarkOpt` (if it is defined), and
-   * updates the high watermark in `actions`.
-   */
-  private[delta] def reassignOverlappingRowIds(
-      readHighWaterMark: Long,
-      winningHighWaterMark: Long,
-      actions: Seq[Action]): (Seq[Action], RowIdHighWaterMark) = {
-    assert(winningHighWaterMark >= readHighWaterMark)
-    val watermarkDiff = winningHighWaterMark - readHighWaterMark
-    val newActions = actions.map {
-      case a: AddFile =>
-        // We should only update the row IDs that were assigned by this transaction, and not the
-        // row IDs that were assigned by an earlier transaction and merely copied over to a new
-        // AddFile as part of this transaction. I.e., we should only update the base row IDs that
-        // are larger than the read high watermark.
-        a.baseRowId match {
-          case Some(baseRowId) if baseRowId > readHighWaterMark =>
-            val newBaseRowId = baseRowId + watermarkDiff
-            a.copy(baseRowId = Some(newBaseRowId))
-          case _ =>
-            a
+    val oldHighWatermark = extractHighWatermark(spark, snapshot)
+        .getOrElse(MISSING_HIGH_WATER_MARK)
+        .highWaterMark
+    var newHighWatermark = oldHighWatermark
+
+    val actionsWithFreshRowIds = actions.map {
+      case a: AddFile if a.baseRowId.isEmpty =>
+        val baseRowId = newHighWatermark + 1L
+        newHighWatermark += a.numPhysicalRecords.getOrElse {
+          throw new UnsupportedOperationException(
+            "Cannot assign row IDs without row count statistics.")
         }
-
-      case RowIdHighWaterMark(v, preservedRowIds) =>
-        RowIdHighWaterMark(v + watermarkDiff, preservedRowIds)
-
-      case a => a
+        a.copy(baseRowId = Some(baseRowId))
+      case _: RowIdHighWaterMark =>
+        throw new IllegalStateException(
+          "Manually setting the Row ID high water mark is not allowed")
+      case other => other
     }
-    val newHighWaterMark = actions
-      .collectFirst { case r: RowIdHighWaterMark => r }
-      .getOrElse(RowId.MISSING_HIGH_WATER_MARK)
-    newActions -> newHighWaterMark
+
+    val newHighWatermarkAction: Iterator[Action] = new Iterator[Action] {
+      // Iterators are lazy, so the first call to `hasNext` won't happen until after we
+      // exhaust the remapped actions iterator. At that point, the watermark (changed or not)
+      // decides whether the iterator is empty or infinite; take(1) below to bound it.
+      override def hasNext(): Boolean = newHighWatermark != oldHighWatermark
+      override def next(): Action = RowIdHighWaterMark(newHighWatermark)
+    }
+    actionsWithFreshRowIds ++ newHighWatermarkAction.take(1)
   }
 
   /**
@@ -199,9 +151,20 @@ object RowId {
     }
   }
 
-  private[delta] def verifyRowIdHighWaterMarkNotSet(actions: Seq[Action]): Unit = {
-    if (actions.exists(_.isInstanceOf[RowIdHighWaterMark])) {
-      throw new IllegalStateException("Manually setting the Row ID high water mark is not allowed")
+  /**
+   * Checks whether CONVERT TO DELTA collects statistics if row tracking is supported. If it does
+   * not collect statistics, we cannot assign fresh row IDs, hence we throw an error to either rerun
+   * the command without enabling the row tracking table feature, or to enable the necessary
+   * flags to collect statistics.
+   */
+  private[delta] def checkStatsCollectedIfRowTrackingSupported(
+      spark: SparkSession,
+      protocol: Protocol,
+      convertToDeltaShouldCollectStats: Boolean,
+      statsCollectionEnabled: Boolean): Unit = {
+    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return
+    if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
+      throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
     }
   }
 }

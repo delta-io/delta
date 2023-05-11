@@ -40,7 +40,7 @@ import org.apache.spark.sql.types.StructType
  * @param readSnapshot read [[Snapshot]] used for the transaction
  * @param commitInfo [[CommitInfo]] for the commit
  */
-private[delta] class CurrentTransactionInfo(
+private[delta] case class CurrentTransactionInfo(
     val txnId: String,
     val readPredicates: Seq[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
@@ -52,35 +52,6 @@ private[delta] class CurrentTransactionInfo(
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
     val readRowIdHighWatermark: RowIdHighWaterMark) {
-
-  // scalastyle:off argcount
-  def copy(
-      txnId: String = txnId,
-      readPredicates: Seq[DeltaTableReadPredicate] = readPredicates,
-      readFiles: Set[AddFile] = readFiles,
-      readWholeTable: Boolean = readWholeTable,
-      readAppIds: Set[String] = readAppIds,
-      metadata: Metadata = metadata,
-      protocol: Protocol = protocol,
-      actions: Seq[Action] = actions,
-      readSnapshot: Snapshot = readSnapshot,
-      commitInfo: Option[CommitInfo] = commitInfo,
-      readRowIdHighWatermark: RowIdHighWaterMark = readRowIdHighWatermark)
-    : CurrentTransactionInfo =
-    new CurrentTransactionInfo(
-      txnId,
-      readPredicates,
-      readFiles,
-      readWholeTable,
-      readAppIds,
-      metadata,
-      protocol,
-      actions,
-      readSnapshot,
-      commitInfo,
-      readRowIdHighWatermark)
-  // scalastyle:on argcount
-
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -351,25 +322,35 @@ private[delta] class ConflictChecker(
    * to the new files added by the current transaction so that they no longer overlap.
    */
   private def reassignOverlappingRowIds(): Unit = {
-    if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) {
-      // The current transaction did not assign Row IDs since Row IDs are not supported.
-      return
-    }
+    // The current transaction should only assign Row Ids if they are supported.
+    if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) return
 
-    RowId.extractHighWatermark(spark, winningCommitSummary.actions)
-      .map(_.highWaterMark)
-      .foreach { winningHighWaterMark =>
+    winningCommitSummary.actions.collectFirst {
+      case RowIdHighWaterMark(winningHighWaterMark) =>
         // The winning transaction assigned conflicting Row IDs. Adjust the Row IDs assigned by the
         // current transaction as if it had read the result of the winning transaction.
-        val (newActions, newHighWaterMark) = RowId.reassignOverlappingRowIds(
-          readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark,
-          winningHighWaterMark = winningHighWaterMark,
-          actions = currentTransactionInfo.actions)
+        val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+        assert(winningHighWaterMark >= readHighWaterMark)
+        val watermarkDiff = winningHighWaterMark - readHighWaterMark
 
-        currentTransactionInfo = currentTransactionInfo.copy(
-          actions = newActions,
-          readRowIdHighWatermark = newHighWaterMark)
-      }
+        val actionsWithReassignedRowIds = currentTransactionInfo.actions.map {
+          // We should only update the row IDs that were assigned by this transaction, and not the
+          // row IDs that were assigned by an earlier transaction and merely copied over to a new
+          // AddFile as part of this transaction. I.e., we should only update the base row IDs
+          // that are larger than the read high watermark.
+          case a: AddFile if a.baseRowId.exists(_ > readHighWaterMark) =>
+            val newBaseRowId = a.baseRowId.map(_ + watermarkDiff)
+            a.copy(baseRowId = newBaseRowId)
+
+          case waterMark @ RowIdHighWaterMark(v) =>
+            waterMark.copy(highWaterMark = v + watermarkDiff)
+
+          case a => a
+        }
+      currentTransactionInfo = currentTransactionInfo.copy(
+        actions = actionsWithReassignedRowIds,
+        readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
+    }
   }
 
   /** A helper function for pretty printing a specific partition directory. */

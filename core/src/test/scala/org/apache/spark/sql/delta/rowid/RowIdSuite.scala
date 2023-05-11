@@ -16,9 +16,8 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, RowId}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.RowIdHighWaterMark
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -250,34 +249,6 @@ class RowIdSuite extends QueryTest
     }
   }
 
-  test(s"CONVERT TO DELTA assigns row ids") {
-    withRowIdsEnabled(enabled = true) {
-      withTempDir { dir =>
-        spark.range(10)
-          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
-
-        sql(s"CONVERT TO DELTA parquet.`$dir`")
-
-        val log = DeltaLog.forTable(spark, dir)
-        assertRowIdsAreValid(log)
-      }
-    }
-  }
-
-  test(s"CONVERT TO DELTA throws error when converting without statistics") {
-    withRowIdsEnabled(enabled = true) {
-      withTempDir { dir =>
-        spark.range(10)
-          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
-
-        val err = intercept[UnsupportedOperationException] {
-          sql(s"CONVERT TO DELTA parquet.`$dir` NO STATISTICS")
-        }
-        assert(err.getMessage === "Cannot assign row IDs without row count statistics.")
-      }
-    }
-  }
-
   test("manually setting row ID high watermark is not allowed") {
     withRowIdsEnabled(enabled = true) {
       withTempDir { dir =>
@@ -287,9 +258,7 @@ class RowIdSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir)
 
         val exception = intercept[IllegalStateException] {
-          log.startTransaction().commit(Seq(
-            RowIdHighWaterMark(highWaterMark = 9001, preservedRowIds = false)),
-            ManualUpdate)
+          log.startTransaction().commit(Seq(RowIdHighWaterMark(highWaterMark = 9001)), ManualUpdate)
         }
         assert(exception.getMessage.contains(
           "Manually setting the Row ID high water mark is not allowed"))

@@ -56,8 +56,10 @@ class CheckpointsSuite extends QueryTest
       val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
       assert(lastCheckpointOpt.nonEmpty)
       assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
+      val expectedCheckpointSchema =
+        Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark")
       assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
-        Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark"))
+        expectedCheckpointSchema)
 
       spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
       withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
@@ -207,9 +209,8 @@ class CheckpointsSuite extends QueryTest
           val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
           val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
           val expectedCheckpointSchema =
-
-          assert(checkpointSchema.fieldNames.toSeq ==
-            Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark"))
+            Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark")
+          assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
         }
       }
     }
