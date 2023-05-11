@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.optimize
 import org.apache.spark.sql.delta.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.col
@@ -54,6 +55,13 @@ class DeltaReorgSuite extends QueryTest
       checkAnswer(
         sql(s"SELECT * FROM delta.`$path`"),
         (1 to 98).toDF())
+
+      // Verify commit history and operation metrics
+      checkOpHistory(
+        tablePath = path,
+        expOpParams = Map("applyPurge" -> "true", "predicate" -> "[]"),
+        numFilesRemoved = 2,
+        numFilesAdded = 1)
     }
   }
 
@@ -73,6 +81,13 @@ class DeltaReorgSuite extends QueryTest
       checkAnswer(
         sql(s"SELECT * FROM delta.`$path`"),
         (1 to 98).toDF())
+
+      // Verify commit history and operation metrics
+      checkOpHistory(
+        tablePath = path,
+        expOpParams = Map("applyPurge" -> "true", "predicate" -> "[]"),
+        numFilesRemoved = 2,
+        numFilesAdded = 1)
 
       // Second purge is a noop
       val versionBefore = log.update().version
@@ -108,6 +123,31 @@ class DeltaReorgSuite extends QueryTest
       val (addFiles2, _) = getFileActionsInLastVersion(log)
       assert(addFiles2.size === 2)
       assert(addFiles2.forall(_.deletionVector === null))
+
+      // Verify commit history and operation metrics
+      checkOpHistory(
+        tablePath = path.toString,
+        expOpParams = Map("applyPurge" -> "true", "predicate" -> "[\"'part IN (0,2)\"]"),
+        numFilesRemoved = 2,
+        numFilesAdded = 2)
     }
+  }
+
+  private def checkOpHistory(
+      tablePath: String,
+      expOpParams: Map[String, String],
+      numFilesRemoved: Long,
+      numFilesAdded: Long): Unit = {
+    val (opName, opParams, opMetrics) = DeltaTable.forPath(tablePath)
+      .history(1)
+      .select("operation", "operationParameters", "operationMetrics")
+      .as[(String, Map[String, String], Map[String, String])]
+      .head()
+    assert(opName === "REORG")
+    assert(opParams === expOpParams)
+    assert(opMetrics("numAddedFiles").toLong === numFilesAdded)
+    assert(opMetrics("numRemovedFiles").toLong === numFilesRemoved)
+    // Because each deleted file has a DV associated it which gets rewritten as part of PURGE
+    assert(opMetrics("numDeletionVectorsRemoved").toLong === numFilesRemoved)
   }
 }
