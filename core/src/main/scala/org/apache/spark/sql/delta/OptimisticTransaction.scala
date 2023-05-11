@@ -992,6 +992,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         onlyAddFiles && !dependsOnFiles
       }
 
+      val readRowIdHighWatermark =
+        RowId.extractHighWatermark(spark, snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
+
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
         op.name,
@@ -1005,16 +1008,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      val currentTransactionInfo = new CurrentTransactionInfo(
+      val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
+        protocol = protocol,
         actions = preparedActions,
         readSnapshot = snapshot,
-        commitInfo = Option(commitInfo))
+        commitInfo = Option(commitInfo),
+        readRowIdHighWatermark = readRowIdHighWatermark)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1125,6 +1130,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         }
         action
       }
+
+      allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions)
+
       if (readVersion < 0) {
         deltaLog.createLogDirectory()
       }
@@ -1341,6 +1349,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     deltaLog.protocolWrite(snapshot.protocol)
 
+    finalActions =
+      RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
+
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.
     val removes = actions.collect { case r: RemoveFile => r }
@@ -1451,8 +1462,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
-      isolationLevel: IsolationLevel
-  ): (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
+      isolationLevel: IsolationLevel)
+    : (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
 
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
@@ -1623,7 +1634,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       checkVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      commitIsolationLevel: IsolationLevel): (Long, CurrentTransactionInfo) = recordDeltaOperation(
+      commitIsolationLevel: IsolationLevel)
+    : (Long, CurrentTransactionInfo) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {

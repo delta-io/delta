@@ -16,9 +16,8 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import scala.collection.mutable.ArrayBuffer
-
-import org.apache.spark.sql.delta.RowIdFeature
+import org.apache.spark.sql.delta.{DeltaLog, RowId, RowIdFeature}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{defaultPropertyKey, propertyKey}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -41,7 +40,65 @@ trait RowIdTestUtils extends QueryTest
     // Even when we don't want Row Ids on created tables, we want to enable code paths that
     // interact with them, which is controlled by this config.
     assert(spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED.key) == "true")
-    val configPairs = if (enabled) Seq(defaultRowIdFeatureProperty -> "enabled") else Seq.empty
+    val configPairs = if (enabled) Seq(defaultRowIdFeatureProperty -> "supported") else Seq.empty
     withSQLConf(configPairs: _*)(f)
+  }
+
+  protected def getRowIdRangeInclusive(f: AddFile): (Long, Long) = {
+    val min = f.baseRowId.get.toLong
+    val max = min + f.numPhysicalRecords.get - 1L
+    (min, max)
+  }
+
+  def assertRowIdsDoNotOverlap(log: DeltaLog): Unit = {
+    val files = log.update().allFiles.collect()
+
+    val sortedRanges = files
+      .map(f => (f.path, getRowIdRangeInclusive(f)))
+      .sortBy { case (_, (min, _)) => min }
+
+    for (i <- sortedRanges.indices.dropRight(1)) {
+      val (curPath, (_, curMax)) = sortedRanges(i)
+      val (nextPath, (nextMin, _)) = sortedRanges(i + 1)
+      assert(curMax < nextMin, s"$curPath and $nextPath have overlapping row IDs")
+    }
+  }
+
+  def assertHighWatermarkIsCorrect(log: DeltaLog): Unit = {
+    val snapshot = log.update()
+    val files = snapshot.allFiles.collect()
+
+    val highWatermarkOpt = snapshot.rowIdHighWaterMarkOpt
+    if (files.isEmpty) {
+      assert(highWatermarkOpt.isDefined)
+    } else {
+      val maxAssignedRowId = files
+        .map(a => a.baseRowId.get + a.numPhysicalRecords.get - 1L)
+        .max
+      assert(highWatermarkOpt.get.highWaterMark == maxAssignedRowId)
+    }
+  }
+
+  def assertRowIdsAreValid(log: DeltaLog): Unit = {
+    assertRowIdsDoNotOverlap(log)
+    assertHighWatermarkIsCorrect(log)
+  }
+
+  def assertHighWatermarkIsCorrectAfterUpdate(
+      log: DeltaLog, highWatermarkBeforeUpdate: Long, expectedNumRecordsWritten: Long): Unit = {
+    val highWaterMarkAfterUpdate =
+      RowId.extractHighWatermark(spark, log.update()).get.highWaterMark
+    assert((highWatermarkBeforeUpdate + expectedNumRecordsWritten) === highWaterMarkAfterUpdate)
+    assertRowIdsAreValid(log)
+  }
+
+  def assertRowIdsAreNotSet(log: DeltaLog): Unit = {
+    val snapshot = log.update()
+
+    val highWatermarks = snapshot.rowIdHighWaterMarkOpt
+    assert(highWatermarks.isEmpty)
+
+    val files = snapshot.allFiles.collect()
+    assert(files.forall(_.baseRowId.isEmpty))
   }
 }

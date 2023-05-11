@@ -257,7 +257,8 @@ class Snapshot(
             col("add.dataChange"),
             col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
             col("add.tags"),
-            col("add.deletionVector")
+            col("add.deletionVector"),
+            col("add.baseRowId")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -324,6 +325,7 @@ class Snapshot(
     numMetadata = numOfMetadata,
     numProtocol = numOfProtocol,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
+    rowIdHighWaterMark = rowIdHighWaterMarkOpt,
     metadata = metadata,
     protocol = protocol,
     histogramOpt = fileSizeHistogram,

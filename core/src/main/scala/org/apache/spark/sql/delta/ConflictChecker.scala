@@ -40,16 +40,18 @@ import org.apache.spark.sql.types.StructType
  * @param readSnapshot read [[Snapshot]] used for the transaction
  * @param commitInfo [[CommitInfo]] for the commit
  */
-private[delta] class CurrentTransactionInfo(
+private[delta] case class CurrentTransactionInfo(
     val txnId: String,
     val readPredicates: Seq[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
     val metadata: Metadata,
+    val protocol: Protocol,
     val actions: Seq[Action],
     val readSnapshot: Snapshot,
-    val commitInfo: Option[CommitInfo]) {
+    val commitInfo: Option[CommitInfo],
+    val readRowIdHighWatermark: RowIdHighWaterMark) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -120,7 +122,8 @@ private[delta] class ConflictChecker(
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
-  def currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**
@@ -135,6 +138,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+    reassignOverlappingRowIds()
     logMetrics()
     currentTransactionInfo
   }
@@ -308,6 +312,44 @@ private[delta] class ConflictChecker(
     // multiple instances of the same streaming query are running at the same time.
     if (winningCommitSummary.appLevelTransactions.exists(currentTransactionInfo.isConflict(_))) {
       throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
+    }
+  }
+
+  /**
+   * Checks whether the Row IDs assigned by the current transaction overlap with the Row IDs
+   * assigned by the winning transaction. I.e. this function checks whether both the winning and the
+   * current transaction assigned new Row IDs. If this the case, then this check assigns new Row IDs
+   * to the new files added by the current transaction so that they no longer overlap.
+   */
+  private def reassignOverlappingRowIds(): Unit = {
+    // The current transaction should only assign Row Ids if they are supported.
+    if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) return
+
+    winningCommitSummary.actions.collectFirst {
+      case RowIdHighWaterMark(winningHighWaterMark) =>
+        // The winning transaction assigned conflicting Row IDs. Adjust the Row IDs assigned by the
+        // current transaction as if it had read the result of the winning transaction.
+        val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+        assert(winningHighWaterMark >= readHighWaterMark)
+        val watermarkDiff = winningHighWaterMark - readHighWaterMark
+
+        val actionsWithReassignedRowIds = currentTransactionInfo.actions.map {
+          // We should only update the row IDs that were assigned by this transaction, and not the
+          // row IDs that were assigned by an earlier transaction and merely copied over to a new
+          // AddFile as part of this transaction. I.e., we should only update the base row IDs
+          // that are larger than the read high watermark.
+          case a: AddFile if a.baseRowId.exists(_ > readHighWaterMark) =>
+            val newBaseRowId = a.baseRowId.map(_ + watermarkDiff)
+            a.copy(baseRowId = newBaseRowId)
+
+          case waterMark @ RowIdHighWaterMark(v) =>
+            waterMark.copy(highWaterMark = v + watermarkDiff)
+
+          case a => a
+        }
+      currentTransactionInfo = currentTransactionInfo.copy(
+        actions = actionsWithReassignedRowIds,
+        readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
     }
   }
 

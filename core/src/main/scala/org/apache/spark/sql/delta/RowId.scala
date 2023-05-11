@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RowIdHighWaterMark}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -26,6 +26,8 @@ import org.apache.spark.sql.SparkSession
  * Collection of helpers to handle Row IDs.
  */
 object RowId {
+
+  val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark = RowIdHighWaterMark(highWaterMark = -1L)
 
   /**
    * Returns whether Row IDs can be written to Delta tables and read from Delta tables. This acts as
@@ -53,7 +55,7 @@ object RowId {
   def rowIdsEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
     val isEnabled = DeltaConfigs.ROW_IDS_ENABLED.fromMetaData(metadata)
     if (isEnabled && !rowIdsSupported(protocol)) {
-      throw new IllegalStateException(s"Table property '${DeltaConfigs.ROW_IDS_ENABLED.key}' is" +
+      throw new IllegalStateException(s"Table property '${DeltaConfigs.ROW_IDS_ENABLED.key}' is " +
         s"set on the table but this table version doesn't support table feature " +
         s"'${propertyKey(RowIdFeature)}'.")
     }
@@ -86,5 +88,83 @@ object RowId {
         "Cannot enable Row IDs on an existing table.")
     }
     latestMetadata
+  }
+
+  /**
+   * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet and emits
+   * a [[RowIdHighWaterMark]] action with the new high-water mark.
+   */
+  private[delta] def assignFreshRowIds(
+      spark: SparkSession,
+      protocol: Protocol,
+      snapshot: Snapshot,
+      actions: Iterator[Action]): Iterator[Action] = {
+    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return actions
+
+    val oldHighWatermark = extractHighWatermark(spark, snapshot)
+        .getOrElse(MISSING_HIGH_WATER_MARK)
+        .highWaterMark
+    var newHighWatermark = oldHighWatermark
+
+    val actionsWithFreshRowIds = actions.map {
+      case a: AddFile if a.baseRowId.isEmpty =>
+        val baseRowId = newHighWatermark + 1L
+        newHighWatermark += a.numPhysicalRecords.getOrElse {
+          throw new UnsupportedOperationException(
+            "Cannot assign row IDs without row count statistics.")
+        }
+        a.copy(baseRowId = Some(baseRowId))
+      case _: RowIdHighWaterMark =>
+        throw new IllegalStateException(
+          "Manually setting the Row ID high water mark is not allowed")
+      case other => other
+    }
+
+    val newHighWatermarkAction: Iterator[Action] = new Iterator[Action] {
+      // Iterators are lazy, so the first call to `hasNext` won't happen until after we
+      // exhaust the remapped actions iterator. At that point, the watermark (changed or not)
+      // decides whether the iterator is empty or infinite; take(1) below to bound it.
+      override def hasNext(): Boolean = newHighWatermark != oldHighWatermark
+      override def next(): Action = RowIdHighWaterMark(newHighWatermark)
+    }
+    actionsWithFreshRowIds ++ newHighWatermarkAction.take(1)
+  }
+
+  /**
+   * Extracts the high watermark of row IDs from a snapshot.
+   */
+  private[delta] def extractHighWatermark(
+      spark: SparkSession, snapshot: Snapshot): Option[RowIdHighWaterMark] = {
+    if (rowIdsAllowed(spark)) {
+      snapshot.rowIdHighWaterMarkOpt
+    } else {
+      None
+    }
+  }
+
+  private[delta] def extractHighWatermark(
+      spark: SparkSession, actions: Seq[Action]): Option[RowIdHighWaterMark] = {
+    if (rowIdsAllowed(spark)) {
+      actions.collectFirst { case r: RowIdHighWaterMark => r }
+    } else {
+      None
+    }
+  }
+
+  /**
+   * Checks whether CONVERT TO DELTA collects statistics if row tracking is supported. If it does
+   * not collect statistics, we cannot assign fresh row IDs, hence we throw an error to either rerun
+   * the command without enabling the row tracking table feature, or to enable the necessary
+   * flags to collect statistics.
+   */
+  private[delta] def checkStatsCollectedIfRowTrackingSupported(
+      spark: SparkSession,
+      protocol: Protocol,
+      convertToDeltaShouldCollectStats: Boolean,
+      statsCollectionEnabled: Boolean): Unit = {
+    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return
+    if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
+      throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
+    }
   }
 }
