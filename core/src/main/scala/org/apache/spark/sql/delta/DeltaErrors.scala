@@ -1049,6 +1049,7 @@ trait DeltaErrorsBase
     )
   }
 
+
   def cannotRenamePath(tempPath: String, path: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH", messageParameters = Array(tempPath, path))
