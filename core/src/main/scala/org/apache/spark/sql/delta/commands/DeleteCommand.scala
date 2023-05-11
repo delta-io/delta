@@ -260,10 +260,13 @@ case class DeleteCommand(
               cond)
 
             if (touchedFiles.nonEmpty) {
-              DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+              val (actions, metricMap) = DeleteWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
                 txn.snapshot)
+              metrics("numDeletedRows").set(metricMap("numDeletedRows"))
+              numRemovedFiles = metricMap("numRemovedFiles")
+              actions
             } else {
               Nil // Nothing to update
             }

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -288,6 +288,41 @@ class DeletionVectorsSuite extends QueryTest
         // Check the data is valid
         val expectedTable1DataV5 = expectedTable1DataV4.filterNot(e => dataToRemove.contains(e))
         checkAnswer(spark.sql(s"SELECT * FROM $targetPath"), expectedTable1DataV5.toDF())
+      }
+    }
+  }
+
+  test("Metrics when deleting with DV") {
+    withDeletionVectorsEnabled() {
+      val tableName = "tbl"
+      withTable(tableName) {
+        spark.range(0, 10, 1, numPartitions = 2)
+          .write.format("delta").saveAsTable(tableName)
+
+        {
+          // Delete one row from the first file, and the whole second file.
+          val result = sql(s"DELETE FROM $tableName WHERE id >= 4")
+          assert(result.collect() === Array(Row(6)))
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 6)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+        }
+
+        {
+          // Delete one row again.
+          sql(s"DELETE FROM $tableName WHERE id = 3")
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
+        }
+
+        {
+          // Delete all renaming rows.
+          sql(s"DELETE FROM $tableName WHERE id IN (0, 1, 2)")
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 3)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+        }
       }
     }
   }
