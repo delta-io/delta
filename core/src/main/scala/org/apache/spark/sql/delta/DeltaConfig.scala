@@ -35,7 +35,6 @@ case class DeltaConfig[T](
     fromString: String => T,
     validationFunction: T => Boolean,
     helpMessage: String,
-    minimumProtocolVersion: Option[Protocol] = None,
     editable: Boolean = true,
     alternateKeys: Seq[String] = Seq.empty) {
   /**
@@ -126,7 +125,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       fromString: String => T,
       validationFunction: T => Boolean,
       helpMessage: String,
-      minimumProtocolVersion: Option[Protocol] = None,
       userConfigurable: Boolean = true,
       alternateConfs: Seq[DeltaConfig[T]] = Seq.empty): DeltaConfig[T] = {
 
@@ -135,7 +133,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       fromString,
       validationFunction,
       helpMessage,
-      minimumProtocolVersion,
       userConfigurable,
       alternateConfs.map(_.key))
 
@@ -452,8 +449,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     defaultValue = "false",
     fromString = _.toBoolean,
     validationFunction = _ => true,
-    helpMessage = "needs to be a boolean.",
-    minimumProtocolVersion = Some(AppendOnlyTableFeature.minProtocolVersion))
+    helpMessage = "needs to be a boolean.")
 
   /**
    * Whether commands modifying this Delta table are allowed to create new deletion vectors.
@@ -463,8 +459,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     defaultValue = "false",
     fromString = _.toBoolean,
     validationFunction = _ => true,
-    helpMessage = "needs to be a boolean.",
-    minimumProtocolVersion = Some(DeletionVectorsTableFeature.minProtocolVersion))
+    helpMessage = "needs to be a boolean.")
 
   /**
    * Whether this table will automatically optimize the layout of files during writes.
@@ -541,16 +536,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.",
-    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY),
-    minimumProtocolVersion = Some(ChangeDataFeedTableFeature.minProtocolVersion))
+    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",
     "none",
     DeltaColumnMappingMode(_),
     _ => true,
-    "",
-    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion))
+    "")
 
   /**
    * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
@@ -562,7 +555,6 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toLong,
     _ => true,
     "",
-    minimumProtocolVersion = Some(ColumnMappingTableFeature.minProtocolVersion),
     userConfigurable = false)
 
 
