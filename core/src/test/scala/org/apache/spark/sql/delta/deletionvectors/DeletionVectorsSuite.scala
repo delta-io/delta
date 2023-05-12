@@ -569,7 +569,7 @@ class DeletionVectorsSuite extends QueryTest
 }
 
 object DeletionVectorsSuite {
-  val table1Path = "src/test/resources/delta/table-with-dv-large"
+  val table1Path = getTestResourcePath("delta/table-with-dv-large")
   // Table at version 0: contains [0, 2000)
   val expectedTable1DataV0 = Seq.range(0, 2000)
   // Table at version 1: removes rows with id = 0, 180, 300, 700, 1800
@@ -585,13 +585,13 @@ object DeletionVectorsSuite {
   val v4Added = Set(900, 1567)
   val expectedTable1DataV4 = expectedTable1DataV3 ++ v4Added
 
-  val table2Path = "src/test/resources/delta/table-with-dv-small"
+  val table2Path = getTestResourcePath("delta/table-with-dv-small")
   // Table at version 0: contains 0 - 9
   val expectedTable2DataV0 = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
   // Table at version 1: removes rows 0 and 9
   val expectedTable2DataV1 = Seq(1, 2, 3, 4, 5, 6, 7, 8)
 
-  val table3Path = "src/test/resources/delta/partitioned-table-with-dv-large"
+  val table3Path = getTestResourcePath("delta/partitioned-table-with-dv-large")
   // Table at version 0: contains [0, 2000)
   val expectedTable3DataV0 = Seq.range(0, 2000)
   // Table at version 1: removes rows with id = (0, 180, 308, 225, 756, 1007, 1503)
@@ -620,9 +620,13 @@ object DeletionVectorsSuite {
   // All "id % 1000 = 0" rows are marked as deleted.
   // Column "value" ranges from 0 to 21.
   // 99900000 rows with values 0 to 20 each, and 47436174 rows with value 21.
-  val table5Path = "src/test/resources/delta/table-with-dv-gigantic"
+  val table5Path = getTestResourcePath("delta/table-with-dv-gigantic")
   val table5Count = 2145336174L
   val table5Sum = 21975159654L
   val table5CountByValues = (0 to 20).map(_ -> 99900000L).toMap + (21 -> 47436174L)
   val table5SumByValues = (0 to 20).map(v => v -> v * 99900000L).toMap + (21 -> 21 * 47436174L)
+
+  def getTestResourcePath(file: String): String = {
+    new File(getClass.getClassLoader.getResource(file).getFile).getCanonicalPath
+  }
 }

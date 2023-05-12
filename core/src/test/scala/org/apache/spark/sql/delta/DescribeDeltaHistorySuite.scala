@@ -44,7 +44,7 @@ trait DescribeDeltaHistorySuiteBase
   import testImplicits._
 
   protected val evolvabilityResource = {
-    new File("src/test/resources/delta/history/delta-0.2.0").getAbsolutePath()
+    getTestResourcePath("delta/history/delta-0.2.0")
   }
 
   protected val evolvabilityLastOp = Seq("STREAMING UPDATE", null, null)

@@ -337,7 +337,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       val e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.create().tableName(s"delta.`$path`")
           .addColumn("c1", "int")
-          .location("src/test/resources/delta/dbr_8_0_non_generated_columns")
+          .location(getTestResourcePath("delta/dbr_8_0_non_generated_columns"))
           .execute()
       }
       assert(e.getMessage.startsWith(
