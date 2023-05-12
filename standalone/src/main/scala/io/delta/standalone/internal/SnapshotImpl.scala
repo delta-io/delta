@@ -353,7 +353,10 @@ private[internal] object SnapshotImpl {
       val fs = FileSystem.get(hadoopConf)
       fs.makeQualified(hadoopPath).toUri.toString
     } else {
-      // return untouched if it is a relative path or is already fully qualified
+      // return untouched if
+      // - path is a relative path
+      // - or path is already fully qualified
+      // - or path points to external file systems (authority is not null)
       hadoopPath.toUri.toString
     }
   }

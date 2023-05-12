@@ -27,6 +27,7 @@ import io.delta.standalone.expressions.{And, EqualTo, LessThan, Literal}
 import io.delta.standalone.types.{IntegerType, StructField, StructType}
 
 import io.delta.standalone.internal.actions.{Action, AddFile, Metadata}
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
 import io.delta.standalone.internal.util.TestUtils._
 
@@ -54,14 +55,25 @@ class DeltaScanSuite extends FunSuite {
     AddFile(i.toString, partitionValues, 1L, 1L, dataChange = true)
   }
 
+  private val externalFileSystems = Seq("s3://", "wasbs://", "adls://")
+
+  private val externalFiles = (1 to 10).map { i =>
+    val partitionValues = Map("col1" -> (i % 3).toString, "col2" -> (i % 2).toString)
+    val schema = externalFileSystems(i % 3)
+    AddFile(s"${schema}path/to/$i.parquet", partitionValues, 1L, 1L, dataChange = true)
+  }
+
   private val filesDataChangeFalse = files.map(_.copy(dataChange = false))
 
   private val metadataConjunct = new EqualTo(schema.column("col1"), Literal.of(0))
   private val dataConjunct = new EqualTo(schema.column("col3"), Literal.of(5))
 
-  def withLog(actions: Seq[Action])(test: DeltaLog => Unit): Unit = {
+  def withLog(
+               actions: Seq[Action],
+               configuration: Configuration = new Configuration()
+             )(test: DeltaLog => Unit): Unit = {
     withTempDir { dir =>
-      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val log = DeltaLog.forTable(configuration, dir.getCanonicalPath)
       log.startTransaction().commit(metadata :: Nil, op, "engineInfo")
       log.startTransaction().commit(actions, op, "engineInfo")
 
@@ -101,6 +113,19 @@ class DeltaScanSuite extends FunSuite {
         filesDataChangeFalse)
       assert(!scan.getPushedPredicate.isPresent)
       assert(scan.getResidualPredicate.get == filter)
+    }
+  }
+
+  test("filtered scan with files stored in external file systems") {
+    val configuration = new Configuration()
+    configuration.setBoolean(StandaloneHadoopConf.RELATIVE_PATH_IGNORE, true)
+    withLog(externalFiles, configuration) { log =>
+      val filter = dataConjunct
+      val scan = log.update().scan(filter)
+      val scannedFiles = scan.getFiles.asScala.map(_.getPath).toSet
+      val expectedFiles = externalFiles.map(_.path).toSet
+      assert(scannedFiles == expectedFiles,
+        "paths should not have been made qualified")
     }
   }
 

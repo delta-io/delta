@@ -27,8 +27,10 @@ import io.delta.standalone.DeltaLog
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo, Metadata => MetadataJ, Protocol, SetTransaction => SetTransactionJ}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 
-import io.delta.standalone.internal.actions.{AddFile, Metadata}
+import io.delta.standalone.internal.actions.AddFile
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.TestUtils._
+
 
 class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
 
@@ -316,4 +318,36 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
       assert(committedAddFile.getPath === "file:/absolute/path/to/file/test.parquet")
     }
   }
+
+  test("Can't create table with external files") {
+    val extFile = AddFile("s3://snip/snip.parquet", Map(), 0, 0, true)
+    val conf = new Configuration()
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(conf, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val e = intercept[IllegalStateException] {
+        txn.updateMetadata(metadata_colXY)
+        txn.commit(List(extFile), op, engineInfo)
+      }
+      assert(e.getMessage.contains("Failed to relativize the path"))
+    }
+  }
+
+  test("Create table with external files override") {
+    val extFile = AddFile("s3://snip/snip.parquet", Map(), 0, 0, true)
+    val conf = new Configuration()
+    conf.setBoolean(StandaloneHadoopConf.RELATIVE_PATH_IGNORE, true)
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(conf, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      txn.updateMetadata(metadata_colXY)
+      txn.commit(List(extFile), op, engineInfo)
+      val committedAddFile = log.update().getAllFiles.asScala.head
+      val committedPath = new Path(committedAddFile.getPath)
+      // Path is preserved
+      assert(committedPath.isAbsolute && !committedPath.isAbsoluteAndSchemeAuthorityNull)
+      assert(committedPath.toString == "s3://snip/snip.parquet")
+    }
+  }
+
 }

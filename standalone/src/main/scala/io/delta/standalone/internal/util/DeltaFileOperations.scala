@@ -60,14 +60,12 @@ private[internal] object DeltaFileOperations extends Logging {
           throw new IllegalStateException(
             s"""Failed to relativize the path ($child). This can happen when absolute paths make
                |it into the transaction log, which start with the scheme
-               |s3://, wasbs:// or adls://. This is a bug that has existed before DBR 5.0.
-               |To fix this issue, please upgrade your writer jobs to DBR 5.0 and please run:
-               |%scala com.databricks.delta.Delta.fixAbsolutePathsInLog("$child").
+               |s3://, wasbs:// or adls://.
                |
                |If this table was created with a shallow clone across file systems
                |(different buckets/containers) and this table is NOT USED IN PRODUCTION, you can
-               |set the SQL configuration spark.databricks.delta.vacuum.relativize.ignoreError
-               |to true. Using this SQL configuration could lead to accidental data loss,
+               |set the hadoop configuration io.delta.vacuum.relativize.ignoreError
+               |to true. Using this configuration could lead to accidental data loss,
                |therefore we do not recommend the use of this flag unless
                |this is a shallow clone for testing purposes.
              """.stripMargin)

@@ -33,8 +33,10 @@ import io.delta.standalone.types.StructType
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMergingUtils, SchemaUtils}
 import io.delta.standalone.internal.util.DeltaFileOperations
+
 
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
@@ -243,6 +245,13 @@ private[internal] class OptimisticTransactionImpl(
     val customCommitInfo = actions.exists(_.isInstanceOf[CommitInfo])
     assert(!customCommitInfo, "Cannot commit a custom CommitInfo in a transaction.")
 
+    // This will ignore errors (disabled by default) when trying to relativize a path
+    // This is specifically for files living in a filesystem different from the base table path
+    // so one can enable shallow clones across file systems
+    val relativizeIgnoreError = deltaLog
+      .hadoopConf
+      .getBoolean(StandaloneHadoopConf.RELATIVE_PATH_IGNORE, false)
+
     // Convert AddFile paths to relative paths if they're in the table path
     var finalActions = actions.map {
       case addFile: AddFile =>
@@ -250,7 +259,8 @@ private[internal] class OptimisticTransactionImpl(
           DeltaFileOperations.tryRelativizePath(
             deltaLog.fs,
             deltaLog.getPath,
-            new Path(addFile.path)
+            new Path(addFile.path),
+            relativizeIgnoreError
           ).toString)
       case a: Action => a
     }
