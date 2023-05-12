@@ -875,6 +875,7 @@ object CheckpointV2 {
  * - metadata of the underlying checkpoint
  */
 trait CheckpointProvider {
+  def version: Long
   def checkpointFiles: Seq[FileStatus]
   def checkpointMetadata: CheckpointMetaData
 }
@@ -891,7 +892,9 @@ trait CheckpointProvider {
 case class PreloadedCheckpointProvider(
     override val checkpointFiles: Seq[FileStatus],
     checkpointMetadataOpt: Option[CheckpointMetaData]
-) extends CheckpointProvider {
+) extends CheckpointProvider with DeltaLogging {
+
+  override def version: Long = checkpointMetadata.version
 
   override def checkpointMetadata: CheckpointMetaData = {
     checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))

@@ -297,7 +297,8 @@ class CheckpointMetadataSuite extends SharedSparkSession
         DeltaLog.clearCache()
 
         val log = DeltaLog.forTable(spark, dir)
-        val metadata = log.unsafeVolatileSnapshot.getCheckpointMetadataOpt.get
+        val metadata =
+          log.unsafeVolatileSnapshot.getCheckpointProviderOpt.get.checkpointMetadata
         val trimmed = metadata.productIterator.drop(3).forall {
           case o: Option[_] => o.isEmpty
         }

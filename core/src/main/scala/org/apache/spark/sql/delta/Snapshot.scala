@@ -357,8 +357,12 @@ class Snapshot(
     }
   }
 
-  def getCheckpointMetadataOpt: Option[CheckpointMetaData] =
-    logSegment.checkpointProviderOpt.map(_.checkpointMetadata)
+  /**
+   * Returns the [[CheckpointProvider]] for the underlying checkpoint.
+   * Returns None if the Snapshot isn't backed by a checkpoint.
+   */
+  def getCheckpointProviderOpt: Option[CheckpointProvider] =
+    logSegment.checkpointProviderOpt
 
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
