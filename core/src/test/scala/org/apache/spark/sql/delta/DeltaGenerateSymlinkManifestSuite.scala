@@ -600,10 +600,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
             subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)  {
           setEnabledIncrementalManifest(tablePath, enabled = true)
         }
-        // Run optimize to delete the DVs and rewrite the data files
-        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO.key -> "0.00001") {
-          spark.sql(s"OPTIMIZE delta.`$tablePath`")
-        }
+        // Purge
+        spark.sql(s"REORG TABLE delta.`$tablePath` APPLY (PURGE)")
         assert(getFilesWithDeletionVectors(deltaLog).isEmpty)
         // Now it should work.
         setEnabledIncrementalManifest(tablePath, enabled = true)

@@ -115,7 +115,13 @@ class DeltaThrowableSuite extends SparkFunSuite {
 
   test("Delta message format invariants") {
     val messageFormats = deltaErrorClassToInfoMap.values.toSeq.flatMap { i =>
-      Seq(i.messageTemplate) ++ i.subClass.getOrElse(Map.empty).values.toSeq.map(_.messageTemplate)
+      i.subClass match {
+        // Has sub error class: the message template should be: base + sub
+        case Some(subs) =>
+          subs.values.toSeq.map(sub => s"${i.messageTemplate} ${sub.messageTemplate}")
+        // Does not have any sub error class: the message template is itself
+        case None => Seq(i.messageTemplate)
+      }
     }
     checkCondition(messageFormats, s => s != null)
     checkIfUnique(messageFormats)

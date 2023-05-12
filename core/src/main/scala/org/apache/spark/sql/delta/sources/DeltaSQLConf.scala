@@ -1157,15 +1157,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_ENABLE_BLOCKING_UPDATES_ON_DV_TABLES =
-    buildConf("deletionVectors.updates.blocking.enabled")
-        .internal()
-        .doc(
-          """Enable blocking updates on tables with Deletion Vectors
-            |Only change this for testing!""".stripMargin)
-        .booleanConf
-        .createWithDefault(true)
-
   val DELTA_DUPLICATE_ACTION_CHECK_ENABLED =
     buildConf("duplicateActionCheck.enabled")
       .internal()

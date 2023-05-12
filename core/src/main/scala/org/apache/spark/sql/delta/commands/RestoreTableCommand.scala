@@ -22,17 +22,18 @@ import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.functions.{column, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.IGNORE_MISSING_FILES
 import org.apache.spark.sql.types.LongType
@@ -120,26 +121,63 @@ case class RestoreTableCommand(
 
         import org.apache.spark.sql.delta.implicits._
 
-        val filesToAdd = snapshotToRestoreFiles
-          .join(
-            latestSnapshotFiles,
-            snapshotToRestoreFiles("path") === latestSnapshotFiles("path"),
-            "left_anti")
-          .as[AddFile]
+        // If either source version or destination version contains DVs,
+        // we have to take them into account during deduplication.
+        val targetMayHaveDVs = DeletionVectorUtils.deletionVectorsReadable(latestSnapshot)
+        val sourceMayHaveDVs = DeletionVectorUtils.deletionVectorsReadable(snapshotToRestore)
+
+        val normalizedSourceWithoutDVs = snapshotToRestoreFiles.mapPartitions { files =>
+          files.map(file => (file, file.path))
+        }.toDF("srcAddFile", "srcPath")
+        val normalizedTargetWithoutDVs = latestSnapshotFiles.mapPartitions { files =>
+          files.map(file => (file, file.path))
+        }.toDF("tgtAddFile", "tgtPath")
+
+        def addDVsToNormalizedDF(
+          mayHaveDVs: Boolean,
+          dvIdColumnName: String,
+          dvAccessColumn: Column,
+          normalizedDf: DataFrame): DataFrame = {
+          if (mayHaveDVs) {
+            normalizedDf.withColumn(
+              dvIdColumnName,
+              DeletionVectorDescriptor.uniqueIdExpression(dvAccessColumn))
+          } else {
+            normalizedDf.withColumn(dvIdColumnName, lit(null))
+          }
+        }
+
+        val normalizedSource = addDVsToNormalizedDF(
+          mayHaveDVs = sourceMayHaveDVs,
+          dvIdColumnName = "srcDeletionVectorId",
+          dvAccessColumn = column("srcAddFile.deletionVector"),
+          normalizedDf = normalizedSourceWithoutDVs)
+
+        val normalizedTarget = addDVsToNormalizedDF(
+          mayHaveDVs = targetMayHaveDVs,
+          dvIdColumnName = "tgtDeletionVectorId",
+          dvAccessColumn = column("tgtAddFile.deletionVector"),
+          normalizedDf = normalizedTargetWithoutDVs)
+
+        val joinExprs =
+          column("srcPath") === column("tgtPath") and
+            // Use comparison operator where NULL == NULL
+            column("srcDeletionVectorId") <=> column("tgtDeletionVectorId")
+
+        val filesToAdd = normalizedSource
+          .join(normalizedTarget, joinExprs, "left_anti")
+          .select(column("srcAddFile").as[AddFile])
           .map(_.copy(dataChange = true))
 
-        val filesToRemove = latestSnapshotFiles
-          .join(
-            snapshotToRestoreFiles,
-            latestSnapshotFiles("path") === snapshotToRestoreFiles("path"),
-            "left_anti")
-          .as[AddFile]
+        val filesToRemove = normalizedTarget
+          .join(normalizedSource, joinExprs, "left_anti")
+          .select(column("tgtAddFile").as[AddFile])
           .map(_.removeWithTimestamp())
 
         val ignoreMissingFiles = spark
-            .sessionState
-            .conf
-            .getConf(IGNORE_MISSING_FILES)
+          .sessionState
+          .conf
+          .getConf(IGNORE_MISSING_FILES)
 
         if (!ignoreMissingFiles) {
           checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)

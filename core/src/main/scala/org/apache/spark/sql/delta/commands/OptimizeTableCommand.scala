@@ -109,7 +109,9 @@ case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
     userPartitionPredicates: Seq[String],
-    options: Map[String, String])(val zOrderBy: Seq[UnresolvedAttribute])
+    options: Map[String, String],
+    optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext()
+)(val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase with LeafRunnableCommand {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
@@ -138,7 +140,34 @@ case class OptimizeTableCommand(
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
-    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns).optimize()
+    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns, optimizeContext)
+      .optimize()
+  }
+}
+
+/**
+ * Stored all runtime context information that can control the execution of optimize.
+ *
+ * @param isPurge Whether the rewriting task is only for purging soft-deleted data instead of
+ *                for compaction. If [[isPurge]] is true, only files with DVs will be selected
+ *                for compaction.
+ * @param minFileSize Files which are smaller than this threshold will be selected for compaction.
+ *                    If not specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE]] will be used.
+ *                    This parameter must be set to `0` when [[isPurge]] is true.
+ * @param maxDeletedRowsRatio Files with a ratio of soft-deleted rows to the total rows larger than
+ *                            this threshold will be rewritten by the OPTIMIZE command. If not
+ *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
+ *                            will be used. This parameter must be set to `0` when [[isPurge]] is
+ *                            true.
+ */
+case class DeltaOptimizeContext(
+    isPurge: Boolean = false,
+    minFileSize: Option[Long] = None,
+    maxDeletedRowsRatio: Option[Double] = None) {
+  if (isPurge) {
+    require(
+      minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
+      "minFileSize and maxDeletedRowsRatio must be 0 when running PURGE.")
   }
 }
 
@@ -154,7 +183,8 @@ class OptimizeExecutor(
     sparkSession: SparkSession,
     txn: OptimisticTransaction,
     partitionPredicate: Seq[Expression],
-    zOrderByColumns: Seq[String])
+    zOrderByColumns: Seq[String],
+    optimizeContext: DeltaOptimizeContext)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
   /** Timestamp to use in [[FileAction]] */
@@ -164,18 +194,16 @@ class OptimizeExecutor(
 
   def optimize(): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
-      val minFileSize = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE)
-      val maxFileSize = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
-      require(minFileSize > 0, "minFileSize must be > 0")
-      require(maxFileSize > 0, "maxFileSize must be > 0")
+      val minFileSize = optimizeContext.minFileSize.getOrElse(
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
+      val maxFileSize =
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+      val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
 
       val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      val maxDeletedRowsRatio = sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO)
       val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
@@ -191,7 +219,7 @@ class OptimizeExecutor(
       val removedFiles = updates.collect { case r: RemoveFile => r }
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
-        val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql), zOrderByColumns)
+        val operation = DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
         commitAndRetry(txn, operation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema

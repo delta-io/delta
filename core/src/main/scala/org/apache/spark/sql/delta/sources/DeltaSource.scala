@@ -343,7 +343,9 @@ trait DeltaSourceBase extends Source
     // Initialize schema tracking log if possible, no-op if already initialized
     // This is one of the two places can initialize schema tracking.
     // This case specifically handles when we have a fresh stream.
-    initializeSchemaTrackingAndExitStreamIfNeeded(fromVersion)
+    if (readyToInitializeSchemaTrackingUponProvided) {
+      initializeSchemaTrackingAndExitStream(fromVersion)
+    }
 
     val changes = getFileChangesWithRateLimit(
       fromVersion,
@@ -498,7 +500,8 @@ trait DeltaSourceBase extends Source
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
-          snapshot.metadata, snapshot.version, validateAgainstStartSnapshot = true)
+          snapshot.metadata, snapshot.version, batchStartVersion,
+          validateAgainstStartSnapshot = true)
       }
     }
 
@@ -521,7 +524,11 @@ trait DeltaSourceBase extends Source
   protected def checkReadIncompatibleSchemaChanges(
       metadata: Metadata,
       version: Long,
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
       validateAgainstStartSnapshot: Boolean = false): Unit = {
+    log.info(s"checking read incompatibility with schema at version $version," +
+      s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
 
     // Column mapping schema changes
     if (shouldVerifyColumnMappingSchemaChanges) {
@@ -691,6 +698,7 @@ case class DeltaSource(
             createActionsIterator().processAndClose { actionsIter =>
               validateCommitAndDecideSkipping(
                 actionsIter, version,
+                fromVersion, endOffset.map(_.reservoirVersion),
                 verifyMetadataAction && !trackingSchemaChange
               )
             }
@@ -866,6 +874,8 @@ case class DeltaSource(
   protected def validateCommitAndDecideSkipping(
       actions: Iterator[Action],
       version: Long,
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
       verifyMetadataAction: Boolean = true): (Boolean, Option[Metadata]) = {
     /** A check on the source table that disallows changes on the source data. */
     val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
@@ -886,7 +896,7 @@ case class DeltaSource(
         }
       case m: Metadata =>
         if (verifyMetadataAction) {
-          checkReadIncompatibleSchemaChanges(m, version)
+          checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
         }
         assert(metadataAction.isEmpty,
           "Should not encounter two metadata actions in the same commit")
@@ -961,7 +971,9 @@ case class DeltaSource(
     // contained such a schema change.
     // In either world, the initialization logic would find the superset compatible schema for this
     // batch by scanning Delta log.
-    initializeSchemaTrackingAndExitStreamIfNeeded(startVersion, Some(endOffset.reservoirVersion))
+    if (readyToInitializeSchemaTrackingUponProvided) {
+      initializeSchemaTrackingAndExitStream(startVersion, Some(endOffset.reservoirVersion))
+    }
 
     if (startOffsetOption.contains(endOffset)) {
       // This happens only if we recover from a failure and `MicroBatchExecution` tries to call

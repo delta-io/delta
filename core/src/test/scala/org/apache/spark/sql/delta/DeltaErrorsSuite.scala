@@ -2660,14 +2660,12 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "operation1 is only supported for Delta tables.")
     }
     {
-      val invalidStruct = StructField("invalid1", StringType)
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(invalidStruct)
+        throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(StringType)
       }
       assert(e.getErrorClass == "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE")
       assert(e.getSqlState == "0AKDC")
-      assert(e.getMessage ==
-        "Can only drop nested columns from StructType. Found StructField(invalid1,StringType,true)")
+      assert(e.getMessage == s"Can only drop nested columns from StructType. Found $StringType")
     }
     {
       val columnsThatNeedRename = Set("c0", "c1")

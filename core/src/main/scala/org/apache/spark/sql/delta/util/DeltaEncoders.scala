@@ -83,6 +83,10 @@ private[delta] trait DeltaEncoders {
   private lazy val _addFileWithIndexEncoder = new DeltaEncoder[(AddFile, Long)]
   implicit def addFileWithIndexEncoder: Encoder[(AddFile, Long)] = _addFileWithIndexEncoder.get
 
+  private lazy val _addFileWithSourcePathEncoder = new DeltaEncoder[(AddFile, String)]
+  implicit def addFileWithSourcePathEncoder: Encoder[(AddFile, String)] =
+    _addFileWithSourcePathEncoder.get
+
   private lazy val _deltaHistoryEncoder = new DeltaEncoder[DeltaHistory]
   implicit def deltaHistoryEncoder: Encoder[DeltaHistory] = _deltaHistoryEncoder.get
 

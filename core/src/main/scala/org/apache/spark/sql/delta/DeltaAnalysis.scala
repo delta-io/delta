@@ -459,6 +459,18 @@ class DeltaAnalysis(session: SparkSession)
             s"${other.prettyName} clauses cannot be part of the WHEN NOT MATCHED clause in MERGE " +
              "INTO.")
       }
+      val notMatchedBySourceActions = merge.notMatchedBySourceActions.map {
+        case update: UpdateAction =>
+          DeltaMergeIntoNotMatchedBySourceUpdateClause(
+            update.condition,
+            DeltaMergeIntoClause.toActions(update.assignments))
+        case delete: DeleteAction =>
+          DeltaMergeIntoNotMatchedBySourceDeleteClause(delete.condition)
+        case other =>
+          throw new IllegalArgumentException(
+            s"${other.prettyName} clauses cannot be part of the WHEN NOT MATCHED BY SOURCE " +
+             "clause in MERGE INTO.")
+      }
       // rewrites Delta from V2 to V1
       val newTarget =
         stripTempViewForMergeWrapper(merge.targetTable).transformUp { case DeltaRelation(lr) => lr }
@@ -468,10 +480,18 @@ class DeltaAnalysis(session: SparkSession)
         newTarget,
         merge.sourceTable,
         merge.mergeCondition,
-        matchedActions ++ notMatchedActions
+        matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
       )
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
+
+    case reorg@DeltaReorgTable(_@ResolvedTable(_, _, t, _)) =>
+      t match {
+        case table: DeltaTableV2 =>
+          DeltaReorgTableCommand(table)(reorg.predicates)
+        case _ =>
+          throw DeltaErrors.notADeltaTable(t.name())
+      }
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
@@ -810,12 +830,6 @@ class DeltaAnalysis(session: SparkSession)
    */
   private def needsSchemaAdjustmentByName(query: LogicalPlan, targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2): Boolean = {
-    // TODO: update this to allow columns with default expressions to not be
-    //  specified (i.e. generated columns)
-    if (targetAttrs.length != query.output.length) {
-      throw QueryCompilationErrors.writeTableWithMismatchedColumnsError(
-        targetAttrs.length, query.output.length, query)
-    }
     insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
     val userSpecifiedNames = if (session.sessionState.conf.caseSensitiveAnalysis) {
       query.output.map(a => (a.name, a)).toMap

@@ -45,6 +45,7 @@ class DeltaImplicitsSuite extends SparkFunSuite with SharedSparkSession {
   testImplict("serializableFileStatus", serializableFileStatusEncoder)
   testImplict("indexedFile", indexedFileEncoder)
   testImplict("addFileWithIndex", addFileWithIndexEncoder)
+  testImplict("addFileWithSourcePath", addFileWithSourcePathEncoder)
   testImplict("deltaHistoryEncoder", deltaHistoryEncoder)
   testImplict("historyCommitEncoder", historyCommitEncoder)
   testImplict("snapshotStateEncoder", snapshotStateEncoder)
