@@ -425,6 +425,8 @@ object DeltaOperations {
   sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression])
     extends OperationWithPredicates(name, predicates)
 
+  /** operation name for REORG command */
+  val REORG_OPERATION_NAME = "REORG"
   /** operation name for OPTIMIZE command */
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
   /** parameter key to indicate which columns to z-order by */
@@ -481,6 +483,17 @@ object DeltaOperations {
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
+  }
+
+  /** Recorded when running REORG on the table. */
+  case class Reorg(
+      predicate: Seq[Expression],
+      applyPurge: Boolean = true) extends OptimizeOrReorg(REORG_OPERATION_NAME, predicate) {
+    override val parameters: Map[String, Any] = super.parameters ++ Map(
+      "applyPurge" -> applyPurge
+    )
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
 
