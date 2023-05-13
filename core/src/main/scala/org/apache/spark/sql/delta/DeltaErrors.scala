@@ -2811,6 +2811,20 @@ trait DeltaErrorsBase
       messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
     )
   }
+
+  def domainMetadataDuplicate(domainName: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR",
+      messageParameters = Array(domainName)
+    )
+  }
+
+  def domainMetadataTableFeatureNotSupported(domainNames: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DOMAIN_METADATA_NOT_SUPPORTED",
+      messageParameters = Array(domainNames)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

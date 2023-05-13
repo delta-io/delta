@@ -51,7 +51,8 @@ private[delta] case class CurrentTransactionInfo(
     val actions: Seq[Action],
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
-    val readRowIdHighWatermark: RowIdHighWaterMark) {
+    val readRowIdHighWatermark: RowIdHighWaterMark,
+    val domainMetadatas: Seq[DomainMetadata]) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -139,6 +140,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
     reassignOverlappingRowIds()
+    checkIfDomainMetadataConflict()
     logMetrics()
     currentTransactionInfo
   }
@@ -299,6 +301,57 @@ private[delta] class ConflictChecker(
           winningCommitSummary.commitInfo, deleteOverlap.head)
       }
     }
+  }
+
+  /**
+   * Checks [[DomainMetadata]] to capture whether the current transaction conflicts with the
+   * winning transaction at any domain.
+   *     1. Accept the current transaction if its set of metadata domains do not overlap with the
+   *        winning transaction's set of metadata domains.
+   *     2. Otherwise, fail the current transaction unless each conflicting domain is associated
+   *        with a table feature that defines a domain-specific way of resolving the conflict.
+   */
+  private def checkIfDomainMetadataConflict(): Unit = {
+    if (!DomainMetadataUtils.domainMetadataSupported(currentTransactionInfo.protocol)) {
+      return
+    }
+    // Note [[currentTransactionInfo.domainMetadatas]] can't have duplicate domains otherwise
+    // it would have failed [[validateDuplicateDomainMetadata]] at beginning of the transaction's
+    // validation.
+    val currentDomainMetadatas =
+      currentTransactionInfo.domainMetadatas.map(action => action.domain -> action)
+    val winningDomainMetadataMap =
+      DomainMetadataUtils.extractDomainMetadatasMap(winningCommitSummary.actions)
+
+    /**
+     * Any new well-known domains that need custom conflict resolution need to add new cases in
+     * below case match clause. E.g.
+     * case ("delta.example.monotonicCounter", domain, Some(conflictDomain)) =>
+     *   domain.copy(value = Math.max(domain.value, conflictingDomain.value))
+     */
+    val mergedDomainMetadatas = currentDomainMetadatas
+      .map { case (name, domain) =>
+        (name, domain, winningDomainMetadataMap.get(name)) match {
+          // No-conflict case.
+          case (_, domain, None) => domain
+          case (name, _, Some(_)) =>
+            // Any conflict not specifically handled by a previous case must fail the transaction.
+            throw new io.delta.exceptions.ConcurrentTransactionException(
+              s"A conflicting metadata domain $name is added.")
+        }
+      }
+
+    // Update the [[DomainMetadata]] to the merged one.
+    val updatedActions = currentTransactionInfo.actions.map {
+      case domainMetadata: DomainMetadata =>
+        // Note the find will always succeed, because [[mergedDomainMetadatas]] already contains
+        // every domain from the transaction.
+        mergedDomainMetadatas.find(_.domain == domainMetadata.domain).getOrElse(domainMetadata)
+      case other => other
+    }
+    currentTransactionInfo = currentTransactionInfo.copy(
+      domainMetadatas = mergedDomainMetadatas,
+      actions = updatedActions)
   }
 
   /**

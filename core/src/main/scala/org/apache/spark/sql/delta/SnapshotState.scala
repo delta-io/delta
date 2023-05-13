@@ -17,13 +17,13 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, RowIdHighWaterMark, SetTransaction}
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, RowIdHighWaterMark, SetTransaction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.sql.{Column, DataFrame}
-import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum}
+import org.apache.spark.sql.functions.{coalesce, col, collect_list, collect_set, count, last, lit, sum}
 import org.apache.spark.util.Utils
 
 
@@ -51,6 +51,7 @@ case class SnapshotState(
   numOfProtocol: Long,
   setTransactions: Seq[SetTransaction],
   rowIdHighWaterMark: RowIdHighWaterMark,
+  domainMetadatas: Seq[DomainMetadata],
   metadata: Metadata,
   protocol: Protocol,
   fileSizeHistogram: Option[FileSizeHistogram] = None
@@ -144,6 +145,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "numOfProtocol" -> count(col("protocol")),
       "setTransactions" -> collect_set(col("txn")),
       "rowIdHighWaterMark" -> last(col("rowIdHighWaterMark"), ignoreNulls = true),
+      "domainMetadatas" -> collect_list(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
@@ -160,9 +162,11 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
+  def domainMetadatas: Seq[DomainMetadata] = computedState.domainMetadatas
   def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
   protected[delta] def sizeInBytesIfKnown: Option[Long] = Some(sizeInBytes)
   protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
+  protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadatas)
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
   protected[delta] def rowIdHighWaterMarkOpt: Option[RowIdHighWaterMark] =
     Option(computedState.rowIdHighWaterMark)
@@ -180,6 +184,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       numOfProtocol = 1L,
       setTransactions = Nil,
       rowIdHighWaterMark = null,
+      domainMetadatas = Nil,
       metadata = metadata,
       protocol = protocol
     )

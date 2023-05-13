@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -337,6 +338,36 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED.key -> "false")
   )
 
+  test("DomainMetadata action - json serialization/deserialization") {
+    val table = "testTable"
+    withTable(table) {
+      sql(
+        s"""
+           | CREATE TABLE $table(id int) USING delta
+           | tblproperties
+           | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
+           |""".stripMargin)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+      val domainMetadatas = DomainMetadata(
+        domain = "testDomain", configuration = Map("key1" -> "value1"), removed = false) :: Nil
+      val version = deltaLog.startTransaction().commit(domainMetadatas, ManualUpdate)
+      val committedActions = deltaLog.store.read(
+        FileNames.deltaFile(deltaLog.logPath, version),
+        deltaLog.newDeltaHadoopConf())
+      assert(committedActions.size == 2)
+      val serializedJson = committedActions.last
+      val expectedJson =
+        """
+          |{"domainMetadata":{
+          |"domain":"testDomain",
+          |"configuration":{"key1":"value1"},
+          |"removed":false}
+          |}""".stripMargin.replaceAll("\n", "")
+      assert(serializedJson === expectedJson)
+      val asObject = Action.fromJson(serializedJson)
+      assert(domainMetadatas.head === asObject)
+    }
+  }
 
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",

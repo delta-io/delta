@@ -548,6 +548,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DOMAIN_METADATA_NOT_SUPPORTED" : {
+    "message" : [
+      "Detected DomainMetadata action(s) for domains <domainNames>, but DomainMetadataTableFeature is not enabled."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to drop column is lower than 0"
@@ -573,11 +579,17 @@
     ],
     "sqlState" : "42701"
   },
-  "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
+  "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR" : {
     "message" : [
+      "Internal error: two DomainMetadata actions within the same transaction have the same domain <domainName>"
+    ],
+    "sqlState" : "42601",
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
+    "message": [
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
     ],
-    "sqlState" : "0A000"
+    "sqlState": "0A000"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [

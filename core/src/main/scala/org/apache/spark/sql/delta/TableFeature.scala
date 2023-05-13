@@ -210,6 +210,7 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
@@ -336,6 +337,7 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
       spark: SparkSession): Boolean = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 }
 
+object DomainMetadataTableFeature extends WriterFeature(name = "domainMetadata")
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing

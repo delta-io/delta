@@ -515,6 +515,23 @@ case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
 }
 
 
+/**
+ * The domain metadata action contains a configuration (string-string map) for a named metadata
+ * domain. Two overlapping transactions conflict if they both contain a domain metadata action for
+ * the same metadata domain.
+ *
+ * [[domain]]: A string used to identify a specific feature.
+ * [[configuration]]: A map containing configuration options for the conflict domain.
+ * [[removed]]: If it is true it serves as a tombstone to logically delete a [[DomainMetadata]]
+ *              action.
+ */
+case class DomainMetadata(
+    domain: String,
+    configuration: Map[String, String],
+    removed: Boolean) extends Action {
+  override def wrap: SingleAction = SingleAction(domainMetadata = this)
+}
+
 /** Actions pertaining to the addition and removal of files. */
 sealed trait FileAction extends Action {
   val path: String
@@ -1111,6 +1128,7 @@ case class SingleAction(
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
     rowIdHighWaterMark: RowIdHighWaterMark = null,
+    domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -1128,6 +1146,8 @@ case class SingleAction(
       cdc
     } else if (rowIdHighWaterMark != null) {
       rowIdHighWaterMark
+    } else if (domainMetadata != null) {
+      domainMetadata
     } else if (commitInfo != null) {
       commitInfo
     } else {

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, RowIdHighWaterMark, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, RowIdHighWaterMark, SetTransaction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 
@@ -334,6 +334,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           false
         case _: AddCDCFile | _: RowIdHighWaterMark | _: SetTransaction =>
           false
+        case _: DomainMetadata => false
         case null => // Some crazy future feature. Ignore
           false
       }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile, metadataAction)
