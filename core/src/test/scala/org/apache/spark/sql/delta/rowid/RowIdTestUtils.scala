@@ -16,36 +16,14 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaLog, RowId, RowIdFeature}
+import org.apache.spark.sql.delta.{DeltaLog, RowId}
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{defaultPropertyKey, propertyKey}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSparkSession
-
-trait RowIdTestUtils extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
-
-  val rowIdFeatureName: String = propertyKey(RowIdFeature)
-  val defaultRowIdFeatureProperty: String = defaultPropertyKey(RowIdFeature)
-
-  override protected def sparkConf: SparkConf =
-    super.sparkConf.set(DeltaSQLConf.ROW_IDS_ALLOWED.key, "true")
-
-  def withRowIdsEnabled(enabled: Boolean)(f: => Unit): Unit = {
-    // Even when we don't want Row Ids on created tables, we want to enable code paths that
-    // interact with them, which is controlled by this config.
-    assert(spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED.key) == "true")
-    val configPairs = if (enabled) Seq(defaultRowIdFeatureProperty -> "supported") else Seq.empty
-    withSQLConf(configPairs: _*)(f)
-  }
-
+trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   protected def getRowIdRangeInclusive(f: AddFile): (Long, Long) = {
-    val min = f.baseRowId.get.toLong
+    val min = f.baseRowId.get
     val max = min + f.numPhysicalRecords.get - 1L
     (min, max)
   }

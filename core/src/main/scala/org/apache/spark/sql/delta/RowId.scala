@@ -35,29 +35,26 @@ object RowId {
    * behave as if Row IDs didn't exist when this returns false to avoid leaking an incomplete
    * implementation.
    */
-  def rowIdsAllowed(spark: SparkSession): Boolean = {
-    spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED)
-  }
+  def isAllowed(spark: SparkSession): Boolean = spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED)
 
   /**
    * Returns whether the protocol version supports the Row ID table feature. Whenever Row IDs are
    * supported, fresh Row IDs must be assigned to all newly committed files, even when Row IDs are
    * disabled in the current table version.
    */
-  def rowIdsSupported(protocol: Protocol): Boolean = {
-    protocol.isFeatureSupported(RowIdFeature)
-  }
+  def isSupported(protocol: Protocol): Boolean = RowTracking.isSupported(protocol)
 
   /**
    * Returns whether Row IDs are enabled on this table version. Checks that Row IDs are supported,
    * which is a pre-requisite for enabling Row IDs, throws an error if not.
    */
-  def rowIdsEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
-    val isEnabled = DeltaConfigs.ROW_IDS_ENABLED.fromMetaData(metadata)
-    if (isEnabled && !rowIdsSupported(protocol)) {
-      throw new IllegalStateException(s"Table property '${DeltaConfigs.ROW_IDS_ENABLED.key}' is " +
+  def isEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
+    val isEnabled = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
+    if (isEnabled && !isSupported(protocol)) {
+      throw new IllegalStateException(
+        s"Table property '${DeltaConfigs.ROW_TRACKING_ENABLED.key}' is " +
         s"set on the table but this table version doesn't support table feature " +
-        s"'${propertyKey(RowIdFeature)}'.")
+        s"'${propertyKey(RowTrackingFeature)}'.")
     }
     isEnabled
   }
@@ -72,16 +69,16 @@ object RowId {
       oldMetadata: Metadata,
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Metadata = {
-    if (!rowIdsAllowed(spark)) return newMetadata
-    val latestMetadata = if (isCreatingNewTable && rowIdsSupported(protocol)) {
-      val newConfig = newMetadata.configuration + (DeltaConfigs.ROW_IDS_ENABLED.key -> "true")
+    if (!isAllowed(spark)) return newMetadata
+    val latestMetadata = if (isCreatingNewTable && isSupported(protocol)) {
+      val newConfig = newMetadata.configuration + (DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true")
       newMetadata.copy(configuration = newConfig)
     } else {
       newMetadata
     }
 
-    val rowIdsEnabledBefore = rowIdsEnabled(protocol, oldMetadata)
-    val rowIdsEnabledAfter = rowIdsEnabled(protocol, latestMetadata)
+    val rowIdsEnabledBefore = isEnabled(protocol, oldMetadata)
+    val rowIdsEnabledAfter = isEnabled(protocol, latestMetadata)
 
     if (rowIdsEnabledAfter && !rowIdsEnabledBefore && !isCreatingNewTable) {
       throw new UnsupportedOperationException(
@@ -99,7 +96,7 @@ object RowId {
       protocol: Protocol,
       snapshot: Snapshot,
       actions: Iterator[Action]): Iterator[Action] = {
-    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return actions
+    if (!isAllowed(spark) || !isSupported(protocol)) return actions
 
     val oldHighWatermark = extractHighWatermark(spark, snapshot)
         .getOrElse(MISSING_HIGH_WATER_MARK)
@@ -135,7 +132,7 @@ object RowId {
    */
   private[delta] def extractHighWatermark(
       spark: SparkSession, snapshot: Snapshot): Option[RowIdHighWaterMark] = {
-    if (rowIdsAllowed(spark)) {
+    if (isAllowed(spark)) {
       snapshot.rowIdHighWaterMarkOpt
     } else {
       None
@@ -144,7 +141,7 @@ object RowId {
 
   private[delta] def extractHighWatermark(
       spark: SparkSession, actions: Seq[Action]): Option[RowIdHighWaterMark] = {
-    if (rowIdsAllowed(spark)) {
+    if (isAllowed(spark)) {
       actions.collectFirst { case r: RowIdHighWaterMark => r }
     } else {
       None
@@ -162,7 +159,7 @@ object RowId {
       protocol: Protocol,
       convertToDeltaShouldCollectStats: Boolean,
       statsCollectionEnabled: Boolean): Unit = {
-    if (!rowIdsAllowed(spark) || !rowIdsSupported(protocol)) return
+    if (!isAllowed(spark) || !isSupported(protocol)) return
     if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
       throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
     }

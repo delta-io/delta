@@ -2286,8 +2286,8 @@ trait DeltaErrorsBase
   def convertToDeltaRowTrackingEnabledWithoutStatsCollection: Throwable = {
     val statisticsCollectionPropertyKey = DeltaSQLConf.DELTA_COLLECT_STATS.key
     val rowTrackingTableFeatureDefaultKey =
-      TableFeatureProtocolUtils.defaultPropertyKey(RowIdFeature)
-    val rowTrackingDefaultPropertyKey = DeltaConfigs.ROW_IDS_ENABLED.defaultTablePropertyKey
+      TableFeatureProtocolUtils.defaultPropertyKey(RowTrackingFeature)
+    val rowTrackingDefaultPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey
     new DeltaIllegalStateException(
       errorClass = "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
       messageParameters = Array(

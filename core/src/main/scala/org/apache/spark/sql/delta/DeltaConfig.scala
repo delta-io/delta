@@ -585,11 +585,12 @@ trait DeltaConfigsBase extends DeltaLogging {
   )
 
   /**
-   * Indicates whether row IDs are enabled. When this flag is turned on, all rows are guaranteed to
-   * have row IDs assigned to them.
+   * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
+   * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are
+   * expected to preserve them by materializing them to hidden columns in the data files.
    */
-  val ROW_IDS_ENABLED = buildConfig[Boolean](
-    key = "enableRowIds",
+  val ROW_TRACKING_ENABLED = buildConfig[Boolean](
+    key = "enableRowTracking",
     defaultValue = false.toString,
     fromString = _.toBoolean,
     validationFunction = _ => true,

@@ -323,7 +323,7 @@ private[delta] class ConflictChecker(
    */
   private def reassignOverlappingRowIds(): Unit = {
     // The current transaction should only assign Row Ids if they are supported.
-    if (!RowId.rowIdsSupported(currentTransactionInfo.protocol)) return
+    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
 
     winningCommitSummary.actions.collectFirst {
       case RowIdHighWaterMark(winningHighWaterMark) =>

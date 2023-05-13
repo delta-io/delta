@@ -32,19 +32,19 @@ class RowIdSuite extends QueryTest
     with SharedSparkSession
     with RowIdTestUtils {
   test("Creating a new table with row ID table feature sets row IDs as readable") {
-    withRowIdsEnabled(enabled = false) {
+    withRowTrackingEnabled(enabled = false) {
       withTable("tbl") {
         spark.range(10).write.format("delta")
-          .option(rowIdFeatureName, "supported").saveAsTable("tbl")
+          .option(rowTrackingFeatureName, "supported").saveAsTable("tbl")
 
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(RowId.rowIdsEnabled(log.update().protocol, log.update().metadata))
+        assert(RowId.isEnabled(log.update().protocol, log.update().metadata))
       }
     }
   }
 
   test("Enabling row IDs on existing table does not set row IDs as readable") {
-    withRowIdsEnabled(enabled = false) {
+    withRowTrackingEnabled(enabled = false) {
       withTable("tbl") {
         spark.range(10).write.format("delta")
           .saveAsTable("tbl")
@@ -53,18 +53,18 @@ class RowIdSuite extends QueryTest
           s"""
              |ALTER TABLE tbl
              |SET TBLPROPERTIES (
-             |'$rowIdFeatureName' = 'supported',
+             |'$rowTrackingFeatureName' = 'supported',
              |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
 
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(RowId.rowIdsSupported(log.update().protocol))
-        assert(!RowId.rowIdsEnabled(log.update().protocol, log.update().metadata))
+        assert(RowId.isSupported(log.update().protocol))
+        assert(!RowId.isEnabled(log.update().protocol, log.update().metadata))
       }
     }
   }
 
   test("row ids are assigned when they are enabled") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -79,7 +79,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("row ids are not assigned when they are disabled") {
-    withRowIdsEnabled(enabled = false) {
+    withRowTrackingEnabled(enabled = false) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -94,7 +94,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("row ids are not assigned when they are not allowed") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       // Setting the table property, but disabling via config.
       withSQLConf(DeltaSQLConf.ROW_IDS_ALLOWED.key -> "false") {
         withTempDir { dir =>
@@ -112,7 +112,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("row ids can be disabled") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -120,7 +120,7 @@ class RowIdSuite extends QueryTest
         assertRowIdsAreValid(log)
 
         sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` " +
-          s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_IDS_ENABLED.key}' = false)")
+          s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = false)")
         checkAnswer(
           spark.read.load(dir.getAbsolutePath),
           (0 until 1000).map(Row(_)))
@@ -129,7 +129,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("high watermark survives checkpointing") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -157,7 +157,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("re-added files keep their row ids") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -179,7 +179,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("RESTORE retains high watermark") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         // version 0: high watermark = 9
         spark.range(start = 0, end = 10)
@@ -222,7 +222,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("row_id column with row ids disabled") {
-    withRowIdsEnabled(enabled = false) {
+    withRowTrackingEnabled(enabled = false) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 5)
           .select((col("id") + 10000L).as("row_id"))
@@ -238,7 +238,7 @@ class RowIdSuite extends QueryTest
 
   test("Throws error when assigning row IDs without stats") {
     withSQLConf(
-      defaultRowIdFeatureProperty -> "supported",
+      defaultRowTrackingFeatureProperty -> "supported",
       DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
       withTable("target") {
         val err = intercept[UnsupportedOperationException] {
@@ -250,7 +250,7 @@ class RowIdSuite extends QueryTest
   }
 
   test("manually setting row ID high watermark is not allowed") {
-    withRowIdsEnabled(enabled = true) {
+    withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
         spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
           .write.format("delta").save(dir.getAbsolutePath)
@@ -267,15 +267,16 @@ class RowIdSuite extends QueryTest
   }
 
   test("ALTER TABLE cannot enable Row IDs on existing table") {
-    withRowIdsEnabled(enabled = false) {
+    withRowTrackingEnabled(enabled = false) {
       withTable("tbl") {
         spark.range(10).write.format("delta").saveAsTable("tbl")
 
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(!RowId.rowIdsEnabled(log.update().protocol, log.update().metadata))
+        assert(!RowId.isEnabled(log.update().protocol, log.update().metadata))
 
         val err = intercept[UnsupportedOperationException] {
-          sql(s"ALTER TABLE tbl SET TBLPROPERTIES ('${DeltaConfigs.ROW_IDS_ENABLED.key}' = true)")
+          sql(s"ALTER TABLE tbl " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = true)")
         }
         assert(err.getMessage === "Cannot enable Row IDs on an existing table.")
       }
