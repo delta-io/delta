@@ -147,6 +147,46 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
     }
   }
 
+  cloneTest("Clone on table with delta statistics columns") { (source, target) =>
+    withTable("delta_table", "delta_table_shadow_clone", "delta_table_clone") {
+      sql(
+        "create table delta_table (c0 long, c1 long, c2 long) using delta " +
+        "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2', " +
+        "'delta.columnMapping.mode' = 'name', " +
+        "'delta.minReaderVersion' = '2', " +
+        "'delta.minWriterVersion' = '5')"
+      )
+      sql(s"CREATE TABLE delta_table_shadow_clone SHALLOW CLONE delta_table LOCATION '$source'")
+      var dataSkippingStatsColumns = sql("SHOW TBLPROPERTIES delta_table_shadow_clone")
+        .collect()
+        .map { row => row.getString(0) -> row.getString(1) }
+        .filter(_._1 == "delta.dataSkippingStatsColumns")
+        .toSeq
+      val result1 = Seq(("delta.dataSkippingStatsColumns", "c1,c2"))
+      assert(dataSkippingStatsColumns == result1)
+    }
+  }
+
+  cloneTest("Clone on table with nested delta statistics columns") { (source, target) =>
+      withTable("delta_table", "delta_table_shadow_clone", "delta_table_clone") {
+        sql(
+          "create table delta_table (c0 long, c1 long, c2 struct<a: int, b int>) using delta " +
+            "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2.a,c2.b', " +
+            "'delta.columnMapping.mode' = 'name', " +
+            "'delta.minReaderVersion' = '2', " +
+            "'delta.minWriterVersion' = '5')"
+        )
+        sql(s"CREATE TABLE delta_table_shadow_clone SHALLOW CLONE delta_table LOCATION '$source'")
+        var dataSkippingStatsColumns = sql("SHOW TBLPROPERTIES delta_table_shadow_clone")
+          .collect()
+          .map { row => row.getString(0) -> row.getString(1) }
+          .filter(_._1 == "delta.dataSkippingStatsColumns")
+          .toSeq
+        val result1 = Seq(("delta.dataSkippingStatsColumns", "c1,c2.a,c2.b"))
+        assert(dataSkippingStatsColumns == result1)
+      }
+  }
+
   cloneTest("cloning a view over a Delta table") { (tblExt, _) =>
     withTable("delta_table") {
       withView("tmp") {

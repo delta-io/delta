@@ -322,6 +322,18 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
+    "message" : [
+      "Data skipping is not supported for partition column '<column>'."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" : {
+    "message" : [
+      "Data skipping is not supported for column '<column>' of type <type>."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET" : {
     "message" : [
       "The max column id property (<prop>) is not set on a column mapping enabled table."
@@ -556,6 +568,18 @@
       "Please remove duplicate columns before you update your table."
     ],
     "sqlState" : "42701"
+  },
+  "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" : {
+    "message" : [
+      "Duplicated data skipping columns found: <columns>."
+    ],
+    "sqlState" : "42701"
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
+    "message" : [
+      "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [

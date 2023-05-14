@@ -21,7 +21,7 @@ import java.util.{HashMap, Locale}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -489,6 +489,23 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
+
+  /**
+   * The names of specific columns to collect stats on for data skipping. If present, it takes
+   * precedences over dataSkippingNumIndexedCols config, and the system will only collect stats for
+   * columns that exactly match those specified. If a nested column is specified, the system will
+   * collect stats for all leaf fields of that column. If a non-existing column is specified, it
+   * will be ignored. Updating this conf does not trigger stats re-collection, but redefines the
+   * stats schema of table, i.e., it will change the behavior of future stats collection (e.g., in
+   * append and OPTIMIZE) as well as data skipping (e.g., the column stats not mentioned by this
+   * config will be ignored even if they exist).
+   */
+  val DATA_SKIPPING_STATS_COLUMNS = buildConfig[Option[String]](
+    "dataSkippingStatsColumns",
+    null,
+    v => Option(v),
+    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    "needs to be a (possibly empty) comma-separated list of column names.")
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",

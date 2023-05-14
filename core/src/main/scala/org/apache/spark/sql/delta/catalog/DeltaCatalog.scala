@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -104,7 +105,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
     val conf = spark.sessionState.conf
-
+    allTableProperties.asScala
+      .get(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key)
+      .foreach(StatisticsCollection.validateDeltaStatsColumns(schema, partitionColumns, _))
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")

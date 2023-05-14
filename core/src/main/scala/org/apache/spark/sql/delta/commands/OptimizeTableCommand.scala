@@ -71,7 +71,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
     val df = spark.createDataFrame(new java.util.ArrayList[Row](), dataSchema)
     val checkColStat = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK)
-    val statCollectionSchema = txn.snapshot.statCollectionSchema
+    val statCollectionSchema = txn.snapshot.statCollectionLogicalSchema
     val colsWithoutStats = ArrayBuffer[String]()
 
     unresolvedZOrderByCols.foreach { colAttribute =>
