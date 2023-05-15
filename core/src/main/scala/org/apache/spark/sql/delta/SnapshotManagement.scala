@@ -134,6 +134,10 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param versionToLoad A specific version to load. Typically used with time travel and the
    *                      Delta streaming source. If not provided, we will try to load the latest
    *                      version of the table.
+   * @param checkpointMetadataHint [[CheckpointMetaData]] from the _last_checkpoint. This could be
+   *                               used to initialize the Snapshot's [[LogSegment]].
+   * @param oldCheckpointProvider The [[CheckpointProvider]] from the previous snapshot. This could
+   *                              be used to initialize the new [[LogSegment]].
    * @return Some LogSegment to build a Snapshot if files do exist after the given
    *         startCheckpoint. None, if the directory was missing or empty.
    */

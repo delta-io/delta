@@ -868,37 +868,3 @@ object CheckpointV2 {
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }
 }
-
-/**
- * A trait which provides information about a checkpoint to the Snapshot.
- * - files in the underlying checkpoint
- * - metadata of the underlying checkpoint
- */
-trait CheckpointProvider {
-  def version: Long
-  def checkpointFiles: Seq[FileStatus]
-  def checkpointMetadata: CheckpointMetaData
-}
-
-/**
- * An implementation of [[CheckpointProvider]] where the information about checkpoint files
- * (i.e. Seq[FileStatus]) is already known in advance.
- *
- * @param checkpointFiles - file statuses for the checkpoint
- * @param checkpointMetadataOpt - optional checkpoint metadata for the checkpoint.
- *                              If this is passed, the provider will use it instead of deriving the
- *                              [[CheckpointMetaData]] from the file list.
- */
-case class PreloadedCheckpointProvider(
-    override val checkpointFiles: Seq[FileStatus],
-    checkpointMetadataOpt: Option[CheckpointMetaData]
-) extends CheckpointProvider with DeltaLogging {
-
-  override def version: Long = checkpointMetadata.version
-
-  override def checkpointMetadata: CheckpointMetaData = {
-    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))
-  }
-
-  require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
-}
