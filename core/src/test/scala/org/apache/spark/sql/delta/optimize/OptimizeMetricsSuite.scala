@@ -157,13 +157,14 @@ trait OptimizeMetricsSuiteBase extends QueryTest
 
         spark.sql(s"OPTIMIZE delta.`${tempDir.toString}`") // run optimize on the table
 
-        val history = DeltaTable.forPath(spark, tempDir.getAbsolutePath).history(1)
+        val actualOperationMetricsAndName = DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+          .history(1)
+          .select("operationMetrics", "operation")
+          .head
 
-        val actualOperationMetrics = history
-            .select("operationMetrics")
-            .head
-            .getMap(0)
-            .asInstanceOf[Map[String, String]]
+        val actualOperationMetrics = actualOperationMetricsAndName
+          .getMap(0)
+          .asInstanceOf[Map[String, String]]
 
         // File sizes depend on the order of how they are merged (=> compression). In order to avoid
         // flaky test, just test that the metric exists.
@@ -181,7 +182,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           "numDeletionVectorsRemoved"
         ).foreach(metric => assert(actualOperationMetrics.get(metric).isDefined))
 
-        assertOperationName(history)
+        val operationName = actualOperationMetricsAndName(1).asInstanceOf[String]
+        assert(operationName === DeltaOperations.OPTIMIZE_OPERATION_NAME)
       }
     }
   }
@@ -275,20 +277,20 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         val finalSizes = DeltaLog.forTable(spark, tempDir)
           .unsafeVolatileSnapshot.allFiles.select('size).collect().map(_.getLong(0)).sorted
 
-        val history = DeltaTable.forPath(spark, tempDir.getAbsolutePath).history(1)
+        val actualOperation = DeltaTable.forPath(spark, tempDir.getAbsolutePath).history(1)
+          .select(
+            "operationParameters.zOrderBy",
+            "operationMetrics",
+            "operation")
+          .take(1).head
 
         // Verify ZOrder operation parameters
-        val actualOpParameters = history
-          .select($"operationParameters.zOrderBy")
-          .take(1).head.getString(0)
+        val actualOpParameters = actualOperation.getString(0)
         assert(actualOpParameters === "[\"col1\",\"col2\"]")
 
         // Verify metrics records in commit log.
-        val actualMetrics = history
-          .select("operationMetrics")
-          .take(1)
-          .head
-          .getMap(0)
+        val actualMetrics = actualOperation
+          .getMap(1)
           .asInstanceOf[Map[String, String]]
 
         val expMetricsJson =
@@ -308,7 +310,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         val expMetrics = JsonUtils.fromJson[Map[String, String]](expMetricsJson)
         assert(actualMetrics === expMetrics)
 
-        assertOperationName(history)
+        val operationName = actualOperation(2).asInstanceOf[String]
+        assert(operationName === DeltaOperations.OPTIMIZE_OPERATION_NAME)
       }
     }
   }
@@ -418,7 +421,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         val dvMetrics = opMetrics.keys.filter(_.contains("DeletionVector"))
         assert(dvMetrics === Set("numDeletionVectorsRemoved"))
         assert(opMetrics("numDeletionVectorsRemoved") === numFilesWithDVs.toString)
-        assertOperationName(deltaTable.history(1))
       }
     }
   }
@@ -429,16 +431,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
     }.head
 
     assert(ci.operation === DeltaOperations.OPTIMIZE_OPERATION_NAME)
-  }
-
-  def assertOperationName(df: DataFrame): Unit = {
-    val operationName = df
-      .select("operation")
-      .take(1)
-      .head(0)
-      .asInstanceOf[String]
-
-    assert(operationName === DeltaOperations.OPTIMIZE_OPERATION_NAME)
   }
 }
 
