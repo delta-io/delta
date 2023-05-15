@@ -21,6 +21,8 @@ import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -3021,6 +3023,11 @@ class DeltaIllegalStateException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(errorClass, null)
+      .zip(messageParameters).toMap.asJava
+  }
 }
 
 class DeltaIndexOutOfBoundsException(
@@ -3061,6 +3068,10 @@ class DeltaRuntimeException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getParameterNames(errorClass, null)
+      .zip(messageParameters).toMap.asJava
 }
 
 class DeltaSparkException(
@@ -3121,6 +3132,13 @@ class DeltaTablePropertyValidationFailedException(
     errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED" + "." + subClass.tag,
     messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(
+      "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
+      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
+  }
+
   override def getErrorClass: String =
     "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
 }
