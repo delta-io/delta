@@ -552,14 +552,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
     //
-    // This code path is for existing tables. The new table case has been handled by
-    // [[Protocol.forNewTable]] earlier in this method.
-    if (!isCreatingNewTable) {
+    // This code path is for existing tables and during `REPLACE` if the downgrade flag is not set.
+    // The new table case has been handled by [[Protocol.forNewTable]] earlier in this method.
+    if (!canAssignAnyNewProtocol) {
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
 
-    newMetadataTmp = RowId.verifyAndUpdateMetadata(
+    RowId.verifyMetadata(
       spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     assertMetadata(newMetadataTmp)

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
-import org.apache.spark.sql.delta.RowTrackingFeature
+import org.apache.spark.sql.delta.{DeltaConfigs, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -36,8 +36,6 @@ trait RowTrackingTestUtils extends QueryTest with SharedSparkSession {
     // Even when we don't want Row Ids on created tables, we want to enable code paths that
     // interact with them, which is controlled by this config.
     assert(spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED.key) == "true")
-    val configPairs =
-      if (enabled) Seq(defaultRowTrackingFeatureProperty -> "supported") else Seq.empty
-    withSQLConf(configPairs: _*)(f)
+    withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> enabled.toString)(f)
   }
 }

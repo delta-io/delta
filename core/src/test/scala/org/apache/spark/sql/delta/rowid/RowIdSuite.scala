@@ -31,18 +31,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 class RowIdSuite extends QueryTest
     with SharedSparkSession
     with RowIdTestUtils {
-  test("Creating a new table with row ID table feature sets row IDs as readable") {
-    withRowTrackingEnabled(enabled = false) {
-      withTable("tbl") {
-        spark.range(10).write.format("delta")
-          .option(rowTrackingFeatureName, "supported").saveAsTable("tbl")
-
-        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(RowId.isEnabled(log.update().protocol, log.update().metadata))
-      }
-    }
-  }
-
   test("Enabling row IDs on existing table does not set row IDs as readable") {
     withRowTrackingEnabled(enabled = false) {
       withTable("tbl") {

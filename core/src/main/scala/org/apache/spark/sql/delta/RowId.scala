@@ -60,31 +60,23 @@ object RowId {
   }
 
   /**
-   * Marks row IDs as readable if the row ID writer feature is enabled on a new table and
-   * verifies that row IDs are only set as readable when a new table is created.
+   * Verifies that row IDs are only set as readable when a new table is created.
    */
-  private[delta] def verifyAndUpdateMetadata(
+  private[delta] def verifyMetadata(
       spark: SparkSession,
       protocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      isCreatingNewTable: Boolean): Metadata = {
-    if (!isAllowed(spark)) return newMetadata
-    val latestMetadata = if (isCreatingNewTable && isSupported(protocol)) {
-      val newConfig = newMetadata.configuration + (DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true")
-      newMetadata.copy(configuration = newConfig)
-    } else {
-      newMetadata
-    }
+      isCreatingNewTable: Boolean): Unit = {
+    if (!isAllowed(spark)) return
 
     val rowIdsEnabledBefore = isEnabled(protocol, oldMetadata)
-    val rowIdsEnabledAfter = isEnabled(protocol, latestMetadata)
+    val rowIdsEnabledAfter = isEnabled(protocol, newMetadata)
 
     if (rowIdsEnabledAfter && !rowIdsEnabledBefore && !isCreatingNewTable) {
       throw new UnsupportedOperationException(
         "Cannot enable Row IDs on an existing table.")
     }
-    latestMetadata
   }
 
   /**
