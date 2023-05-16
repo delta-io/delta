@@ -1126,6 +1126,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             numSetTransaction += 1
           case m: Metadata =>
             assertMetadata(m)
+          case p: Protocol =>
+            recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
           case _ =>
         }
         action
@@ -1284,6 +1286,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // NOTE: There is at most one protocol change at this point.
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
+      recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
     }
 
 
@@ -1421,6 +1424,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ => false // This case should never happen
     }
     allowFallbackToSnapshotIsolation
+  }
+
+  /** Log protocol change events. */
+  private def recordProtocolChanges(
+      fromProtocol: Protocol,
+      toProtocol: Protocol,
+      isCreatingNewTable: Boolean): Unit = {
+    def extract(p: Protocol): Map[String, Any] = Map(
+      "minReaderVersion" -> p.minReaderVersion, // Number
+      "minWriterVersion" -> p.minWriterVersion, // Number
+      "supportedFeatures" ->
+        p.implicitlyAndExplicitlySupportedFeatures.map(_.name).toSeq.sorted // Array[String]
+    )
+
+    val payload = if (isCreatingNewTable) {
+      Map("toProtocol" -> extract(toProtocol))
+    } else {
+      Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
+    }
+    recordDeltaEvent(deltaLog, "delta.protocol.change", data = payload)
   }
 
   /**
