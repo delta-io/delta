@@ -53,18 +53,16 @@ object DeltaFileOperations extends DeltaLogging {
    *                 Note: It is assumed that the basePath do not have any escaped characters and
    *                 is directly readable by Hadoop APIs.
    * @param child    Child path to append to `basePath` if child is a relative path.
-   *                 Note: t is assumed that the child is escaped, that is, all special chars that
-   *                 need escaping by URI standards are already escaped.
    * @return Absolute path without escaped chars that is directly readable by Hadoop APIs.
    */
   def absolutePath(basePath: String, child: String): Path = {
     // scalastyle:off pathfromuri
-    val p = new Path(new URI(child))
+    val p = new Path(child)
     if (p.isAbsolute) {
       p
     } else {
-      val merged = new Path(basePath, p)
-      // URI resolution strips the final `/` in `p` if it exists
+      val merged = new Path(basePath, child)
+      // URI resolution strips the final `/` in `child` if it exists
       val mergedUri = merged.toUri.toString
       if (child.endsWith("/") && !mergedUri.endsWith("/")) {
         new Path(new URI(mergedUri + "/"))
