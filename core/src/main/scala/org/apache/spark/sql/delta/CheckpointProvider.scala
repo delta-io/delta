@@ -32,8 +32,11 @@ trait CheckpointProvider {
   /** Checkpoint version */
   def version: Long
 
-  /** files in the underlying checkpoint */
-  def checkpointFiles: Seq[FileStatus]
+  /**
+   * Minimum set of files that represents this checkpoint.
+   * These files could be reused again to initialize the [[CheckpointProvider]].
+   */
+  def files: Seq[FileStatus]
 
   /** [[CheckpointMetaData]] representing the checkpoint */
   def checkpointMetadata: CheckpointMetaData
@@ -52,24 +55,24 @@ trait CheckpointProvider {
  * An implementation of [[CheckpointProvider]] where the information about checkpoint files
  * (i.e. Seq[FileStatus]) is already known in advance.
  *
- * @param checkpointFiles - file statuses for the checkpoint
+ * @param files - file statuses that describes the checkpoint
  * @param checkpointMetadataOpt - optional checkpoint metadata for the checkpoint.
  *                              If this is passed, the provider will use it instead of deriving the
  *                              [[CheckpointMetaData]] from the file list.
  */
 case class PreloadedCheckpointProvider(
-  override val checkpointFiles: Seq[FileStatus],
+  override val files: Seq[FileStatus],
   checkpointMetadataOpt: Option[CheckpointMetaData]
 ) extends CheckpointProvider with DeltaLogging {
 
-  require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
+  require(files.nonEmpty, "There should be atleast 1 checkpoint file")
   private lazy val fileIndex =
-    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, checkpointFiles).get
+    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, files).get
 
   override def version: Long = checkpointMetadata.version
 
   override def checkpointMetadata: CheckpointMetaData = {
-    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))
+    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(files))
   }
 
   override def effectiveCheckpointSizeInBytes(): Long = fileIndex.sizeInBytes

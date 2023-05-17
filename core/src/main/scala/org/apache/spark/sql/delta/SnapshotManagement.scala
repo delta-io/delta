@@ -878,8 +878,6 @@ case class LogSegment(
 
   def checkpointVersionOpt: Option[Long] = checkpointProviderOpt.map(_.version)
 
-  def checkpoint: Seq[FileStatus] = checkpointProviderOpt.map(_.checkpointFiles).getOrElse(Nil)
-
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
 
   /**

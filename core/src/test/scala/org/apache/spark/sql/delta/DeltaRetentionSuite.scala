@@ -151,9 +151,12 @@ class DeltaRetentionSuite extends QueryTest
   }
 
   def removeFileCountFromUnderlyingCheckpoint(snapshot: Snapshot): Long = {
-    assert(snapshot.logSegment.checkpoint.size === 1)
-    val checkpointFilePath = snapshot.logSegment.checkpoint.head.getPath.toString
-    spark.read.parquet(checkpointFilePath).where("remove is not null").count()
+    val df = snapshot.logSegment.checkpointProviderOpt
+      .map(_.allActionsFileIndexes())
+      .getOrElse(Seq.empty)
+      .map(snapshot.deltaLog.loadIndex(_))
+      .reduce(_.union(_))
+    df.where("remove is not null").count()
   }
 
   testQuietly("retention timestamp is picked properly by the cold snapshot initialization") {
