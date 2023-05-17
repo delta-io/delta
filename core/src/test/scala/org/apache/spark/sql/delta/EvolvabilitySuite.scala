@@ -71,12 +71,12 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
     assert(contents.exists(_.contains(""""part":null""")), "null value should be written in json")
   }
 
-  testQuietly("parse old version LastCheckpointInfoSuite") {
+  testQuietly("parse old version LastCheckpointInfo") {
     assert(JsonUtils.mapper.readValue[LastCheckpointInfo]("""{"version":1,"size":1}""")
       === LastCheckpointInfo(1, 1, None, None, None, None))
   }
 
-  test("parse partial version LastCheckpointInfoSuite") {
+  test("parse partial version LastCheckpointInfo") {
     assert(JsonUtils.mapper.readValue[LastCheckpointInfo](
       """{"version":1,"size":1,"parts":100}""") ===
       LastCheckpointInfo(1, 1, Some(100), None, None, None))
