@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames.checkpointVersion
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
@@ -35,9 +36,6 @@ trait CheckpointProvider {
   /** files in the underlying checkpoint */
   def checkpointFiles: Seq[FileStatus]
 
-  /** [[CheckpointMetaData]] representing the checkpoint */
-  def checkpointMetadata: CheckpointMetaData
-
   /** Effective size of checkpoint across all files */
   def effectiveCheckpointSizeInBytes(): Long
 
@@ -53,24 +51,19 @@ trait CheckpointProvider {
  * (i.e. Seq[FileStatus]) is already known in advance.
  *
  * @param checkpointFiles - file statuses for the checkpoint
- * @param checkpointMetadataOpt - optional checkpoint metadata for the checkpoint.
- *                              If this is passed, the provider will use it instead of deriving the
- *                              [[CheckpointMetaData]] from the file list.
+ * @param lastCheckpointInfoOpt - optional [[LastCheckpointInfo]] corresponding to this checkpoint.
+ *                                This comes from _last_checkpoint file
  */
 case class PreloadedCheckpointProvider(
   override val checkpointFiles: Seq[FileStatus],
-  checkpointMetadataOpt: Option[CheckpointMetaData]
+  lastCheckpointInfoOpt: Option[LastCheckpointInfo]
 ) extends CheckpointProvider with DeltaLogging {
 
   require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
   private lazy val fileIndex =
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, checkpointFiles).get
 
-  override def version: Long = checkpointMetadata.version
-
-  override def checkpointMetadata: CheckpointMetaData = {
-    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))
-  }
+  override lazy val version: Long = checkpointVersion(checkpointFiles.head)
 
   override def effectiveCheckpointSizeInBytes(): Long = fileIndex.sizeInBytes
 
