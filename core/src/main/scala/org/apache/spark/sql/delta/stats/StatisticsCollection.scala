@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{CheckpointV2, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaUDF}
+import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaUDF}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
@@ -194,7 +194,7 @@ trait StatisticsCollection extends DeltaLogging {
     // This may be very expensive because it is rewriting JSON.
     withStats
       .withColumn("stats", when(col(statsColName).isNotNull, to_json(struct(allStatCols: _*))))
-      .drop(col(CheckpointV2.STATS_COL_NAME)) // Note: does not always exist.
+      .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
 
   /**
