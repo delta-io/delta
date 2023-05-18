@@ -30,7 +30,7 @@ import org.apache.commons.io.IOUtils
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
 
-class CheckpointMetadataSuite extends SharedSparkSession
+class LastCheckpointInfoSuite extends SharedSparkSession
   with DeltaSQLCommandTest {
 
   // same checkpoint schema for tests
@@ -38,7 +38,7 @@ class CheckpointMetadataSuite extends SharedSparkSession
 
   private def jsonStringToChecksum(jsonStr: String): String = {
     val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[JsonNode])
-    CheckpointMetaData.treeNodeToChecksum(rootNode)
+    LastCheckpointInfo.treeNodeToChecksum(rootNode)
   }
 
   test("test json to checksum conversion with maps") {
@@ -157,28 +157,28 @@ class CheckpointMetadataSuite extends SharedSparkSession
   }
   // scalastyle:on line.size.limit
 
-  test("test CheckpointMetadata checksum") {
-    val cm1 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
+  test("test LastCheckpointInfo checksum") {
+    val ci1 = LastCheckpointInfo(version = 1, size = 2, parts = Some(3),
       sizeInBytes = Some(20L), numOfAddFiles = Some(2L), checkpointSchema = checkpointSchema)
     val (stored1, actual1) =
-      CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm1, addChecksum = true))
+      LastCheckpointInfo.getChecksums(LastCheckpointInfo.serializeToJson(ci1, addChecksum = true))
     assert(stored1 === Some(actual1))
 
     // checksum mismatch when version changes.
-    val cm2 = CheckpointMetaData(version = 2, size = 2, parts = Some(3),
+    val ci2 = LastCheckpointInfo(version = 2, size = 2, parts = Some(3),
       sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
       checkpointSchema = checkpointSchema)
     val (stored2, actual2) =
-      CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm2, addChecksum = true))
+      LastCheckpointInfo.getChecksums(LastCheckpointInfo.serializeToJson(ci2, addChecksum = true))
     assert(stored2 === Some(actual2))
     assert(stored2 != stored1)
 
     // `checksum` doesn't participate in `actualChecksum` calculation.
-    val cm3 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
+    val ci3 = LastCheckpointInfo(version = 1, size = 2, parts = Some(3),
       checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
       checkpointSchema = checkpointSchema)
     val (stored3, actual3) =
-      CheckpointMetaData.getChecksums(CheckpointMetaData.serializeToJson(cm3, addChecksum = true))
+      LastCheckpointInfo.getChecksums(LastCheckpointInfo.serializeToJson(ci3, addChecksum = true))
     assert(stored3 === Some(actual3))
     assert(stored3 === stored1)
 
@@ -199,53 +199,53 @@ class CheckpointMetadataSuite extends SharedSparkSession
     val jsonStr = """{"version":1,"size":2,"parts":3,"sizeInBytes":20,"numOfAddFiles":2,""" +
      """"checkpointSchema":{"type":"struct","fields":[{"name":"c1","type":"integer"""" +
      ""","nullable":false,"metadata":{}}]}}"""
-    val expectedCheckpointMetaData = CheckpointMetaData(
+    val expectedLastCheckpointInfo = LastCheckpointInfo(
       version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2),
       checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false)))
-    assert(CheckpointMetaData.deserializeFromJson(jsonStr, validate = true) ===
-      expectedCheckpointMetaData)
+    assert(LastCheckpointInfo.deserializeFromJson(jsonStr, validate = true) ===
+      expectedLastCheckpointInfo)
   }
 
-  test("CheckpointMetadata - serialize/deserialize") {
-    val cm1 = CheckpointMetaData(version = 1, size = 2, parts = Some(3),
+  test("LastCheckpointInfo - serialize/deserialize") {
+    val ci1 = LastCheckpointInfo(version = 1, size = 2, parts = Some(3),
       checksum = Some("XYZ"), sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
       checkpointSchema = checkpointSchema)
-    val cm2 = CheckpointMetaData(version = 1, size = 2, parts = Some(3), checksum = None,
+    val ci2 = LastCheckpointInfo(version = 1, size = 2, parts = Some(3), checksum = None,
       sizeInBytes = Some(20L), numOfAddFiles = Some(2L),
       checkpointSchema = checkpointSchema)
 
-    val actualChecksum = CheckpointMetaData.getChecksums(
-      CheckpointMetaData.serializeToJson(cm1, addChecksum = true))._2
-    val cmWithCorrectChecksum = cm1.copy(checksum = Some(actualChecksum))
+    val actualChecksum = LastCheckpointInfo.getChecksums(
+      LastCheckpointInfo.serializeToJson(ci1, addChecksum = true))._2
+    val ciWithCorrectChecksum = ci1.copy(checksum = Some(actualChecksum))
 
-    for(cm <- Seq(cm1, cm2)) {
-      val json = CheckpointMetaData.serializeToJson(cm, addChecksum = true)
-      assert(CheckpointMetaData.deserializeFromJson(json, validate = true)
-        === cmWithCorrectChecksum)
+    for(ci <- Seq(ci1, ci2)) {
+      val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = true)
+      assert(LastCheckpointInfo.deserializeFromJson(json, validate = true)
+        === ciWithCorrectChecksum)
       // The below assertion also validates that fields version/size/parts are in the beginning of
       // the json.
-      assert(CheckpointMetaData.serializeToJson(cm, addChecksum = true) ===
+      assert(LastCheckpointInfo.serializeToJson(ci, addChecksum = true) ===
         """{"version":1,"size":2,"parts":3,"sizeInBytes":20,"numOfAddFiles":2,""" +
           s""""checkpointSchema":${JsonUtils.toJson(checkpointSchema)},""" +
           """"checksum":"524d4e2226f3c3f923df4ee42dae347e"}""")
     }
 
-    assert(CheckpointMetaData.serializeToJson(cm1, addChecksum = true)
-      === CheckpointMetaData.serializeToJson(cm2, addChecksum = true))
+    assert(LastCheckpointInfo.serializeToJson(ci1, addChecksum = true)
+      === LastCheckpointInfo.serializeToJson(ci2, addChecksum = true))
   }
 
-  test("CheckpointMetadata - json with duplicate keys should fail") {
+  test("LastCheckpointInfo - json with duplicate keys should fail") {
     val jsonString =
       """{"version":1,"size":3,"parts":3,"checksum":"d84a0aa11c93304d57feca6acaceb7fb","size":2}"""
     intercept[MismatchedInputException] {
-      CheckpointMetaData.deserializeFromJson(jsonString, validate = true)
+      LastCheckpointInfo.deserializeFromJson(jsonString, validate = true)
     }
     // Deserialization shouldn't fail when validate is false and the last `size` overrides the
     // previous size.
-    assert(CheckpointMetaData.deserializeFromJson(jsonString, validate = false).size === 2)
+    assert(LastCheckpointInfo.deserializeFromJson(jsonString, validate = false).size === 2)
   }
 
-  test("CheckpointMetadata - test checksum is written only when config is enabled") {
+  test("LastCheckpointInfo - test checksum is written only when config is enabled") {
     withTempDir { dir =>
       spark.range(10).write.format("delta").save(dir.getAbsolutePath)
       val log = DeltaLog.forTable(spark, dir)
@@ -275,16 +275,16 @@ class CheckpointMetadataSuite extends SharedSparkSession
 
   test("Suppress optional fields in _last_checkpoint") {
     val expectedStr = """{"version":1,"size":2,"parts":3}"""
-    val cm = CheckpointMetaData(
+    val info = LastCheckpointInfo(
       version = 1, size = 2, parts = Some(3), sizeInBytes = Some(20), numOfAddFiles = Some(2),
       checkpointSchema = Some(new StructType().add("c1", IntegerType, nullable = false)))
-    val serializedJson = CheckpointMetaData.serializeToJson(
-      cm, addChecksum = true, suppressOptionalFields = true)
+    val serializedJson = LastCheckpointInfo.serializeToJson(
+      info, addChecksum = true, suppressOptionalFields = true)
     assert(serializedJson === expectedStr)
 
     val expectedStrNoPart = """{"version":1,"size":2}"""
-    val serializedJsonNoPart = CheckpointMetaData.serializeToJson(
-      cm.copy(parts = None), addChecksum = true, suppressOptionalFields = true)
+    val serializedJsonNoPart = LastCheckpointInfo.serializeToJson(
+      info.copy(parts = None), addChecksum = true, suppressOptionalFields = true)
     assert(serializedJsonNoPart === expectedStrNoPart)
   }
 
@@ -297,8 +297,7 @@ class CheckpointMetadataSuite extends SharedSparkSession
         DeltaLog.clearCache()
 
         val log = DeltaLog.forTable(spark, dir)
-        val metadata =
-          log.unsafeVolatileSnapshot.getCheckpointProviderOpt.get.checkpointMetadata
+        val metadata = log.readLastCheckpointFile().get
         val trimmed = metadata.productIterator.drop(3).forall {
           case o: Option[_] => o.isEmpty
         }

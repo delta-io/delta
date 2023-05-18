@@ -46,7 +46,7 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
     assert(deltaLog.snapshot.metadata.schema === StructType.fromDDL("id INT, value STRING"))
     assert(deltaLog.snapshot.metadata.partitionSchema === StructType.fromDDL("id INT"))
 
-    // Check we can load CheckpointMetaData
+    // Check we can load LastCheckpointInfo
     val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
     assert(lastCheckpointOpt.get.version === 3)
     assert(lastCheckpointOpt.get.size === 6L)

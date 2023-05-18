@@ -105,13 +105,13 @@ class CheckpointsSuite extends QueryTest
   }
 
   private def verifyCheckpoint(
-      checkpoint: Option[CheckpointMetaData],
+      checkpoint: Option[LastCheckpointInfo],
       version: Int,
       parts: Option[Int]): Unit = {
     assert(checkpoint.isDefined)
-    checkpoint.foreach { checkpointMetadata =>
-      assert(checkpointMetadata.version == version)
-      assert(checkpointMetadata.parts == parts)
+    checkpoint.foreach { lastCheckpointInfo =>
+      assert(lastCheckpointInfo.version == version)
+      assert(lastCheckpointInfo.parts == parts)
     }
   }
 

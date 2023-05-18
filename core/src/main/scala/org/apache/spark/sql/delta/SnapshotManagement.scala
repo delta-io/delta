@@ -63,11 +63,11 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param startingCheckpoint A checkpoint that we can start our listing from
    */
   protected def getLogSegmentFrom(
-      startingCheckpoint: Option[CheckpointMetaData]): Option[LogSegment] = {
+      startingCheckpoint: Option[LastCheckpointInfo]): Option[LogSegment] = {
     getLogSegmentForVersion(
       startCheckpoint = startingCheckpoint.map(_.version),
       versionToLoad = None,
-      checkpointMetadataHint = startingCheckpoint
+      lastCheckpointInfo = startingCheckpoint
     )
   }
 
@@ -134,8 +134,8 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param versionToLoad A specific version to load. Typically used with time travel and the
    *                      Delta streaming source. If not provided, we will try to load the latest
    *                      version of the table.
-   * @param checkpointMetadataHint [[CheckpointMetaData]] from the _last_checkpoint. This could be
-   *                               used to initialize the Snapshot's [[LogSegment]].
+   * @param lastCheckpointInfo [[LastCheckpointInfo]] from the _last_checkpoint. This could be
+   *                           used to initialize the Snapshot's [[LogSegment]].
    * @param oldCheckpointProvider The [[CheckpointProvider]] from the previous snapshot. This could
    *                              be used to initialize the new [[LogSegment]].
    * @return Some LogSegment to build a Snapshot if files do exist after the given
@@ -144,7 +144,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long] = None,
-      checkpointMetadataHint: Option[CheckpointMetaData] = None,
+      lastCheckpointInfo: Option[LastCheckpointInfo] = None,
       oldCheckpointProvider: Option[CheckpointProvider] = None): Option[LogSegment] = {
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
@@ -153,7 +153,7 @@ trait SnapshotManagement { self: DeltaLog =>
       startCheckpoint,
       versionToLoad,
       newFiles,
-      checkpointMetadataHint = checkpointMetadataHint,
+      lastCheckpointInfo = lastCheckpointInfo,
       oldCheckpointProvider = oldCheckpointProvider)
   }
 
@@ -199,7 +199,7 @@ trait SnapshotManagement { self: DeltaLog =>
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long],
       files: Option[Array[FileStatus]],
-      checkpointMetadataHint: Option[CheckpointMetaData],
+      lastCheckpointInfo: Option[LastCheckpointInfo],
       oldCheckpointProvider: Option[CheckpointProvider]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
       val newFiles = files.filterNot(_.isEmpty)
@@ -264,7 +264,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val checkpointProvider =
         newCheckpoint.map { ci =>
           oldCheckpointProvider.filter(_.version == newCheckpointVersion).getOrElse {
-            ci.getCheckpointProvider(logPath, checkpoints, checkpointMetadataHint)
+            ci.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfo)
           }
         }
 
@@ -405,7 +405,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // `checkpoints` may contain multiple checkpoints for different part sizes, we need to
         // search `FileStatus`s of the checkpoint files for `cp`.
         val checkpointProvider =
-          cp.getCheckpointProvider(logPath, checkpoints, checkpointMetadataHint = None)
+          cp.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfoHint = None)
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
           deltaVersion(file) > cp.version
