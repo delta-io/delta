@@ -508,10 +508,10 @@ trait DeltaConfigsBase extends DeltaLogging {
    * "stats_parsed" column. We will also write partition values as a struct as
    * "partitionValues_parsed".
    */
-  val CHECKPOINT_WRITE_STATS_AS_STRUCT = buildConfig[Option[Boolean]](
+  val CHECKPOINT_WRITE_STATS_AS_STRUCT = buildConfig[Boolean](
     "checkpoint.writeStatsAsStruct",
-    null,
-    v => Option(v).map(_.toBoolean),
+    "true",
+    _.toBoolean,
     _ => true,
     "needs to be a boolean.")
 

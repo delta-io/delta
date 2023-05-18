@@ -338,8 +338,12 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       schema: StructType): UnresolvedAttribute = {
     val parts = UnresolvedAttribute.parseAttributeName(col)
     val shouldIgnoreFirstPart = Set(
-      "minValues", "maxValues", "numRecords", CheckpointV2.PARTITIONS_COL_NAME, "partitionValues")
-    val shouldIgnoreSecondPart = Set(CheckpointV2.STATS_COL_NAME, "stats")
+      "minValues",
+      "maxValues",
+      "numRecords",
+      Checkpoints.STRUCT_PARTITIONS_COL_NAME,
+      "partitionValues")
+    val shouldIgnoreSecondPart = Set(Checkpoints.STRUCT_STATS_COL_NAME, "stats")
     val physical = if (shouldIgnoreFirstPart.contains(parts.head)) {
       parts.head +: getPhysicalPathForStats(parts.tail, schema).getOrElse(parts.tail)
     } else if (shouldIgnoreSecondPart.contains(parts.head)) {

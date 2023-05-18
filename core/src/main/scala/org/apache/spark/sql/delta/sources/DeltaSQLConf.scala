@@ -525,13 +525,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_CHECKPOINT_V2_ENABLED =
-    buildConf("checkpointV2.enabled")
-      .internal()
-      .doc("Write checkpoints where the partition values are parsed according to the data type.")
-      .booleanConf
-      .createWithDefault(true)
-
   val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
     buildConf("checkpointSchema.writeThresholdLength")
       .internal()
