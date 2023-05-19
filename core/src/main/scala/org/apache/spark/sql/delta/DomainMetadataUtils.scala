@@ -38,7 +38,7 @@ object DomainMetadataUtils extends DeltaLogging {
         if (domains.length != 1) {
           throw DeltaErrors.domainMetadataDuplicate(domains.head.domain)
         }
-        (name, domains.head)
+        name -> domains.head
       }
   }
 

@@ -332,9 +332,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case commitInfo: CommitInfo =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           false
-        case _: AddCDCFile | _: RowIdHighWaterMark | _: SetTransaction =>
+        case _: AddCDCFile | _: RowIdHighWaterMark | _: SetTransaction | _: DomainMetadata =>
           false
-        case _: DomainMetadata => false
         case null => // Some crazy future feature. Ignore
           false
       }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile, metadataAction)
