@@ -583,7 +583,7 @@
     "message" : [
       "Internal error: two DomainMetadata actions within the same transaction have the same domain <domainName>"
     ],
-    "sqlState" : "42601",
+    "sqlState" : "42601"
   },
   "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
     "message": [

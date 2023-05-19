@@ -321,7 +321,7 @@ class Snapshot(
     numProtocol = numOfProtocol,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
     rowIdHighWaterMark = rowIdHighWaterMarkOpt,
-    domainMetadatas = checksumOpt.flatMap(_.domainMetadatas),
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
     metadata = metadata,
     protocol = protocol,
     histogramOpt = fileSizeHistogram,

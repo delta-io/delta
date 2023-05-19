@@ -988,7 +988,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       // Check for duplicated [[MetadataAction]] with the same domain names and validate the table
       // feature is enabled if [[MetadataAction]] is submitted.
-      val domainMetadatas =
+      val domainMetadata =
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       val isBlindAppend = {
@@ -1026,7 +1026,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readSnapshot = snapshot,
         commitInfo = Option(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
-        domainMetadatas = domainMetadatas)
+        domainMetadata = domainMetadata)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {

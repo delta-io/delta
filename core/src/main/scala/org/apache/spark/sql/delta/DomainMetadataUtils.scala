@@ -30,7 +30,7 @@ object DomainMetadataUtils extends DeltaLogging {
    * Given a list of [[Action]]s, build a domain name to [[DomainMetadata]] map.
    * Note duplicated domain name is not expected otherwise an internal error is thrown.
    */
-  def extractDomainMetadatasMap(actions: Seq[Action]): Map[String, DomainMetadata] =
+  def extractDomainMetadatasMap(actions: Seq[Action]): Map[String, DomainMetadata] = {
     actions
       .collect { case action: DomainMetadata => action }
       .groupBy(_.domain)
@@ -40,6 +40,7 @@ object DomainMetadataUtils extends DeltaLogging {
         }
         (name, domains.head)
       }
+  }
 
   /**
    * Validate there are no two [[DomainMetadata]] actions with the same domain name. An internal

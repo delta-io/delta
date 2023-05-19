@@ -51,7 +51,7 @@ case class SnapshotState(
   numOfProtocol: Long,
   setTransactions: Seq[SetTransaction],
   rowIdHighWaterMark: RowIdHighWaterMark,
-  domainMetadatas: Seq[DomainMetadata],
+  domainMetadata: Seq[DomainMetadata],
   metadata: Metadata,
   protocol: Protocol,
   fileSizeHistogram: Option[FileSizeHistogram] = None
@@ -145,7 +145,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "numOfProtocol" -> count(col("protocol")),
       "setTransactions" -> collect_set(col("txn")),
       "rowIdHighWaterMark" -> last(col("rowIdHighWaterMark"), ignoreNulls = true),
-      "domainMetadatas" -> collect_list(col("domainMetadata")),
+      "domainMetadata" -> collect_list(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
@@ -162,11 +162,11 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
-  def domainMetadatas: Seq[DomainMetadata] = computedState.domainMetadatas
+  def domainMetadata: Seq[DomainMetadata] = computedState.domainMetadata
   def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
   protected[delta] def sizeInBytesIfKnown: Option[Long] = Some(sizeInBytes)
   protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
-  protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadatas)
+  protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
   protected[delta] def rowIdHighWaterMarkOpt: Option[RowIdHighWaterMark] =
     Option(computedState.rowIdHighWaterMark)
@@ -184,7 +184,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       numOfProtocol = 1L,
       setTransactions = Nil,
       rowIdHighWaterMark = null,
-      domainMetadatas = Nil,
+      domainMetadata = Nil,
       metadata = metadata,
       protocol = protocol
     )
