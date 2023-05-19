@@ -1037,7 +1037,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
-        doCommitRetryIteratively(snapshot.version + 1, currentTransactionInfo, isolationLevelToUse)
+        doCommitRetryIteratively(
+          getFirstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
       (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
@@ -1084,7 +1085,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     context: Map[String, String],
     metrics: Map[String, String]): (Long, Snapshot) = {
     commitStartNano = System.nanoTime()
-    val attemptVersion = readVersion + 1
+    val attemptVersion = getFirstAttemptVersion
     try {
       val commitInfo = CommitInfo(
         time = clock.getTimeMillis(),
@@ -1134,6 +1135,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
 
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions)
+      allActions = DefaultRowCommitVersion
+        .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
       if (readVersion < 0) {
         deltaLog.createLogDirectory()
@@ -1354,6 +1357,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     finalActions =
       RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
+    finalActions = DefaultRowCommitVersion
+      .assignIfMissing(protocol, finalActions.toIterator, getFirstAttemptVersion).toList
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.
@@ -1709,6 +1714,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commitIsolationLevel)
     conflictChecker.checkConflicts()
   }
+
+  protected def getFirstAttemptVersion: Long = readVersion + 1L
 
   /** Returns the next attempt version given the last attempted version */
   protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {

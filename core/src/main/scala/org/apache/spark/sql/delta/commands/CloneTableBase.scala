@@ -278,8 +278,11 @@ abstract class CloneTableBase(
           val copiedFile = fileToCopy.copy(dataChange = true)
           opName match {
             case CloneTableCommand.OP_NAME =>
+              // CLONE does not preserve Row IDs and Commit Versions
+              copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
+            case RestoreTableCommand.OP_NAME =>
+              // RESTORE preserves Row IDs and Commit Versions
               copiedFile
-            case RestoreTableCommand.OP_NAME => copiedFile
           }
         }
       val sourceName = sourceTable.name

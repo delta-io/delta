@@ -622,7 +622,8 @@ object Checkpoints extends DeltaLogging {
         col("add.dataChange"), // actually not really useful here
         col("add.tags"),
         col("add.deletionVector"),
-        col("add.baseRowId")) ++
+        col("add.baseRowId"),
+        col("add.defaultRowCommitVersion")) ++
         additionalCols: _*
       ))
     )

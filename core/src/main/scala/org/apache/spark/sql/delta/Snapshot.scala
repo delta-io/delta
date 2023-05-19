@@ -253,7 +253,8 @@ class Snapshot(
             col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
             col("add.tags"),
             col("add.deletionVector"),
-            col("add.baseRowId")
+            col("add.baseRowId"),
+            col("add.defaultRowCommitVersion")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
