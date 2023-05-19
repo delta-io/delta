@@ -347,7 +347,7 @@ private[delta] class ConflictChecker(
     }
 
     currentTransactionInfo = currentTransactionInfo.copy(
-      domainMetadata = mergedDomainMetadata,
+      domainMetadata = mergedDomainMetadata.toSeq,
       actions = updatedActions)
   }
 
