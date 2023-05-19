@@ -402,10 +402,11 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     LOG.info("fixed file {}", entry.fileName);
                     return;
                 } catch (java.nio.file.FileAlreadyExistsException e) {
-                    LOG.info("file already copied {}:", e.getClass().getSimpleName(), e);
+                    LOG.info("file {} already copied: {}:",
+                        entry.fileName, e.getClass().getSimpleName(), e);
                     copied = true;
-                    // should we fixDeltaLogPutCompleteDbEntry after this to be safe?
-                    // Don't return so that we mark Db entry as complete
+                    // Don't return since we still need to mark the DB entry as complete. This will
+                    // happen when we execute the main try block on the next while loop iteration
                 } catch (Throwable e) {
                     LOG.info("{}:", e.getClass().getSimpleName(), e);
                     if (retry >= 3) {

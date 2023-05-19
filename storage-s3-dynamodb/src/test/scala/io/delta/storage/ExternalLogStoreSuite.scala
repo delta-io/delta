@@ -263,6 +263,33 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
+  test("BaseExternalLogStore catches FileAlreadyExistsException on copy") {
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1 = getDeltaVersionPath(tempLogDir, 1)
+
+      // write N
+      store.write(delta0, Iterator("one"), overwrite = false, sessionHadoopConf)
+
+      // mark entry N as incomplete in the external store
+      val entry = MemoryLogStore.get(delta0)
+      val key = MemoryLogStore.createKey(delta0.getParent.getParent.toString, delta0.getName)
+      val incompleteEntry = new ExternalCommitEntry(
+        entry.tablePath, entry.fileName, entry.tempPath, false, entry.expireTime)
+      // scalastyle:off
+      println(key)
+      MemoryLogStore.hashMap.put(key, incompleteEntry)
+
+      // write N + 1 and check that recovery does not throw FileAlreadyExistsException
+      // this won't test it since we also check if the file exists before writing
+      store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+      assert(delta1.getFileSystem(sessionHadoopConf).exists(delta1))
+      assert(MemoryLogStore.get(delta1).complete)
+      assert(MemoryLogStore.get(delta0).complete) // todo: do we expect it to correct this entry?
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
