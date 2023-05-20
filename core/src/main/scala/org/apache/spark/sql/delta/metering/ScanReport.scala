@@ -57,7 +57,8 @@ object ScanReport {
       metrics: Map[String, Long],
       versionScanned: Option[Long],
       annotations: Map[String, Long],
-      parentFilterOutputRows: Option[Long]): ScanReport = {
+      parentFilterOutputRows: Option[Long]
+      ): ScanReport = {
     // scalastyle:on
     ScanReport(
       tableId = tableId,
