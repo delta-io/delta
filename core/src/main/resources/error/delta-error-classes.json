@@ -589,7 +589,7 @@
     "message": [
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
     ],
-    "sqlState": "0A000"
+    "sqlState" : "0A000"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
