@@ -341,7 +341,7 @@ private[delta] class ConflictChecker(
     val updatedActions: Seq[Action] = currentTransactionInfo.actions.map {
       case domainMetadata: DomainMetadata =>
         val mergedAction = resolveConflict(domainMetadata)
-        mergedDomainMetadata += resolveConflict(domainMetadata)
+        mergedDomainMetadata += mergedAction
         mergedAction
       case other => other
     }
