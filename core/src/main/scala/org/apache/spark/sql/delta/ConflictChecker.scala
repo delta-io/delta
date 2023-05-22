@@ -321,8 +321,8 @@ private[delta] class ConflictChecker(
     /**
      * Any new well-known domains that need custom conflict resolution need to add new cases in
      * below case match clause. E.g.
-     * case ("delta.example.monotonicCounter", domain, Some(conflictDomain)) =>
-     *   domain.copy(value = Math.max(domain.value, conflictingDomain.value))
+     * * case MonotonicCounter(value), Some(MonotonicCounter(conflictingValue)) =>
+     *   MonotonicCounter(Math.max(value, conflictingValue))
      */
     def resolveConflict(domainMetadataFromCurrentTransaction: DomainMetadata): DomainMetadata =
       (domainMetadataFromCurrentTransaction,
@@ -337,7 +337,7 @@ private[delta] class ConflictChecker(
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
-    // Update the [[DomainMetadata]] to the merged one.
+    // Resolve physical [[DomainMetadata]] conflicts (fail on logical conflict).
     val updatedActions: Seq[Action] = currentTransactionInfo.actions.map {
       case domainMetadata: DomainMetadata =>
         val mergedAction = resolveConflict(domainMetadata)

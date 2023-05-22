@@ -1136,7 +1136,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             assertMetadata(m)
           case p: Protocol =>
             recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
-          case _: DomainMetadata => numOfDomainMetadatas += 1
+          case _: DomainMetadata =>
+            numOfDomainMetadatas += 1
           case _ =>
         }
         action
