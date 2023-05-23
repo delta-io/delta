@@ -13,6 +13,7 @@ jobs:
         id: git-diff
         with:
           PATTERNS: |
+            *
             **
             !kernel/**
       - name: print the results
