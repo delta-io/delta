@@ -1,4 +1,4 @@
-name: "Delta Lake Tests"
+name: "Delta Spark Tests"
 on: [push, pull_request]
 jobs:
   test:
