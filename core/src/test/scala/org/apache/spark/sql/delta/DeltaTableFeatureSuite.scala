@@ -101,6 +101,23 @@ class DeltaTableFeatureSuite
         .readerAndWriterFeatureNames === Set(TestReaderWriterFeature.name))
   }
 
+  test("adding feature automatically adds all dependencies") {
+    assert(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestFeatureWithDependency)
+        .readerAndWriterFeatureNames ===
+        Set(TestFeatureWithDependency.name, TestReaderWriterFeature.name))
+
+    assert(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestFeatureWithTransitiveDependency)
+        .readerAndWriterFeatureNames ===
+        Set(
+          TestFeatureWithTransitiveDependency.name,
+          TestFeatureWithDependency.name,
+          TestReaderWriterFeature.name))
+  }
+
   test("implicitly-enabled features") {
     assert(
       Protocol(2, 6).implicitlySupportedFeatures === Set(

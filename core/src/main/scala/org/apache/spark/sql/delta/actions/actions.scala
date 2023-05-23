@@ -22,6 +22,7 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -234,19 +235,32 @@ object Protocol {
   }
 
   /**
-   * Extracts all table features that are enabled by the given metadata.
+   * Extracts all table features that are enabled by the given protocol and metadata.
    */
-  def extractAutomaticallyEnabledFeatures(
-      spark: SparkSession, metadata: Metadata): Set[TableFeature] = {
-    val enabledFeatures = mutable.Set[TableFeature]()
-    TableFeature.allSupportedFeaturesMap.values.foreach {
-      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
-        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-          enabledFeatures += feature
-        }
-      case _ => () // Do nothing. We only care about features that can be activated in metadata.
+  def extractRequiredFeatures(
+      spark: SparkSession, protocol: Protocol, metadata: Metadata): Set[TableFeature] = {
+    val protocolEnabledFeatures =
+      protocol.writerFeatureNames.flatMap(TableFeature.featureNameToFeature)
+    val metadataEnabledFeatures = TableFeature
+      .allSupportedFeaturesMap.values
+      .collect {
+        case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
+            if f.metadataRequiresFeatureToBeEnabled(metadata, spark) =>
+          f.asInstanceOf[TableFeature]
+      }
+      .toSet
+
+    @tailrec
+    def fixedPoint(requiredFeatures: Set[TableFeature]): Set[TableFeature] = {
+      val newRequiredFeatures = requiredFeatures ++ requiredFeatures.flatMap(_.requiredFeatures)
+      if (newRequiredFeatures == requiredFeatures) {
+        requiredFeatures
+      } else {
+        fixedPoint(newRequiredFeatures)
+      }
     }
-    enabledFeatures.toSet
+
+    fixedPoint(protocolEnabledFeatures ++ metadataEnabledFeatures)
   }
 
   /**
@@ -271,7 +285,7 @@ object Protocol {
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
     val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
-    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+    val metaEnabledFeatures = extractRequiredFeatures(spark, Protocol(), metadata)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
@@ -333,7 +347,7 @@ object Protocol {
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession,
       metadata: Metadata): (Int, Int, Set[TableFeature]) = {
-    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+    val enabledFeatures = extractRequiredFeatures(spark, Protocol(), metadata)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
       readerVersion = math.max(readerVersion, feature.minReaderVersion)

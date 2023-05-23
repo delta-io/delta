@@ -99,6 +99,12 @@ sealed abstract class TableFeature(
    * more information.
    */
   def isLegacyFeature: Boolean = this.isInstanceOf[LegacyFeatureType]
+
+  /**
+   * Set of table features that this table feature depends on. I.e. the set of features that need
+   * to be enabled if this table feature is enabled.
+   */
+  def requiredFeatures: Set[TableFeature] = Set.empty
 }
 
 /** A trait to indicate a feature applies to readers and writers. */
@@ -224,6 +230,8 @@ object TableFeature {
         TestReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
+        TestFeatureWithDependency,
+        TestFeatureWithTransitiveDependency,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature)
     }
@@ -389,4 +397,26 @@ object TestReaderWriterMetadataAutoUpdateFeature
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
+}
+
+object TestFeatureWithDependency
+  extends ReaderWriterFeature(name = "testFeatureWithDependency")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  val TABLE_PROP_KEY = "_123testFeatureWithDependency321_"
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def requiredFeatures: Set[TableFeature] = Set(TestReaderWriterFeature)
+}
+
+object TestFeatureWithTransitiveDependency
+  extends ReaderWriterFeature(name = "testFeatureWithTransitiveDependency") {
+
+  override def requiredFeatures: Set[TableFeature] = Set(TestFeatureWithDependency)
 }
