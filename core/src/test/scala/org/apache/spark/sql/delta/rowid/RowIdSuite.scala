@@ -226,13 +226,13 @@ class RowIdSuite extends QueryTest
 
   test("Throws error when assigning row IDs without stats") {
     withSQLConf(
-      defaultRowTrackingFeatureProperty -> "supported",
+      DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "true",
       DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
       withTable("target") {
-        val err = intercept[UnsupportedOperationException] {
+        val err = intercept[DeltaIllegalStateException] {
           spark.range(end = 10).write.format("delta").saveAsTable("target")
         }
-        assert(err.getMessage === "Cannot assign row IDs without row count statistics.")
+        checkError(err, "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
       }
     }
   }

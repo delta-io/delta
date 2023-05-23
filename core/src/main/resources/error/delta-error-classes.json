@@ -1468,6 +1468,19 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot assign row IDs without row count statistics.",
+      "Collect statistics for the table by running the following code and retry:",
+      "import org.apache.spark.sql.catalyst.TableIdentifier",
+      "import org.apache.spark.sql.delta.DeltaLog",
+      "import org.apache.spark.sql.delta.stats.StatisticsCollection",
+      "",
+      "val log = DeltaLog.forTable(spark, TableIdentifier(table_name))",
+      "StatisticsCollection.recompute(spark, log)"
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [
       "Detected schema change:",

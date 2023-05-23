@@ -2811,6 +2811,10 @@ trait DeltaErrorsBase
       messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
     )
   }
+
+  def rowIdAssignmentWithoutStats: Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
