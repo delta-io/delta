@@ -2815,6 +2815,20 @@ trait DeltaErrorsBase
   def rowIdAssignmentWithoutStats: Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
   }
+
+  def domainMetadataDuplicate(domainName: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR",
+      messageParameters = Array(domainName)
+    )
+  }
+
+  def domainMetadataTableFeatureNotSupported(domainNames: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DOMAIN_METADATA_NOT_SUPPORTED",
+      messageParameters = Array(domainNames)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

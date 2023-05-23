@@ -45,6 +45,7 @@ class InMemoryLogReplay(
   private var currentMetaData: Metadata = null
   private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   private var rowIdHighWatermark: RowIdHighWaterMark = null
+  private val domainMetadatas = collection.mutable.Map.empty[String, DomainMetadata]
   private val activeFiles = new scala.collection.mutable.HashMap[UniqueFileActionTuple, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
 
@@ -57,6 +58,10 @@ class InMemoryLogReplay(
         transactions(a.appId) = a
       case a: RowIdHighWaterMark =>
         rowIdHighWatermark = a
+      case a: DomainMetadata if a.removed =>
+        domainMetadatas.remove(a.domain)
+      case a: DomainMetadata if !a.removed =>
+        domainMetadatas(a.domain) = a
       case a: Metadata =>
         currentMetaData = a
       case a: Protocol =>
@@ -90,11 +95,14 @@ class InMemoryLogReplay(
     }
   }
 
+  private[delta] def getDomainMetadatas: Iterable[DomainMetadata] = domainMetadatas.values
+
   /** Returns the current state of the Table as an iterator of actions. */
   override def checkpoint: Iterator[Action] = {
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
     Option(rowIdHighWatermark).toIterator ++
+    getDomainMetadatas ++
     getTransactions ++
     (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path).iterator
   }
