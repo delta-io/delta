@@ -30,6 +30,8 @@ import org.apache.spark.sql.delta.util.FileNames
 // Base Test Suite //
 /////////////////////
 
+// test
+
 class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[MemoryLogStore].getName
