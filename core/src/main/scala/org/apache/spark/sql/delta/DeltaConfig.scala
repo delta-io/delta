@@ -494,7 +494,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * The names of specific columns to collect stats on for data skipping. If present, it takes
    * precedences over dataSkippingNumIndexedCols config, and the system will only collect stats for
    * columns that exactly match those specified. If a nested column is specified, the system will
-   * collect stats for all leaf fields of that column. If a non-existing column is specified, it
+   * collect stats for all leaf fields of that column. If a non-existent column is specified, it
    * will be ignored. Updating this conf does not trigger stats re-collection, but redefines the
    * stats schema of table, i.e., it will change the behavior of future stats collection (e.g., in
    * append and OPTIMIZE) as well as data skipping (e.g., the column stats not mentioned by this
@@ -505,7 +505,20 @@ trait DeltaConfigsBase extends DeltaLogging {
     null,
     v => Option(v),
     vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
-    "needs to be a (possibly empty) comma-separated list of column names.")
+    """
+      |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
+      |identifiers. Each column identifier can consist of letters, digits, and underscores.
+      |Multiple column identifiers can be listed, separated by commas.
+      |
+      |If a column identifier includes special characters such as '!@#$%^&*()_+-={}|[]:";'<>,.?/',
+      |the column name should be enclosed in backticks (`) to escape the special characters.
+      |
+      |A column identifier can refer to one of the following: the name of a non-struct column, the
+      |leaf field's name of a struct column, or the name of a struct column. When a struct column's
+      |name is specified in dataSkippingStatsColumns, statistics for all its leaf fields will be
+      |collected.
+      |""".stripMargin)
+
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",

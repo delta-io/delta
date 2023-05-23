@@ -394,6 +394,7 @@ class StatsCollectionSuite
         .toSeq
       val result1 = Seq(("delta.dataSkippingStatsColumns", "`c1.`,`c2*`,`c3,`,`c-4`"))
       assert(dataSkippingStatsColumns == result1)
+      // BEGIN-EDGE
       sql(s"insert into $tableName values(1,1,1,1),(3,3,3,3),(5,5,5,5),(7,7,7,7)")
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val df = deltaLog.update().withStats
@@ -401,6 +402,7 @@ class StatsCollectionSuite
         assert(row.get(0).asInstanceOf[GenericRowWithSchema].toSeq == Seq(1, 1, 1, 1))
         assert(row.get(1).asInstanceOf[GenericRowWithSchema].toSeq == Seq(7, 7, 7, 7))
       }
+      // END-EDGE
     }
   }
 
