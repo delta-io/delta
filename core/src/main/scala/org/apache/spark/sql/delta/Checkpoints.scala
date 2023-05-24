@@ -54,7 +54,7 @@ import org.apache.spark.util.Utils
 case class CheckpointInstance(
     version: Long,
     format: CheckpointInstance.Format,
-    numParts: Option[Int]) extends Ordered[CheckpointInstance] {
+    numParts: Option[Int] = None) extends Ordered[CheckpointInstance] {
 
   // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
   // For other formats, numParts must be None.
@@ -69,9 +69,10 @@ case class CheckpointInstance(
    * [[CheckpointProvider]] provides more precise info.
    */
   def getCheckpointProvider(
-      logPath: Path,
+      deltaLog: DeltaLog,
       filesForCheckpointConstruction: Seq[FileStatus],
       lastCheckpointInfoHint: Option[LastCheckpointInfo] = None): CheckpointProvider = {
+    val logPath = deltaLog.logPath
     format match {
       case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
         val filePaths = if (format == CheckpointInstance.Format.WITH_PARTS) {
@@ -146,7 +147,10 @@ object CheckpointInstance {
   }
 
   def apply(metadata: LastCheckpointInfo): CheckpointInstance = {
-    CheckpointInstance(metadata.version, metadata.getFormatEnum(), metadata.parts)
+    CheckpointInstance(
+      version = metadata.version,
+      format = metadata.getFormatEnum(),
+      numParts = metadata.parts)
   }
 
   val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)

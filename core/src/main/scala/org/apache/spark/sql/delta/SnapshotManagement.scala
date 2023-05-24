@@ -264,7 +264,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val checkpointProvider =
         newCheckpoint.map { ci =>
           oldCheckpointProvider.filter(_.version == newCheckpointVersion).getOrElse {
-            ci.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfo)
+            ci.getCheckpointProvider(this, checkpoints, lastCheckpointInfo)
           }
         }
 
@@ -405,7 +405,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // `checkpoints` may contain multiple checkpoints for different part sizes, we need to
         // search `FileStatus`s of the checkpoint files for `cp`.
         val checkpointProvider =
-          cp.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfoHint = None)
+          cp.getCheckpointProvider(this, checkpoints, lastCheckpointInfoHint = None)
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
           deltaVersion(file) > cp.version
