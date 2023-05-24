@@ -54,6 +54,7 @@ case class VersionChecksum(
     numMetadata: Long,
     numProtocol: Long,
     setTransactions: Option[Seq[SetTransaction]],
+    rowIdHighWaterMark: Option[RowIdHighWaterMark] = None,
     metadata: Metadata,
     protocol: Protocol,
     histogramOpt: Option[FileSizeHistogram],

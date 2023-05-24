@@ -103,7 +103,7 @@ final class RoaringBitmapArray extends Equals {
     while (currentHigh <= lastHigh) {
       val start = if (currentHigh == startHigh) UnsignedInts.toLong(startLow) else 0L
       // RoaringBitmap.add is exclusive the end boundary.
-      val end = if (currentHigh == lastHigh) {
+      val end = if (currentHigh == endHigh) {
         if (range.isInclusive) UnsignedInts.toLong(endLow) + 1L else UnsignedInts.toLong(endLow)
       } else {
         0xFFFFFFFFL + 1L

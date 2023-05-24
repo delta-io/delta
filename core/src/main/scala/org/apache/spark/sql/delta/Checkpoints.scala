@@ -20,7 +20,6 @@ import java.io.FileNotFoundException
 import java.util.UUID
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.math.Ordering.Implicits._
 import scala.util.control.NonFatal
 
@@ -32,12 +31,6 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude, JsonPropertyOrder}
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.commons.codec.digest.DigestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -55,57 +48,66 @@ import org.apache.spark.util.SerializableConfiguration
 import org.apache.spark.util.Utils
 
 /**
- * Records information about a checkpoint.
- *
- * This class provides the checksum validation logic, needed to ensure that content of
- * LAST_CHECKPOINT file points to a valid json. The readers might read some part from old file and
- * some part from the new file (if the file is read across multiple requests). In some rare
- * scenarios, the split read might produce a valid json and readers will be able to parse it and
- * convert it into a [[CheckpointMetaData]] object that contains invalid data. In order to prevent
- * using it, we do a checksum match on the read json to validate that it is consistent.
- *
- * For old Delta versions, which do not have checksum logic, we want to make sure that the old
- * fields (i.e. version, size, parts) are together in the beginning of last_checkpoint json. All
- * these fields together are less than 50 bytes, so even in split read scenario, we want to make
- * sure that old delta readers which do not do have checksum validation logic, gets all 3 fields
- * from one read request. For this reason, we use `JsonPropertyOrder` to force them in the beginning
- * together.
- *
- * @param version the version of this checkpoint
- * @param size the number of actions in the checkpoint, -1 if the information is unavailable.
- * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
- *              singular checkpoint
- * @param sizeInBytes the number of bytes of the checkpoint
- * @param numOfAddFiles the number of AddFile actions in the checkpoint
- * @param checkpointSchema the schema of the underlying checkpoint files
- * @param checksum the checksum of the [[CheckpointMetaData]].
+ * A class to help with comparing checkpoints with each other, where we may have had concurrent
+ * writers that checkpoint with different number of parts.
  */
-@JsonPropertyOrder(Array("version", "size", "parts"))
-case class CheckpointMetaData(
+case class CheckpointInstance(
     version: Long,
-    size: Long,
-    parts: Option[Int],
-    @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    sizeInBytes: Option[Long],
-    @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    numOfAddFiles: Option[Long],
-    checkpointSchema: Option[StructType],
-    checksum: Option[String] = None) {
+    format: CheckpointInstance.Format,
+    numParts: Option[Int]) extends Ordered[CheckpointInstance] {
 
-  @JsonIgnore
-  def getFormatEnum(): CheckpointMetaData.Format = parts match {
-    case Some(_) => CheckpointMetaData.Format.WITH_PARTS
-    case None => CheckpointMetaData.Format.SINGLE
+  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
+  // For other formats, numParts must be None.
+  require((format == CheckpointInstance.Format.WITH_PARTS) == numParts.isDefined,
+    s"numParts ($numParts) must be present for checkpoint format" +
+      s" ${CheckpointInstance.Format.WITH_PARTS.name}")
+
+  /**
+   * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
+   * checkpoint.
+   * The `lastCheckpointInfoHint` might be passed to [[CheckpointProvider]] so that underlying
+   * [[CheckpointProvider]] provides more precise info.
+   */
+  def getCheckpointProvider(
+      logPath: Path,
+      filesForCheckpointConstruction: Seq[FileStatus],
+      lastCheckpointInfoHint: Option[LastCheckpointInfo] = None): CheckpointProvider = {
+    format match {
+      case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
+        val filePaths = if (format == CheckpointInstance.Format.WITH_PARTS) {
+          checkpointFileWithParts(logPath, version, numParts.get).toSet
+        } else {
+          Set(checkpointFileSingular(logPath, version))
+        }
+        val newCheckpointFileArray =
+          filesForCheckpointConstruction.filter(f => filePaths.contains(f.getPath))
+        assert(newCheckpointFileArray.length == filePaths.size,
+          "Failed in getting the file information for:\n" +
+            filePaths.mkString(" -", "\n -", "") + "\namong\n" +
+            filesForCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
+        PreloadedCheckpointProvider(
+          newCheckpointFileArray,
+          lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this))
+      case CheckpointInstance.Format.SENTINEL =>
+        throw DeltaErrors.assertionFailedError(
+          s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")
+    }
   }
 
-  /** Whether two [[CheckpointMetaData]] represents the same checkpoint */
-  def semanticEquals(other: CheckpointMetaData): Boolean = {
-    CheckpointInstance(this) == CheckpointInstance(other)
+  /**
+   * Comparison rules:
+   * 1. A [[CheckpointInstance]] with higher version is greater than the one with lower version.
+   * 2. For [[CheckpointInstance]]s with same version, a Multi-part checkpoint is greater than a
+   *    Single part checkpoint.
+   * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
+   *    parts is greater than the one with less parts.
+   */
+  override def compare(other: CheckpointInstance): Int = {
+    (version, format, numParts) compare (other.version, other.format, other.numParts)
   }
 }
 
-object CheckpointMetaData {
-
+object CheckpointInstance {
   sealed abstract class Format(val ordinal: Int, val name: String) extends Ordered[Format] {
     override def compare(other: Format): Int = ordinal compare other.ordinal
   }
@@ -125,227 +127,25 @@ object CheckpointMetaData {
     object SENTINEL extends Format(Int.MaxValue, "SENTINEL")
   }
 
-  val STORED_CHECKSUM_KEY = "checksum"
-
-  /** Whether to store checksum OR do checksum validations around [[CheckpointMetaData]]  */
-  def checksumEnabled(spark: SparkSession): Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
-
-  /**
-   * Returns the json representation of this [[CheckpointMetaData]] object.
-   * Also adds the checksum to the returned json if `addChecksum` is set. The checksum can be
-   * used by readers to validate consistency of the [[CheckpointMetadata]].
-   * It is calculated using rules mentioned in "JSON checksum" section in PROTOCOL.md.
-   */
-  def serializeToJson(
-      chkMetadata: CheckpointMetaData,
-      addChecksum: Boolean,
-      suppressOptionalFields: Boolean = false): String = {
-    if (suppressOptionalFields) {
-      return JsonUtils.toJson(
-          CheckpointMetaData(
-            chkMetadata.version, chkMetadata.size, chkMetadata.parts, None, None, None))
-    }
-
-    val jsonStr: String = JsonUtils.toJson(chkMetadata.copy(checksum = None))
-    if (!addChecksum) return jsonStr
-    val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[ObjectNode])
-    val checksum = treeNodeToChecksum(rootNode)
-    rootNode.put(STORED_CHECKSUM_KEY, checksum).toString
-  }
-
-  /**
-   * Converts the given `jsonStr` into a [[CheckpointMetaData]] object.
-   * if `validate` is set, then it also validates the consistency of the json:
-   *  - calculating the checksum and comparing it with the `storedChecksum`.
-   *  - json should not have any duplicates.
-   */
-  def deserializeFromJson(jsonStr: String, validate: Boolean): CheckpointMetaData = {
-    if (validate) {
-      val (storedChecksumOpt, actualChecksum) = CheckpointMetaData.getChecksums(jsonStr)
-      storedChecksumOpt.filter(_ != actualChecksum).foreach { storedChecksum =>
-        throw new IllegalStateException(s"Checksum validation failed for json: $jsonStr,\n" +
-          s"storedChecksum:$storedChecksum, actualChecksum:$actualChecksum")
-      }
-    }
-
-    // This means:
-    // 1) EITHER: Checksum validation is config-disabled
-    // 2) OR: The json lacked a checksum (e.g. written by old client). Nothing to validate.
-    // 3) OR: The Stored checksum matches the calculated one. Validation succeeded.
-    JsonUtils.fromJson[CheckpointMetaData](jsonStr)
-  }
-
-  /**
-   * Analyzes the json representation of [[CheckpointMetaData]] and returns checksum tuple where
-   * - first element refers to the stored checksum in the json representation of
-   *   [[CheckpointMetaData]], None if the checksum is not present.
-   * - second element refers to the checksum computed from the canonicalized json representation of
-   *   the [[CheckpointMetaData]].
-   */
-  def getChecksums(jsonStr: String): (Option[String], String) = {
-    val reader =
-      JsonUtils.mapper.reader().withFeatures(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
-    val rootNode = reader.readTree(jsonStr)
-    val storedChecksum = if (rootNode.has(STORED_CHECKSUM_KEY)) {
-        Some(rootNode.get(STORED_CHECKSUM_KEY).asText())
-      } else {
-        None
-      }
-    val actualChecksum = treeNodeToChecksum(rootNode)
-    storedChecksum -> actualChecksum
-  }
-
-  /**
-   * Canonicalizes the given `treeNode` json and returns its md5 checksum.
-   * Refer to "JSON checksum" section in PROTOCOL.md for canonicalization steps.
-   */
-  def treeNodeToChecksum(treeNode: JsonNode): String = {
-    val jsonEntriesBuffer = ArrayBuffer.empty[(String, String)]
-
-    import scala.collection.JavaConverters._
-    def traverseJsonNode(currentNode: JsonNode, prefix: ArrayBuffer[String]): Unit = {
-      if (currentNode.isObject) {
-        currentNode.fields().asScala.foreach { entry =>
-          prefix.append(encodeString(entry.getKey))
-          traverseJsonNode(entry.getValue, prefix)
-          prefix.trimEnd(1)
-        }
-      } else if (currentNode.isArray) {
-        currentNode.asScala.zipWithIndex.foreach { case (jsonNode, index) =>
-          prefix.append(index.toString)
-          traverseJsonNode(jsonNode, prefix)
-          prefix.trimEnd(1)
-        }
-      } else {
-        var nodeValue = currentNode.asText()
-        if (currentNode.isTextual) nodeValue = encodeString(nodeValue)
-        jsonEntriesBuffer.append(prefix.mkString("+") -> nodeValue)
-      }
-    }
-    traverseJsonNode(treeNode, prefix = ArrayBuffer.empty)
-    import Ordering.Implicits._
-    val normalizedJsonKeyValues = jsonEntriesBuffer
-      .filter { case (k, _) => k != s""""$STORED_CHECKSUM_KEY"""" }
-      .map { case (k, v) => s"$k=$v" }
-      .sortBy(_.toSeq: Seq[Char])
-      .mkString(",")
-    DigestUtils.md5Hex(normalizedJsonKeyValues)
-  }
-
-  private val isUnreservedOctet =
-    (Set.empty ++ ('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9') ++ "-._~").map(_.toByte)
-
-  /**
-   * URL encodes a String based on the following rules:
-   * 1. Use uppercase hexadecimals for all percent encodings
-   * 2. percent-encode everything other than unreserved characters
-   * 3. unreserved characters are = a-z / A-Z / 0-9 / "-" / "." / "_" / "~"
-   */
-  private def encodeString(str: String): String = {
-    val result = str.getBytes(java.nio.charset.StandardCharsets.UTF_8).map {
-      case b if isUnreservedOctet(b) => b.toChar.toString
-      case b =>
-        // convert to char equivalent of unsigned byte
-        val c = (b & 0xff)
-        f"%%$c%02X"
-    }.mkString
-    s""""$result""""
-  }
-
-  def fromFiles(files: Seq[FileStatus]): CheckpointMetaData = {
-    assert(files.nonEmpty, "files should be non empty to construct CheckpointMetaData")
-    CheckpointMetaData(
-      version = checkpointVersion(files.head),
-      size = -1L,
-      parts = numCheckpointParts(files.head.getPath),
-      sizeInBytes = Some(files.map(_.getLen).sum),
-      numOfAddFiles = None,
-      checkpointSchema = None
-    )
-  }
-}
-
-/**
- * A class to help with comparing checkpoints with each other, where we may have had concurrent
- * writers that checkpoint with different number of parts.
- */
-case class CheckpointInstance(
-    version: Long,
-    format: CheckpointMetaData.Format,
-    numParts: Option[Int]) extends Ordered[CheckpointInstance] {
-
-  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
-  // For other formats, numParts must be None.
-  require((format == CheckpointMetaData.Format.WITH_PARTS) == numParts.isDefined,
-    s"numParts ($numParts) must be present for checkpoint format" +
-      s" ${CheckpointMetaData.Format.WITH_PARTS.name}")
-
-  /**
-   * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
-   * checkpoint.
-   * The `checkpointMetadataHint` might be passed to [[CheckpointProvider]] so that underlying
-   * [[CheckpointProvider]] provides more precise info.
-   */
-  def getCheckpointProvider(
-      logPath: Path,
-      filesForCheckpointConstruction: Seq[FileStatus],
-      checkpointMetadataHint: Option[CheckpointMetaData] = None): CheckpointProvider = {
-    format match {
-      case CheckpointMetaData.Format.WITH_PARTS | CheckpointMetaData.Format.SINGLE =>
-        val filePaths = if (format == CheckpointMetaData.Format.WITH_PARTS) {
-          checkpointFileWithParts(logPath, version, numParts.get).toSet
-        } else {
-          Set(checkpointFileSingular(logPath, version))
-        }
-        val newCheckpointFileArray =
-          filesForCheckpointConstruction.filter(f => filePaths.contains(f.getPath))
-        assert(newCheckpointFileArray.length == filePaths.size,
-          "Failed in getting the file information for:\n" +
-            filePaths.mkString(" -", "\n -", "") + "\namong\n" +
-            filesForCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
-        PreloadedCheckpointProvider(
-          newCheckpointFileArray,
-          checkpointMetadataHint.filter(cm => CheckpointInstance(cm) == this))
-      case CheckpointMetaData.Format.SENTINEL =>
-        throw DeltaErrors.assertionFailedError(
-          s"invalid checkpoint format ${CheckpointMetaData.Format.SENTINEL}")
-    }
-  }
-
-  /**
-   * Comparison rules:
-   * 1. A [[CheckpointInstance]] with higher version is greater than the one with lower version.
-   * 2. For [[CheckpointInstance]]s with same version, a Multi-part checkpoint is greater than a
-   *    Single part checkpoint.
-   * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
-   *    parts is greater than the one with less parts.
-   */
-  override def compare(other: CheckpointInstance): Int = {
-    (version, format, numParts) compare (other.version, other.format, other.numParts)
-  }
-}
-
-object CheckpointInstance {
   def apply(path: Path): CheckpointInstance = {
     // Three formats to worry about:
     // * <version>.checkpoint.parquet
     // * <version>.checkpoint.<i>.<n>.parquet
     path.getName.split("\\.") match {
       case Array(v, "checkpoint", "parquet") =>
-        CheckpointInstance(v.toLong, CheckpointMetaData.Format.SINGLE, numParts = None)
+        CheckpointInstance(v.toLong, Format.SINGLE, numParts = None)
       case Array(v, "checkpoint", _, n, "parquet") =>
-        CheckpointInstance(v.toLong, CheckpointMetaData.Format.WITH_PARTS, numParts = Some(n.toInt))
+        CheckpointInstance(v.toLong, Format.WITH_PARTS, numParts = Some(n.toInt))
       case _ =>
         throw DeltaErrors.assertionFailedError(s"Unrecognized checkpoint path format: $path")
     }
   }
 
   def apply(version: Long): CheckpointInstance = {
-    CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
+    CheckpointInstance(version, Format.SINGLE, numParts = None)
   }
 
-  def apply(metadata: CheckpointMetaData): CheckpointInstance = {
+  def apply(metadata: LastCheckpointInfo): CheckpointInstance = {
     CheckpointInstance(metadata.version, metadata.getFormatEnum(), metadata.parts)
   }
 
@@ -353,7 +153,7 @@ object CheckpointInstance {
 
   def sentinelValue(versionOpt: Option[Long]): CheckpointInstance = {
     val version = versionOpt.getOrElse(Long.MaxValue)
-    CheckpointInstance(version, CheckpointMetaData.Format.SENTINEL, numParts = None)
+    CheckpointInstance(version, Format.SENTINEL, numParts = None)
   }
 }
 
@@ -424,42 +224,42 @@ trait Checkpoints extends DeltaLogging {
 
   protected def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot): Unit = {
-    val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
+    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint)
     writeLastCheckpointFile(
-      snapshotToCheckpoint.deltaLog, checkpointMetaData, CheckpointMetaData.checksumEnabled(spark))
+      snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint)
   }
 
   protected[delta] def writeLastCheckpointFile(
       deltaLog: DeltaLog,
-      checkpointMetaData: CheckpointMetaData,
+      lastCheckpointInfo: LastCheckpointInfo,
       addChecksum: Boolean): Unit = {
     withCheckpointExceptionHandling(deltaLog, "delta.lastCheckpoint.write.error") {
       val suppressOptionalFields = spark.sessionState.conf.getConf(
         DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS)
-      val json = CheckpointMetaData.serializeToJson(
-        checkpointMetaData, addChecksum, suppressOptionalFields)
+      val json = LastCheckpointInfo.serializeToJson(
+        lastCheckpointInfo, addChecksum, suppressOptionalFields)
       store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
     }
   }
 
   protected def writeCheckpointFiles(
-      snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
+      snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 
   /** Returns information about the most recent checkpoint. */
-  private[delta] def readLastCheckpointFile(): Option[CheckpointMetaData] = {
+  private[delta] def readLastCheckpointFile(): Option[LastCheckpointInfo] = {
     loadMetadataFromFile(0)
   }
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] =
+  private def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
-        val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = CheckpointMetaData.checksumEnabled(spark)
-        Some(CheckpointMetaData.deserializeFromJson(checkpointMetadataJson.head, validate))
+        val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+        val validate = LastCheckpointInfo.checksumEnabled(spark)
+        Some(LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate))
       } catch {
         case _: FileNotFoundException =>
           None
@@ -478,15 +278,15 @@ trait Checkpoints extends DeltaLogging {
           logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
           // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
           // not atomic. We will try to list all files to find the latest checkpoint and restore
-          // CheckpointMetaData from it.
+          // LastCheckpointInfo from it.
           val verifiedCheckpoint = findLastCompleteCheckpointBefore(checkpointInstance = None)
           verifiedCheckpoint.map(manuallyLoadCheckpoint)
       }
     }
 
-  /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
-  protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
-    CheckpointMetaData(
+  /** Loads the given checkpoint manually to come up with the [[LastCheckpointInfo]] */
+  protected def manuallyLoadCheckpoint(cv: CheckpointInstance): LastCheckpointInfo = {
+    LastCheckpointInfo(
       version = cv.version,
       size = -1,
       parts = cv.numParts,
@@ -502,7 +302,7 @@ trait Checkpoints extends DeltaLogging {
    * @param version The checkpoint version to compare against
    */
   protected def findLastCompleteCheckpointBefore(version: Long): Option[CheckpointInstance] = {
-    val upperBound = CheckpointInstance(version, CheckpointMetaData.Format.SINGLE, numParts = None)
+    val upperBound = CheckpointInstance(version, CheckpointInstance.Format.SINGLE, numParts = None)
     findLastCompleteCheckpointBefore(Some(upperBound))
   }
 
@@ -555,12 +355,12 @@ trait Checkpoints extends DeltaLogging {
     val complete = instances.filter(_ <= sentinelCv).groupBy(identity).filter {
       case (ci, matchingCheckpointInstances) =>
        ci.format match {
-         case CheckpointMetaData.Format.SINGLE =>
+         case CheckpointInstance.Format.SINGLE =>
            matchingCheckpointInstances.length == 1
-         case CheckpointMetaData.Format.WITH_PARTS =>
+         case CheckpointInstance.Format.WITH_PARTS =>
            assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
            matchingCheckpointInstances.length == ci.numParts.get
-         case CheckpointMetaData.Format.SENTINEL =>
+         case CheckpointInstance.Format.SENTINEL =>
            false
        }
     }
@@ -595,7 +395,7 @@ object Checkpoints extends DeltaLogging {
   private[delta] def writeCheckpoint(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      snapshot: Snapshot): CheckpointMetaData = recordFrameProfile(
+      snapshot: Snapshot): LastCheckpointInfo = recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
@@ -734,7 +534,7 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(
+    LastCheckpointInfo(
       version = snapshot.version,
       size = checkpointRowCount.value,
       parts = numPartsOption,
@@ -821,7 +621,8 @@ object Checkpoints extends DeltaLogging {
         col("add.modificationTime"),
         col("add.dataChange"), // actually not really useful here
         col("add.tags"),
-        col("add.deletionVector")) ++
+        col("add.deletionVector"),
+        col("add.baseRowId")) ++
         additionalCols: _*
       ))
     )
@@ -866,35 +667,4 @@ object CheckpointV2 {
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }
-}
-
-/**
- * A trait which provides information about a checkpoint to the Snapshot.
- * - files in the underlying checkpoint
- * - metadata of the underlying checkpoint
- */
-trait CheckpointProvider {
-  def checkpointFiles: Seq[FileStatus]
-  def checkpointMetadata: CheckpointMetaData
-}
-
-/**
- * An implementation of [[CheckpointProvider]] where the information about checkpoint files
- * (i.e. Seq[FileStatus]) is already known in advance.
- *
- * @param checkpointFiles - file statuses for the checkpoint
- * @param checkpointMetadataOpt - optional checkpoint metadata for the checkpoint.
- *                              If this is passed, the provider will use it instead of deriving the
- *                              [[CheckpointMetaData]] from the file list.
- */
-case class PreloadedCheckpointProvider(
-    override val checkpointFiles: Seq[FileStatus],
-    checkpointMetadataOpt: Option[CheckpointMetaData]
-) extends CheckpointProvider {
-
-  override def checkpointMetadata: CheckpointMetaData = {
-    checkpointMetadataOpt.getOrElse(CheckpointMetaData.fromFiles(checkpointFiles))
-  }
-
-  require(checkpointFiles.nonEmpty, "There should be atleast 1 checkpoint file")
 }

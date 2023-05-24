@@ -56,7 +56,8 @@ class CheckpointsSuite extends QueryTest
       val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
       assert(lastCheckpointOpt.nonEmpty)
       assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
-      val expectedCheckpointSchema = Seq("txn", "add", "remove", "metaData", "protocol")
+      val expectedCheckpointSchema =
+        Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark")
       assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
         expectedCheckpointSchema)
 
@@ -104,13 +105,13 @@ class CheckpointsSuite extends QueryTest
   }
 
   private def verifyCheckpoint(
-      checkpoint: Option[CheckpointMetaData],
+      checkpoint: Option[LastCheckpointInfo],
       version: Int,
       parts: Option[Int]): Unit = {
     assert(checkpoint.isDefined)
-    checkpoint.foreach { checkpointMetadata =>
-      assert(checkpointMetadata.version == version)
-      assert(checkpointMetadata.parts == parts)
+    checkpoint.foreach { lastCheckpointInfo =>
+      assert(lastCheckpointInfo.version == version)
+      assert(lastCheckpointInfo.parts == parts)
     }
   }
 
@@ -207,7 +208,8 @@ class CheckpointsSuite extends QueryTest
           deltaLog.checkpoint()
           val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
           val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
-          val expectedCheckpointSchema = Seq("txn", "add", "remove", "metaData", "protocol")
+          val expectedCheckpointSchema =
+            Seq("txn", "add", "remove", "metaData", "protocol", "rowIdHighWaterMark")
           assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
         }
       }
@@ -223,7 +225,8 @@ class CheckpointsSuite extends QueryTest
         "extendedFileMetadata",
         "partitionValues",
         "size",
-        "deletionVector")
+        "deletionVector",
+        "baseRowId")
 
       val tablePath = tempDir.getAbsolutePath
       // Append rows [0, 9] to table and merge tablePath.

@@ -44,6 +44,7 @@ class InMemoryLogReplay(
   private var currentVersion: Long = -1
   private var currentMetaData: Metadata = null
   private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
+  private var rowIdHighWatermark: RowIdHighWaterMark = null
   private val activeFiles = new scala.collection.mutable.HashMap[UniqueFileActionTuple, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
 
@@ -54,6 +55,8 @@ class InMemoryLogReplay(
     actions.foreach {
       case a: SetTransaction =>
         transactions(a.appId) = a
+      case a: RowIdHighWaterMark =>
+        rowIdHighWatermark = a
       case a: Metadata =>
         currentMetaData = a
       case a: Protocol =>
@@ -91,6 +94,7 @@ class InMemoryLogReplay(
   override def checkpoint: Iterator[Action] = {
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
+    Option(rowIdHighWatermark).toIterator ++
     getTransactions ++
     (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path).iterator
   }

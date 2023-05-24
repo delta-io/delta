@@ -29,6 +29,9 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.format.converter.ParquetMetadataConverter
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
@@ -235,32 +238,32 @@ class DeltaColumnMappingSuite extends QueryTest
     )
 
   protected val schemaWithPhysicalNamesNested = new StructType()
-    .add("a", StringType, true, withPhysicalName("aaa"))
+    .add("a", StringType, true, withIdAndPhysicalName(1, "aaa"))
     .add("b",
       // let's call this nested struct 'X'.
       new StructType()
-        .add("c", StringType, true, withPhysicalName("ccc"))
-        .add("d", IntegerType, true, withPhysicalName("ddd"))
+        .add("c", StringType, true, withIdAndPhysicalName(2, "ccc"))
+        .add("d", IntegerType, true, withIdAndPhysicalName(3, "ddd"))
         .add("foo.bar",
-          new StructType().add("f", LongType, true, withPhysicalName("fff")),
+          new StructType().add("f", LongType, true, withIdAndPhysicalName(4, "fff")),
           true,
-          withPhysicalName("foo.foo.foo.bar.bar.bar")),
+          withIdAndPhysicalName(5, "foo.foo.foo.bar.bar.bar")),
       true,
-      withPhysicalName("bbb")
+      withIdAndPhysicalName(6, "bbb")
     )
     .add("g",
       // nested struct 'X' (see above) is repeated here.
       new StructType()
-        .add("c", StringType, true, withPhysicalName("ccc"))
-        .add("d", IntegerType, true, withPhysicalName("ddd"))
+        .add("c", StringType, true, withIdAndPhysicalName(7, "ccc"))
+        .add("d", IntegerType, true, withIdAndPhysicalName(8, "ddd"))
         .add("foo.bar",
-          new StructType().add("f", LongType, true, withPhysicalName("fff")),
+          new StructType().add("f", LongType, true, withIdAndPhysicalName(9, "fff")),
           true,
-          withPhysicalName("foo.foo.foo.bar.bar.bar")),
+          withIdAndPhysicalName(10, "foo.foo.foo.bar.bar.bar")),
       true,
-      withPhysicalName("ggg")
+      withIdAndPhysicalName(11, "ggg")
     )
-    .add("h", IntegerType, true, withPhysicalName("hhh"))
+    .add("h", IntegerType, true, withIdAndPhysicalName(12, "hhh"))
 
   protected val schemaWithIdNestedRandom = new StructType()
     .add("a", StringType, true, withId(111))
@@ -1518,6 +1521,27 @@ class DeltaColumnMappingSuite extends QueryTest
             }
           }
         }
+      }
+    }
+  }
+
+  testColumnMapping("id and name mode should write field_id in parquet schema",
+      modes = Some(Seq("name", "id"))) { mode =>
+    withTable("t1") {
+      createTableWithSQLAPI(
+        "t1",
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode))
+      val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("t1"))
+      val files = snapshot.allFiles.collect()
+      files.foreach { f =>
+        val footer = ParquetFileReader.readFooter(
+          log.newDeltaHadoopConf(),
+          new Path(log.dataPath, f.path),
+          ParquetMetadataConverter.NO_FILTER)
+        footer.getFileMetaData.getSchema.getFields.asScala.foreach(f =>
+          // getId.intValue will throw NPE if field id does not exist
+          assert(f.getId.intValue >= 0)
+        )
       }
     }
   }

@@ -219,9 +219,8 @@ class OptimizeExecutor(
       val removedFiles = updates.collect { case r: RemoveFile => r }
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
-        val operation = DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
-        commitAndRetry(txn, operation, updates, metrics) { newTxn =>
+        commitAndRetry(txn, getOperation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
           val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
@@ -427,6 +426,15 @@ class OptimizeExecutor(
           logWarning("Semantic conflicts detected. Aborting operation.")
           throw e
         }
+    }
+  }
+
+  /** Create the appropriate [[Operation]] object for txn commit history */
+  private def getOperation(): Operation = {
+    if (optimizeContext.isPurge) {
+      DeltaOperations.Reorg(partitionPredicate)
+    } else {
+      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
     }
   }
 

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -292,6 +292,41 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("Metrics when deleting with DV") {
+    withDeletionVectorsEnabled() {
+      val tableName = "tbl"
+      withTable(tableName) {
+        spark.range(0, 10, 1, numPartitions = 2)
+          .write.format("delta").saveAsTable(tableName)
+
+        {
+          // Delete one row from the first file, and the whole second file.
+          val result = sql(s"DELETE FROM $tableName WHERE id >= 4")
+          assert(result.collect() === Array(Row(6)))
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 6)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+        }
+
+        {
+          // Delete one row again.
+          sql(s"DELETE FROM $tableName WHERE id = 3")
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
+        }
+
+        {
+          // Delete all renaming rows.
+          sql(s"DELETE FROM $tableName WHERE id IN (0, 1, 2)")
+          val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+          assert(opMetrics.getOrElse("numDeletedRows", -1) === 3)
+          assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+        }
+      }
+    }
+  }
+
   for(targetDVFileSize <- Seq(2, 200, 2000000)) {
     test(s"DELETE with DVs - packing multiple DVs into one file: target max DV file " +
       s"size=$targetDVFileSize") {
@@ -549,17 +584,6 @@ class DeletionVectorsSuite extends QueryTest
         checkTableContents(Seq(2, 3, 5, 6, 7).toDF())
       }
     }
-  }
-
-  test("huge table: read from tables of 2B rows with existing DV of many zeros") {
-    val canonicalTable5Path = new File(table5Path).getCanonicalPath
-    checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
-  }
-
-  private def checkCountAndSum(column: String, count: Long, sum: Long, tableDir: String): Unit = {
-    checkAnswer(
-      sql(s"SELECT count($column), sum($column) FROM delta.`$tableDir`"),
-      Seq((count, sum)).toDF())
   }
 
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {

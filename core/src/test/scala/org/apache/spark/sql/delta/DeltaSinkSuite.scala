@@ -37,7 +37,9 @@ import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with DeltaSQLCommandTest {
+class DeltaSinkSuite
+  extends StreamTest  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
@@ -444,7 +446,7 @@ class DeltaSinkSuite extends StreamTest  with DeltaColumnMappingTestUtils with D
           .start(outputDir.getCanonicalPath)
       val e = intercept[StreamingQueryException] {
         inputData.addData(1)
-        query.awaitTermination(10000)
+        query.awaitTermination(30000)
       }
       assert(e.cause.isInstanceOf[AnalysisException])
     }

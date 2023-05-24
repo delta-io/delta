@@ -65,7 +65,7 @@ case class DeltaLogFileIndex private (
 object DeltaLogFileIndex {
 
   lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
-  lazy val CHECKPOINT_FILE_FORMAT = new ParquetFileFormat
+  lazy val CHECKPOINT_FILE_FORMAT_PARQUET = new ParquetFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
     DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)
@@ -73,5 +73,9 @@ object DeltaLogFileIndex {
 
   def apply(format: FileFormat, files: Seq[FileStatus]): Option[DeltaLogFileIndex] = {
     if (files.isEmpty) None else Some(DeltaLogFileIndex(format, files.toArray))
+  }
+
+  def apply(format: FileFormat, filesOpt: Option[Seq[FileStatus]]): Option[DeltaLogFileIndex] = {
+    filesOpt.flatMap(DeltaLogFileIndex(format, _))
   }
 }

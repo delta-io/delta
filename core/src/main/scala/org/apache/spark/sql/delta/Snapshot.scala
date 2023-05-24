@@ -112,17 +112,11 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
   }
 
-  /**
-   * Get the file index consisting of the Checkpoint files (if any) that are present in the
-   * LogSegment making up this snapshot.
-   */
-  protected lazy val checkpointFileIndexOpt: Option[DeltaLogFileIndex] = {
-    assertLogFilesBelongToTable(path, logSegment.checkpoint)
-    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
-  }
-
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
-    checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
+    val checkpointFileIndexes = getCheckpointProviderOpt
+      .map(_.allActionsFileIndexes())
+      .getOrElse(Nil)
+    checkpointFileIndexes ++ deltaFileIndexOpt.toSeq
   }
 
   /**
@@ -196,7 +190,8 @@ class Snapshot(
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
-  def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
+  def checkpointSizeInBytes(): Long =
+    getCheckpointProviderOpt.map(_.effectiveCheckpointSizeInBytes()).getOrElse(0L)
 
   override def metadata: Metadata = _metadata
 
@@ -261,7 +256,8 @@ class Snapshot(
             col("add.dataChange"),
             col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
             col("add.tags"),
-            col("add.deletionVector")
+            col("add.deletionVector"),
+            col("add.baseRowId")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -328,6 +324,7 @@ class Snapshot(
     numMetadata = numOfMetadata,
     numProtocol = numOfProtocol,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
+    rowIdHighWaterMark = rowIdHighWaterMarkOpt,
     metadata = metadata,
     protocol = protocol,
     histogramOpt = fileSizeHistogram,
@@ -363,8 +360,12 @@ class Snapshot(
     }
   }
 
-  def getCheckpointMetadataOpt: Option[CheckpointMetaData] =
-    logSegment.checkpointProviderOpt.map(_.checkpointMetadata)
+  /**
+   * Returns the [[CheckpointProvider]] for the underlying checkpoint.
+   * Returns None if the Snapshot isn't backed by a checkpoint.
+   */
+  def getCheckpointProviderOpt: Option[CheckpointProvider] =
+    logSegment.checkpointProviderOpt
 
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)

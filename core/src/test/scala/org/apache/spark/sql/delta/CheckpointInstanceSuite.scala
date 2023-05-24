@@ -16,14 +16,13 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.CheckpointMetaData.Format
+import org.apache.spark.sql.delta.CheckpointInstance.Format
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.test.SharedSparkSession
 
 class CheckpointInstanceSuite extends SparkFunSuite {
 
-  test("hello") {
+  test("checkpoint instance comparisons") {
     val ci1_single_1 = CheckpointInstance(1, Format.SINGLE, numParts = None)
     val ci1_withparts_2 = CheckpointInstance(1, Format.WITH_PARTS, numParts = Some(2))
     val ci1_sentinel = CheckpointInstance.sentinelValue(Some(1))

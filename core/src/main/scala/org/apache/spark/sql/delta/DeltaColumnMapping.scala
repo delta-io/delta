@@ -166,51 +166,23 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .build()
 
-      case IdMapping =>
+      case IdMapping | NameMapping =>
         if (!hasColumnId(field)) {
-          throw DeltaErrors.missingColumnId(IdMapping, field.name)
+          throw DeltaErrors.missingColumnId(mode, field.name)
         }
         if (!hasPhysicalName(field)) {
-          throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
+          throw DeltaErrors.missingPhysicalName(mode, field.name)
         }
+        // Delta spec requires writer to always write field_id in parquet schema for column mapping
+        // Reader strips PARQUET_FIELD_ID_METADATA_KEY in
+        // DeltaParquetFileFormat:prepareSchemaForRead
         new MetadataBuilder()
           .withMetadata(field.metadata)
           .putLong(PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
           .build()
 
-      case NameMapping =>
-        if (!hasPhysicalName(field)) {
-          throw DeltaErrors.missingPhysicalName(NameMapping, field.name)
-        }
-        new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(PARQUET_FIELD_ID_METADATA_KEY)
-          .build()
-
       case mode =>
         throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
-    }
-  }
-
-  /**
-   * Prepares the table schema, to be used by the readers and writers of the table.
-   *
-   * In the new Delta protocol that supports column mapping, we persist various column mapping
-   * metadata in the serialized schema of the Delta log. This method performs the necessary
-   * transformation and filtering on these metadata based on the column mapping mode set for the
-   * table.
-   *
-   * @param schema the raw schema directly deserialized from the Delta log, with various column
-   *               mapping metadata.
-   * @param mode column mapping mode of the table
-   *
-   * @return the table schema for the readers and writers. Columns will need to be renamed
-   *         by using the `renameColumns` function.
-   */
-  def setColumnMetadata(schema: StructType, mode: DeltaColumnMappingMode): StructType = {
-    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      field.copy(metadata = getColumnMappingMetadata(field, mode))
     }
   }
 

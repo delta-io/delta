@@ -1200,6 +1200,7 @@ trait DeltaSQLConfBase {
           |Only change this for testing!""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
