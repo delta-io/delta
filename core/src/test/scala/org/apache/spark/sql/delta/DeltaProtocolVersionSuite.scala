@@ -1214,7 +1214,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     props = Map(
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
-      s"delta.feature.${TestFeatureWithDependency.name}" -> "enabled"),
+      s"delta.feature.${TestFeatureWithDependency.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
@@ -1234,7 +1234,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     props = Map(
       DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
       DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
-      s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "enabled"),
+      s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeatures(Seq(
@@ -1430,7 +1430,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   testAlterTable(
     name = "feature with a dependency",
     tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
-    props = Map(s"delta.feature.${TestFeatureWithDependency.name}" -> "enabled"),
+    props = Map(s"delta.feature.${TestFeatureWithDependency.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
@@ -1446,7 +1446,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   testAlterTable(
     name = "feature with a dependency that has a dependency",
     tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
-    props = Map(s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "enabled"),
+    props = Map(s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "supported"),
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeatures(Seq(

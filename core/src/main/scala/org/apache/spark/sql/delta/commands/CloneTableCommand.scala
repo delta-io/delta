@@ -22,7 +22,7 @@ import java.io.FileNotFoundException
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Clone
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
-import org.apache.spark.sql.delta.actions.Protocol.extractRequiredFeatures
+import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.convert.{ConvertTargetTable, ConvertUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -188,7 +188,7 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
   def protocol: Protocol = {
     // This is quirky but necessary to add table features such as column mapping if the default
     // protocol version supports table features.
-    Protocol().withFeatures(extractRequiredFeatures(spark, Protocol(), metadata))
+    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, Protocol(), metadata))
   }
 
   override val clock: Clock = new SystemClock()
