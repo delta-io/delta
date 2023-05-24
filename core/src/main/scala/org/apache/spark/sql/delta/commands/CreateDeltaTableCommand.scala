@@ -208,7 +208,8 @@ case class CreateDeltaTableCommand(
               txn.updateProtocol(protocol)
             }
             val op = getOperation(newMetadata, isManagedTable, None)
-            txn.commit(Nil, op)
+            val actionsToCommit = Seq.empty[Action]
+            txn.commit(actionsToCommit, op)
           } else {
             verifyTableMetadata(txn, tableWithLocation)
           }
@@ -235,9 +236,11 @@ case class CreateDeltaTableCommand(
             replaceMetadataIfNecessary(txn, tableWithLocation, options, tableWithLocation.schema)
             // Truncate the table
             val operationTimestamp = System.currentTimeMillis()
+            var actionsToCommit = Seq.empty[Action]
             val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
+            actionsToCommit = removes
             val op = getOperation(txn.metadata, isManagedTable, None)
-            txn.commit(removes, op)
+            txn.commit(actionsToCommit, op)
         }
       }
 
