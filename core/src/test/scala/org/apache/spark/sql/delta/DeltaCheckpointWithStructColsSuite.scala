@@ -27,7 +27,7 @@ import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-class DeltaCheckpointV2Suite
+class DeltaCheckpointWithStructColsSuite
   extends QueryTest
   with SharedSparkSession  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
@@ -35,7 +35,6 @@ class DeltaCheckpointV2Suite
   import testImplicits._
 
   protected val checkpointFnsWithStructAndJsonStats: Seq[DeltaLog => Long] = Seq(
-    checkpointWithConf,
     checkpointWithProperty(writeStatsAsJson = Some(true)),
     checkpointWithProperty(writeStatsAsJson = None))
 
@@ -112,7 +111,7 @@ class DeltaCheckpointV2Suite
         checkFields(
           addColumns,
           statsAsJsonExists = true,
-          unexpected = Seq(CheckpointV2.PARTITIONS_COL_NAME))
+          unexpected = Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
 
@@ -123,7 +122,7 @@ class DeltaCheckpointV2Suite
         checkFields(
           addColumns,
           statsAsJsonExists = false,
-          unexpected = Seq(CheckpointV2.PARTITIONS_COL_NAME))
+          unexpected = Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
 
@@ -134,7 +133,7 @@ class DeltaCheckpointV2Suite
         checkFields(
           addColumns,
           statsAsJsonExists = true,
-          unexpected = Seq(CheckpointV2.PARTITIONS_COL_NAME))
+          unexpected = Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
 
@@ -142,7 +141,8 @@ class DeltaCheckpointV2Suite
       checkpointingFns = Seq(checkpointWithoutStats),
       expectedCols = Nil,
       additionalValidationFn = addColumns => {
-        checkFields(addColumns, statsAsJsonExists = false, Seq(CheckpointV2.PARTITIONS_COL_NAME))
+        checkFields(
+          addColumns, statsAsJsonExists = false, Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
   }
@@ -179,7 +179,7 @@ class DeltaCheckpointV2Suite
         checkFields(
           addColumns,
           statsAsJsonExists = true,
-          Seq(CheckpointV2.PARTITIONS_COL_NAME))
+          Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
 
@@ -187,7 +187,8 @@ class DeltaCheckpointV2Suite
       checkpointingFns = Seq(checkpointWithoutStats),
       expectedCols = Nil,
       additionalValidationFn = addColumns => {
-        checkFields(addColumns, statsAsJsonExists = false, Seq(CheckpointV2.PARTITIONS_COL_NAME))
+        checkFields(
+          addColumns, statsAsJsonExists = false, Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME))
       }
     )
   }
@@ -247,7 +248,8 @@ class DeltaCheckpointV2Suite
 
       df.write.format("delta").partitionBy("key").save(dir.getCanonicalPath)
       val deltaLog = DeltaLog.forTable(spark, dir)
-      val version = checkpointWithConf(deltaLog)
+      val version = checkpointWithProperty(
+        writeStatsAsJson = Some(true), writeStatsAsStruct = true)(deltaLog)
       val f = spark.read.parquet(
         FileNames.checkpointFileSingular(deltaLog.logPath, version).toString)
 
@@ -269,38 +271,27 @@ class DeltaCheckpointV2Suite
   }
 
 
-  protected def checkpointWithConf(deltaLog: DeltaLog): Long = {
-    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED.key -> "true") {
-      deltaLog.checkpoint()
-    }
-    deltaLog.readLastCheckpointFile().get.version
-  }
-
   /**
-   * Creates a V2 checkpoint by leveraging the `writeStatsAsStruct` configuration.
+   * Creates a checkpoint by based on `writeStatsAsJson`/`writeStatsAsStruct` properties.
    */
   protected def checkpointWithProperty(
       writeStatsAsJson: Option[Boolean],
       writeStatsAsStruct: Boolean = true)(deltaLog: DeltaLog): Long = {
-    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED.key -> "false") {
-      val asJson = writeStatsAsJson.map { v =>
-        s", delta.checkpoint.writeStatsAsJson = $v"
-      }.getOrElse("")
-      sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` " +
-        s"SET TBLPROPERTIES (delta.checkpoint.writeStatsAsStruct = ${writeStatsAsStruct}${asJson})")
-      deltaLog.checkpoint()
-    }
+    val asJson = writeStatsAsJson.map { v =>
+      s", delta.checkpoint.writeStatsAsJson = $v"
+    }.getOrElse("")
+    sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` " +
+      s"SET TBLPROPERTIES (delta.checkpoint.writeStatsAsStruct = ${writeStatsAsStruct}${asJson})")
+    deltaLog.checkpoint()
     deltaLog.readLastCheckpointFile().get.version
   }
 
   /** A checkpoint that doesn't have any stats columns, i.e. `stats` and `stats_parsed`. */
   protected def checkpointWithoutStats(deltaLog: DeltaLog): Long = {
-    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED.key -> "false") {
-      sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` " +
-        s"SET TBLPROPERTIES (delta.checkpoint.writeStatsAsStruct = false, " +
-        "delta.checkpoint.writeStatsAsJson = false)")
-      deltaLog.checkpoint()
-    }
+    sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` " +
+      s"SET TBLPROPERTIES (delta.checkpoint.writeStatsAsStruct = false, " +
+      "delta.checkpoint.writeStatsAsJson = false)")
+    deltaLog.checkpoint()
     deltaLog.readLastCheckpointFile().get.version
   }
 
@@ -326,7 +317,7 @@ class DeltaCheckpointV2Suite
 }
 
 
-class DeltaCheckpointV2NameColumnMappingSuite extends DeltaCheckpointV2Suite
+class DeltaCheckpointWithStructColsNameColumnMappingSuite extends DeltaCheckpointWithStructColsSuite
   with DeltaColumnMappingEnableNameMode {
 
   override protected def runOnlyTests = Seq(

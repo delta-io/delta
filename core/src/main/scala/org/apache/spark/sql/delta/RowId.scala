@@ -99,8 +99,7 @@ object RowId {
       case a: AddFile if a.baseRowId.isEmpty =>
         val baseRowId = newHighWatermark + 1L
         newHighWatermark += a.numPhysicalRecords.getOrElse {
-          throw new UnsupportedOperationException(
-            "Cannot assign row IDs without row count statistics.")
+          throw DeltaErrors.rowIdAssignmentWithoutStats
         }
         a.copy(baseRowId = Some(baseRowId))
       case _: RowIdHighWaterMark =>

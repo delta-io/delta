@@ -609,7 +609,7 @@ object Checkpoints extends DeltaLogging {
     // opt in our out of the struct conf.
     val includeStructColumns = shouldWriteStatsAsStruct(sessionConf, snapshot)
     if (includeStructColumns) {
-      val partitionValues = CheckpointV2.extractPartitionValues(
+      val partitionValues = Checkpoints.extractPartitionValues(
         snapshot.metadata.partitionSchema, "add.partitionValues")
       additionalCols ++= partitionValues
     }
@@ -629,23 +629,15 @@ object Checkpoints extends DeltaLogging {
   }
 
   def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
-    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
-      .fromMetaData(snapshot.metadata)
-      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata)
   }
 
   def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)
   }
-}
 
-/**
- * Utility methods for generating and using V2 checkpoints. V2 checkpoints have partition values and
- * statistics as struct fields of the `add` column.
- */
-object CheckpointV2 {
-  val PARTITIONS_COL_NAME = "partitionValues_parsed"
-  val STATS_COL_NAME = "stats_parsed"
+  val STRUCT_PARTITIONS_COL_NAME = "partitionValues_parsed"
+  val STRUCT_STATS_COL_NAME = "stats_parsed"
 
   /**
    * Creates a nested struct column of partition values that extract the partition values
@@ -665,6 +657,8 @@ object CheckpointV2 {
         ansiEnabled = false)
       ).as(physicalName)
     }
-    if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
+    if (partitionValues.isEmpty) {
+      None
+    } else Some(struct(partitionValues: _*).as(STRUCT_PARTITIONS_COL_NAME))
   }
 }

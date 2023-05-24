@@ -89,6 +89,7 @@ case class CommitStats(
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
+  numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None
 )
 
@@ -987,6 +988,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
 
+      // Check for duplicated [[MetadataAction]] with the same domain names and validate the table
+      // feature is enabled if [[MetadataAction]] is submitted.
+      val domainMetadata =
+        DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
+
       val isBlindAppend = {
         val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
         val onlyAddFiles =
@@ -1021,7 +1027,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         actions = preparedActions,
         readSnapshot = snapshot,
         commitInfo = Option(commitInfo),
-        readRowIdHighWatermark = readRowIdHighWatermark)
+        readRowIdHighWatermark = readRowIdHighWatermark,
+        domainMetadata = domainMetadata)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1581,6 +1588,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     var bytesNew: Long = 0L
     var numAdd: Int = 0
+    var numOfDomainMetadatas: Long = 0L
     var numRemove: Int = 0
     var numSetTransaction: Int = 0
     var numCdcFiles: Int = 0
@@ -1598,6 +1606,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         cdcBytesNew += c.size
       case _: SetTransaction =>
         numSetTransaction += 1
+      case _: DomainMetadata =>
+        numOfDomainMetadatas += 1
       case _ =>
     }
     val info = currentTransactionInfo.commitInfo
@@ -1631,6 +1641,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
+      numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 

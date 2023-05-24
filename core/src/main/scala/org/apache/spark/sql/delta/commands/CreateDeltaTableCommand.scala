@@ -494,9 +494,11 @@ case class CreateDeltaTableCommand(
   }
 }
 
+// isCreate is true for Create and CreateOrReplace modes. It is false for Replace mode.
 object TableCreationModes {
   sealed trait CreationMode {
     def mode: SaveMode
+    def isCreate: Boolean = true
   }
 
   case object Create extends CreationMode {
@@ -509,5 +511,6 @@ object TableCreationModes {
 
   case object Replace extends CreationMode {
     override def mode: SaveMode = SaveMode.Overwrite
+    override def isCreate: Boolean = false
   }
 }
