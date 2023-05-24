@@ -1442,6 +1442,7 @@ trait DescribeDeltaHistorySuiteBase
           StructType(Seq(
             StructField("jobId", StringType, nullable = true),
             StructField("jobName", StringType, nullable = true),
+            StructField("jobRunId", StringType, nullable = true),
             StructField("runId", StringType, nullable = true),
             StructField("jobOwnerId", StringType, nullable = true),
             StructField("triggerType", StringType, nullable = true))),

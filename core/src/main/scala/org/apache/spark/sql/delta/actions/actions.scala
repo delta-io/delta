@@ -1041,6 +1041,7 @@ case class CommitInfo(
 case class JobInfo(
     jobId: String,
     jobName: String,
+    jobRunId: String,
     runId: String,
     jobOwnerId: String,
     triggerType: String)
@@ -1051,6 +1052,7 @@ object JobInfo {
       JobInfo(
         jobId,
         context.get("jobName").orNull,
+        context.get("multitaskParentRunId").orNull,
         context.get("runId").orNull,
         context.get("jobOwnerId").orNull,
         context.get("jobTriggerType").orNull)
