@@ -626,8 +626,7 @@ case class DeltaSource(
     options: DeltaOptions,
     snapshotAtSourceInit: Snapshot,
     metadataPath: String,
-    schemaTrackingLog: Option[DeltaSourceSchemaTrackingLog] = None,
-    filters: Seq[Expression] = Nil)
+    schemaTrackingLog: Option[DeltaSourceSchemaTrackingLog] = None)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport
   with DeltaSourceSchemaEvolutionSupport {
@@ -658,8 +657,6 @@ case class DeltaSource(
   // A metadata snapshot when starting the query.
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
-
-  logInfo(s"Filters being pushed down: $filters")
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
@@ -743,7 +740,7 @@ case class DeltaSource(
       super[DeltaSourceBase].cleanUpSnapshotResources()
       val snapshot = getSnapshotFromDeltaLog(version)
 
-      initialState = new DeltaSourceSnapshot(spark, snapshot, filters)
+      initialState = new DeltaSourceSnapshot(spark, snapshot)
       initialStateVersion = version
     }
     initialState.iterator()
