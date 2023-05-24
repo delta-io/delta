@@ -137,7 +137,10 @@ case class CreateDeltaTableCommand(
             replaceMetadataIfNecessary(
               txn, tableWithLocation, options, schema)
           }
-          val actions = deltaWriter.write(txn, sparkSession)
+          val actions = deltaWriter.write(
+            txn,
+            sparkSession
+          )
           val op = getOperation(txn.metadata, isManagedTable, Some(options))
           (actions, op)
         }

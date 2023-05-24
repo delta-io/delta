@@ -186,7 +186,10 @@ case class WriteIntoDelta(
     txn.registerSQLMetrics(spark, sqlMetrics)
   }
 
-  def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
+  def write(
+      txn: OptimisticTransaction,
+      sparkSession: SparkSession
+    ): Seq[Action] = {
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -346,7 +349,9 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, deletedFiles)
       case _ =>
-        val newFiles = writeFiles(txn, data, options)
+        val newFiles = writeFiles(
+          txn, data, options
+        )
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
@@ -396,7 +401,8 @@ case class WriteIntoDelta(
   private def writeFiles(
       txn: OptimisticTransaction,
       data: DataFrame,
-      options: DeltaOptions): Seq[FileAction] = {
+      options: DeltaOptions
+    ): Seq[FileAction] = {
     txn.writeFiles(data, Some(options))
   }
 
