@@ -249,13 +249,14 @@ object Protocol {
   }
 
   /**
-   * Extracts all table features that are enabled by the given protocol and metadata.
-   * This includes features enabled directly by metadata, and their dependencies.
+   * Extracts all table features that are enabled by the given metadata and the optional protocol.
+   * This includes all already enabled features (if a protocol is provided), the features enabled
+   * directly by metadata, and all of their (transitive) dependencies.
    */
   def extractAutomaticallyEnabledFeatures(
-      spark: SparkSession, protocol: Protocol, metadata: Metadata): Set[TableFeature] = {
+      spark: SparkSession, metadata: Metadata, protocol: Option[Protocol]): Set[TableFeature] = {
     val protocolEnabledFeatures =
-      protocol.writerFeatureNames.flatMap(TableFeature.featureNameToFeature)
+      protocol.flatMap(_.writerFeatureNames).toSet.flatMap(TableFeature.featureNameToFeature)
     val metadataEnabledFeatures = TableFeature
       .allSupportedFeaturesMap.values
       .collect {
@@ -290,7 +291,7 @@ object Protocol {
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
     val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
-    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, Protocol(), metadata)
+    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, protocol = None)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
@@ -352,7 +353,7 @@ object Protocol {
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession,
       metadata: Metadata): (Int, Int, Set[TableFeature]) = {
-    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, Protocol(), metadata)
+    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, protocol = None)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
       readerVersion = math.max(readerVersion, feature.minReaderVersion)
