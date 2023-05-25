@@ -67,7 +67,7 @@ lazy val kernelDefault = (project in file("kernel-default"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
       "junit" % "junit" % "4.11" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
     )
   )
 
