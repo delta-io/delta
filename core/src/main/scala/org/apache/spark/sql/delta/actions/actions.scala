@@ -254,7 +254,9 @@ object Protocol {
    * directly by metadata, and all of their (transitive) dependencies.
    */
   def extractAutomaticallyEnabledFeatures(
-      spark: SparkSession, metadata: Metadata, protocol: Option[Protocol]): Set[TableFeature] = {
+      spark: SparkSession,
+      metadata: Metadata,
+      protocol: Option[Protocol] = None): Set[TableFeature] = {
     val protocolEnabledFeatures = protocol
       .map(_.writerFeatureNames)
       .getOrElse(Set.empty)
@@ -293,7 +295,7 @@ object Protocol {
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
     val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
-    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, protocol = None)
+    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
@@ -355,7 +357,7 @@ object Protocol {
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession,
       metadata: Metadata): (Int, Int, Set[TableFeature]) = {
-    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, protocol = None)
+    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
       readerVersion = math.max(readerVersion, feature.minReaderVersion)
