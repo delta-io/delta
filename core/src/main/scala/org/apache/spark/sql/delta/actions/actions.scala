@@ -255,8 +255,10 @@ object Protocol {
    */
   def extractAutomaticallyEnabledFeatures(
       spark: SparkSession, metadata: Metadata, protocol: Option[Protocol]): Set[TableFeature] = {
-    val protocolEnabledFeatures =
-      protocol.flatMap(_.writerFeatureNames).toSet.flatMap(TableFeature.featureNameToFeature)
+    val protocolEnabledFeatures = protocol
+      .map(_.writerFeatureNames)
+      .getOrElse(Set.empty)
+      .flatMap(TableFeature.featureNameToFeature)
     val metadataEnabledFeatures = TableFeature
       .allSupportedFeaturesMap.values
       .collect {
