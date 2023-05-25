@@ -561,7 +561,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
 
     RowId.verifyMetadata(
-      spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
+      spark, snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")

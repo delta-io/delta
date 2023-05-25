@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.JavaConverters._
+
 import org.antlr.v4.runtime.ParserRuleContext
 
 import org.apache.spark.sql.AnalysisException
@@ -47,6 +49,11 @@ class DeltaIllegalArgumentException(
     with DeltaThrowable {
     override def getErrorClass: String = errorClass
   def getMessageParametersArray: Array[String] = messageParameters
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
+  }
 }
 
 class DeltaUnsupportedOperationException(
