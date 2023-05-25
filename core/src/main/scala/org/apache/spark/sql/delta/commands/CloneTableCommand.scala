@@ -188,7 +188,7 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
   def protocol: Protocol = {
     // This is quirky but necessary to add table features such as column mapping if the default
     // protocol version supports table features.
-    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, metadata)
+    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, metadata))
   }
 
   override val clock: Clock = new SystemClock()
