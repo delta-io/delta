@@ -21,12 +21,9 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
-import org.apache.spark.sql.delta.stats.DeltaScan
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -102,8 +99,8 @@ class DefaultRowCommitVersionSuite extends QueryTest with SharedSparkSession wit
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         val commitVersionForFiles = expectedCommitVersionsForAllFiles(deltaLog)
 
-        val filters: Seq[Expression] = Seq(col("id = 150").expr)
-        val scan: DeltaScan = deltaLog.update().filesForScan(filters)
+        val filters = Seq(col("id = 150").expr)
+        val scan = deltaLog.update().filesForScan(filters)
 
         scan.files.foreach { f =>
           assert(f.defaultRowCommitVersion.contains(commitVersionForFiles(f.path)))

@@ -1715,6 +1715,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     conflictChecker.checkConflicts()
   }
 
+  /** Returns the version that the first attempt will try to commit at. */
   protected def getFirstAttemptVersion: Long = readVersion + 1L
 
   /** Returns the next attempt version given the last attempted version */
