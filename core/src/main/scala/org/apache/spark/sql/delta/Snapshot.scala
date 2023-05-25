@@ -47,6 +47,8 @@ trait SnapshotDescriptor {
 
   def schema: StructType = metadata.schema
 
+  protected[delta] def numOfFilesIfKnown: Option[Long]
+  protected[delta] def sizeInBytesIfKnown: Option[Long]
 }
 
 /**

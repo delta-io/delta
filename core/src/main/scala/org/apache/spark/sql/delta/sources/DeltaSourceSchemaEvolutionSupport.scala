@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.types.StructType
 
@@ -79,8 +80,7 @@ import org.apache.spark.sql.types.StructType
  * schema changes to propagate. We detect such non-additive schema changes during stream start by
  * comparing the last schema log entry with the current one.
  */
-trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
-  base: DeltaSource =>
+trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
   /**
    * Whether this DeltaSource is utilizing a schema log entry as its read schema.
@@ -119,11 +119,20 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
   }
 
   /**
-   * Check if a schema change is different from the stream read schema.
-   * A strict equality check on the schemas should be safest to capture all schema changes.
+   * Check if a schema change is different from the stream read schema. We make sure:
+   * 1. A strict equality check on the schemas to capture all schema changes, AND
+   * 2. The incoming schema change should not be considered a failure-causing change if we have
+   *    marked the persisted schema and the stream progress is behind that schema version.
+   *    This could happen when we've already merged consecutive schema changes during the analysis
+   *    phase and we are using the merged schema as the read schema. All the schema changes in
+   *    between can be safely ignored because they won't contribute any data.
    */
-  protected def hasSchemaChangeComparedToStreamSchema(s: StructType): Boolean =
-    s != readSchemaAtSourceInit
+  protected def hasSchemaChangeComparedToStreamSchema(
+      newSchema: StructType,
+      newSchemaVersion: Long): Boolean =
+    newSchema != readSchemaAtSourceInit && !persistedSchemaAtSourceInit.exists { schemaEntry =>
+      schemaEntry.deltaCommitVersion >= newSchemaVersion
+    }
 
   /**
    * If the current stream schema is not equal to the schema change in [[metadataChangeOpt]], return
@@ -132,9 +141,9 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
    */
   protected def getSchemaChangeIndexedFileIterator(
       metadataChangeOpt: Option[Metadata], version: Long): ClosableIterator[IndexedFile] = {
-    // It would be nice to capture partition schema change as well.
+    // TODO: It would be nice to capture partition schema change as well.
     if (trackingSchemaChange &&
-        metadataChangeOpt.exists(m => hasSchemaChangeComparedToStreamSchema(m.schema))) {
+        metadataChangeOpt.exists(m => hasSchemaChangeComparedToStreamSchema(m.schema, version))) {
       // Create an IndexedFile with metadata change
       Iterator.single(IndexedFile(version, DeltaSourceOffset.SCHEMA_CHANGE_INDEX, null)).toClosable
     } else {
@@ -151,15 +160,11 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
     deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).takeWhile {
       case (version, _) => version <= endVersion
     }.foreach { case (version, fileStatus) =>
-      val fileIterator = deltaLog.store.readAsIterator(
-        fileStatus,
-        deltaLog.newDeltaHadoopConf())
-      try {
-        fileIterator.map(Action.fromJson)
+      val fileIterator = DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+      fileIterator.processAndClose { actionsIter =>
+        actionsIter
           .collectFirst { case m: Metadata => m }
           .foreach { m => metadataActions.append((version, m)) }
-      } finally {
-        fileIterator.close()
       }
     }
     metadataActions.toSeq
@@ -235,7 +240,8 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
     // occurred, simply block as no-op.
     if (previousOffset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
       hasSchemaChangeComparedToStreamSchema(
-        collectSchemaChangeAtVersion(previousOffset.reservoirVersion).schema)) {
+        collectSchemaChangeAtVersion(previousOffset.reservoirVersion).schema,
+        previousOffset.reservoirVersion)) {
       return Some(previousOffset)
     }
 
@@ -263,10 +269,11 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
         val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
         (startSnapshot.version, startSnapshot.metadata)
       }
-    val schemaToUse = PersistedSchema(tableId, version, metadata.schema, metadata.partitionSchema)
+    val schemaToUse =
+      PersistedSchema(tableId, version, metadata.schema, metadata.partitionSchema, metadataPath)
     // Always initialize the schema log
-    schemaTrackingLog.get.evolveSchema(schemaToUse)
-    if (hasSchemaChangeComparedToStreamSchema(metadata.schema)) {
+    schemaTrackingLog.get.writeNewSchema(schemaToUse)
+    if (hasSchemaChangeComparedToStreamSchema(metadata.schema, version)) {
       // But trigger schema evolution exception when there's a difference
       throw DeltaErrors.streamingSchemaEvolutionException(schemaToUse.dataSchema)
     }
@@ -290,7 +297,8 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
         deltaLog.tableId,
         offset.reservoirVersion,
         schemaChange.schema,
-        schemaChange.partitionSchema
+        schemaChange.partitionSchema,
+        metadataPath
       )
 
       // Evolve the schema when the schema is indeed different from the current stream schema. We
@@ -301,12 +309,43 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
       // second one is committed.
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
-      if (hasSchemaChangeComparedToStreamSchema(schemaChange.schema)) {
+      if (hasSchemaChangeComparedToStreamSchema(schemaChange.schema, offset.reservoirVersion)) {
         // Update schema log
-        schemaTrackingLog.get.evolveSchema(schemaToPersist)
+        schemaTrackingLog.get.writeNewSchema(schemaToPersist)
         // Fail the stream with schema evolution exception
         throw DeltaErrors.streamingSchemaEvolutionException(schemaChange.schema)
       }
+    }
+  }
+}
+
+object NonAdditiveSchemaChangeTypes {
+  // Rename -> caused by a single column rename
+  val SCHEMA_CHANGE_RENAME = "RENAME COLUMN"
+  // Drop -> caused by a single column drop
+  val SCHEMA_CHANGE_DROP = "DROP COLUMN"
+  // A combination of rename and drop columns -> can be caused by a complete overwrite
+  val SCHEMA_CHANGE_RENAME_AND_DROP = "RENAME AND DROP COLUMN"
+}
+
+object DeltaSourceSchemaEvolutionSupport {
+
+  /**
+   * Determine the non-additive schema change type for an incoming schema change. None if it's
+   * additive.
+   */
+  private def determineNonAdditiveSchemaChangeType(
+      newSchema: StructType, oldSchema: StructType): Option[String] = {
+    val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
+    val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
+    if (isRenameColumn && isDropColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP)
+    } else if (isRenameColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME)
+    } else if (isDropColumn) {
+      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP)
+    } else {
+      None
     }
   }
 
@@ -328,11 +367,14 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
    * We will check for any of these configs given the non-additive operation, and throw a proper
    * error message to instruct the user to set the SQL conf if they would like to unblock.
    *
+   * @param metadataPath The path to the source-unique metadata location under checkpoint
    * @param currentSchema The current persisted schema
    * @param previousSchema The previous persisted schema
    */
   // scalastyle:on
-  protected def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+  protected[sources] def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+      spark: SparkSession,
+      metadataPath: String,
       currentSchema: PersistedSchema,
       previousSchema: PersistedSchema): Unit = {
     val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
@@ -396,31 +438,4 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase {
     }
   }
 
-  /**
-   * Determine the non-additive schema change type for an incoming schema change. None if it's
-   * additive.
-   */
-  private def determineNonAdditiveSchemaChangeType(
-      newSchema: StructType, oldSchema: StructType): Option[String] = {
-    val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
-    val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
-    if (isRenameColumn && isDropColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP)
-    } else if (isRenameColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME)
-    } else if (isDropColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP)
-    } else {
-      None
-    }
-  }
-}
-
-object NonAdditiveSchemaChangeTypes {
-  // Rename -> caused by a single column rename
-  val SCHEMA_CHANGE_RENAME = "RENAME COLUMN"
-  // Drop -> caused by a single column drop
-  val SCHEMA_CHANGE_DROP = "DROP COLUMN"
-  // A combination of rename and drop columns -> can be caused by a complete overwrite
-  val SCHEMA_CHANGE_RENAME_AND_DROP = "RENAME AND DROP COLUMN"
 }
