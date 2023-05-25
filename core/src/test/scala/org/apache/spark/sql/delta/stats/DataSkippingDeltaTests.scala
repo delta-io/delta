@@ -540,6 +540,125 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   )
 
   testSkipping(
+    "indexed column names - empty list disables stats collection",
+    """{
+      "a": 1,
+      "b": 2,
+      "c": 3,
+      "d": 4
+    }""".replace("\n", ""),
+    hits = Seq(
+      "a < 0",
+      "b < 0",
+      "c < 0",
+      "d < 0"
+    ),
+    misses = Seq(),
+    indexedCols = 3,
+    deltaStatsColNamesOpt = Some(" ")
+  )
+
+  testSkipping(
+    "indexed column names - naming a nested column indexes all leaf fields of that column",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    hits = Seq(
+      // these all have missing stats
+      "a < 0",
+      "b.l < 0",
+      "m < 0"
+    ),
+    misses = Seq(
+      "b.c.d < 0",
+      "b.c.e < 0",
+      "b.c.f.g < 0",
+      "b.c.f.h < 0",
+      "b.c.f.i < 0",
+      "b.c.j < 0",
+      "b.c.k < 0"
+    ),
+    indexedCols = 3,
+    deltaStatsColNamesOpt = Some("b.c")
+  )
+
+  testSkipping(
+    "indexed column names - index only a subset of leaf columns",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    hits = Seq(
+      // these all have missing stats
+      "a < 0",
+      "b.c.d < 0",
+      "b.c.f.g < 0",
+      "b.c.f.i < 0",
+      "b.c.j < 0",
+      "m < 0"
+    ),
+    misses = Seq(
+      "b.c.e < 0",
+      "b.c.f.h < 0",
+      "b.c.k < 0",
+      "b.l < 0"
+    ),
+    indexedCols = 3,
+    deltaStatsColNamesOpt = Some("b.c.e, b.c.f.h, b.c.k, b.l")
+  )
+
+  testSkipping(
+    "indexed column names - backtick escapes work as expected",
+    """{
+      "a": 1,
+      "b.c": 2,
+      "b": {
+        "c": 3,
+        "d": 4
+      }
+    }""".replace("\n", ""),
+    hits = Seq(
+      "b.c < 0"
+    ),
+    misses = Seq(
+      "a < 0",
+      "`b.c` < 0",
+      "b.d < 0"
+    ),
+    indexedCols = 3,
+    deltaStatsColNamesOpt = Some("`a`, `b.c`, `b`.`d`")
+  )
+
+  testSkipping(
     "boolean comparisons",
     """{"a": false}""",
     hits = Seq(
@@ -1485,6 +1604,182 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+  Seq("create", "alter").foreach { label =>
+    test(s"Basic: Data skipping with delta statistic column $label") {
+      withTable("table") {
+        val tableProperty = if (label == "create") {
+          "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9')"
+        } else {
+          ""
+        }
+        sql(
+          s"""CREATE TABLE table(
+             |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+             |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+             |) USING delta $tableProperty""".stripMargin)
+        if (label == "alter") {
+          sql(
+            s"""ALTER TABLE table
+               |SET TBLPROPERTIES (
+               |  'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9'
+               |)""".stripMargin)
+        }
+        sql(
+          """insert into table values
+            |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+            |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+            |""".stripMargin).count()
+        val hits = Seq(
+          "c1 = 1",
+          "c2 = \'2\'",
+          "c3 < 1.5",
+          "c4 > 1.0",
+          "c5 >= \"2001-01-01 01:00:00\"",
+          "c6 = \"2002-02-02\"",
+          "c7 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
+          "c7 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
+          "c8 = true",
+          "c8 = false",
+          "c9 > 1.5"
+        )
+        val misses = Seq(
+          "c1 = 10",
+          "c2 = \'4\'",
+          "c3 < 0.5",
+          "c4 > 5.0",
+          "c5 >= \"2003-01-01 01:00:00\"",
+          "c6 = \"2003-02-02\"",
+          "c9 > 2.5"
+        )
+        val dataSeq = Seq(
+          (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", "1111", true, 1.0f),
+          (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", "2222", false, 2.0f)
+        )
+        val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+        checkSkipping(r, hits, misses, dataSeq.toString(), false)
+      }
+    }
+  }
+
+  test(s"Data skipping with delta statistic column rename column") {
+    withTable("table") {
+      sql(
+        s"""CREATE TABLE table(
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |) USING delta
+           |TBLPROPERTIES(
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.columnMapping.mode' = 'name',
+           |'delta.minReaderVersion' = '2',
+           |'delta.minWriterVersion' = '5'
+           |)
+           |""".stripMargin)
+      (1 to 9).foreach { i =>
+        sql(s"alter table table RENAME COLUMN c$i to cc$i")
+      }
+      val newConfiguration = sql("SHOW TBLPROPERTIES table ")
+        .collect()
+        .map { row =>
+          row.getString(0) -> row.getString(1)
+        }
+        .filter(_._1 == "delta.dataSkippingStatsColumns")
+        .toSeq
+      assert(
+        newConfiguration == Seq(
+          ("delta.dataSkippingStatsColumns", "cc1,cc2,cc3,cc4,cc5,cc6,cc9"))
+      )
+      sql(
+        """insert into table values
+          |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+          |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+          |""".stripMargin).count()
+      val hits = Seq(
+        "cc1 = 1",
+        "cc2 = \'2\'",
+        "cc3 < 1.5",
+        "cc4 > 1.0",
+        "cc5 >= \"2001-01-01 01:00:00\"",
+        "cc6 = \"2002-02-02\"",
+        "cc7 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
+        "cc7 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
+        "cc8 = true",
+        "cc8 = false",
+        "cc9 > 1.5"
+      )
+      val misses = Seq(
+        "cc1 = 10",
+        "cc2 = \'4\'",
+        "cc3 < 0.5",
+        "cc4 > 5.0",
+        "cc5 >= \"2003-01-01 01:00:00\"",
+        "cc6 = \"2003-02-02\"",
+        "cc9 > 2.5"
+      )
+      val dataSeq = Seq(
+        (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", "1111", true, 1.0f),
+        (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", "2222", false, 2.0f)
+      )
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  test(s"Data skipping with delta statistic column drop column") {
+    withTable("table") {
+      sql(
+        s"""CREATE TABLE table(
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |) USING delta
+           |TBLPROPERTIES(
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.columnMapping.mode' = 'name',
+           |'delta.minReaderVersion' = '2',
+           |'delta.minWriterVersion' = '5'
+           |)
+           |""".stripMargin)
+      sql(s"alter table table drop COLUMN c2")
+      sql(s"alter table table drop COLUMN c7")
+      sql(s"alter table table drop COLUMN c8")
+      val newConfiguration = sql("SHOW TBLPROPERTIES table ")
+        .collect()
+        .map { row =>
+          row.getString(0) -> row.getString(1)
+        }
+        .filter(_._1 == "delta.dataSkippingStatsColumns")
+        .toSeq
+      assert(newConfiguration == Seq(("delta.dataSkippingStatsColumns", "c1,c3,c4,c5,c6,c9")))
+      sql(
+        """insert into table values
+          |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', 1.0),
+          |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
+          |""".stripMargin).count()
+      val hits = Seq(
+        "c1 = 1",
+        "c3 < 1.5",
+        "c4 > 1.0",
+        "c5 >= \"2001-01-01 01:00:00\"",
+        "c6 = \"2002-02-02\"",
+        "c9 > 1.5"
+      )
+      val misses = Seq(
+        "c1 = 10",
+        "c3 < 0.5",
+        "c4 > 5.0",
+        "c5 >= \"2003-01-01 01:00:00\"",
+        "c6 = \"2003-02-02\"",
+        "c9 > 2.5"
+      )
+      val dataSeq = Seq(
+        (1L, 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", 1.0f),
+        (2L, 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", 2.0f)
+      )
+      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
   protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
       s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
         s""""nullCount":{"$colName":0}}""".stripMargin
@@ -1647,6 +1942,14 @@ trait DataSkippingDeltaTestsBase extends QueryTest
           |)""".stripMargin)
   }
 
+  protected def setDeltaStatsColumns(path: String, deltaStatsColumns: String): Unit = {
+    sql(s"""
+           |ALTER TABLE delta.`$path`
+           |SET TBLPROPERTIES (
+           |  'delta.dataSkippingStatsColumns' = '$deltaStatsColumns'
+           |)""".stripMargin)
+  }
+
   private def isFullScan(report: ScanReport): Boolean = {
     report.size("scanned").bytesCompressed === report.size("total").bytesCompressed
   }
@@ -1677,6 +1980,16 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       fail(s"The stats schema should be nullable. Differences:\n${schemaDiff.mkString("\n")}")
     }
   }
+  protected def getDataSkippingConfs(
+      indexedCols: Int,
+      deltaStatsColNamesOpt: Option[String]): TraversableOnce[(String, String)] = {
+    val numIndexedColsConfOpt = Option(indexedCols)
+      .filter(_ != defaultNumIndexedCols)
+      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
+    val indexedColNamesConfOpt = deltaStatsColNamesOpt
+      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
+    numIndexedColsConfOpt ++ indexedColNamesConfOpt
+  }
 
   protected def testSkipping(
       name: String,
@@ -1686,9 +1999,12 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       misses: Seq[String],
       sqlConfs: Seq[(String, String)] = Nil,
       indexedCols: Int = defaultNumIndexedCols,
-      checkEmptyUnusedFiltersForHits: Boolean = false): Unit = {
+      deltaStatsColNamesOpt: Option[String] = None,
+      checkEmptyUnusedFiltersForHits: Boolean = false,
+      exceptionOpt: Option[Throwable] = None): Unit = {
     test(s"data skipping by stats - $name") {
-      withSQLConf(sqlConfs: _*) {
+      val allSQLConfs = sqlConfs ++ getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt)
+      withSQLConf(allSQLConfs: _*) {
         val jsonRecords = data.split("\n").toSeq
         val reader = spark.read
         if (schema != null) { reader.schema(schema) }
@@ -1698,11 +2014,31 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         val r = DeltaLog.forTable(spark, tempDir)
         df.coalesce(1).write.format("delta").save(r.dataPath.toString)
 
-        if (indexedCols != defaultNumIndexedCols) {
-          setNumIndexedColumns(r.dataPath.toString, indexedCols)
-          df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
+        exceptionOpt.map { exception =>
+          val except = intercept[Throwable] {
+            deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+              setDeltaStatsColumns(r.dataPath.toString, deltaStatsColNames)
+              df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
+              if (indexedCols != defaultNumIndexedCols) {
+                setNumIndexedColumns(r.dataPath.toString, indexedCols)
+                df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
+              }
+              checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
+            }
+          }
+          assert(except.getClass == exception.getClass &&
+            except.getMessage.contains(exception.getMessage))
+        }.getOrElse {
+          if (indexedCols != defaultNumIndexedCols) {
+            setNumIndexedColumns(r.dataPath.toString, indexedCols)
+            df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
+          }
+          deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+            setDeltaStatsColumns(r.dataPath.toString, deltaStatsColNames)
+            df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
+          }
+          checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
         }
-        checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
       }
     }
   }

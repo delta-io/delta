@@ -397,6 +397,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       proposedNewMetadata: Metadata,
       ignoreDefaultProperties: Boolean = false): Unit = {
     var newMetadataTmp = proposedNewMetadata
+    // Validate all indexed columns are inside table's schema.
+    StatisticsCollection.validateDeltaStatsColumns(newMetadataTmp)
     if (readVersion == -1 || isCreatingNewTable) {
       // We need to ignore the default properties when trying to create an exact copy of a table
       // (as in CLONE and SHALLOW CLONE).

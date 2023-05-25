@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -86,6 +87,8 @@ class Snapshot(
 
   /** Snapshot to scan by the DeltaScanGenerator for metadata query optimizations */
   override val snapshotToScan: Snapshot = this
+
+  override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
 
   @volatile private[delta] var stateReconstructionTriggered = false
@@ -152,7 +155,8 @@ class Snapshot(
   }
 
   /** Number of columns to collect stats on for data skipping */
-  lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+  override lazy val statsColumnSpec: DeltaStatsColumnSpec =
+    StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
 
   /** Performs validations during initialization */
   protected def init(): Unit = {
@@ -329,7 +333,11 @@ class Snapshot(
     allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** Returns the data schema of the table, used for reading stats */
-  def tableDataSchema: StructType = metadata.dataSchema
+  def tableSchema: StructType = metadata.dataSchema
+
+  def outputTableStatsSchema: StructType = metadata.dataSchema
+
+  def outputAttributeSchema: StructType = metadata.dataSchema
 
   /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema
