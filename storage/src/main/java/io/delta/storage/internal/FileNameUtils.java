@@ -9,6 +9,7 @@ import org.apache.hadoop.fs.Path;
  */
 public final class FileNameUtils {
     static Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
+    public static String VIRTUAL_CHILD_NAME = "\u0000";
 
     /**
      * Returns the delta (json format) path for a given delta file.

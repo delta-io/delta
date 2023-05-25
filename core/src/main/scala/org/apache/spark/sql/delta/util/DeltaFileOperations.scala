@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.util
 
+import io.delta.storage.internal.FileNameUtils
+
 import java.io.{FileNotFoundException, IOException}
 import java.net.URI
 import java.util.Locale
@@ -152,7 +154,8 @@ object DeltaFileOperations extends DeltaLogging {
     def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
       logInfo(s"Listing $dir")
       try {
-        val path = if (listAsDirectories) new Path(dir, "\u0000") else new Path(dir + "\u0000")
+        val path = if (listAsDirectories) new Path(dir, FileNameUtils.VIRTUAL_CHILD_NAME)
+          else new Path(dir + FileNameUtils.VIRTUAL_CHILD_NAME)
         logStore.listFrom(path, hadoopConf)
           .filterNot{ f =>
             val name = f.getPath.getName

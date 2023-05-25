@@ -208,7 +208,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         if (
             // LocalFileSystem and RawLocalFileSystem checks are needed for tests to pass
             fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem || !enableFastListFrom
-                    || resolvedPath.getName().equals("\u0000")
+                    || resolvedPath.getName().equals(FileNameUtils.VIRTUAL_CHILD_NAME)
         ) {
             statuses = fs.listStatus(parentPath);
         } else {
