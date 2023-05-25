@@ -313,7 +313,7 @@ class DeltaLogSuite extends QueryTest
 
       assert(log.update().allFiles.collect().find(_.path == "foo")
         // `dataChange` is set to `false` after replaying logs.
-        === Some(add2.copy(dataChange = false)))
+        === Some(add2.copy(dataChange = false, defaultRowCommitVersion = Some(2))))
     }
   }
 
