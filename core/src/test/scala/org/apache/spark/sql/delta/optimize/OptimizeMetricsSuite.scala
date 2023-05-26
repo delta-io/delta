@@ -272,7 +272,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
             "operationParameters.zOrderBy",
             "operationMetrics",
             "operation")
-          .take(1).head
+          .head
 
         // Verify ZOrder operation parameters
         val actualOpParameters = actualOperation.getString(0)
@@ -402,7 +402,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
 
         // Check DV metrics in the Delta history.
         val opMetricsAndName = deltaTable.history.select("operationMetrics", "operation")
-          .take(1)
           .head
 
         val opMetrics = opMetricsAndName
