@@ -150,7 +150,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt
     )
 
-    val withDb = verifyTableAndSolidify(tableDesc, None)
+    val withDb =
+      verifyTableAndSolidify(
+        tableDesc,
+        None
+      )
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
@@ -392,7 +396,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
   /** Performs checks on the parameters provided for table creation for a Delta table. */
   def verifyTableAndSolidify(
       tableDesc: CatalogTable,
-      query: Option[LogicalPlan]): CatalogTable = {
+      query: Option[LogicalPlan]
+      ): CatalogTable = {
 
     if (tableDesc.bucketSpec.isDefined) {
       throw DeltaErrors.operationNotSupportedException("Bucketing", tableDesc.identifier)
@@ -408,7 +413,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       tableDesc.partitionColumnNames,
       caseSensitive = false) // Delta is case insensitive
 
-    val validatedConfigurations = DeltaConfigs.validateConfigurations(tableDesc.properties)
+    val validatedConfigurations =
+      DeltaConfigs.validateConfigurations(tableDesc.properties)
 
     val db = tableDesc.identifier.database.getOrElse(catalog.getCurrentDatabase)
     val tableIdentWithDB = tableDesc.identifier.copy(database = Some(db))
