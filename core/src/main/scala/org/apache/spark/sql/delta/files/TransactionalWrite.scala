@@ -291,8 +291,12 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       partitionSchema: StructType, data: DataFrame): (
         Option[DeltaJobStatisticsTracker],
         Option[StatisticsCollection]) = {
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
+    // check whether we should collect Delta stats
+    val collectStats =
+      (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
+      )
 
+    if (collectStats) {
       val (outputStatsCollectionSchema, tableStatsCollectionSchema) =
         getStatsSchema(output, partitionSchema)
 
@@ -316,11 +320,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
       val statsColExpr = getStatsColExpr(outputStatsCollectionSchema, statsCollection)
 
-      (Some(new DeltaJobStatisticsTracker(
-        deltaLog.newDeltaHadoopConf(),
-        outputPath,
-        outputStatsCollectionSchema,
-        statsColExpr)), Some(statsCollection))
+      (Some(new DeltaJobStatisticsTracker(deltaLog.newDeltaHadoopConf(),
+                                          outputPath,
+                                          outputStatsCollectionSchema,
+                                          statsColExpr)),
+       Some(statsCollection))
     } else {
       (None, None)
     }
@@ -416,10 +420,17 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    val resultFiles = committer.addedStatuses.map { a =>
-        a.copy(stats = optionalStatsTracker.map(
-          _.recordedStats(a.toPath.getName)).getOrElse(a.stats))
-    }.filter {
+    val resultFiles =
+      (if (optionalStatsTracker.isDefined) {
+        committer.addedStatuses.map { a =>
+          a.copy(stats = optionalStatsTracker.map(
+            _.recordedStats(a.toPath.getName)).getOrElse(a.stats))
+        }
+      }
+      else {
+        committer.addedStatuses
+      })
+      .filter {
       // In some cases, we can write out an empty `inputData`. Some examples of this (though, they
       // may be fixed in the future) are the MERGE command when you delete with empty source, or
       // empty target, or on disjoint tables. This is hard to catch before the write without
