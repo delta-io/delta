@@ -185,7 +185,11 @@ class DeltaAnalysis(session: SparkSession)
         }
       val newDeltaCatalog = new DeltaCatalog()
       CreateDeltaTableCommand(
-        table = newDeltaCatalog.verifyTableAndSolidify(catalogTableTarget, None),
+        table = newDeltaCatalog
+          .verifyTableAndSolidify(
+            catalogTableTarget,
+            None
+          ),
         existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier),
         mode = saveMode,
         query = None,
