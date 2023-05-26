@@ -1451,7 +1451,10 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- dataChange: boolean
 ```
 
-Please note, as in the above example, the `readerFeatures` and `writerFeatures` fields do exist in the schema even when the table does not support table features. In such a case values of these two fields are `null`.
+Observe that `readerFeatures` and `writerFeatures` fields should comply with:
+- If a table has Reader Version 3, then a writer must write checkpoints with a not-null `readerFeatures` in the schema.
+- If a table has Writer Version 7, then a writer must write checkpoints with a not-null `writerFeatures` in the schema.
+- If a table has neither of the above, then a writer chooses whether to write `readerFeatures` and/or `writerFeatures` into the checkpoint schema. But if it does, their values must be null.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
