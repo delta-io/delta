@@ -17,17 +17,14 @@
 package org.apache.spark.sql.delta.optimize
 
 // scalastyle:off import.ordering.noEmptyLine
-import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.commands.optimize.{DeletionVectorStats, FileSizeStats, OptimizeMetrics, ZOrderStats}
+import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.floor
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -67,8 +64,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       assert(metrics.totalFilesSkipped == 0)
       assert(metrics.numTableColumns == 2)
       assert(metrics.numTableColumnsWithStats == 2)
-
-      assertOperationName(deltaLog)
     }
   }
 
@@ -141,7 +136,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       spark.range(0, 10).write.format("delta").save(tempDir.toString)
       val res = sql(s"OPTIMIZE delta.`${tempDir.toString}`")
       assert(res.schema == optimizeSchema)
-      assertOperationName(DeltaLog.forTable(spark, tempDir))
     }
   }
 
@@ -221,9 +215,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         numTableColumnsWithStats = 1)
 
       assert(actMetrics === expMetrics)
-
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
-      assertOperationName(deltaLog)
     }
   }
 
@@ -253,7 +244,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       assert(actMetrics.numTableColumns == 5)
       // There are only 3 columns to collect stats because of the dataSkippingNumIndexedCols config
       assert(actMetrics.numTableColumnsWithStats == 3)
-      assertOperationName(DeltaLog.forTable(spark, TableIdentifier(tblName)))
     }
   }
 
@@ -366,7 +356,6 @@ trait OptimizeMetricsSuiteBase extends QueryTest
           |}""".stripMargin
 
         assert(metrics.zOrderStats === Some(JsonUtils.fromJson[ZOrderStats](expZOrderMetrics)))
-        assertOperationName(DeltaLog.forTable(spark, tempDir))
       }
     }
   }
@@ -410,27 +399,23 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         val dvStats = metrics.head.deletionVectorStats
         assert(dvStats.get.numDeletionVectorsRemoved === numFilesWithDVs)
         assert(dvStats.get.numDeletionVectorRowsRemoved === numDeletedRows)
-        assertOperationName(deltaLog)
 
         // Check DV metrics in the Delta history.
-        val opMetrics = deltaTable.history.select("operationMetrics")
+        val opMetricsAndName = deltaTable.history.select("operationMetrics", "operation")
           .take(1)
           .head
+
+        val opMetrics = opMetricsAndName
           .getMap(0)
           .asInstanceOf[Map[String, String]]
         val dvMetrics = opMetrics.keys.filter(_.contains("DeletionVector"))
         assert(dvMetrics === Set("numDeletionVectorsRemoved"))
         assert(opMetrics("numDeletionVectorsRemoved") === numFilesWithDVs.toString)
+
+        val operationName = opMetricsAndName(1).asInstanceOf[String]
+        assert(operationName === DeltaOperations.OPTIMIZE_OPERATION_NAME)
       }
     }
-  }
-
-  def assertOperationName(deltaLog: DeltaLog): Unit = {
-    val ci = deltaLog.getChanges(deltaLog.update().version).map(_._2).flatten.collectFirst {
-      case ci: CommitInfo => ci
-    }.head
-
-    assert(ci.operation === DeltaOperations.OPTIMIZE_OPERATION_NAME)
   }
 }
 
