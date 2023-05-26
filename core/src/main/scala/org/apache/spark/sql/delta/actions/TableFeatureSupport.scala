@@ -84,7 +84,8 @@ trait TableFeatureSupport { this: Protocol =>
       shouldAddToWriterFeatures = shouldAddWrite
     }
 
-    withFeature(
+    val protocolWithDependencies = withFeatures(feature.requiredFeatures)
+    protocolWithDependencies.withFeature(
       feature.name,
       addToReaderFeatures = shouldAddToReaderFeatures,
       addToWriterFeatures = shouldAddToWriterFeatures)

@@ -22,6 +22,7 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -234,19 +235,42 @@ object Protocol {
   }
 
   /**
-   * Extracts all table features that are enabled by the given metadata.
+   * Returns the smallest set of table features that contains `features` and that also contains
+   * all dependencies of all features in the returned set.
+   */
+  @tailrec
+  private def getDependencyClosure(features: Set[TableFeature]): Set[TableFeature] = {
+    val requiredFeatures = features ++ features.flatMap(_.requiredFeatures)
+    if (features == requiredFeatures) {
+      features
+    } else {
+      getDependencyClosure(requiredFeatures)
+    }
+  }
+
+  /**
+   * Extracts all table features that are enabled by the given metadata and the optional protocol.
+   * This includes all already enabled features (if a protocol is provided), the features enabled
+   * directly by metadata, and all of their (transitive) dependencies.
    */
   def extractAutomaticallyEnabledFeatures(
-      spark: SparkSession, metadata: Metadata): Set[TableFeature] = {
-    val enabledFeatures = mutable.Set[TableFeature]()
-    TableFeature.allSupportedFeaturesMap.values.foreach {
-      case feature: TableFeature with FeatureAutomaticallyEnabledByMetadata =>
-        if (feature.metadataRequiresFeatureToBeEnabled(metadata, spark)) {
-          enabledFeatures += feature
-        }
-      case _ => () // Do nothing. We only care about features that can be activated in metadata.
-    }
-    enabledFeatures.toSet
+      spark: SparkSession,
+      metadata: Metadata,
+      protocol: Option[Protocol] = None): Set[TableFeature] = {
+    val protocolEnabledFeatures = protocol
+      .map(_.writerFeatureNames)
+      .getOrElse(Set.empty)
+      .flatMap(TableFeature.featureNameToFeature)
+    val metadataEnabledFeatures = TableFeature
+      .allSupportedFeaturesMap.values
+      .collect {
+        case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
+          if f.metadataRequiresFeatureToBeEnabled(metadata, spark) =>
+          f.asInstanceOf[TableFeature]
+      }
+      .toSet
+
+    getDependencyClosure(protocolEnabledFeatures ++ metadataEnabledFeatures)
   }
 
   /**
