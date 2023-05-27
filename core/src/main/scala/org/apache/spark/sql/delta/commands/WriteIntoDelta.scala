@@ -336,7 +336,9 @@ case class WriteIntoDelta(
           newFiles.collect { case a: AddFile => a },
           removedFileActions)
       case (SaveMode.Overwrite, None) =>
-        val newFiles = txn.writeFiles(data, Some(options))
+        val newFiles = writeFiles(
+          txn, data, options
+        )
         val addFiles = newFiles.collect { case a: AddFile => a }
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
           // with dynamic partition overwrite for any partition that is being written to all
