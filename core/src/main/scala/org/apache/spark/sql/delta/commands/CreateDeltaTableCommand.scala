@@ -437,7 +437,6 @@ case class CreateDeltaTableCommand(
     }
 
     table.copy(
-      properties = table.properties,
       // Remove write specific options when updating the catalog
       storage = storageProps,
       tracksPartitionsInCatalog = true)
