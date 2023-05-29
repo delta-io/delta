@@ -194,6 +194,7 @@ case class AlterTableAddColumnsDeltaCommand(
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val catalog = sparkSession.sessionState.catalog
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addColumns") {
       val txn = startTransaction(sparkSession)
@@ -249,6 +250,21 @@ case class AlterTableAddColumnsDeltaCommand(
               path, col, colPosition.map(_.toString))
         }))
 
+      // Perform schema update in external catalog in order to reflect newSchema.
+      // Spark's HiveExternalCatalog will copy the schema to tableProperties
+      // of HMS, before attempting HMS schema update, erroring out
+      // and then reattempting with EMPTY_SCHEMA
+      val catalogTable = table.catalogTable.get
+      val newDataSchema = StructType(
+        newSchema.fields.filterNot(field => catalogTable.partitionColumnNames.contains(field.name))
+      )
+
+      val existingSchema = CharVarcharUtils.getRawSchema(newDataSchema)
+      try catalog.alterTableDataSchema(catalogTable.identifier, existingSchema)
+      catch {
+        case e: Throwable =>
+          log.error("Error altering add columns: ", e)
+      }
       Seq.empty[Row]
     }
   }
