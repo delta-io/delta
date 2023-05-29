@@ -251,8 +251,8 @@ case class AlterTableAddColumnsDeltaCommand(
 
       // Perform schema update in external catalog in order to reflect newSchema.
       // Spark's HiveExternalCatalog will copy the schema to tableProperties
-      // of HMS, before attempting HMS schema update, erroring out
-      // and then reattempting with EMPTY_SCHEMA
+      // of HMS, before attempting HMS schema update, throwing and catching
+      // InvocationTargetException, and then reattempting with EMPTY_SCHEMA
       val catalogTable = table.catalogTable.get
       val newDataSchema = StructType(
         newSchema.fields.filterNot(field => catalogTable.partitionColumnNames.contains(field.name))
