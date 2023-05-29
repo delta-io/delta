@@ -254,12 +254,12 @@ case class AlterTableAddColumnsDeltaCommand(
       // of HMS, before attempting HMS schema update, throwing and catching
       // InvocationTargetException, and then reattempting with EMPTY_SCHEMA
       val catalogTable = table.catalogTable.get
-      val newDataSchema = StructType(
+      var newDataSchema = StructType(
         newSchema.fields.filterNot(field => catalogTable.partitionColumnNames.contains(field.name))
       )
 
-      val existingSchema = CharVarcharUtils.getRawSchema(newDataSchema)
-      try catalog.alterTableDataSchema(catalogTable.identifier, existingSchema)
+      newDataSchema = CharVarcharUtils.getRawSchema(newDataSchema)
+      try catalog.alterTableDataSchema(catalogTable.identifier, newDataSchema)
       catch {
         case e: InvocationTargetException =>
           log.error("Error altering add columns: ", e)
