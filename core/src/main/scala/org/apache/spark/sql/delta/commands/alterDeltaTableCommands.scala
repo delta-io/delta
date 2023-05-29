@@ -18,9 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
-
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -28,7 +26,6 @@ import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraint
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
@@ -39,6 +36,8 @@ import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
+
+import java.lang.reflect.InvocationTargetException
 
 /**
  * A super trait for alter table commands that modify Delta tables.
@@ -194,6 +193,7 @@ case class AlterTableAddColumnsDeltaCommand(
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val catalog = sparkSession.sessionState.catalog
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addColumns") {
       val txn = startTransaction(sparkSession)
@@ -249,6 +249,21 @@ case class AlterTableAddColumnsDeltaCommand(
               path, col, colPosition.map(_.toString))
         }))
 
+      // Perform schema update in external catalog in order to reflect newSchema.
+      // Spark's HiveExternalCatalog will copy the schema to tableProperties
+      // of HMS, before attempting HMS schema update, throwing and catching
+      // InvocationTargetException, and then reattempting with EMPTY_SCHEMA
+      val catalogTable = table.catalogTable.get
+      val newDataSchema = StructType(
+        newSchema.fields.filterNot(field => catalogTable.partitionColumnNames.contains(field.name))
+      )
+
+      val existingSchema = CharVarcharUtils.getRawSchema(newDataSchema)
+      try catalog.alterTableDataSchema(catalogTable.identifier, existingSchema)
+      catch {
+        case e: InvocationTargetException =>
+          log.error("Error altering add columns: ", e)
+      }
       Seq.empty[Row]
     }
   }
