@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import java.io.File
+
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.QueryTest
