@@ -428,6 +428,22 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot enable row tracking without collecting statistics.",
+      "If you want to enable row tracking, do the following:",
+      "  1. Enable statistics collection by running the command",
+      "     SET <statisticsCollectionPropertyKey> = true",
+      "  2. Run CONVERT TO DELTA without the NO STATISTICS option.",
+      "",
+      "If you do not want to collect statistics, disable row tracking:",
+      "  1. Deactivate enabling the table feature by default by running the command:",
+      "     RESET <rowTrackingTableFeatureDefaultKey>",
+      "  2. Deactivate the table property by default by running:",
+      "     SET <rowTrackingDefaultPropertyKey> = false"
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA" : {
     "message" : [
       "",
@@ -532,6 +548,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DOMAIN_METADATA_NOT_SUPPORTED" : {
+    "message" : [
+      "Detected DomainMetadata action(s) for domains <domainNames>, but DomainMetadataTableFeature is not enabled."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_DROP_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
     "message" : [
       "Index <columnIndex> to drop column is lower than 0"
@@ -556,6 +578,18 @@
       "Please remove duplicate columns before you update your table."
     ],
     "sqlState" : "42701"
+  },
+  "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR" : {
+    "message" : [
+      "Internal error: two DomainMetadata actions within the same transaction have the same domain <domainName>"
+    ],
+    "sqlState" : "42601"
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
+    "message" : [
+      "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
@@ -1445,6 +1479,19 @@
       "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false. Filters: <dataFilters>"
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot assign row IDs without row count statistics.",
+      "Collect statistics for the table by running the following code and retry:",
+      "import org.apache.spark.sql.catalyst.TableIdentifier",
+      "import org.apache.spark.sql.delta.DeltaLog",
+      "import org.apache.spark.sql.delta.stats.StatisticsCollection",
+      "",
+      "val log = DeltaLog.forTable(spark, TableIdentifier(table_name))",
+      "StatisticsCollection.recompute(spark, log)"
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [

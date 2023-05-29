@@ -177,12 +177,28 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
 
+          // However, if we allow creating an empty schema table and indeed the table is new, we
+          // would need to make sure txn.readVersion <= 0 so we are either:
+          // 1) Creating a new empty schema table (version = -1) or
+          // 2) Restoring an existing empty schema table at version 0. An empty schema table should
+          //    not have versions > 0 because it must be written with schema changes after initial
+          //    creation.
+          val emptySchemaTableFlag = sparkSession.sessionState.conf
+            .getConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE)
+          val allowRestoringExistingEmptySchemaTable =
+            emptySchemaTableFlag && txn.metadata.schema.isEmpty && txn.readVersion == 0
+          val allowCreatingNewEmptySchemaTable =
+            emptySchemaTableFlag && tableWithLocation.schema.isEmpty && txn.readVersion == -1
+
           // This is either a new table, or, we never defined the schema of the table. While it is
           // unexpected that `txn.metadata.schema` to be empty when txn.readVersion >= 0, we still
           // guard against it, in case of checkpoint corruption bugs.
           val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
-          if (noExistingMetadata) {
-            assertTableSchemaDefined(fs, tableLocation, tableWithLocation, txn, sparkSession)
+          if (noExistingMetadata && !allowRestoringExistingEmptySchemaTable) {
+            assertTableSchemaDefined(
+              fs, tableLocation, tableWithLocation, sparkSession,
+              allowCreatingNewEmptySchemaTable
+            )
             assertPathEmpty(hadoopConf, tableWithLocation)
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
@@ -270,15 +286,8 @@ case class CreateDeltaTableCommand(
       fs: FileSystem,
       path: Path,
       table: CatalogTable,
-      txn: OptimisticTransaction,
-      sparkSession: SparkSession): Unit = {
-    // If we allow creating an empty schema table and indeed the table is new, we just need to
-    // make sure:
-    // 1. txn.readVersion == -1 to read a new table
-    // 2. for external tables: path must either doesn't exist or is completely empty
-    val allowCreatingTableWithEmptySchema = sparkSession.sessionState
-      .conf.getConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE) && txn.readVersion == -1
-
+      sparkSession: SparkSession,
+      allowEmptyTableSchema: Boolean): Unit = {
     // Users did not specify the schema. We expect the schema exists in Delta.
     if (table.schema.isEmpty) {
       if (table.tableType == CatalogTableType.EXTERNAL) {
@@ -286,12 +295,12 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.createExternalTableWithoutLogException(
             path, table.identifier.quotedString, sparkSession)
         } else {
-          if (allowCreatingTableWithEmptySchema) return
+          if (allowEmptyTableSchema) return
           throw DeltaErrors.createExternalTableWithoutSchemaException(
             path, table.identifier.quotedString, sparkSession)
         }
       } else {
-        if (allowCreatingTableWithEmptySchema) return
+        if (allowEmptyTableSchema) return
         throw DeltaErrors.createManagedTableWithoutSchemaException(
           table.identifier.quotedString, sparkSession)
       }
@@ -482,9 +491,11 @@ case class CreateDeltaTableCommand(
   }
 }
 
+// isCreate is true for Create and CreateOrReplace modes. It is false for Replace mode.
 object TableCreationModes {
   sealed trait CreationMode {
     def mode: SaveMode
+    def isCreate: Boolean = true
   }
 
   case object Create extends CreationMode {
@@ -497,5 +508,6 @@ object TableCreationModes {
 
   case object Replace extends CreationMode {
     override def mode: SaveMode = SaveMode.Overwrite
+    override def isCreate: Boolean = false
   }
 }

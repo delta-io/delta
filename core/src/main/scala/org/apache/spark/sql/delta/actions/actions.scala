@@ -507,6 +507,30 @@ case class SetTransaction(
   override def wrap: SingleAction = SingleAction(txn = this)
 }
 
+/**
+ * Stores the highest (inclusive) ID that has been assigned to a row in during history of the table.
+ */
+case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
+  override def wrap: SingleAction = SingleAction(rowIdHighWaterMark = this)
+}
+
+/**
+ * The domain metadata action contains a configuration (string-string map) for a named metadata
+ * domain. Two overlapping transactions conflict if they both contain a domain metadata action for
+ * the same metadata domain.
+ *
+ * [[domain]]: A string used to identify a specific feature.
+ * [[configuration]]: A map containing configuration options for the conflict domain.
+ * [[removed]]: If it is true it serves as a tombstone to logically delete a [[DomainMetadata]]
+ *              action.
+ */
+case class DomainMetadata(
+    domain: String,
+    configuration: Map[String, String],
+    removed: Boolean) extends Action {
+  override def wrap: SingleAction = SingleAction(domainMetadata = this)
+}
+
 /** Actions pertaining to the addition and removal of files. */
 sealed trait FileAction extends Action {
   val path: String
@@ -552,7 +576,9 @@ case class AddFile(
     override val dataChange: Boolean,
     stats: String = null,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null
+    deletionVector: DeletionVectorDescriptor = null,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    baseRowId: Option[Long] = None
 ) extends FileAction {
   require(path.nonEmpty)
 
@@ -569,7 +595,8 @@ case class AddFile(
     val removedFile = RemoveFile(
       path, Some(timestamp), dataChange,
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
-      deletionVector = deletionVector
+      deletionVector = deletionVector,
+      baseRowId = baseRowId
     )
     removedFile.numLogicalRecords = numLogicalRecords
     removedFile.estLogicalFileSize = estLogicalFileSize
@@ -789,7 +816,9 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null
+    deletionVector: DeletionVectorDescriptor = null,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    baseRowId: Option[Long] = None
 ) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1097,6 +1126,8 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
+    rowIdHighWaterMark: RowIdHighWaterMark = null,
+    domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -1112,6 +1143,10 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
+    } else if (rowIdHighWaterMark != null) {
+      rowIdHighWaterMark
+    } else if (domainMetadata != null) {
+      domainMetadata
     } else if (commitInfo != null) {
       commitInfo
     } else {

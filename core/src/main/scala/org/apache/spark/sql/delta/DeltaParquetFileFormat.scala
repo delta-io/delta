@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAllRowsFilter, KeepMarkedRowsFilter}
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -36,7 +37,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.{ByteType, LongType, StructField, StructType}
+import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -74,8 +75,22 @@ case class DeltaParquetFileFormat(
       s"${requiredWriteConf.key} must be enabled to support Delta id column mapping mode")
   }
 
-  def prepareSchema(inputSchema: StructType): StructType = {
-    DeltaColumnMapping.createPhysicalSchema(inputSchema, referenceSchema, columnMappingMode)
+  /**
+   * prepareSchemaForRead must only be used for parquet read.
+   * It removes "PARQUET_FIELD_ID_METADATA_KEY" for name mapping mode which address columns by
+   * physical name instead of id.
+   */
+  def prepareSchemaForRead(inputSchema: StructType): StructType = {
+    val schema = DeltaColumnMapping.createPhysicalSchema(
+      inputSchema, referenceSchema, columnMappingMode)
+    if (columnMappingMode == NameMapping) {
+      SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .build())
+      }
+    } else schema
   }
 
   override def isSplitable(
@@ -113,9 +128,9 @@ case class DeltaParquetFileFormat(
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
         sparkSession,
-        prepareSchema(dataSchema),
-        prepareSchema(partitionSchema),
-        prepareSchema(requiredSchema),
+        prepareSchemaForRead(dataSchema),
+        prepareSchemaForRead(partitionSchema),
+        prepareSchemaForRead(requiredSchema),
         pushdownFilters,
         options,
         hadoopConf)

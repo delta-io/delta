@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
@@ -1790,6 +1792,92 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("protocol change logging") {
+    withTempDir { path =>
+      val dir = path.getCanonicalPath
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2") {
+        assert(
+          captureProtocolChangeEventBlob {
+            sql(s"CREATE TABLE delta.`$dir` (id INT) USING delta")
+          } === Map(
+            "toProtocol" -> Map(
+              "minReaderVersion" -> 1,
+              "minWriterVersion" -> 2,
+              "supportedFeatures" -> List("appendOnly", "invariants")
+            )))
+      }
+
+      // Upgrade protocol
+      assert(captureProtocolChangeEventBlob {
+        sql(
+          s"ALTER TABLE delta.`$dir` " +
+            s"SET TBLPROPERTIES (${DeltaConfigs.MIN_WRITER_VERSION.key} = '7')")
+      } === Map(
+        "fromProtocol" -> Map(
+          "minReaderVersion" -> 1,
+          "minWriterVersion" -> 2,
+          "supportedFeatures" -> List("appendOnly", "invariants")
+        ),
+        "toProtocol" -> Map(
+          "minReaderVersion" -> 1,
+          "minWriterVersion" -> 7,
+          "supportedFeatures" -> List("appendOnly", "invariants")
+        )))
+
+      // Add feature
+      assert(captureProtocolChangeEventBlob {
+        sql(
+          s"ALTER TABLE delta.`$dir` " +
+            s"SET TBLPROPERTIES (${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key} = 'true')")
+      } === Map(
+        "fromProtocol" -> Map(
+          "minReaderVersion" -> 1,
+          "minWriterVersion" -> 7,
+          "supportedFeatures" -> List("appendOnly", "invariants")
+        ),
+        "toProtocol" -> Map(
+          "minReaderVersion" -> 3,
+          "minWriterVersion" -> 7,
+          "supportedFeatures" -> List("appendOnly", "deletionVectors", "invariants")
+        )))
+    }
+  }
+
+  test("protocol change logging using commitLarge") {
+    withTempDir { path =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2") {
+        assert(
+          captureProtocolChangeEventBlob {
+            sql(s"CREATE TABLE delta.`${path.getCanonicalPath}` (id INT) USING delta")
+          } === Map(
+            "toProtocol" -> Map(
+              "minReaderVersion" -> 1,
+              "minWriterVersion" -> 2,
+              "supportedFeatures" -> List("appendOnly", "invariants")
+            )))
+      }
+
+      // Clone table to invoke commitLarge
+      withTempDir { clonedPath =>
+        assert(
+          captureProtocolChangeEventBlob {
+            sql(s"CREATE TABLE delta.`${clonedPath.getCanonicalPath}` " +
+              s"SHALLOW CLONE delta.`${path.getCanonicalPath}` " +
+              s"TBLPROPERTIES (${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key} = 'true')")
+          } === Map(
+            "toProtocol" -> Map(
+              "minReaderVersion" -> 3,
+              "minWriterVersion" -> 7,
+              "supportedFeatures" -> List("appendOnly", "deletionVectors", "invariants")
+            )))
+      }
+    }
+  }
+
   test("can't write to a table with identity columns (legacy protocol)") {
     withTempDir { dir =>
       val writerVersion = 6
@@ -1853,6 +1941,16 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(TableFeature.featureNameToFeature(name).isDefined)
       assert(status == FEATURE_PROP_SUPPORTED)
     }
+  }
+
+  private def captureProtocolChangeEventBlob(f: => Unit): Map[String, Any] = {
+    val logs = Log4jUsageLogger.track(f)
+    val blob = logs.collectFirst {
+      case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        r.tags.get("opType").contains("delta.protocol.change") => r.blob
+    }
+    require(blob.nonEmpty, "Expecting a delta.protocol.change event but didn't see any.")
+    blob.map(JsonUtils.fromJson[Map[String, Any]]).head
   }
 }
 

@@ -99,6 +99,7 @@ case class WriteIntoDelta(
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata)
       txn.commit(actions, operation)
+
     }
     Seq.empty
   }

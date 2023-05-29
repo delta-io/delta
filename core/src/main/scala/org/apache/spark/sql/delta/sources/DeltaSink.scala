@@ -33,6 +33,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.execution.streaming.{Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.NullType
+import org.apache.spark.util.Utils
 
 /**
  * A streaming sink that writes data into a Delta Table.
@@ -76,8 +77,13 @@ class DeltaSink(
       optimisticTransaction.registerSQLMetrics(sqlContext.sparkSession, metrics)
       val setTxn = SetTransaction(appId = queryId, version = batchId,
         lastUpdated = Some(deltaLog.clock.getTimeMillis())) :: Nil
-      optimisticTransaction
-        .commit(actions = setTxn ++ newFiles ++ deletedFiles, op = streamingUpdate)
+      val (_, durationMs) = Utils.timeTakenMs {
+        optimisticTransaction
+          .commit(actions = setTxn ++ newFiles ++ deletedFiles, op = streamingUpdate)
+      }
+      logInfo(
+        s"Committed transaction, batchId=${batchId}, duration=${durationMs} ms, " +
+        s"added ${newFiles.size} files, removed ${deletedFiles.size} files.")
       val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
     }
@@ -120,7 +126,15 @@ class DeltaSink(
         txn.filterFiles().map(_.remove)
       case _ => Nil
     }
-    val newFiles = txn.writeFiles(data, Some(options))
+    val (newFiles, writeFilesTimeMs) = Utils.timeTakenMs{
+      txn.writeFiles(data, Some(options))
+    }
+    val totalSize = newFiles.map(_.getFileSize).sum
+    val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
+    logInfo(
+      s"Wrote ${newFiles.size} files, with total size ${totalSize}, " +
+      s"${totalLogicalRecords} logical records, duration=${writeFilesTimeMs} ms.")
+
     val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId, options.userMetadata)
     val pendingTxn = PendingTxn(batchId, txn, info, newFiles, deletedFiles)
     pendingTxn.commit()

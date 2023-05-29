@@ -51,7 +51,7 @@ case class DeltaSourceOffset private(
     reservoirVersion: Long,
     index: Long,
     isStartingVersion: Boolean
-  ) extends Offset {
+  ) extends Offset with Comparable[DeltaSourceOffset] {
 
   import DeltaSourceOffset._
 
@@ -91,6 +91,9 @@ case class DeltaSourceOffset private(
       " same table is disallowed.")
     implicitly[Ordering[(Long, Long)]].compare((reservoirVersion, index),
       (otherOffset.reservoirVersion, otherOffset.index))
+  }
+  override def compareTo(o: DeltaSourceOffset): Int = {
+    compare(o)
   }
 }
 

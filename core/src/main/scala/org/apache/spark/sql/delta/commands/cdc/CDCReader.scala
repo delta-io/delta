@@ -760,7 +760,7 @@ trait CDCReaderImpl extends DeltaLogging {
 
     val dfs = ListBuffer[DataFrame]()
     // Scan for masked rows as change_type = "insert",
-    // see explanation in [[generateFileActionWithInlineDv]].
+    // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceAddFiles.foreach { case (tableVersion, addFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
       dfs.append(
@@ -773,13 +773,13 @@ trait CDCReaderImpl extends DeltaLogging {
             deltaLog.dataPath,
             snapshot,
             rowIndexFilters =
-              Some(fileActionsToRowIndexFilters(addFiles.toSeq, useIfContainedFilters = true))),
+              Some(fileActionsToIfNotContainedRowIndexFilters(addFiles.toSeq))),
 
           isStreaming))
     }
 
     // Scan for masked rows as change_type = "delete",
-    // see explanation in [[generateFileActionWithInlineDv]].
+    // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceRemoveFiles.foreach { case (tableVersion, removeFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
       dfs.append(
@@ -792,7 +792,7 @@ trait CDCReaderImpl extends DeltaLogging {
             deltaLog.dataPath,
             snapshot,
             rowIndexFilters =
-              Some(fileActionsToRowIndexFilters(removeFiles.toSeq, useIfContainedFilters = false))),
+              Some(fileActionsToIfNotContainedRowIndexFilters(removeFiles.toSeq))),
 
           isStreaming))
     }
@@ -973,16 +973,11 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
-   * Return a map of file paths to IfContained or IfNotContained row index filters, depending on
-   * the value of `indexFilterType`.
+   * Return a map of file paths to IfNotContained row index filters, to keep only the marked rows.
    */
-  private def fileActionsToRowIndexFilters(
-      actions: Seq[FileAction],
-      useIfContainedFilters: Boolean): Map[String, RowIndexFilterType] = {
-    val indexFilterType =
-      if (useIfContainedFilters) RowIndexFilterType.IF_CONTAINED
-      else RowIndexFilterType.IF_NOT_CONTAINED
-    actions.map(f => f.path -> indexFilterType).toMap
+  private def fileActionsToIfNotContainedRowIndexFilters(
+      actions: Seq[FileAction]): Map[String, RowIndexFilterType] = {
+    actions.map(f => f.path -> RowIndexFilterType.IF_NOT_CONTAINED).toMap
   }
 
   /**

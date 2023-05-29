@@ -16,25 +16,22 @@
 
 package org.apache.spark.sql.delta.commands.merge
 
-import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTable}
-import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
 import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression, ExpressionSet, Literal}
-import org.apache.spark.sql.catalyst.optimizer.{EliminateResolvedHint, JoinSelectionHelper}
+import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression, Literal}
+import org.apache.spark.sql.catalyst.optimizer.EliminateResolvedHint
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
-import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.storage.StorageLevel
 
@@ -63,7 +60,7 @@ import org.apache.spark.storage.StorageLevel
  * 3rd concern is that executors run out of disk space with the extra materialization.
  * We record such failures for tracking purpuses.
  */
-trait MergeIntoMaterializeSource extends DeltaLogging {
+trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
   import MergeIntoMaterializeSource._
 
   /**
@@ -219,9 +216,9 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       case DeltaSQLConf.MergeMaterializeSource.AUTO =>
         if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY)
-        } else if (!sourceContainsOnlyDeltaScans(source)) {
+        } else if (!planContainsOnlyDeltaScans(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA)
-        } else if (!isDeterministic(source)) {
+        } else if (!planIsDeterministic(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
@@ -343,34 +340,6 @@ trait MergeIntoMaterializeSource extends DeltaLogging {
       matchedActionsCols ++ notMatchedActionsCols)
 
     source.output.filter(allCols.contains(_))
-  }
-
-  private def sourceContainsOnlyDeltaScans(source: LogicalPlan): Boolean = {
-    !source.exists {
-      case l: LogicalRelation =>
-        l match {
-          case DeltaTable(_) => false
-          case _ => true
-        }
-      case _: LeafNode => true // Any other LeafNode is a non Delta scan.
-      case _ => false
-    }
-  }
-
-  /**
-   * `true` if `source` has a safe level of determinism.
-   * This is a conservative approximation of `source` being a truly deterministic query.
-   */
-  private def isDeterministic(plan: LogicalPlan): Boolean = plan match {
-      // This is very restrictive, allowing only deterministic filters and projections directly
-      // on top of a Delta Table.
-      case Project(projectList, child) if projectList.forall(_.deterministic) =>
-        isDeterministic(child)
-      case Filter(cond, child) if cond.deterministic => isDeterministic(child)
-      case Union(children, _, _) => children.forall(isDeterministic)
-      case SubqueryAlias(_, child) => isDeterministic(child)
-      case DeltaTable(_) => true
-      case _ => false
   }
 }
 

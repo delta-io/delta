@@ -62,7 +62,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, MapType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -427,10 +427,12 @@ class DeltaAnalysis(session: SparkSession)
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
           case Some(DeltaFullTable(index)) =>
+            DeltaUpdateTable(newTable, cols, expressions, condition)
           case o =>
-            throw DeltaErrors.notADeltaSourceException("UPDATE", o)
+            // not a Delta table
+            u
         }
-      DeltaUpdateTable(newTable, cols, expressions, condition)
+
 
     case merge: MergeIntoTable if merge.childrenResolved =>
       val matchedActions = merge.matchedActions.map {

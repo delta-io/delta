@@ -89,6 +89,7 @@ case class CommitStats(
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
+  numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None
 )
 
@@ -552,14 +553,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
     //
-    // This code path is for existing tables. The new table case has been handled by
-    // [[Protocol.forNewTable]] earlier in this method.
-    if (!isCreatingNewTable) {
+    // This code path is for existing tables and during `REPLACE` if the downgrade flag is not set.
+    // The new table case has been handled by [[Protocol.forNewTable]] earlier in this method.
+    if (!canAssignAnyNewProtocol) {
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
 
-    newMetadataTmp = RowId.verifyAndUpdateMetadata(
+    RowId.verifyMetadata(
       spark, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     assertMetadata(newMetadataTmp)
@@ -985,12 +986,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
 
+      // Check for duplicated [[MetadataAction]] with the same domain names and validate the table
+      // feature is enabled if [[MetadataAction]] is submitted.
+      val domainMetadata =
+        DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
+
       val isBlindAppend = {
         val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
       }
+
+      val readRowIdHighWatermark =
+        RowId.extractHighWatermark(spark, snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
@@ -1005,16 +1014,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      val currentTransactionInfo = new CurrentTransactionInfo(
+      val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
+        protocol = protocol,
         actions = preparedActions,
         readSnapshot = snapshot,
-        commitInfo = Option(commitInfo))
+        commitInfo = Option(commitInfo),
+        readRowIdHighWatermark = readRowIdHighWatermark,
+        domainMetadata = domainMetadata)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1121,10 +1133,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             numSetTransaction += 1
           case m: Metadata =>
             assertMetadata(m)
+          case p: Protocol =>
+            recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
           case _ =>
         }
         action
       }
+
+      allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions)
+
       if (readVersion < 0) {
         deltaLog.createLogDirectory()
       }
@@ -1276,6 +1293,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // NOTE: There is at most one protocol change at this point.
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
+      recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
     }
 
 
@@ -1340,6 +1358,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     deltaLog.protocolWrite(snapshot.protocol)
+
+    finalActions =
+      RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.
@@ -1412,6 +1433,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     allowFallbackToSnapshotIsolation
   }
 
+  /** Log protocol change events. */
+  private def recordProtocolChanges(
+      fromProtocol: Protocol,
+      toProtocol: Protocol,
+      isCreatingNewTable: Boolean): Unit = {
+    def extract(p: Protocol): Map[String, Any] = Map(
+      "minReaderVersion" -> p.minReaderVersion, // Number
+      "minWriterVersion" -> p.minWriterVersion, // Number
+      "supportedFeatures" ->
+        p.implicitlyAndExplicitlySupportedFeatures.map(_.name).toSeq.sorted // Array[String]
+    )
+
+    val payload = if (isCreatingNewTable) {
+      Map("toProtocol" -> extract(toProtocol))
+    } else {
+      Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
+    }
+    recordDeltaEvent(deltaLog, "delta.protocol.change", data = payload)
+  }
+
   /**
   * Default [[IsolationLevel]] as set in table metadata.
   */
@@ -1451,8 +1492,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
-      isolationLevel: IsolationLevel
-  ): (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
+      isolationLevel: IsolationLevel)
+    : (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
 
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
@@ -1545,6 +1586,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     var bytesNew: Long = 0L
     var numAdd: Int = 0
+    var numOfDomainMetadatas: Long = 0L
     var numRemove: Int = 0
     var numSetTransaction: Int = 0
     var numCdcFiles: Int = 0
@@ -1562,6 +1604,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         cdcBytesNew += c.size
       case _: SetTransaction =>
         numSetTransaction += 1
+      case _: DomainMetadata =>
+        numOfDomainMetadatas += 1
       case _ =>
     }
     val info = currentTransactionInfo.commitInfo
@@ -1595,6 +1639,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
+      numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 
@@ -1623,7 +1668,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       checkVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      commitIsolationLevel: IsolationLevel): (Long, CurrentTransactionInfo) = recordDeltaOperation(
+      commitIsolationLevel: IsolationLevel)
+    : (Long, CurrentTransactionInfo) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {

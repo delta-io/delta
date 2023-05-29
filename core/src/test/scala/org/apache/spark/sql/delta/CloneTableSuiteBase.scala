@@ -945,31 +945,35 @@ trait CloneTableSuiteBase extends QueryTest
       assert(targetLog.update().protocol.isFeatureSupported(TestWriterFeature))
   }
 
+  case class TableFeatureWithProperty(
+      feature: TableFeature,
+      property: DeltaConfig[Boolean])
+
   // Delta properties that automatically cause a version upgrade when enabled via ALTER TABLE.
-  final val featuresWithAutomaticProtocolUpgrade: Seq[DeltaConfig[Boolean]] = Seq(
-    DeltaConfigs.CHANGE_DATA_FEED,
-    DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION
-  )
+  final val featuresWithAutomaticProtocolUpgrade: Seq[TableFeatureWithProperty] = Seq(
+    TableFeatureWithProperty(ChangeDataFeedTableFeature, DeltaConfigs.CHANGE_DATA_FEED),
+    TableFeatureWithProperty(
+      DeletionVectorsTableFeature, DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION))
   // This test ensures this upgrade also happens when enabled during a CLONE.
-  for (feature <- featuresWithAutomaticProtocolUpgrade)
+  for (featureWithProperty <- featuresWithAutomaticProtocolUpgrade)
     testAllClones("Cloning a table with new table properties" +
-      s" that force protocol version upgrade - ${feature.key}"
+      s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
       import DeltaTestUtils.StrictProtocolOrdering
 
       spark.range(5).write.format("delta").save(source)
       val sourceDeltaLog = DeltaLog.forTable(spark, source)
       val sourceSnapshot = sourceDeltaLog.update()
-      // This only works if the feature is not enabled by default.
-      assert(!feature.fromMetaData(sourceSnapshot.metadata))
-      // Check that the original version is not already sufficient for the feature.
+      // This only works if the featureWithProperty is not enabled by default.
+      assert(!featureWithProperty.property.fromMetaData(sourceSnapshot.metadata))
+      // Check that the original version is not already sufficient for the featureWithProperty.
       assert(!StrictProtocolOrdering.fulfillsVersionRequirements(
         actual = sourceSnapshot.protocol,
-        requirement = feature.minimumProtocolVersion.get
+        requirement = featureWithProperty.feature.minProtocolVersion
       ))
 
-      // Clone the table, enabling the feature in an override.
-      val tblProperties = Map(feature.key -> "true")
+      // Clone the table, enabling the featureWithProperty in an override.
+      val tblProperties = Map(featureWithProperty.property.key -> "true")
       cloneTable(
         source,
         target,
@@ -983,7 +987,7 @@ trait CloneTableSuiteBase extends QueryTest
       // Check that the protocol has been upgraded.
       assert(StrictProtocolOrdering.fulfillsVersionRequirements(
         actual = targetSnapshot.protocol,
-        requirement = feature.minimumProtocolVersion.get
+        requirement = featureWithProperty.feature.minProtocolVersion
       ))
     }
 
@@ -1000,7 +1004,7 @@ trait CloneTableSuiteBase extends QueryTest
       // Check that the original version is not already sufficient for the feature.
       assert(!StrictProtocolOrdering.fulfillsVersionRequirements(
         actual = sourceSnapshot.protocol,
-        requirement = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.minimumProtocolVersion.get
+        requirement = DeletionVectorsTableFeature.minProtocolVersion
       ))
 
       // Clone the table.

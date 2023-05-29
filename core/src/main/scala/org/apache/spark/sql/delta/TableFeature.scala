@@ -210,6 +210,7 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
@@ -225,7 +226,7 @@ object TableFeature {
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         // Row IDs are still under development and only available in testing.
-        RowIdFeature)
+        RowTrackingFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -327,14 +328,16 @@ object DeletionVectorsTableFeature
   }
 }
 
-object RowIdFeature extends WriterFeature(name = "rowIds")
+object RowTrackingFeature extends WriterFeature(name = "rowTracking")
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
-      spark: SparkSession): Boolean = DeltaConfigs.ROW_IDS_ENABLED.fromMetaData(metadata)
+      spark: SparkSession): Boolean = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 }
+
+object DomainMetadataTableFeature extends WriterFeature(name = "domainMetadata")
 
 
 /**

@@ -40,16 +40,19 @@ import org.apache.spark.sql.types.StructType
  * @param readSnapshot read [[Snapshot]] used for the transaction
  * @param commitInfo [[CommitInfo]] for the commit
  */
-private[delta] class CurrentTransactionInfo(
+private[delta] case class CurrentTransactionInfo(
     val txnId: String,
     val readPredicates: Seq[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
     val metadata: Metadata,
+    val protocol: Protocol,
     val actions: Seq[Action],
     val readSnapshot: Snapshot,
-    val commitInfo: Option[CommitInfo]) {
+    val commitInfo: Option[CommitInfo],
+    val readRowIdHighWatermark: RowIdHighWaterMark,
+    val domainMetadata: Seq[DomainMetadata]) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -120,7 +123,8 @@ private[delta] class ConflictChecker(
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
-  def currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**
@@ -135,6 +139,8 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+    reassignOverlappingRowIds()
+    checkIfDomainMetadataConflict()
     logMetrics()
     currentTransactionInfo
   }
@@ -308,6 +314,92 @@ private[delta] class ConflictChecker(
     // multiple instances of the same streaming query are running at the same time.
     if (winningCommitSummary.appLevelTransactions.exists(currentTransactionInfo.isConflict(_))) {
       throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
+    }
+  }
+
+  /**
+   * Checks [[DomainMetadata]] to capture whether the current transaction conflicts with the
+   * winning transaction at any domain.
+   *     1. Accept the current transaction if its set of metadata domains do not overlap with the
+   *        winning transaction's set of metadata domains.
+   *     2. Otherwise, fail the current transaction unless each conflicting domain is associated
+   *        with a table feature that defines a domain-specific way of resolving the conflict.
+   */
+  private def checkIfDomainMetadataConflict(): Unit = {
+    if (!DomainMetadataUtils.domainMetadataSupported(currentTransactionInfo.protocol)) {
+      return
+    }
+    val winningDomainMetadataMap =
+      DomainMetadataUtils.extractDomainMetadatasMap(winningCommitSummary.actions)
+
+    /**
+     * Any new well-known domains that need custom conflict resolution need to add new cases in
+     * below case match clause. E.g.
+     * case MonotonicCounter(value), Some(MonotonicCounter(conflictingValue)) =>
+     *   MonotonicCounter(Math.max(value, conflictingValue))
+     */
+    def resolveConflict(domainMetadataFromCurrentTransaction: DomainMetadata): DomainMetadata =
+      (domainMetadataFromCurrentTransaction,
+        winningDomainMetadataMap.get(domainMetadataFromCurrentTransaction.domain)) match {
+        // No-conflict case.
+        case (domain, None) => domain
+        case (_, Some(_)) =>
+          // Any conflict not specifically handled by a previous case must fail the transaction.
+          throw new io.delta.exceptions.ConcurrentTransactionException(
+            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
+              "added.")
+      }
+
+    val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
+    // Resolve physical [[DomainMetadata]] conflicts (fail on logical conflict).
+    val updatedActions: Seq[Action] = currentTransactionInfo.actions.map {
+      case domainMetadata: DomainMetadata =>
+        val mergedAction = resolveConflict(domainMetadata)
+        mergedDomainMetadata += mergedAction
+        mergedAction
+      case other => other
+    }
+
+    currentTransactionInfo = currentTransactionInfo.copy(
+      domainMetadata = mergedDomainMetadata.toSeq,
+      actions = updatedActions)
+  }
+
+  /**
+   * Checks whether the Row IDs assigned by the current transaction overlap with the Row IDs
+   * assigned by the winning transaction. I.e. this function checks whether both the winning and the
+   * current transaction assigned new Row IDs. If this the case, then this check assigns new Row IDs
+   * to the new files added by the current transaction so that they no longer overlap.
+   */
+  private def reassignOverlappingRowIds(): Unit = {
+    // The current transaction should only assign Row Ids if they are supported.
+    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
+
+    winningCommitSummary.actions.collectFirst {
+      case RowIdHighWaterMark(winningHighWaterMark) =>
+        // The winning transaction assigned conflicting Row IDs. Adjust the Row IDs assigned by the
+        // current transaction as if it had read the result of the winning transaction.
+        val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+        assert(winningHighWaterMark >= readHighWaterMark)
+        val watermarkDiff = winningHighWaterMark - readHighWaterMark
+
+        val actionsWithReassignedRowIds = currentTransactionInfo.actions.map {
+          // We should only update the row IDs that were assigned by this transaction, and not the
+          // row IDs that were assigned by an earlier transaction and merely copied over to a new
+          // AddFile as part of this transaction. I.e., we should only update the base row IDs
+          // that are larger than the read high watermark.
+          case a: AddFile if a.baseRowId.exists(_ > readHighWaterMark) =>
+            val newBaseRowId = a.baseRowId.map(_ + watermarkDiff)
+            a.copy(baseRowId = newBaseRowId)
+
+          case waterMark @ RowIdHighWaterMark(v) =>
+            waterMark.copy(highWaterMark = v + watermarkDiff)
+
+          case a => a
+        }
+      currentTransactionInfo = currentTransactionInfo.copy(
+        actions = actionsWithReassignedRowIds,
+        readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
     }
   }
 

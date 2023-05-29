@@ -163,9 +163,11 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
   def processUnmodifiedData(
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
-      snapshot: Snapshot): Seq[FileAction] = {
-    val (fullyRemovedFiles, notFullyRemovedFiles) =
-      touchedFiles.partition(_.isFullyReplaced())
+      snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
+    val numDeletedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
+
+    val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
 
     val timestamp = System.currentTimeMillis()
     val fullyRemoved = fullyRemovedFiles.map(_.fileLogEntry.removeWithTimestamp(timestamp))
@@ -178,7 +180,9 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles
+    // TODO: gather more metrics
+    val metricMap = Map("numDeletedRows" -> numDeletedRows, "numRemovedFiles" -> numRemovedFiles)
+    (fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles, metricMap)
   }
 
   /** Fetch stats for `addFiles`. */

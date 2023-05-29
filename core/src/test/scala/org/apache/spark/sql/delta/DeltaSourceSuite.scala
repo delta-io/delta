@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
+import org.scalatest.time.{Seconds, Span}
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -910,7 +911,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("SC-11561: can delete old files of a snapshot without update") {
+  test(
+      "can delete old files of a snapshot without update"
+  ) {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
@@ -960,7 +963,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // can process new data without update, despite that previous log files have been deleted
         AdvanceManualClock(10 * 1000L),
         AdvanceManualClock(10 * 1000L),
-        CheckLastBatch("3", "4")
+        CheckNewAnswer("3", "4")
       )
       assert(deltaLog.snapshot.version == 0)
     }
@@ -2126,7 +2129,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Initialize the stream to pass the initial snapshot
         testStream(readStream())(
           StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-          ProcessAllAvailable()
+          ProcessAllAvailable(),
+          CheckAnswer(("a", "b"))
         )
 
         // It is ok to relax nullability during streaming post analysis, and restart would fix it.
@@ -2155,10 +2159,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // The query would fail because the read schema has nullable=false but the schema change
           // tries to relax it, we cannot automatically move ahead with it.
           ExpectFailure[DeltaIllegalStateException](t =>
-            assert(t.getMessage.contains("Detected schema change")))
-        )
-        // Upon restart, the backfill can work with relaxed nullability read schema
-        testStream(readStream())(
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          },
+          // Upon restart, the backfill can work with relaxed nullability read schema
           StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
           ProcessAllAvailable(),
           // See how it loads data from across the nullability change without a problem

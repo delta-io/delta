@@ -63,11 +63,11 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param startingCheckpoint A checkpoint that we can start our listing from
    */
   protected def getLogSegmentFrom(
-      startingCheckpoint: Option[CheckpointMetaData]): Option[LogSegment] = {
+      startingCheckpoint: Option[LastCheckpointInfo]): Option[LogSegment] = {
     getLogSegmentForVersion(
       startCheckpoint = startingCheckpoint.map(_.version),
       versionToLoad = None,
-      checkpointMetadataHint = startingCheckpoint
+      lastCheckpointInfo = startingCheckpoint
     )
   }
 
@@ -134,13 +134,18 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param versionToLoad A specific version to load. Typically used with time travel and the
    *                      Delta streaming source. If not provided, we will try to load the latest
    *                      version of the table.
+   * @param lastCheckpointInfo [[LastCheckpointInfo]] from the _last_checkpoint. This could be
+   *                           used to initialize the Snapshot's [[LogSegment]].
+   * @param oldCheckpointProvider The [[CheckpointProvider]] from the previous snapshot. This could
+   *                              be used to initialize the new [[LogSegment]].
    * @return Some LogSegment to build a Snapshot if files do exist after the given
    *         startCheckpoint. None, if the directory was missing or empty.
    */
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long] = None,
-      checkpointMetadataHint: Option[CheckpointMetaData] = None): Option[LogSegment] = {
+      lastCheckpointInfo: Option[LastCheckpointInfo] = None,
+      oldCheckpointProvider: Option[CheckpointProvider] = None): Option[LogSegment] = {
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
     val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
@@ -148,7 +153,8 @@ trait SnapshotManagement { self: DeltaLog =>
       startCheckpoint,
       versionToLoad,
       newFiles,
-      checkpointMetadataHint = checkpointMetadataHint)
+      lastCheckpointInfo = lastCheckpointInfo,
+      oldCheckpointProvider = oldCheckpointProvider)
   }
 
   /**
@@ -193,7 +199,8 @@ trait SnapshotManagement { self: DeltaLog =>
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long],
       files: Option[Array[FileStatus]],
-      checkpointMetadataHint: Option[CheckpointMetaData]): Option[LogSegment] = {
+      lastCheckpointInfo: Option[LastCheckpointInfo],
+      oldCheckpointProvider: Option[CheckpointProvider]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
       val newFiles = files.filterNot(_.isEmpty)
         .getOrElse {
@@ -254,8 +261,12 @@ trait SnapshotManagement { self: DeltaLog =>
 
       val newVersion =
         deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
-      val checkpointProvider = newCheckpoint
-        .map(_.getCheckpointProvider(logPath, checkpoints, checkpointMetadataHint))
+      val checkpointProvider =
+        newCheckpoint.map { ci =>
+          oldCheckpointProvider.filter(_.version == newCheckpointVersion).getOrElse {
+            ci.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfo)
+          }
+        }
 
       // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
       // they may just be before the checkpoint version unless we have a bug in log cleanup.
@@ -394,7 +405,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // `checkpoints` may contain multiple checkpoints for different part sizes, we need to
         // search `FileStatus`s of the checkpoint files for `cp`.
         val checkpointProvider =
-          cp.getCheckpointProvider(logPath, checkpoints, checkpointMetadataHint = None)
+          cp.getCheckpointProvider(logPath, checkpoints, lastCheckpointInfoHint = None)
         // Create the list of `FileStatus`s for delta files after `cp.version`.
         val deltasAfterCheckpoint = deltas.filter { file =>
           deltaVersion(file) > cp.version
@@ -439,7 +450,7 @@ trait SnapshotManagement { self: DeltaLog =>
   /** Used to compute the LogSegment after a commit */
   protected[delta] def getLogSegmentAfterCommit(
       preCommitLogSegment: LogSegment,
-      checkpointMetadataHint: Option[CheckpointMetaData]): LogSegment = {
+      oldCheckpointProvider: Option[CheckpointProvider]): LogSegment = {
     /**
      * We can't specify `versionToLoad = committedVersion` for the call below.
      * If there are a lot of concurrent commits to the table on the same cluster, each
@@ -452,7 +463,7 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(
       startCheckpoint = preCommitLogSegment.checkpointVersionOpt,
       versionToLoad = None,
-      checkpointMetadataHint = checkpointMetadataHint
+      oldCheckpointProvider = oldCheckpointProvider
     ).getOrElse {
       // This shouldn't be possible right after a commit
       logError(s"No delta log found for the Delta table at $logPath")
@@ -715,7 +726,7 @@ trait SnapshotManagement { self: DeltaLog =>
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
       val segment = getLogSegmentAfterCommit(
         preCommitLogSegment,
-        checkpointMetadataHint = previousSnapshot.getCheckpointMetadataOpt)
+        previousSnapshot.getCheckpointProviderOpt)
 
       // This likely implies a list-after-write inconsistency
       if (segment.version < committedVersion) {
@@ -799,19 +810,11 @@ object SnapshotManagement {
   def appendCommitToLogSegment(
       oldLogSegment: LogSegment,
       commitFileStatus: FileStatus,
-      committedVersion: Long,
-      checkpointMetadataHint: Option[CheckpointMetaData]): LogSegment = {
+      committedVersion: Long): LogSegment = {
     require(oldLogSegment.version + 1 == committedVersion)
-    val checkpointProvider = oldLogSegment.checkpointProviderOpt match {
-      case Some(provider: PreloadedCheckpointProvider)
-          if checkpointMetadataHint.forall(_.semanticEquals(provider.checkpointMetadata)) =>
-        Some(provider.copy(checkpointMetadataOpt = checkpointMetadataHint))
-      case other => other
-    }
     oldLogSegment.copy(
       version = committedVersion,
       deltas = oldLogSegment.deltas :+ commitFileStatus,
-      checkpointProviderOpt = checkpointProvider,
       lastCommitTimestamp = commitFileStatus.getModificationTime)
   }
 }
@@ -873,11 +876,7 @@ case class LogSegment(
     checkpointProviderOpt: Option[CheckpointProvider],
     lastCommitTimestamp: Long) {
 
-  def checkpointVersionOpt: Option[Long] =
-    checkpointProviderOpt.map(_.checkpointMetadata.version)
-
-  def checkpoint: Seq[FileStatus] =
-    checkpointProviderOpt.map(_.checkpointFiles).getOrElse(Nil)
+  def checkpointVersionOpt: Option[Long] = checkpointProviderOpt.map(_.version)
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
 

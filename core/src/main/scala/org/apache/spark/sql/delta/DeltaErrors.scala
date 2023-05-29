@@ -21,6 +21,8 @@ import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -1048,6 +1050,7 @@ trait DeltaErrorsBase
       messageParameters = Array(unknownColumns.mkString(", "))
     )
   }
+
 
   def cannotRenamePath(tempPath: String, path: String): Throwable = {
     new DeltaIllegalStateException(
@@ -2282,6 +2285,19 @@ trait DeltaErrorsBase
     )
   }
 
+  def convertToDeltaRowTrackingEnabledWithoutStatsCollection: Throwable = {
+    val statisticsCollectionPropertyKey = DeltaSQLConf.DELTA_COLLECT_STATS.key
+    val rowTrackingTableFeatureDefaultKey =
+      TableFeatureProtocolUtils.defaultPropertyKey(RowTrackingFeature)
+    val rowTrackingDefaultPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array(
+        statisticsCollectionPropertyKey,
+        rowTrackingTableFeatureDefaultKey,
+        rowTrackingDefaultPropertyKey))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -2400,6 +2416,12 @@ trait DeltaErrorsBase
   def replaceWhereUsedWithDynamicPartitionOverwrite(): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE"
+    )
+  }
+
+  def deltaDynamicPartitionOverwriteDisabled(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED"
     )
   }
 
@@ -2789,6 +2811,24 @@ trait DeltaErrorsBase
       messageParameters = Array(s"$expType", causedBy, supportedTypes.mkString(","))
     )
   }
+
+  def rowIdAssignmentWithoutStats: Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
+  }
+
+  def domainMetadataDuplicate(domainName: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR",
+      messageParameters = Array(domainName)
+    )
+  }
+
+  def domainMetadataTableFeatureNotSupported(domainNames: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DOMAIN_METADATA_NOT_SUPPORTED",
+      messageParameters = Array(domainNames)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3007,6 +3047,11 @@ class DeltaIllegalStateException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(errorClass, null)
+      .zip(messageParameters).toMap.asJava
+  }
 }
 
 class DeltaIndexOutOfBoundsException(
@@ -3047,6 +3092,10 @@ class DeltaRuntimeException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getParameterNames(errorClass, null)
+      .zip(messageParameters).toMap.asJava
 }
 
 class DeltaSparkException(
@@ -3107,6 +3156,13 @@ class DeltaTablePropertyValidationFailedException(
     errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED" + "." + subClass.tag,
     messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(
+      "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
+      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
+  }
+
   override def getErrorClass: String =
     "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
 }
