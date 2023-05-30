@@ -1,4 +1,4 @@
-name: "Delta Lake Tests"
+name: "Delta Spark Tests"
 on: [push, pull_request]
 jobs:
   test:
@@ -10,6 +10,12 @@ jobs:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
       - uses: actions/checkout@v3
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            **
+            !kernel/**
       - name: install java
         uses: actions/setup-java@v3
         with:
@@ -49,7 +55,9 @@ jobs:
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
           pipenv run pip install setuptools==41.0.1
+        if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         run: |
           pipenv run python run-tests.py --coverage
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
+        if: steps.git-diff.outputs.diff
