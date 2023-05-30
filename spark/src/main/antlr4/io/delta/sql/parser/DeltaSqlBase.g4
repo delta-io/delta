@@ -89,10 +89,10 @@ statement
     | ALTER TABLE table=qualifiedName
         DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
     | OPTIMIZE (path=STRING | table=qualifiedName)
-        (WHERE partitionPredicate=predicateToken)?
+        (WHERE partitionPredicate=exprToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
-        (WHERE partitionPredicate=predicateToken)?
+        (WHERE partitionPredicate=exprToken)?
         APPLY LEFT_PAREN PURGE RIGHT_PAREN                              #reorgTable
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
@@ -196,13 +196,6 @@ number
 
 constraint
     : CHECK '(' exprToken+ ')'                                 #checkConstraint
-    ;
-
-// We don't have an expression rule in our grammar here, so we just grab the tokens and defer
-// parsing them to later. Although this is the same as `exprToken`, we have to re-define it to
-// workaround an ANTLR issue (https://github.com/delta-io/delta/issues/1205)
-predicateToken
-    :  .+?
     ;
 
 // We don't have an expression rule in our grammar here, so we just grab the tokens and defer
