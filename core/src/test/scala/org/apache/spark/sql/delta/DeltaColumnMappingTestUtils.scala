@@ -453,8 +453,18 @@ trait DeltaColumnMappingEnableNameMode extends SharedSparkSession
 
     val tableReaderVersion = deltaLog.unsafeVolatileSnapshot.protocol.minReaderVersion
     val tableWriterVersion = deltaLog.unsafeVolatileSnapshot.protocol.minWriterVersion
-    val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(2)
-    val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(5)
+    val requiredReaderVersion = if (tableWriterVersion >=
+      TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION) {
+      // If the writer version of the table supports table features, we need to
+      // bump the reader version to table features to enable column mapping.
+      TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
+    } else {
+      ColumnMappingTableFeature.minReaderVersion
+    }
+    val readerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION).max(
+      requiredReaderVersion)
+    val writerVersion = spark.conf.get(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION).max(
+      ColumnMappingTableFeature.minWriterVersion)
 
     val properties = mutable.ListBuffer(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name")
     if (tableReaderVersion < readerVersion) {

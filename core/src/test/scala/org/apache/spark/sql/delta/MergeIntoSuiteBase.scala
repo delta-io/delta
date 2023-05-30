@@ -22,6 +22,7 @@ import java.util.Locale
 
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.BeforeAndAfterEach
@@ -2511,10 +2512,11 @@ abstract class MergeIntoSuiteBase
       expectedWithoutEvolution: => DataFrame = null,
       expectErrorContains: String = null,
       expectErrorWithoutEvolutionContains: String = null,
-      confs: Seq[(String, String)] = Seq()) = {
+      confs: Seq[(String, String)] = Seq(),
+      partitionCols: Seq[String] = Seq.empty) = {
     test(s"schema evolution - $name - with evolution disabled") {
       withSQLConf(confs: _*) {
-        append(targetData)
+        append(targetData, partitionCols)
         withTempView("source") {
           sourceData.createOrReplaceTempView("source")
 
@@ -2540,7 +2542,7 @@ abstract class MergeIntoSuiteBase
 
     test(s"schema evolution - $name") {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
-        append(targetData)
+        append(targetData, partitionCols)
         withTempView("source") {
           sourceData.createOrReplaceTempView("source")
 
@@ -3505,7 +3507,8 @@ abstract class MergeIntoSuiteBase
     expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
-  testEvolution("extra nested column in source - update")(
+  for (isPartitioned <- BOOLEAN_DOMAIN)
+  testEvolution(s"extra nested column in source - update, isPartitioned=$isPartitioned")(
     targetData = Seq((1, (1, 10)), (2, (2, 2000))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
     sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
@@ -3514,7 +3517,21 @@ abstract class MergeIntoSuiteBase
     expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast"
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    partitionCols = if (isPartitioned) Seq("key") else Seq.empty
+  )
+
+  testEvolution("extra nested column in source - update, partition on unused column")(
+    targetData = Seq((1, 2, (1, 10)), (2, 2, (2, 2000))).toDF("key", "part", "x")
+      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._2) as x"),
+    sourceData = Seq((1, 2, (10, 100, 1000))).toDF("key", "part", "x")
+      .selectExpr("key", "part", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    clauses = update("*") :: Nil,
+    expected = ((1, 2, (10, 100, 1000)) +: (2, 2, (2, null, 2000)) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, (Integer, Integer, Integer))]].toDF("key", "part", "x")
+      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    partitionCols = Seq("part")
   )
 
   // scalastyle:off line.size.limit

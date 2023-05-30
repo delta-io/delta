@@ -25,8 +25,9 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait RowTrackingTestUtils extends QueryTest with SharedSparkSession {
-  val rowTrackingFeatureName: String = TableFeatureProtocolUtils.propertyKey(RowTrackingFeature)
-  val defaultRowTrackingFeatureProperty: String =
+  lazy val rowTrackingFeatureName: String =
+    TableFeatureProtocolUtils.propertyKey(RowTrackingFeature)
+  lazy val defaultRowTrackingFeatureProperty: String =
     TableFeatureProtocolUtils.defaultPropertyKey(RowTrackingFeature)
 
   override protected def sparkConf: SparkConf =
