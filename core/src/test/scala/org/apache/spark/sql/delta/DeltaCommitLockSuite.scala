@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.{AzureLogStore, S3SingleDriverLogStore}
+import io.delta.storage.S3SingleDriverLogStore
+import io.delta.storage.AzureLogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkFunSuite

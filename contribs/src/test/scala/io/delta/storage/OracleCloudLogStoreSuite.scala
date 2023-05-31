@@ -16,9 +16,9 @@
 
 package io.delta.storage
 
-import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
+import org.apache.spark.sql.delta.FakeFileSystem
 
-class OracleCloudLogStoreSuite extends LogStoreSuiteBase {
+class OracleCloudLogStoreSuite extends ContributesLogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[OracleCloudLogStore].getName
 
