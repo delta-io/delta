@@ -174,5 +174,48 @@
             <property name="format" value="new (java\.lang\.)?(Byte|Integer|Long|Short)\("/>
             <property name="message" value="Use static factory 'valueOf' or 'parseXXX' instead of the deprecated constructors." />
         </module>
+        <module name="Indentation">
+            <property name="basicOffset" value="4"/>
+            <property name="braceAdjustment" value="0"/>
+            <property name="caseIndent" value="4"/>
+            <property name="throwsIndent" value="4"/>
+            <property name="lineWrappingIndentation" value="4"/>
+            <property name="arrayInitIndent" value="4"/>
+        </module>
+
+        <!--
+        We use the following import order:
+        import java.*
+        import javax.*
+        <blank line>
+        import scala.*
+        <blank line>
+        import all other imports
+        <blank line>
+        import io.delta.kernel.*
+        import io.delta.kernel.internal.*
+        -->
+        <module name="ImportOrder">
+            <property name="separated" value="true"/>
+            <property name="ordered" value="true"/>
+            <property name="groups" value="java.,javax.,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+        </module>
+
+        <!--
+        As per https://checkstyle.sourceforge.io/config_imports.html, "There is no flexibility to
+        enforce empty lines between some groups and no empty lines between other groups." However,
+        sometimes we want import X to come before import Y, yet we do not want them to be separated
+        by a blank line. This suppression is how we achieve that.
+        -->
+        <!-- io.delta.kernel and io.delta.kernel.internal -->
+        <module name="SuppressionXpathSingleFilter">
+            <property name="checks" value="ImportOrder"/>
+            <property name="message" value="^'io.delta.kernel.internal\..*'.*"/>
+        </module>
+        <!-- java and javax -->
+        <module name="SuppressionXpathSingleFilter">
+            <property name="checks" value="ImportOrder"/>
+            <property name="message" value="^'javax\..*'.*"/>
+        </module>
     </module>
 </module>
