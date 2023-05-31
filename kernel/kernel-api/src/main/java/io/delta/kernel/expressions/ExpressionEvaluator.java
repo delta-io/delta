@@ -2,7 +2,6 @@ package io.delta.kernel.expressions;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.expressions.Expression;
 
 /**
  * Interface for implementing an {@link Expression} evaluator.

@@ -17,7 +17,8 @@ public interface ExpressionHandler
      * {@link io.delta.kernel.data.ColumnarBatch} of data with given <i>batchSchema</i>.
      * @param batchSchema Schema of the input data.
      * @param expression Expression to evaluate.
-     * @return An {@link ExpressionEvaluator} instance bound to the given expression and batchSchema.
+     * @return An {@link ExpressionEvaluator} instance bound to the given expression and
+     *         batchSchema.
      */
     ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression);
 }

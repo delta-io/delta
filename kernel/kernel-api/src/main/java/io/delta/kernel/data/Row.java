@@ -1,9 +1,9 @@
 package io.delta.kernel.data;
 
-import io.delta.kernel.types.StructType;
-
 import java.util.List;
 import java.util.Map;
+
+import io.delta.kernel.types.StructType;
 
 /**
  * Represent a single record

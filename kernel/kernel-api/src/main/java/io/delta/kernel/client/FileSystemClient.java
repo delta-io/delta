@@ -1,11 +1,9 @@
 package io.delta.kernel.client;
 
+import java.io.FileNotFoundException;
+
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-
-import java.io.DataInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client

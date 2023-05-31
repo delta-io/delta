@@ -1,13 +1,13 @@
 package io.delta.kernel.client;
 
+import java.io.IOException;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-
-import java.io.IOException;
 
 /**
  * Provides JSON handling functionality to Delta Kernel. Delta Kernel can use this client to
@@ -19,8 +19,8 @@ public interface JsonHandler
         extends FileHandler
 {
     /**
-     * Parse the given <i>json</i> string and return the requested fields in given <i>outputSchema</i>
-     * as a {@link Row}.
+     * Parse the given <i>json</i> string and return the requested fields in given
+     * <i>outputSchema</i> as a {@link Row}.
      *
      * @param jsonStringVector Valid JSON object in string format.
      * @param outputSchema Schema of the data to return from the parse JSON. If any requested fields

@@ -1,5 +1,8 @@
 package io.delta.kernel;
 
+import java.io.IOException;
+import java.util.Optional;
+
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
@@ -10,14 +13,9 @@ import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
-
-import java.io.IOException;
-import java.util.Optional;
 
 /**
  * An object representing a scan of a Delta table.

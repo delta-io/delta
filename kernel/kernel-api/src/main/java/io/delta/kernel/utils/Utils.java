@@ -1,47 +1,42 @@
 package io.delta.kernel.utils;
 
+import java.io.IOException;
+import java.util.Collections;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
-import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.AddFileColumnarBatch;
+import io.delta.kernel.internal.data.ScanStateRow;
 
-import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-public class Utils
-{
+public class Utils {
     /**
      * Utility method to create a singleton {@link CloseableIterator}.
+     *
      * @param elem Element to create iterator with.
-     * @param <T> Element type.
+     * @param <T>  Element type.
      * @return A {@link CloseableIterator} with just one element.
      */
-    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem)  {
+    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
         return new CloseableIterator<T>() {
             private boolean accessed;
+
             @Override
-            public void close()
-                    throws IOException
-            {
+            public void close() throws IOException {
                 // nothing to close
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return !accessed;
             }
 
             @Override
-            public T next()
-            {
+            public T next() {
                 accessed = true;
                 return elem;
             }
@@ -84,6 +79,7 @@ public class Utils
 
     /**
      * Utility method to get the physical schema from the scan state {@link Row}.
+     *
      * @param scanState Scan state given as {@link Row}
      * @return Physical schema to read from the data files.
      */

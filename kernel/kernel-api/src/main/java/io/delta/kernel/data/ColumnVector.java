@@ -1,9 +1,9 @@
 package io.delta.kernel.data;
 
-import io.delta.kernel.types.DataType;
-
 import java.util.List;
 import java.util.Map;
+
+import io.delta.kernel.types.DataType;
 
 /**
  * Represents zero or more values of a single column.

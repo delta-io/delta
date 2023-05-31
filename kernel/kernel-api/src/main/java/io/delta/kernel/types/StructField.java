@@ -1,8 +1,8 @@
 package io.delta.kernel.types;
 
-import io.delta.kernel.data.Row;
-
 import java.util.Map;
+
+import io.delta.kernel.data.Row;
 
 public class StructField {
 

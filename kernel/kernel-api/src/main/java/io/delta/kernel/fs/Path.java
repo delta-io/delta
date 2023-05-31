@@ -447,8 +447,9 @@ public class Path
             if (path.indexOf('/')==0 &&
                 hasWindowsDrive(path) &&                // has windows drive
                 uri.getScheme() == null &&              // but no scheme
-                uri.getAuthority() == null)             // or authority
+                uri.getAuthority() == null) {             // or authority
                 path = path.substring(1);                 // remove slash before drive
+            }
             buffer.append(path);
         }
         if (uri.getFragment() != null) {
@@ -515,8 +516,9 @@ public class Path
         String fragment = pathUri.getFragment();
 
         if (scheme != null &&
-            (authority != null || defaultUri.getAuthority() == null))
+            (authority != null || defaultUri.getAuthority() == null)) {
             return path;
+        }
 
         if (scheme == null) {
             scheme = defaultUri.getScheme();

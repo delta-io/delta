@@ -1,11 +1,11 @@
 package io.delta.kernel.client;
 
+import java.io.IOException;
+
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-
-import java.io.IOException;
 
 /**
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this

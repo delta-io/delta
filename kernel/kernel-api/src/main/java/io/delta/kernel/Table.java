@@ -20,7 +20,7 @@ public interface Table {
 
     /**
      * Get the latest snapshot of the table.
-     * 
+     *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return an instance of {@link Snapshot}
      */
