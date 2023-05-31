@@ -92,7 +92,7 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
 
   val metadataUpdates: Seq[Metadata] = actions.collect { case a: Metadata => a }
   val appLevelTransactions: Seq[SetTransaction] = actions.collect { case a: SetTransaction => a }
-  val protocol: Seq[Protocol] = actions.collect { case a: Protocol => a }
+  val protocol: Option[Protocol] = actions.collectFirst { case a: Protocol => a }
   val commitInfo: Option[CommitInfo] = actions.collectFirst { case a: CommitInfo => a }.map(
     ci => ci.copy(version = Some(commitVersion)))
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
@@ -140,6 +140,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
     reassignOverlappingRowIds()
+    reassignRowCommitVersions()
     checkIfDomainMetadataConflict()
     logMetrics()
     currentTransactionInfo
@@ -168,6 +169,7 @@ private[delta] class ConflictChecker(
       winningCommitSummary.protocol.foreach { p =>
         deltaLog.protocolRead(p)
         deltaLog.protocolWrite(p)
+        currentTransactionInfo = currentTransactionInfo.copy(protocol = p)
       }
       if (currentTransactionInfo.actions.exists(_.isInstanceOf[Protocol])) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
@@ -401,6 +403,33 @@ private[delta] class ConflictChecker(
         actions = actionsWithReassignedRowIds,
         readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
     }
+  }
+
+  /**
+   * Reassigns default row commit versions to correctly handle the winning transaction.
+   * Concretely:
+   *  1. Reassigns all default row commit versions (of AddFiles in the current transaction) equal to
+   *     the version of the winning transaction to the next commit version.
+   *  2. Assigns all unassigned default row commit versions that do not have one assigned yet
+   *     to handle the row tracking feature being enabled by the winning transaction.
+   */
+  private def reassignRowCommitVersions(): Unit = {
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+      return
+    }
+
+    val newActions = currentTransactionInfo.actions.map {
+      case a: AddFile if a.defaultRowCommitVersion.contains(winningCommitVersion) =>
+        a.copy(defaultRowCommitVersion = Some(winningCommitVersion + 1L))
+
+      case a: AddFile if a.defaultRowCommitVersion.isEmpty =>
+        // A concurrent transaction has turned on support for Row Tracking.
+        a.copy(defaultRowCommitVersion = Some(winningCommitVersion + 1L))
+
+      case a => a
+    }
+
+    currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
   }
 
   /** A helper function for pretty printing a specific partition directory. */

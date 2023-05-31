@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.rowtracking
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, RowTrackingFeature}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 
 import org.apache.spark.sql.QueryTest
@@ -149,6 +151,67 @@ class DefaultRowCommitVersionSuite extends QueryTest with SharedSparkSession wit
         deltaLog.update().allFiles.collect().foreach { f =>
           assert(f.defaultRowCommitVersion.contains(commitVersionForFiles(f.path)))
         }
+      }
+    }
+  }
+
+  test("default row commit versions are reassigned on conflict") {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+
+      // Initial setup - version 0
+      val protocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(RowTrackingFeature)
+      val metadata = Metadata()
+      deltaLog.startTransaction().commit(Seq(protocol, metadata), ManualUpdate)
+
+      // Start a transaction
+      val txn = deltaLog.startTransaction()
+
+      // Commit two concurrent transactions - version 1 and 2
+      deltaLog.startTransaction().commit(Nil, ManualUpdate)
+      deltaLog.startTransaction().commit(Nil, ManualUpdate)
+
+      // Commit the transaction - version 3
+      val addA = AddFile(path = "a", partitionValues = Map.empty, size = 1, modificationTime = 1,
+        dataChange = true, stats = "{\"numRecords\": 1}")
+      val addB = AddFile(path = "b", partitionValues = Map.empty, size = 1, modificationTime = 1,
+        dataChange = true, stats = "{\"numRecords\": 1}")
+      txn.commit(Seq(addA, addB), ManualUpdate)
+
+      deltaLog.update().allFiles.collect().foreach { f =>
+        assert(f.defaultRowCommitVersion.contains(3))
+      }
+    }
+  }
+
+  test("default row commit versions are assigned when concurrent txn enables row tracking") {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+
+      // Initial setup - version 0
+      val protocolWithoutRowTracking =
+        Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+      val metadata = Metadata()
+      deltaLog.startTransaction().commit(Seq(protocolWithoutRowTracking, metadata), ManualUpdate)
+
+      // Start a transaction
+      val txn = deltaLog.startTransaction()
+
+      // Commit concurrent transactions enabling row tracking - version 1 and 2
+      val protocolWithRowTracking = protocolWithoutRowTracking.withFeature(RowTrackingFeature)
+      deltaLog.startTransaction().commit(Seq(protocolWithRowTracking), ManualUpdate)
+      deltaLog.startTransaction().commit(Nil, ManualUpdate)
+
+      // Commit the transaction - version 3
+      val addA = AddFile(path = "a", partitionValues = Map.empty, size = 1, modificationTime = 1,
+        dataChange = true, stats = "{\"numRecords\": 1}")
+      val addB = AddFile(path = "b", partitionValues = Map.empty, size = 1, modificationTime = 1,
+        dataChange = true, stats = "{\"numRecords\": 1}")
+      txn.commit(Seq(addA, addB), ManualUpdate)
+
+      deltaLog.update().allFiles.collect().foreach { f =>
+        assert(f.defaultRowCommitVersion.contains(3))
       }
     }
   }
