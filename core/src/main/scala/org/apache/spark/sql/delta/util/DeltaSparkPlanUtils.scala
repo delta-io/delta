@@ -19,38 +19,88 @@ package org.apache.spark.sql.delta.util
 import org.apache.spark.sql.delta.DeltaTable
 
 import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery}
-import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, Project, SubqueryAlias, Union}
+import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, OneRowRelation, Project, SubqueryAlias, Union}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 
 trait DeltaSparkPlanUtils {
-  protected def planContainsOnlyDeltaScans(source: LogicalPlan): Boolean = {
-    !source.exists {
+  protected def planContainsOnlyDeltaScans(source: LogicalPlan): Boolean =
+    findFirstNonDeltaScan(source).isEmpty
+
+  protected def findFirstNonDeltaScan(source: LogicalPlan): Option[LogicalPlan] = {
+    source match {
       case l: LogicalRelation =>
         l match {
-          case DeltaTable(_) => false
-          case _ => true
+          case DeltaTable(_) => None
+          case _ => Some(l)
         }
-      case _: LeafNode => true // Any other LeafNode is a non Delta scan.
-      case _ => false
+      case OneRowRelation() => None
+      case leaf: LeafNode => Some(leaf) // Any other LeafNode is a non Delta scan.
+      case node => collectFirst(node.children, findFirstNonDeltaScan)
     }
   }
 
   /**
-   * Returns `true` if `plan` has a safe level of determinism. This is a conservative approximation
-   * of `plan` being a truly deterministic query.
+   * Returns `true` if `plan` has a safe level of determinism. This is a conservative
+   * approximation of `plan` being a truly deterministic query.
    */
-  protected def planIsDeterministic(plan: LogicalPlan): Boolean = plan match {
-    // This is very restrictive, allowing only deterministic filters and projections directly
-    // on top of a Delta Table.
-    case Distinct(child) => planIsDeterministic(child)
-    case Project(projectList, child) if projectList.forall(_.deterministic) =>
-      planIsDeterministic(child)
-    case Filter(cond, child) if cond.deterministic => planIsDeterministic(child)
-    case Union(children, _, _) => children.forall(planIsDeterministic)
-    case SubqueryAlias(_, child) => planIsDeterministic(child)
-    case DeltaTable(_) => true
-    case _ => false
+  protected def planIsDeterministic(plan: LogicalPlan): Boolean =
+    findFirstNonDeterministicNode(plan).isEmpty
+
+  type PlanOrExpression = Either[LogicalPlan, Expression]
+
+  /**
+   * Returns a part of the `plan` that does not have a safe level of determinism.
+   * This is a conservative approximation of `plan` being a truly deterministic query.
+   */
+  protected def findFirstNonDeterministicNode(plan: LogicalPlan): Option[PlanOrExpression] = {
+    plan match {
+      // This is very restrictive, allowing only deterministic filters and projections directly
+      // on top of a Delta Table.
+      case Distinct(child) => findFirstNonDeterministicNode(child)
+      case Project(projectList, child) =>
+        findFirstNonDeterministicChildNode(projectList) orElse {
+            findFirstNonDeterministicNode(child)
+        }
+      case Filter(cond, child) =>
+        findFirstNonDeterministicNode(cond) orElse {
+          findFirstNonDeterministicNode(child)
+        }
+      case Union(children, _, _) => collectFirst[LogicalPlan, PlanOrExpression](
+        children,
+        findFirstNonDeterministicNode)
+      case SubqueryAlias(_, child) => findFirstNonDeterministicNode(child)
+      case DeltaTable(_) => None
+      case OneRowRelation() => None
+      case node => Some(Left(node))
+    }
+  }
+
+  protected def findFirstNonDeterministicChildNode(
+      children: Seq[Expression]): Option[PlanOrExpression] =
+    collectFirst[Expression, PlanOrExpression](
+      children,
+      findFirstNonDeterministicNode)
+
+  protected def findFirstNonDeterministicNode(child: Expression): Option[PlanOrExpression] = {
+    child match {
+      case SubqueryExpression(plan) =>
+        findFirstNonDeltaScan(plan).map(Left(_)).orElse(findFirstNonDeterministicNode(plan))
+      case p =>
+        collectFirst[Expression, PlanOrExpression](
+          p.children,
+          findFirstNonDeterministicNode) orElse {
+          if (p.deterministic) None else Some(Right(p))
+        }
+    }
+  }
+
+  private def collectFirst[In, Out](
+      input: Iterable[In],
+      recurse: In => Option[Out]): Option[Out] = {
+    input.foldLeft(Option.empty[Out]) { case (acc, value) =>
+      acc.orElse(recurse(value))
+    }
   }
 
   /** Extractor object for the subquery plan of expressions that contain subqueries. */
