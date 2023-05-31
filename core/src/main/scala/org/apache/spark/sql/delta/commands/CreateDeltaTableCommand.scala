@@ -253,11 +253,8 @@ case class CreateDeltaTableCommand(
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(
-        sparkSession,
-        tableWithLocation,
-        deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs)),
-        txn)
+      val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+      updateCatalog(sparkSession, tableWithLocation, snapshot, txn)
 
 
       result
