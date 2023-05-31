@@ -177,11 +177,12 @@ object DeletionVectorDescriptor {
   final val UUID_DV_MARKER: String = "u"
 
   final val STRUCT_TYPE: StructType = new StructType()
-    .add("storageType", StringType)
-    .add("pathOrInlineDv", StringType)
-    .add("offset", IntegerType)
+    .add("storageType", StringType, nullable = false)
+    .add("pathOrInlineDv", StringType, nullable = false)
+    .add("offset", IntegerType, nullable = true)
     .add("sizeInBytes", IntegerType, nullable = false)
     .add("cardinality", LongType, nullable = false)
+    .add("maxRowIndex", LongType, nullable = true)
 
   private lazy val _encoder = new DeltaEncoder[DeletionVectorDescriptor]
   implicit def encoder: Encoder[DeletionVectorDescriptor] = _encoder.get
