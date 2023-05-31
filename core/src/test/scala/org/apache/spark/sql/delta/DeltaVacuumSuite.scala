@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -159,7 +160,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
       partitionValues: Map[String, String] = Map.empty): AddFile = {
     FileUtils.write(file, "gibberish")
     file.setLastModified(clock.getTimeMillis())
-    AddFile(filePath, partitionValues, 10L, clock.getTimeMillis(), dataChange = true)
+    createTestAddFile(
+      path = filePath,
+      partitionValues = partitionValues,
+      modificationTime = clock.getTimeMillis())
   }
 
   protected def gcTest(deltaLog: DeltaLog, clock: ManualClock)(actions: Operation*): Unit = {

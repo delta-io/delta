@@ -184,7 +184,9 @@ object SchemaUtils extends DeltaLogging {
    * schema validation checks have been made and this is the last operation before writing into
    * Delta.
    */
-  def normalizeColumnNames(baseSchema: StructType, data: Dataset[_]): DataFrame = {
+  def normalizeColumnNames(
+      baseSchema: StructType,
+      data: Dataset[_]): DataFrame = {
     val dataSchema = data.schema
     val dataFields = explodeNestedFieldNames(dataSchema).toSet
     val tableFields = explodeNestedFieldNames(baseSchema).toSet

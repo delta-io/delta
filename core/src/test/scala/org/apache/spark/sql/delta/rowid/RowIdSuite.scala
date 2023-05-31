@@ -81,24 +81,6 @@ class RowIdSuite extends QueryTest
     }
   }
 
-  test("row ids are not assigned when they are not allowed") {
-    withRowTrackingEnabled(enabled = true) {
-      // Setting the table property, but disabling via config.
-      withSQLConf(DeltaSQLConf.ROW_IDS_ALLOWED.key -> "false") {
-        withTempDir { dir =>
-          spark.range(start = 0, end = 1000, step = 1, numPartitions = 10)
-            .write.format("delta").save(dir.getAbsolutePath)
-          val log = DeltaLog.forTable(spark, dir)
-          assertRowIdsAreNotSet(log)
-
-          spark.range(start = 1000, end = 1500, step = 1, numPartitions = 3)
-            .write.format("delta").mode("append").save(dir.getAbsolutePath)
-          assertRowIdsAreNotSet(log)
-        }
-      }
-    }
-  }
-
   test("row ids can be disabled") {
     withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
@@ -178,12 +160,12 @@ class RowIdSuite extends QueryTest
         // version 1: high watermark = 19
         spark.range(start = 10, end = 20)
           .write.mode("append").format("delta").save(dir.getAbsolutePath)
-        val highWatermarkBeforeRestore = RowId.extractHighWatermark(spark, log.update())
+        val highWatermarkBeforeRestore = RowId.extractHighWatermark(log.update())
 
         // back to version 0: high watermark should be still equal to before the restore.
         deltaTable.restoreToVersion(0)
 
-        val highWatermarkAfterRestore = RowId.extractHighWatermark(spark, log.update())
+        val highWatermarkAfterRestore = RowId.extractHighWatermark(log.update())
         assert(highWatermarkBeforeRestore == highWatermarkAfterRestore)
         assertRowIdsDoNotOverlap(log)
 
@@ -195,13 +177,13 @@ class RowIdSuite extends QueryTest
           highWatermarkBeforeUpdate = highWatermarkAfterRestore.get.highWaterMark,
           expectedNumRecordsWritten = 10)
         assertRowIdsDoNotOverlap(log)
-        val highWatermarkWithNewData = RowId.extractHighWatermark(spark, log.update())
+        val highWatermarkWithNewData = RowId.extractHighWatermark(log.update())
 
         // back to version 0: high watermark should still be 29.
         deltaTable.restoreToVersion(0)
 
         val highWatermarkWithNewDataAfterRestore =
-          RowId.extractHighWatermark(spark, log.update())
+          RowId.extractHighWatermark(log.update())
         assert(highWatermarkWithNewData == highWatermarkWithNewDataAfterRestore)
         assertRowIdsDoNotOverlap(log)
 

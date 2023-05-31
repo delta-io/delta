@@ -29,13 +29,7 @@ trait RowTrackingTestUtils extends QueryTest with SharedSparkSession {
   val defaultRowTrackingFeatureProperty: String =
     TableFeatureProtocolUtils.defaultPropertyKey(RowTrackingFeature)
 
-  override protected def sparkConf: SparkConf =
-    super.sparkConf.set(DeltaSQLConf.ROW_IDS_ALLOWED.key, "true")
-
   def withRowTrackingEnabled(enabled: Boolean)(f: => Unit): Unit = {
-    // Even when we don't want Row Ids on created tables, we want to enable code paths that
-    // interact with them, which is controlled by this config.
-    assert(spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED.key) == "true")
     withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> enabled.toString)(f)
   }
 }

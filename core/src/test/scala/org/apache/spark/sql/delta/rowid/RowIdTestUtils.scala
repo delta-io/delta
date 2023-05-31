@@ -65,7 +65,7 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   def assertHighWatermarkIsCorrectAfterUpdate(
       log: DeltaLog, highWatermarkBeforeUpdate: Long, expectedNumRecordsWritten: Long): Unit = {
     val highWaterMarkAfterUpdate =
-      RowId.extractHighWatermark(spark, log.update()).get.highWaterMark
+      RowId.extractHighWatermark(log.update()).get.highWaterMark
     assert((highWatermarkBeforeUpdate + expectedNumRecordsWritten) === highWaterMarkAfterUpdate)
     assertRowIdsAreValid(log)
   }

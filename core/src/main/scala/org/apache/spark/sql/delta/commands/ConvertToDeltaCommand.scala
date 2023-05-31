@@ -370,7 +370,6 @@ abstract class ConvertToDeltaCommandBase(
       //  for some convert targets so we block this feature for them here
       checkColumnMapping(txn.metadata, targetTable)
       RowId.checkStatsCollectedIfRowTrackingSupported(
-        spark,
         txn.protocol,
         collectStats,
         statsEnabled)

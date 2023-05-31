@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -35,8 +36,8 @@ class OptimisticTransactionSuite
   with OptimisticTransactionSuiteBase {
 
   // scalastyle:off: removeFile
-  private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
-  private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
+  private val addA = createTestAddFile(path = "a")
+  private val addB = createTestAddFile(path = "b")
 
   /* ************************** *
    * Allowed concurrent actions *

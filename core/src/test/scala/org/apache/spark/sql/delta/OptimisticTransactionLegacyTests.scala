@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -33,9 +34,9 @@ trait OptimisticTransactionLegacyTests
   extends QueryTest
   with SharedSparkSession  with DeltaSQLCommandTest {
 
-  private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
-  private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
-  private val addC = AddFile("c", Map.empty, 1, 1, dataChange = true)
+  private val addA = createTestAddFile(path = "a")
+  private val addB = createTestAddFile(path = "b")
+  private val addC = createTestAddFile(path = "c")
 
   import testImplicits._
 
