@@ -196,7 +196,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       sqlConfs: SQLConf,
       tableConf: Map[String, String],
       ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
-    import collection.JavaConverters._
+    import scala.collection.JavaConverters._
 
     val ignoreProtocolConfs =
       ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
