@@ -1,7 +1,6 @@
 package io.delta.kernel;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.internal.TableImpl;
 
 public interface Table {
 
@@ -15,7 +14,8 @@ public interface Table {
     static Table forPath(String path)
         throws TableNotFoundException
     {
-        return TableImpl.forPath(path);
+        // TODO requires io.delta.kernel.internal.TableImpl
+        throw new UnsupportedOperationException("not implemented yet");
     }
 
     /**
