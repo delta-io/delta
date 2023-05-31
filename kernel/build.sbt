@@ -27,9 +27,16 @@ lazy val commonSettings = Seq(
   Compile / compile / javacOptions ++= Seq("-target", "1.8", "-Xlint:unchecked"),
   // Configurations to speed up tests and reduce memory footprint
   Test / javaOptions += "-Xmx1024m",
+
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  checkstyleConfigLocation := CheckstyleConfigLocation.File("dev/checkstyle.xml"),
+  checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+  (checkstyle in Compile) := (checkstyle in Compile).triggeredBy(compile in Compile).value,
+  (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
 )
 
-// TODO javastyle checkstyle tests
 // TODO unidoc/javadoc settings
 
 lazy val kernelApi = (project in file("kernel-api"))
