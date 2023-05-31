@@ -154,6 +154,9 @@ abstract class TahoeFileIndexWithSnapshotDescriptor(
   override def metadata: Metadata = snapshot.metadata
   override def protocol: Protocol = snapshot.protocol
 
+
+  protected[delta] def numOfFilesIfKnown: Option[Long] = snapshot.numOfFilesIfKnown
+  protected[delta] def sizeInBytesIfKnown: Option[Long] = snapshot.sizeInBytesIfKnown
 }
 
 
@@ -248,6 +251,11 @@ case class TahoeLogFileIndex(
     Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
   }
 
+  protected[delta] def numOfFilesIfKnown: Option[Long] =
+    deltaLog.unsafeVolatileSnapshot.numOfFilesIfKnown
+
+  protected[delta] def sizeInBytesIfKnown: Option[Long] =
+    deltaLog.unsafeVolatileSnapshot.sizeInBytesIfKnown
 }
 
 object TahoeLogFileIndex {

@@ -36,7 +36,6 @@
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
 - [Deletion Vectors](#deletion-vectors)
-- [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
   - [Deletion Vector Descriptor Schema](#deletion-vector-descriptor-schema)
     - [Derived Fields](#derived-fields)
     - [JSON Example 1 — On Disk with Relative Path (with Random Prefix)](#json-example-1--on-disk-with-relative-path-with-random-prefix)
@@ -44,6 +43,7 @@
     - [JSON Example 3 — Inline](#json-example-3--inline)
   - [Reader Requirements for Deletion Vectors](#reader-requirements-for-deletion-vectors)
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
+- [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
 - [Row Tracking](#row-tracking)
   - [Row IDs](#row-ids)
   - [Row Commit Versions](#row-commit-versions)
@@ -727,14 +727,6 @@ When enabled:
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
-# Timestamp without timezone (TimestampNTZ)
-This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
-The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
-
-Enablement:
- - To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
-
-
 ## Deletion Vector Descriptor Schema
 
 The schema of the `DeletionVectorDescriptor` struct is as follows:
@@ -797,6 +789,13 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 
 ## Writer Requirement for Deletion Vectors
 When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
+
+# Timestamp without timezone (TimestampNTZ)
+This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
+The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
+
+Enablement:
+ - To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
 
 # Row Tracking
 
@@ -1452,7 +1451,10 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- dataChange: boolean
 ```
 
-Please note, as in the above example, the `readerFeatures` and `writerFeatures` fields do exist in the schema even when the table does not support table features. In such a case values of these two fields are `null`.
+Observe that `readerFeatures` and `writerFeatures` fields should comply with:
+- If a table has Reader Version 3, then a writer must write checkpoints with a not-null `readerFeatures` in the schema.
+- If a table has Writer Version 7, then a writer must write checkpoints with a not-null `writerFeatures` in the schema.
+- If a table has neither of the above, then a writer chooses whether to write `readerFeatures` and/or `writerFeatures` into the checkpoint schema. But if it does, their values must be null.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 

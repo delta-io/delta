@@ -89,8 +89,20 @@ class DeltaDataSource
     }
 
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
+    // This is the analyzed schema for Delta streaming
     val readSchema = {
-      getSchemaTrackingLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+      // Check if we would like to merge consecutive schema changes, this would allow customers
+      // to write queries based on their latest changes instead of an arbitrary schema in the past.
+      val shouldMergeConsecutiveSchemas = sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES
+      )
+      // This method is invoked during the analysis phase and would determine the schema for the
+      // streaming dataframe. We only need to merge consecutive schema changes here because the
+      // process would create a new entry in the schema log such that when the schema log is
+      // looked up again in the execution phase, we would use the correct schema.
+      getSchemaTrackingLogForDeltaSource(
+          sqlContext.sparkSession, snapshot, parameters,
+          mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas)
         .flatMap(_.getCurrentTrackedSchema.map(_.dataSchema))
         .getOrElse(snapshot.schema)
     }
@@ -123,7 +135,10 @@ class DeltaDataSource
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
 
     val schemaTrackingLogOpt =
-      getSchemaTrackingLogForDeltaSource(sqlContext.sparkSession, snapshot, parameters)
+      getSchemaTrackingLogForDeltaSource(
+        sqlContext.sparkSession, snapshot, parameters,
+        // Pass in the metadata path opt so we can use it for validation
+        sourceMetadataPathOpt = Some(metadataPath))
 
     val readSchema = schemaTrackingLogOpt
       .flatMap(_.getCurrentTrackedSchema.map(_.dataSchema))
@@ -242,21 +257,24 @@ class DeltaDataSource
   private def getSchemaTrackingLogForDeltaSource(
       spark: SparkSession,
       sourceSnapshot: Snapshot,
-      parameters: Map[String, String]): Option[DeltaSourceSchemaTrackingLog] = {
+      parameters: Map[String, String],
+      sourceMetadataPathOpt: Option[String] = None,
+      mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceSchemaTrackingLog] = {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
 
     Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
       .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
       .map { schemaTrackingLocation =>
         if (!spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION)) {
-          // TODO: remove once non-additive schema evolution is released
+          DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)) {
           throw new UnsupportedOperationException(
             "Schema tracking location is not supported for Delta streaming source")
         }
         DeltaSourceSchemaTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
+          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
+          sourceMetadataPathOpt,
+          mergeConsecutiveSchemaChanges
         )
       }
   }

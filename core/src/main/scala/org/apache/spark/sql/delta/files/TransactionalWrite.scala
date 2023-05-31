@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInv
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{DeltaJobStatisticsTracker, StatisticsCollection}
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
@@ -241,24 +242,25 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
-   * Return a tuple of (statsDataSchema, statsCollectionSchema).
-   * statsDataSchema is the data source schema from DataFrame used for stats collection. It
-   * contains the columns in the DataFrame output, excluding the partition columns.
-   * statsCollectionSchema is the schema to collect stats for. It contains the columns in the
+   * Return a tuple of (outputStatsCollectionSchema, statsCollectionSchema).
+   * outputStatsCollectionSchema is the data source schema from DataFrame used for stats collection.
+   * It contains the columns in the DataFrame output, excluding the partition columns.
+   * tableStatsCollectionSchema is the schema to collect stats for. It contains the columns in the
    * table schema, excluding the partition columns.
    * Note: We only collect NULL_COUNT stats (as the number of rows) for the columns in
-   * statsCollectionSchema but missing in statsDataSchema
+   * statsCollectionSchema but missing in outputStatsCollectionSchema
    */
   protected def getStatsSchema(
     dataFrameOutput: Seq[Attribute],
     partitionSchema: StructType): (Seq[Attribute], Seq[Attribute]) = {
     val partitionColNames = partitionSchema.map(_.name).toSet
 
-    // statsDataSchema comes from DataFrame output
+    // The outputStatsCollectionSchema comes from DataFrame output
     // schema should be normalized, therefore we can do an equality check
-    val statsDataSchema = dataFrameOutput.filterNot(c => partitionColNames.contains(c.name))
+    val outputStatsCollectionSchema = dataFrameOutput
+      .filterNot(c => partitionColNames.contains(c.name))
 
-    // statsCollectionSchema comes from table schema
+    // The tableStatsCollectionSchema comes from table schema
     val statsTableSchema = metadata.schema.toAttributes
     val mappedStatsTableSchema = if (metadata.columnMappingMode == NoMapping) {
       statsTableSchema
@@ -267,10 +269,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
 
     // It's important to first do the column mapping and then drop the partition columns
-    val filteredStatsTableSchema = mappedStatsTableSchema
+    val tableStatsCollectionSchema = mappedStatsTableSchema
       .filterNot(c => partitionColNames.contains(c.name))
 
-    (statsDataSchema, filteredStatsTableSchema)
+    (outputStatsCollectionSchema, tableStatsCollectionSchema)
   }
 
   protected def getStatsColExpr(
@@ -289,36 +291,40 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       partitionSchema: StructType, data: DataFrame): (
         Option[DeltaJobStatisticsTracker],
         Option[StatisticsCollection]) = {
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
+    // check whether we should collect Delta stats
+    val collectStats =
+      (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)
+      )
 
-      val (statsDataSchema, statsCollectionSchema) = getStatsSchema(output, partitionSchema)
-
-      val indexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+    if (collectStats) {
+      val (outputStatsCollectionSchema, tableStatsCollectionSchema) =
+        getStatsSchema(output, partitionSchema)
 
       val statsCollection = new StatisticsCollection {
-        override def tableDataSchema = {
-          // If collecting stats using the table schema, then pass in statsCollectionSchema.
-          // Otherwise pass in statsDataSchema to collect stats using the DataFrame schema.
-          if (spark.sessionState.conf.getConf(DeltaSQLConf
-            .DELTA_COLLECT_STATS_USING_TABLE_SCHEMA)) {
-            statsCollectionSchema.toStructType
+        override val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
+        override def tableSchema: StructType = metadata.schema
+        override def outputTableStatsSchema: StructType = {
+          // If collecting stats uses the table schema, then we pass in tableStatsCollectionSchema;
+          // otherwise, pass in outputStatsCollectionSchema to collect stats using the DataFrame
+          // schema.
+          if (spark.sessionState.conf.getConf(DELTA_COLLECT_STATS_USING_TABLE_SCHEMA)) {
+            tableStatsCollectionSchema.toStructType
           } else {
-            statsDataSchema.toStructType
+            outputStatsCollectionSchema.toStructType
           }
         }
-        override def dataSchema = statsDataSchema.toStructType
+        override def outputAttributeSchema: StructType = outputStatsCollectionSchema.toStructType
         override val spark: SparkSession = data.sparkSession
-        override val numIndexedCols = indexedCols
+        override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
       }
+      val statsColExpr = getStatsColExpr(outputStatsCollectionSchema, statsCollection)
 
-      val statsColExpr = getStatsColExpr(statsDataSchema, statsCollection)
-
-      (Some(new DeltaJobStatisticsTracker(
-        deltaLog.newDeltaHadoopConf(),
-        outputPath,
-        statsDataSchema,
-        statsColExpr)), Some(statsCollection))
+      (Some(new DeltaJobStatisticsTracker(deltaLog.newDeltaHadoopConf(),
+                                          outputPath,
+                                          outputStatsCollectionSchema,
+                                          statsColExpr)),
+       Some(statsCollection))
     } else {
       (None, None)
     }
@@ -414,10 +420,17 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    val resultFiles = committer.addedStatuses.map { a =>
-        a.copy(stats = optionalStatsTracker.map(
-          _.recordedStats(a.toPath.getName)).getOrElse(a.stats))
-    }.filter {
+    val resultFiles =
+      (if (optionalStatsTracker.isDefined) {
+        committer.addedStatuses.map { a =>
+          a.copy(stats = optionalStatsTracker.map(
+            _.recordedStats(a.toPath.getName)).getOrElse(a.stats))
+        }
+      }
+      else {
+        committer.addedStatuses
+      })
+      .filter {
       // In some cases, we can write out an empty `inputData`. Some examples of this (though, they
       // may be fixed in the future) are the MERGE command when you delete with empty source, or
       // empty target, or on disjoint tables. This is hard to catch before the write without

@@ -18,6 +18,11 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.Closeable
 
+trait SupportsRewinding[T] extends Iterator[T] {
+  // Overrides if class supports rewinding the iterator to the beginning efficiently.
+  def rewind(): Unit
+}
+
 trait ClosableIterator[T] extends Iterator[T] with Closeable {
   /** Calls f(this) and always closes the iterator afterwards. */
   def processAndClose[R](f: Iterator[T] => R): R = {

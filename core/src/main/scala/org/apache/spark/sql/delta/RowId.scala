@@ -64,14 +64,15 @@ object RowId {
    */
   private[delta] def verifyMetadata(
       spark: SparkSession,
-      protocol: Protocol,
+      oldProtocol: Protocol,
+      newProtocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Unit = {
     if (!isAllowed(spark)) return
 
-    val rowIdsEnabledBefore = isEnabled(protocol, oldMetadata)
-    val rowIdsEnabledAfter = isEnabled(protocol, newMetadata)
+    val rowIdsEnabledBefore = isEnabled(oldProtocol, oldMetadata)
+    val rowIdsEnabledAfter = isEnabled(newProtocol, newMetadata)
 
     if (rowIdsEnabledAfter && !rowIdsEnabledBefore && !isCreatingNewTable) {
       throw new UnsupportedOperationException(

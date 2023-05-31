@@ -2591,7 +2591,7 @@ trait DeltaErrorsBase
       detectedDuringStreaming: Boolean): Throwable = {
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION)
+      DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
     new DeltaStreamingColumnMappingSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,

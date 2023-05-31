@@ -1209,6 +1209,39 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterMetadataNoAutoUpdateFeature)))
 
+  testCreateTable(
+    name = "feature with a dependency",
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
+      DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
+      s"delta.feature.${TestFeatureWithDependency.name}" -> "supported"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
+
+  testCreateTable(
+    name = "feature with a dependency, enabled using a feature property",
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
+      DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
+      TestFeatureWithDependency.TABLE_PROP_KEY -> "true"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
+
+  testCreateTable(
+    name = "feature with a dependency that has a dependency",
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> TABLE_FEATURES_MIN_READER_VERSION.toString,
+      DeltaConfigs.MIN_WRITER_VERSION.key -> TABLE_FEATURES_MIN_WRITER_VERSION.toString,
+      s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "supported"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(
+          TestFeatureWithTransitiveDependency,
+          TestFeatureWithDependency,
+          TestReaderWriterFeature))))
+
   def testAlterTable(
       name: String,
       props: Map[String, String],
@@ -1393,6 +1426,33 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterMetadataAutoUpdateFeature).merge(Protocol(1, 2))),
     tableProtocol = Protocol(1, 2))
+
+  testAlterTable(
+    name = "feature with a dependency",
+    tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+    props = Map(s"delta.feature.${TestFeatureWithDependency.name}" -> "supported"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
+
+  testAlterTable(
+    name = "feature with a dependency, enabled using a feature property",
+    tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+    props = Map(TestFeatureWithDependency.TABLE_PROP_KEY -> "true"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(TestFeatureWithDependency, TestReaderWriterFeature))))
+
+  testAlterTable(
+    name = "feature with a dependency that has a dependency",
+    tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+    props = Map(s"delta.feature.${TestFeatureWithTransitiveDependency.name}" -> "supported"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(Seq(
+          TestFeatureWithTransitiveDependency,
+          TestFeatureWithDependency,
+          TestReaderWriterFeature))))
 
   test("non-auto-update capable feature requires manual enablement (via feature prop)") {
     withTempDir { dir =>

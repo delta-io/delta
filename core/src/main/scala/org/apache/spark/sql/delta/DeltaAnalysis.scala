@@ -946,16 +946,19 @@ class DeltaAnalysis(session: SparkSession)
       case streamingRelation @ StreamingRelation(dataSourceV1, sourceName, _)
         if DeltaSourceUtils.isDeltaDataSourceName(sourceName) =>
           val options = CaseInsensitiveMap(dataSourceV1.options)
-          options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION).foreach { rootSchemaTrackingLocation =>
+          options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION).orElse(
+            options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)
+          ).foreach { rootSchemaTrackingLocation =>
             assert(options.get("path").isDefined, "Path for Delta table must be defined")
             val log = DeltaLog.forTable(session, options.get("path").get)
             val sourceIdOpt = options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
-            val schemaTrackingLocation = DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
-              rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
+            val schemaTrackingLocation =
+              DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
+                rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&
-              !(schemaTrackingLocation.stripSuffix("/") + "/")
-                .startsWith(checkpointLocation.stripSuffix("/") + "/")) {
+              !(schemaTrackingLocation.stripPrefix("file:").stripSuffix("/") + "/")
+                .startsWith(checkpointLocation.stripPrefix("file:").stripSuffix("/") + "/")) {
               throw DeltaErrors.schemaTrackingLocationNotUnderCheckpointLocation(
                 schemaTrackingLocation, checkpointLocation)
             }

@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraint
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
@@ -118,6 +119,7 @@ case class AlterTableSetPropertiesDeltaCommand(
         case _ =>
           true
       }
+
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
@@ -325,9 +327,13 @@ case class AlterTableDropColumnsDeltaCommand(
       if (droppingPartitionCols.nonEmpty) {
         throw DeltaErrors.dropPartitionColumnNotSupported(droppingPartitionCols)
       }
-
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
-
+      // Updates the delta statistics column list by removing the dropped columns from it.
+      val newConfiguration = metadata.configuration ++
+        StatisticsCollection.dropDeltaStatsColumns(metadata, columnsToDrop)
+      val newMetadata = metadata.copy(
+        schemaString = newSchema.json,
+        configuration = newConfiguration
+      )
       columnsToDrop.foreach { columnParts =>
         checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol, "drop")
       }
@@ -412,8 +418,17 @@ case class AlterTableChangeColumnDeltaCommand(
         }
       } else metadata.partitionColumns
 
+      val oldColumnPath = columnPath :+ columnName
+      val newColumnPath = columnPath :+ newColumn.name
+      // Rename the column in the delta statistics columns configuration, if present.
+      val newConfiguration = metadata.configuration ++
+        StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
+
       val newMetadata = metadata.copy(
-        schemaString = newSchema.json, partitionColumns = newPartitionColumns)
+        schemaString = newSchema.json,
+        partitionColumns = newPartitionColumns,
+        configuration = newConfiguration
+      )
 
       if (newColumn.name != columnName) {
         // need to validate the changes if the column is renamed
@@ -426,9 +441,7 @@ case class AlterTableChangeColumnDeltaCommand(
 
       if (newColumn.name != columnName) {
         // record column rename separately
-        txn.commit(Nil, DeltaOperations.RenameColumn(
-          columnPath :+ columnName,
-          columnPath :+ newColumn.name))
+        txn.commit(Nil, DeltaOperations.RenameColumn(oldColumnPath, newColumnPath))
       } else {
         txn.commit(Nil, DeltaOperations.ChangeColumn(
           columnPath, columnName, newColumn, colPosition.map(_.toString)))

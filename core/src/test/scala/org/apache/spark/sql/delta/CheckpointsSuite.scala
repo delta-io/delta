@@ -233,7 +233,8 @@ class CheckpointsSuite extends QueryTest
         "partitionValues",
         "size",
         "deletionVector",
-        "baseRowId")
+        "baseRowId",
+        "defaultRowCommitVersion")
 
       val tablePath = tempDir.getAbsolutePath
       // Append rows [0, 9] to table and merge tablePath.

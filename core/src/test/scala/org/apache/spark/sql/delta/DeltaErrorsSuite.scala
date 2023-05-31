@@ -2697,7 +2697,7 @@ trait DeltaErrorsSuiteBase
           detectedDuringStreaming = true
         )
       }
-      assert(e.getErrorClass == "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE")
+      assert(e.getErrorClass == "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG")
       assert(e.getSqlState == "42KD4")
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))
@@ -2712,7 +2712,7 @@ trait DeltaErrorsSuiteBase
           detectedDuringStreaming = false
         )
       }
-      assert(e.getErrorClass == "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE")
+      assert(e.getErrorClass == "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG")
       assert(e.getSqlState == "42KD4")
       assert(e.readSchema == StructType.fromDDL("id int"))
       assert(e.incompatibleSchema == StructType.fromDDL("id2 int"))

@@ -917,15 +917,24 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_STREAMING_ENABLE_NON_ADDITIVE_SCHEMA_EVOLUTION =
-    buildConf("streaming.nonAdditiveSchemaEvolution.enabled")
+  val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING =
+    buildConf("streaming.schemaTracking.enabled")
       .doc(
         """If enabled, Delta streaming source can support non-additive schema evolution for
           |operations such as rename or drop column on column mapping enabled tables.
           |""".stripMargin)
       .internal()
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
+
+  val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES =
+    buildConf("streaming.schemaTracking.mergeConsecutiveSchemaChanges.enabled")
+      .doc(
+        "When enabled, schema tracking in Delta streaming would consider multiple consecutive " +
+          "schema changes as one.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION =
     buildConf("streaming.allowSchemaLocationOutsideCheckpointLocation")
@@ -935,6 +944,15 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED =
+    buildConf("streaming.schemaTracking.metadataPathCheck.enabled")
+      .doc(
+        "When enabled, Delta streaming with schema tracking will ensure the schema log entry " +
+          "must match the source's unique checkpoint metadata location.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE =
     buildConf("streaming.unsafeReadOnNullabilityChange.enabled")
