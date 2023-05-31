@@ -9,7 +9,6 @@ import org.apache.hadoop.fs.Path;
  */
 public final class FileNameUtils {
     static Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
-    static Pattern DELTA_FILE_PREFIX_PATTERN = Pattern.compile("\\d{20}\\.");
 
     /**
      * Returns the delta (json format) path for a given delta file.
@@ -30,12 +29,5 @@ public final class FileNameUtils {
      */
     public static boolean isDeltaFile(Path path) {
         return DELTA_FILE_PATTERN.matcher(path.getName()).matches();
-    }
-
-    /**
-     * Returns true if the given path is a delta file prefix, else false.
-     */
-    public static boolean isDeltaFilePrefix(Path path) {
-        return DELTA_FILE_PREFIX_PATTERN.matcher(path.getName()).matches();
     }
 }

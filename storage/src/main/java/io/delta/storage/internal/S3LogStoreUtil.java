@@ -66,7 +66,8 @@ public final class S3LogStoreUtil {
                         new ListObjectsV2Request()
                                 .withBucketName(s3afs.getBucket())
                                 .withMaxKeys(maxKeys)
-                                .withPrefix(s3afs.pathToKey(parentPath))
+                                .withPrefix(s3afs.pathToKey(parentPath) + "/")
+                                .withDelimiter("/")
                                 .withStartAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                 ), ACCEPT_ALL,
                 new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
