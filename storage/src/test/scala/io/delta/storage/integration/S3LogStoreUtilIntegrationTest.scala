@@ -89,7 +89,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     })
   }
 
-  def testNonRecursive(table: String): Unit = {
+  def testNonRecursive(table: String): Unit = integrationTest(table) {
     // Setup delta log
     touch(s"$testRunUID/$table/_delta_log/%020d.json".format(1))
     // Setup data file
