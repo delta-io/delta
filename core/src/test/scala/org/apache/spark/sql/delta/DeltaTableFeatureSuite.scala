@@ -116,6 +116,23 @@ class DeltaTableFeatureSuite
           TestFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
+
+    // Validate new protocol has required features enabled when a writer feature requires a
+    // reader/write feature.
+    val metadata = Metadata(
+      configuration = Map(
+        TableFeatureProtocolUtils.propertyKey(TestWriterFeatureWithTransitiveDependency) ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+    assert(
+      Protocol
+        .forNewTable(
+          spark,
+          Some(metadata))
+        .readerAndWriterFeatureNames ===
+        Set(
+          TestWriterFeatureWithTransitiveDependency.name,
+          TestFeatureWithDependency.name,
+          TestReaderWriterFeature.name))
   }
 
   test("implicitly-enabled features") {

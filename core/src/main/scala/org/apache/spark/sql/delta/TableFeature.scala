@@ -233,6 +233,7 @@ object TableFeature {
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
+        TestWriterFeatureWithTransitiveDependency,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature)
     }
@@ -420,6 +421,12 @@ object TestFeatureWithDependency
 
 object TestFeatureWithTransitiveDependency
   extends ReaderWriterFeature(name = "testFeatureWithTransitiveDependency") {
+
+  override def requiredFeatures: Set[TableFeature] = Set(TestFeatureWithDependency)
+}
+
+object TestWriterFeatureWithTransitiveDependency
+  extends WriterFeature(name = "testWriterFeatureWithTransitiveDependency") {
 
   override def requiredFeatures: Set[TableFeature] = Set(TestFeatureWithDependency)
 }

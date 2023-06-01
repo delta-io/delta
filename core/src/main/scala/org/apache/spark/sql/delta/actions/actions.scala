@@ -298,7 +298,11 @@ object Protocol {
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
     val tablePropEnabledFeatures = getSupportedFeaturesFromTableConfigs(tableConf)
-    val metaEnabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+    // To enable features that are being dependent by `tablePropEnabledFeatures`, we pass it here to
+    // let [[getDependencyClosure]] collect them.
+    val metaEnabledFeatures =
+      extractAutomaticallyEnabledFeatures(
+        spark, metadata, Some(Protocol().withFeatures(tablePropEnabledFeatures)))
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
