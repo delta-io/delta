@@ -18,9 +18,6 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RowIdHighWaterMark}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
-import org.apache.spark.sql.SparkSession
 
 /**
  * Collection of helpers to handle Row IDs.
@@ -28,14 +25,6 @@ import org.apache.spark.sql.SparkSession
 object RowId {
 
   val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark = RowIdHighWaterMark(highWaterMark = -1L)
-
-  /**
-   * Returns whether Row IDs can be written to Delta tables and read from Delta tables. This acts as
-   * a feature flag during development: every Row ID code path should be hidden behind this flag and
-   * behave as if Row IDs didn't exist when this returns false to avoid leaking an incomplete
-   * implementation.
-   */
-  def isAllowed(spark: SparkSession): Boolean = spark.conf.get(DeltaSQLConf.ROW_IDS_ALLOWED)
 
   /**
    * Returns whether the protocol version supports the Row ID table feature. Whenever Row IDs are
@@ -63,13 +52,11 @@ object RowId {
    * Verifies that row IDs are only set as readable when a new table is created.
    */
   private[delta] def verifyMetadata(
-      spark: SparkSession,
       oldProtocol: Protocol,
       newProtocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Unit = {
-    if (!isAllowed(spark)) return
 
     val rowIdsEnabledBefore = isEnabled(oldProtocol, oldMetadata)
     val rowIdsEnabledAfter = isEnabled(newProtocol, newMetadata)
@@ -85,13 +72,12 @@ object RowId {
    * a [[RowIdHighWaterMark]] action with the new high-water mark.
    */
   private[delta] def assignFreshRowIds(
-      spark: SparkSession,
       protocol: Protocol,
       snapshot: Snapshot,
       actions: Iterator[Action]): Iterator[Action] = {
-    if (!isAllowed(spark) || !isSupported(protocol)) return actions
+    if (!isSupported(protocol)) return actions
 
-    val oldHighWatermark = extractHighWatermark(spark, snapshot)
+    val oldHighWatermark = extractHighWatermark(snapshot)
         .getOrElse(MISSING_HIGH_WATER_MARK)
         .highWaterMark
     var newHighWatermark = oldHighWatermark
@@ -122,22 +108,8 @@ object RowId {
   /**
    * Extracts the high watermark of row IDs from a snapshot.
    */
-  private[delta] def extractHighWatermark(
-      spark: SparkSession, snapshot: Snapshot): Option[RowIdHighWaterMark] = {
-    if (isAllowed(spark)) {
-      snapshot.rowIdHighWaterMarkOpt
-    } else {
-      None
-    }
-  }
-
-  private[delta] def extractHighWatermark(
-      spark: SparkSession, actions: Seq[Action]): Option[RowIdHighWaterMark] = {
-    if (isAllowed(spark)) {
-      actions.collectFirst { case r: RowIdHighWaterMark => r }
-    } else {
-      None
-    }
+  private[delta] def extractHighWatermark(snapshot: Snapshot): Option[RowIdHighWaterMark] = {
+    snapshot.rowIdHighWaterMarkOpt
   }
 
   /**
@@ -147,11 +119,10 @@ object RowId {
    * flags to collect statistics.
    */
   private[delta] def checkStatsCollectedIfRowTrackingSupported(
-      spark: SparkSession,
       protocol: Protocol,
       convertToDeltaShouldCollectStats: Boolean,
       statsCollectionEnabled: Boolean): Unit = {
-    if (!isAllowed(spark) || !isSupported(protocol)) return
+    if (!isSupported(protocol)) return
     if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
       throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
     }

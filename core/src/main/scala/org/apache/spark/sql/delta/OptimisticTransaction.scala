@@ -563,7 +563,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
 
     RowId.verifyMetadata(
-      spark, snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
+      snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
@@ -1001,7 +1001,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
 
       val readRowIdHighWatermark =
-        RowId.extractHighWatermark(spark, snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
+        RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
@@ -1143,7 +1143,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         action
       }
 
-      allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions)
+      allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions)
       allActions = DefaultRowCommitVersion
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
@@ -1364,8 +1364,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     deltaLog.protocolWrite(snapshot.protocol)
 
-    finalActions =
-      RowId.assignFreshRowIds(spark, protocol, snapshot, finalActions.toIterator).toList
+    finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator).toList
     finalActions = DefaultRowCommitVersion
       .assignIfMissing(protocol, finalActions.toIterator, getFirstAttemptVersion).toList
 

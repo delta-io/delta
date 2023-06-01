@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
@@ -210,6 +210,19 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       optimized: LogicalPlan,
       sparkPlan: SparkPlan,
       executedPlan: SparkPlan)
+
+  /**
+   * Creates an AddFile that can be used for tests where the exact parameters do not matter.
+   */
+  def createTestAddFile(
+      path: String = "foo",
+      partitionValues: Map[String, String] = Map.empty,
+      size: Long = 1L,
+      modificationTime: Long = 1L,
+      dataChange: Boolean = true,
+      stats: String = "{\"numRecords\": 1}"): AddFile = {
+    AddFile(path, partitionValues, size, modificationTime, dataChange, stats)
+  }
 
   /**
    * Extracts the table name and alias (if any) from the given string. Correctly handles whitespaces

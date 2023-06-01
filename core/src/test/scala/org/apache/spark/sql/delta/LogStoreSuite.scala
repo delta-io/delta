@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage._
@@ -164,8 +165,7 @@ abstract class LogStoreSuiteBase extends QueryTest
     assert(log1.store.getClass.getName == logStoreClassName)
 
     val txn = log1.startTransaction()
-    val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
-    txn.commitManually(file: _*)
+    txn.commitManually(createTestAddFile())
     log1.checkpoint()
 
     DeltaLog.clearCache()
