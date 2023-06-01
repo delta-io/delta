@@ -157,6 +157,7 @@ abstract class CloneTableBase(
 {
 
   import CloneTableBase._
+  def dataChangeInFileAction: Boolean = true
 
   /**
    * Run the clone command
@@ -275,7 +276,7 @@ abstract class CloneTableBase(
     try {
       var actions = Iterator.single(newProtocol) ++
         addedFileList.iterator.asScala.map { fileToCopy =>
-          val copiedFile = fileToCopy.copy(dataChange = true)
+          val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           opName match {
             case CloneTableCommand.OP_NAME =>
               // CLONE does not preserve Row IDs and Commit Versions
