@@ -375,32 +375,32 @@ private[delta] class ConflictChecker(
     // The current transaction should only assign Row Ids if they are supported.
     if (!RowId.isSupported(currentTransactionInfo.protocol)) return
 
-    winningCommitSummary.actions.collectFirst {
-      case RowIdHighWaterMark(winningHighWaterMark) =>
-        // The winning transaction assigned conflicting Row IDs. Adjust the Row IDs assigned by the
-        // current transaction as if it had read the result of the winning transaction.
-        val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
-        assert(winningHighWaterMark >= readHighWaterMark)
-        val watermarkDiff = winningHighWaterMark - readHighWaterMark
+    // The winning commit might either only have activated the table feature or it assigned Row IDs.
+    val winningHighWaterMark = winningCommitSummary.actions.collectFirst {
+      case RowIdHighWaterMark(winningHighWaterMark) => winningHighWaterMark
+    }.getOrElse(-1L)
+    val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
 
-        val actionsWithReassignedRowIds = currentTransactionInfo.actions.map {
-          // We should only update the row IDs that were assigned by this transaction, and not the
-          // row IDs that were assigned by an earlier transaction and merely copied over to a new
-          // AddFile as part of this transaction. I.e., we should only update the base row IDs
-          // that are larger than the read high watermark.
-          case a: AddFile if a.baseRowId.exists(_ > readHighWaterMark) =>
-            val newBaseRowId = a.baseRowId.map(_ + watermarkDiff)
-            a.copy(baseRowId = newBaseRowId)
-
-          case waterMark @ RowIdHighWaterMark(v) =>
-            waterMark.copy(highWaterMark = v + watermarkDiff)
-
-          case a => a
+    var highWaterMark = winningHighWaterMark
+    val actionsWithReassignedRowIds = currentTransactionInfo.actions.flatMap {
+      // We should only set missing row IDs and update the row IDs that were assigned by this
+      // transaction, and not the row IDs that were assigned by an earlier transaction and merely
+      // copied over to a new AddFile as part of this transaction. I.e., we should only update the
+      // base row IDs that are larger than the read high watermark.
+      case a: AddFile if !a.baseRowId.exists(_ <= readHighWaterMark) =>
+        val newBaseRowId = highWaterMark + 1L
+        highWaterMark += a.numPhysicalRecords.getOrElse {
+          throw DeltaErrors.rowIdAssignmentWithoutStats
         }
-      currentTransactionInfo = currentTransactionInfo.copy(
-        actions = actionsWithReassignedRowIds,
-        readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
+        Some(a.copy(baseRowId = Some(newBaseRowId)))
+      // The RowIdHighWaterMark will be replaced if it exists.
+      case _: RowIdHighWaterMark => None
+      case a => Some(a)
     }
+    currentTransactionInfo = currentTransactionInfo.copy(
+      // Add RowIdHighWaterMark at the front for faster retrieval.
+      actions = RowIdHighWaterMark(highWaterMark) +: actionsWithReassignedRowIds,
+      readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
   }
 
   /** A helper function for pretty printing a specific partition directory. */
