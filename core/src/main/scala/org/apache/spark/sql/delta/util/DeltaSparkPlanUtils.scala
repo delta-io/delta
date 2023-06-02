@@ -95,7 +95,7 @@ trait DeltaSparkPlanUtils {
     }
   }
 
-  private def collectFirst[In, Out](
+  protected def collectFirst[In, Out](
       input: Iterable[In],
       recurse: In => Option[Out]): Option[Out] = {
     input.foldLeft(Option.empty[Out]) { case (acc, value) =>
