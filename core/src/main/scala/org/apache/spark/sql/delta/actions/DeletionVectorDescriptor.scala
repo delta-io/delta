@@ -176,13 +176,8 @@ object DeletionVectorDescriptor {
   final val INLINE_DV_MARKER: String = "i"
   final val UUID_DV_MARKER: String = "u"
 
-  final val STRUCT_TYPE: StructType = new StructType()
-    .add("storageType", StringType, nullable = false)
-    .add("pathOrInlineDv", StringType, nullable = false)
-    .add("offset", IntegerType, nullable = true)
-    .add("sizeInBytes", IntegerType, nullable = false)
-    .add("cardinality", LongType, nullable = false)
-    .add("maxRowIndex", LongType, nullable = true)
+  final val STRUCT_TYPE: StructType =
+    Action.addFileSchema("deletionVector").dataType.asInstanceOf[StructType]
 
   private lazy val _encoder = new DeltaEncoder[DeletionVectorDescriptor]
   implicit def encoder: Encoder[DeletionVectorDescriptor] = _encoder.get
