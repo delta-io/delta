@@ -17,16 +17,24 @@
 import java.nio.file.Files
 import TestParallelization._
 
-val sparkVersion = "3.4.0"
+// Scala versions
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
 val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
 
+// Dependent library versions
+val sparkVersion = "3.4.0"
+val hadoopVersion = "3.3.1"
+val scalaTestVersion = "3.2.15"
+
 scalaVersion := default_scala_version
 
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
+
+lazy val sparkGroup = project.aggregate(spark, contribs, storage, storageS3DynamoDB)
+lazy val kernelGroup = project.aggregate(kernelApi, kernelDefault)
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -39,11 +47,11 @@ lazy val commonSettings = Seq(
   Compile / compile / javacOptions ++= Seq("-target", "1.8")
 )
 
-lazy val core = (project in file("core"))
+lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
-    name := "delta-core",
+    name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
     mimaSettings,
@@ -57,7 +65,7 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
       // Test deps
-      "org.scalatest" %% "scalatest" % "3.2.9" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
@@ -68,7 +76,8 @@ lazy val core = (project in file("core"))
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
+      compilerPlugin(
+        "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -126,7 +135,7 @@ lazy val core = (project in file("core"))
   )
 
 lazy val contribs = (project in file("contribs"))
-  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-contribs",
     commonSettings,
@@ -162,6 +171,38 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   )
 
+lazy val kernelApi = (project in file("kernel/kernel-api"))
+  .settings(
+    name := "delta-kernel-api",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq()
+  )
+
+lazy val kernelDefault = (project in file("kernel/kernel-default"))
+  .dependsOn(kernelApi)
+  .dependsOn(spark % "test")
+  .settings(
+    name := "delta-kernel-default",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion, // Configuration, Path
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5", // ObjectMapper
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
+
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test", // SparkSession
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+      "junit" % "junit" % "4.11" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
+    )
+  )
+
 // TODO javastyle tests
 // TODO unidoc
 // TODO(scott): figure out a better way to include tests in this project
@@ -173,20 +214,20 @@ lazy val storage = (project in file("storage"))
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
-      "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
 
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
-      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
 
       // Test Deps
-      "org.scalatest" %% "scalatest" % "3.2.11" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
     )
   )
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
-  .dependsOn(core % "test->test")
+  .dependsOn(spark % "test->test")
   .settings (
     name := "delta-storage-s3-dynamodb",
     commonSettings,
@@ -200,14 +241,14 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
 
       // Test Deps
-      "org.apache.hadoop" % "hadoop-aws" % "3.3.1" % "test", // RemoteFileChangedException
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
     )
   )
 
 // Requires iceberg release on 3.4
 /**
 lazy val deltaIceberg = (project in file("delta-iceberg"))
-  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-iceberg",
     commonSettings,
@@ -289,6 +330,12 @@ def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
   }
 }
 
+def getPrevName(currentVersion: String): String = {
+  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
+  // name change happened in version 3.0.0
+  if (major == 3 && minor == 0 && patch == 0) "delta-core" else "delta-spark"
+}
+
 def getPrevVersion(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
@@ -309,7 +356,8 @@ def getPrevVersion(currentVersion: String): String = {
 
 lazy val mimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
+  mimaPreviousArtifacts :=
+    Set("io.delta" %% getPrevName(version.value) %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
