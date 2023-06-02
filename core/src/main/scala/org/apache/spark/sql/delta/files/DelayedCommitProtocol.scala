@@ -40,11 +40,16 @@ import org.apache.spark.sql.types.StringType
  * special handling for partitioning on [[CDC_PARTITION_COL]] for
  * compatibility between enabled and disabled CDC; partitions with a value of false in this
  * column produce no corresponding partitioning directory.
+ * @param path The base path files will be written
+ * @param randomPrefixLength The length of random subdir name under 'path' that files been written
+ * @param subdir The immediate subdir under path; If randomPrefixLength and subdir both exist, file
+ *               path will be path/subdir/[rand str of randomPrefixLength]/file
  */
 class DelayedCommitProtocol(
       jobId: String,
       path: String,
-      randomPrefixLength: Option[Int])
+      randomPrefixLength: Option[Int],
+      subdir: Option[String])
   extends FileCommitProtocol with Serializable with Logging {
   // Track the list of files added by a task, only used on the executors.
   @transient protected var addedFiles: ArrayBuffer[(Map[String, String], String)] = _
@@ -187,8 +192,9 @@ class DelayedCommitProtocol(
       }
     }.getOrElse(new Path(filename)) // or directly write out to the output path
 
-    addedFiles.append((partitionValues, relativePath.toUri.toString))
-    new Path(path, relativePath).toString
+    val relativePathWithSubdir = subdir.map(new Path(_, relativePath)).getOrElse(relativePath)
+    addedFiles.append((partitionValues, relativePathWithSubdir.toUri.toString))
+    new Path(path, relativePathWithSubdir).toString
   }
 
   override def newTaskTempFileAbsPath(
