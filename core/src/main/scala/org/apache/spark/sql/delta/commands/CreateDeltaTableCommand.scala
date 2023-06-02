@@ -449,9 +449,6 @@ case class CreateDeltaTableCommand(
     }
 
     table.copy(
-      schema = new StructType(),
-      properties = Map.empty,
-      partitionColumnNames = Nil,
       // Remove write specific options when updating the catalog
       storage = storageProps,
       tracksPartitionsInCatalog = true)
