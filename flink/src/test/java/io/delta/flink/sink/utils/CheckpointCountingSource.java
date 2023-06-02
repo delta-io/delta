@@ -95,15 +95,17 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
     }
 
     private void idleUntilNextCheckpoint(SourceContext<RowData> ctx) throws InterruptedException {
-        // Idle until the next checkpoint completes to avoid any premature job termination and
-        // race conditions.
-        LOGGER.info("Waiting for an additional checkpoint to complete; subtask={}.",
-            getRuntimeContext().getIndexOfThisSubtask());
-        synchronized (ctx.getCheckpointLock()) {
-            waitingForCheckpoint = true;
-        }
-        while (waitingForCheckpoint) {
-            Thread.sleep(1L);
+        if (!isCanceled) {
+            // Idle until the next checkpoint completes to avoid any premature job termination and
+            // race conditions.
+            LOGGER.info("Waiting for an additional checkpoint to complete; subtask={}.",
+                getRuntimeContext().getIndexOfThisSubtask());
+            synchronized (ctx.getCheckpointLock()) {
+                waitingForCheckpoint = true;
+            }
+            while (waitingForCheckpoint) {
+                Thread.sleep(1L);
+            }
         }
     }
 
@@ -132,5 +134,6 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
     @Override
     public void cancel() {
         isCanceled = true;
+        waitingForCheckpoint = false;
     }
 }

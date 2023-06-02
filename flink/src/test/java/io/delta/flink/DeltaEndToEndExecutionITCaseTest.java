@@ -32,6 +32,7 @@ import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -95,6 +96,11 @@ public class DeltaEndToEndExecutionITCaseTest {
         } catch (Exception e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
         }
+    }
+
+    @AfterEach
+    public void afterEach() {
+        miniClusterResource.after();
     }
 
     @ParameterizedRepeatedIfExceptionsTest(

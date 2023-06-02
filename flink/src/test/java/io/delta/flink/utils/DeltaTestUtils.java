@@ -152,7 +152,7 @@ public class DeltaTestUtils {
         miniCluster.startTaskManager();
     }
 
-    public static MiniClusterWithClientResource buildCluster(int parallelismLevel) {
+    public static MiniClusterWithClientResource buildCluster(int slotPerTaskManager) {
         Configuration configuration = new Configuration();
 
         // By default, let's check for leaked classes in tests.
@@ -161,7 +161,7 @@ public class DeltaTestUtils {
         return new MiniClusterWithClientResource(
             new MiniClusterResourceConfiguration.Builder()
                 .setNumberTaskManagers(1)
-                .setNumberSlotsPerTaskManager(parallelismLevel)
+                .setNumberSlotsPerTaskManager(slotPerTaskManager)
                 .setRpcServiceSharing(RpcServiceSharing.DEDICATED)
                 .withHaLeadershipControl()
                 .setConfiguration(configuration)

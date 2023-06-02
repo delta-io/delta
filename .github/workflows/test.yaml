@@ -39,5 +39,5 @@ jobs:
       - name: Run Hive 2 tests
         run: build/sbt "++ ${{ matrix.scala }}" hive2MR/test hive2Tez/test
       - name: Run Flink tests (Scala 2.11 and 2.12 only)
-        run: build/sbt "++ ${{ matrix.scala }}" flink/test
+        run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
         if: ${{ !startsWith(matrix.scala, '2.13.') }}
