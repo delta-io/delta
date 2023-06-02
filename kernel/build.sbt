@@ -37,7 +37,8 @@ lazy val commonSettings = Seq(
   (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
 )
 
-// TODO unidoc/javadoc settings
+// TODO: after adding scala source files SBT will no longer automatically run javadoc instead of
+//  scaladoc
 
 lazy val kernelApi = (project in file("kernel-api"))
   .settings(
@@ -45,7 +46,16 @@ lazy val kernelApi = (project in file("kernel-api"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq()
+    libraryDependencies ++= Seq(),
+    Compile / doc / javacOptions := Seq(
+      "-public",
+      "-windowtitle", "Delta Kernel API " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+      "-noqualifier", "java.lang",
+      "-Xdoclint:all"
+      // TODO: exclude internal packages
+    ),
+    // Ensure doc is run with tests. Must be cleaned before test for docs to be generated
+    (Test / test) := ((Test / test) dependsOn (Compile / doc)).value
   )
 
 val hadoopVersion = "3.3.1"
