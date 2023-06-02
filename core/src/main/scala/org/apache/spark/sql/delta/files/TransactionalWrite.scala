@@ -61,8 +61,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   protected var hasWritten = false
 
+  private[delta] val deltaDataSubdir =
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) {
+      Some("data")
+    } else None
+
   protected def getCommitter(outputPath: Path): DelayedCommitProtocol =
-    new DelayedCommitProtocol("delta", outputPath.toString, None)
+    new DelayedCommitProtocol("delta", outputPath.toString, None, deltaDataSubdir)
 
   /** Makes the output attributes nullable, so that we don't write unreadable parquet files. */
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {

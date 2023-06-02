@@ -75,7 +75,7 @@ class CDCReaderSuite
       }
 
       SQLExecution.withNewExecutionId(qe) {
-        var committer = new DelayedCommitProtocol("delta", basePath, randomPrefixes)
+        var committer = new DelayedCommitProtocol("delta", basePath, randomPrefixes, None)
         FileFormatWriter.write(
           sparkSession = spark,
           plan = qe.executedPlan,

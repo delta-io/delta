@@ -1189,6 +1189,12 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val WRITE_DATA_FILES_TO_SUBDIR = buildConf("write.dataFilesToSubdir")
+    .internal()
+    .doc("Delta will write all data files to subdir 'data/' under table dir if enabled")
+    .booleanConf
+    .createWithDefault(false)
+
   val DELETION_VECTORS_COMMIT_CHECK_ENABLED =
     buildConf("deletionVectors.skipCommitCheck")
       .internal()

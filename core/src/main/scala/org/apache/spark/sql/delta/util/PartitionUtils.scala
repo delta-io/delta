@@ -390,7 +390,7 @@ private[delta] object PartitionUtils {
    * `Seq(("fieldOne", "1"), ("fieldTwo", "2"))`.
    */
   def parsePathFragmentAsSeq(pathFragment: String): Seq[(String, String)] = {
-    pathFragment.split("/").map { kv =>
+    pathFragment.stripPrefix("data/").split("/").map { kv =>
       val pair = kv.split("=", 2)
       (unescapePathName(pair(0)), unescapePathName(pair(1)))
     }
