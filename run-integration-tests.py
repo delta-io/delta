@@ -17,6 +17,8 @@
 #
 
 import os
+import pathlib
+import re
 import subprocess
 from os import path
 import shutil
@@ -323,8 +325,15 @@ if __name__ == "__main__":
 
     # get the version of the package
     root_dir = path.dirname(__file__)
-    with open(path.join(root_dir, "version.sbt")) as fd:
-        default_version = fd.readline().split('"')[1]
+
+    default_version = re.sub(
+        "-SNAPSHOT",
+        ".dev",
+        re.search(
+            '"(?P<version>\d+\.\d+\.\d+(-\w+)?)"',
+            (pathlib.Path(root_dir) / "version.sbt").read_text(),
+        ).group("version"),
+    )
 
     parser = argparse.ArgumentParser()
     parser.add_argument(

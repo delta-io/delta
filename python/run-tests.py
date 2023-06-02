@@ -17,6 +17,8 @@
 #
 
 import os
+import pathlib
+import re
 import subprocess
 import shutil
 from os import path
@@ -53,6 +55,16 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
+def _get_version(path: pathlib.Path) -> str:
+    return re.sub(
+        "-SNAPSHOT",
+        ".dev",
+        re.search(
+            '"(?P<version>\d+\.\d+\.\d+(-\w+)?)"',
+            path.read_text(),
+        ).group("version"),
+    )
+
 def prepare(root_dir):
     print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
@@ -62,10 +74,7 @@ def prepare(root_dir):
     run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
-    version = '0.0.0'
-    with open(os.path.join(root_dir, "version.sbt")) as fd:
-        version = fd.readline().split('"')[1]
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-core_2.12:" + _get_version(pathlib.Path(root_dir) / "version.sbt")
     return package
 
 
@@ -127,10 +136,6 @@ def run_pypi_packaging_tests(root_dir):
     """
     print("##### Running PyPi Packaging tests #####")
 
-    version = '0.0.0'
-    with open(os.path.join(root_dir, "version.sbt")) as fd:
-        version = fd.readline().split('"')[1]
-
     # uninstall packages if they exist
     run_cmd(["pip3", "uninstall", "--yes", "delta-spark"], stream_output=True)
 
@@ -147,9 +152,7 @@ def run_pypi_packaging_tests(root_dir):
 
     run_cmd(["python3", "setup.py", "sdist"], stream_output=True)
 
-    # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
-    version_formatted = version.replace("-", "_")
-    delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
+    delta_whl_name = "delta_spark-" + _get_version(pathlib.Path(root_dir) / "version.sbt") + "-py3-none-any.whl"
 
     # this will install delta-spark-$version
     install_whl_cmd = ["pip3", "install", path.join(wheel_dist_dir, delta_whl_name)]

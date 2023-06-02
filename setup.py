@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
+import pathlib
+import re
 import sys
 
 from setuptools import setup
@@ -9,9 +11,11 @@ from setuptools.command.install import install
 
 # delta.io version
 def get_version_from_sbt():
-    with open("version.sbt") as fp:
-        version = fp.read().strip()
-    return version.split('"')[1]
+    version = re.search(
+        '"(?P<version>\d+\.\d+\.\d+(-\w+)?)"',
+        pathlib.Path("version.sbt").read_text(),
+    ).group("version")
+    return re.sub("-SNAPSHOT", ".dev", version)
 
 
 VERSION = get_version_from_sbt()
