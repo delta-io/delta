@@ -9,6 +9,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 
+// TODO: exclude from public interfaces (move to "internal" somewhere?)
 public class CastingComparator<T extends Comparable<T>> implements Comparator<Object> {
 
     public static Comparator<Object> forDataType(DataType dataType) {

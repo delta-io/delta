@@ -14,7 +14,8 @@ public interface ExpressionHandler
     // TODO: specify 1:1 input and outout
     /**
      * Create an {@link ExpressionEvaluator} that can evaluate the given <i>expression</i> on
-     * {@link io.delta.kernel.data.ColumnarBatch} of data with given <i>batchSchema</i>.
+     * {@link io.delta.kernel.data.ColumnarBatch}s with the given <i>batchSchema</i>.
+     *
      * @param batchSchema Schema of the input data.
      * @param expression Expression to evaluate.
      * @return An {@link ExpressionEvaluator} instance bound to the given expression and

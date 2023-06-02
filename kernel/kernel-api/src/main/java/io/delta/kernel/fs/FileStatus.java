@@ -59,24 +59,22 @@ public class FileStatus {
     }
 
     /**
-     * Create a {@link FileStatus} representing the given path and file size.
+     * Create a {@link FileStatus} with the given path, size and modification time.
      * @param path Fully qualified file path.
      * @param size File size in bytes
      * @param modificationTime Modification time of the file in epoch millis
-     * @return
      */
     public static FileStatus of(String path, long size, long modificationTime) {
         return new FileStatus(path, size, modificationTime, false);
     }
 
     /**
-     * Create a {@link FileStatus}.
-     *
+     * Create a {@link FileStatus} with the given path, size, modification time, and
+     * hasDeletionVector.
      * @param path Fully qualified file path.
      * @param size File size in bytes
      * @param modificationTime Modification time of the file in epoch millis
      * @param hasDeletionVector Whether the file has an associated deletion vector file.
-     * @return
      */
     public static FileStatus of(
             String path,

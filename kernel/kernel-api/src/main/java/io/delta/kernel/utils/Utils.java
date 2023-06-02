@@ -2,6 +2,7 @@ package io.delta.kernel.utils;
 
 import java.io.IOException;
 
+import io.delta.kernel.Scan;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
@@ -39,6 +40,13 @@ public class Utils {
         };
     }
 
+    /**
+     * Utility method to create a singleton string {@link ColumnVector}
+     *
+     * @param value the string element to create the vector with
+     * @return A {@link ColumnVector} with a single element {@code value}
+     */
+    // TODO: add String to method name or make generic?
     public static ColumnVector singletonColumnVector(String value) {
         return new ColumnVector() {
             @Override
@@ -74,9 +82,10 @@ public class Utils {
     }
 
     /**
-     * Utility method to get the physical schema from the scan state {@link Row}.
+     * Utility method to get the physical schema from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
      *
-     * @param scanState Scan state given as {@link Row}
+     * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
     public static StructType getPhysicalSchema(Row scanState) {
@@ -85,10 +94,10 @@ public class Utils {
     }
 
     /**
-     * Get the {@link FileStatus} from given scan file row. {@link FileStatus} object allows the
-     * connector to look at the partial metadata of the scan file.
+     * Get the {@link FileStatus} from given scan file {@link Row}. The {@link FileStatus} contains
+     * file metadata about the scan file.
      *
-     * @param scanFileInfo Row representing one scan file.
+     * @param scanFileInfo {@link Row} representing one scan file.
      * @return a {@link FileStatus} object created from the given scan file row.
      */
     public static FileStatus getFileStatus(Row scanFileInfo) {
@@ -99,9 +108,10 @@ public class Utils {
         return FileStatus.of(path, size, 0, hasDeletionVector);
     }
 
+    // TODO should this be public? Documenting this means exposing details like partitionValues,
+    // dataChange flag, etc
     public static Row getScanFileRow(FileStatus fileStatus) {
         // TODO needs io.delta.kernel.internal.actions.AddFile
         throw new UnsupportedOperationException("not implemented yet");
-
     }
 }

@@ -10,6 +10,7 @@ public class StructField {
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
+    // TODO: docs
     public static StructField fromRow(Row row) {
         final String name = row.getString(0);
         final DataType type = UnresolvedDataType.fromRow(row, 1);
@@ -18,6 +19,7 @@ public class StructField {
         return new StructField(name, type, nullable, metadata);
     }
 
+    // TODO: docs
     public static final StructType READ_SCHEMA = new StructType()
         .add("name", StringType.INSTANCE)
         .add("type", UnresolvedDataType.INSTANCE)
@@ -45,18 +47,30 @@ public class StructField {
         this.metadata = metadata;
     }
 
+    /**
+     * @return the name of this field
+     */
     public String getName() {
         return name;
     }
 
+    /**
+     * @return the data type of this field
+     */
     public DataType getDataType() {
         return dataType;
     }
 
+    /**
+     * @return the metadata for this field
+     */
     public Map<String, String> getMetadata() {
         return metadata;
     }
 
+    /**
+     * @return whether this field allows to have a {@code null} value.
+     */
     public boolean isNullable() {
         return nullable;
     }

@@ -10,8 +10,8 @@ import io.delta.kernel.types.StructType;
 public interface ScanBuilder {
 
     /**
-     * Apply the given filter expression to prune any files
-     * that do not contain data satisfying the given filter.
+     * Apply the given filter expression to prune any files that do not contain data satisfying
+     * the given filter.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param filter an {@link Expression} which evaluates to boolean.

@@ -15,6 +15,7 @@ public final class StructType extends DataType {
 
     public static StructType EMPTY_INSTANCE = new StructType();
 
+    // TODO: docs
     public static StructType fromRow(Row row) {
         final List<Row> fields = row.getList(0);
         return new StructType(
@@ -25,6 +26,7 @@ public final class StructType extends DataType {
         );
     }
 
+    // TODO: docs
     public static StructType READ_SCHEMA = new StructType()
         .add("fields", new ArrayType(StructField.READ_SCHEMA, false /* contains null */ ));
 
@@ -66,14 +68,23 @@ public final class StructType extends DataType {
         return add(new StructField(name, dataType, true /* nullable */, metadata));
     }
 
+    /**
+     * @return array of fields
+     */
     public List<StructField> fields() {
         return Collections.unmodifiableList(fields);
     }
 
+    /**
+     * @return array of field names
+     */
     public List<String> fieldNames() {
         return fieldNames;
     }
 
+    /**
+     * @return the number of fields
+     */
     public int length() {
         return fields.size();
     }
@@ -91,17 +102,22 @@ public final class StructType extends DataType {
     }
 
     /**
-     * Creates a {@link Column} expression for the field with the given
-     * {@code fieldName}.
+     * Creates a {@link Column} expression for the field at the given {@code ordinal}
      *
      * @param ordinal the ordinal of the {@link StructField} to create a column for
-     * @return a {@link Column} expression for the {@link StructField} with name {@code fieldName}
+     * @return a {@link Column} expression for the {@link StructField} with ordinal {@code ordinal}
      */
     public Column column(int ordinal) {
         final StructField field = at(ordinal);
         return new Column(ordinal, field.getName(), field.getDataType());
     }
 
+    /**
+     * Creates a {@link Column} expression for the field with the given {@code fieldName}.
+     *
+     * @param fieldName the name of the {@link StructField} to create a column for
+     * @return a {@link Column} expression for the {@link StructField} with name {@code fieldName}
+     */
     public Column column(String fieldName) {
         Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
         System.out.println("Created column " + fieldName + " with ordinal " + fieldAndOrdinal._2);
@@ -117,6 +133,10 @@ public final class StructType extends DataType {
         );
     }
 
+    /**
+     * @return a readable indented tree representation of this {@code StructType}
+     *         and all of its nested elements
+     */
     public String treeString() {
         return "TODO";
     }

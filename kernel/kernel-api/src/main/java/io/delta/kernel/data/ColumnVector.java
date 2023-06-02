@@ -10,12 +10,12 @@ import io.delta.kernel.types.DataType;
  */
 public interface ColumnVector extends AutoCloseable {
     /**
-     * Returns the data type of this column vector.
+     * @return the data type of this column vector.
      */
     DataType getDataType();
 
     /**
-     * Number of eleements in the vector
+     * @return number of elements in the vector
      */
     int getSize();
 
@@ -30,7 +30,7 @@ public interface ColumnVector extends AutoCloseable {
     void close();
 
     /**
-     * Returns whether the value at {@code rowId} is NULL.
+     * @return whether the value at {@code rowId} is NULL.
      */
     boolean isNullAt(int rowId);
 

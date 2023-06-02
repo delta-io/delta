@@ -17,7 +17,7 @@ public interface Snapshot {
     long getVersion(TableClient tableClient);
 
     /**
-     * Get the schema of the table according to this snapshot.
+     * Get the schema of the table at this snapshot.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return Schema of the Delta table at this snapshot.
@@ -25,7 +25,7 @@ public interface Snapshot {
     StructType getSchema(TableClient tableClient);
 
     /**
-     * Create scan builder to allow construction of scans to read data from this snapshot.
+     * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return an instance of {@link ScanBuilder}

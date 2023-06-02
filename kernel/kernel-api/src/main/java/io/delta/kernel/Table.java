@@ -2,10 +2,13 @@ package io.delta.kernel;
 
 import io.delta.kernel.client.TableClient;
 
+/**
+ * Represents the Delta Lake table for a given path.
+ */
 public interface Table {
 
     /**
-     * Instantiate table object for Delta Lake table at the given path.
+     * Instantiate a table object for the Delta Lake table at the given path.
      *
      * @param path location where the Delta table is present. Path needs to be fully qualified.
      * @return an instance of {@link Table} representing the Delta table at given path
