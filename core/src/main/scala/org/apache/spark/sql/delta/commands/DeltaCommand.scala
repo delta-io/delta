@@ -21,9 +21,9 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -32,11 +32,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, ResolvedTable, UnresolvedAttribute, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -277,6 +278,20 @@ trait DeltaCommand extends DeltaLogging {
   protected def sendDriverMetrics(spark: SparkSession, metrics: Map[String, SQLMetric]): Unit = {
     val executionId = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     SQLMetrics.postDriverMetricUpdates(spark.sparkContext, executionId, metrics.values.toSeq)
+  }
+
+  /**
+   * Extracts the [[DeltaTableV2]] from a LogicalPlan iff the LogicalPlan is a [[ResolvedTable]]
+   * with either a [[DeltaTableV2]] or a [[V1Table]] that is referencing a Delta table. In all
+   * other cases this method will throw a "Table not found" exception.
+   */
+  def getDeltaTable(target: LogicalPlan, cmd: String): DeltaTableV2 = {
+    target match {
+      case ResolvedTable(_, _, d: DeltaTableV2, _) => d
+      case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
+        DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
+      case _ => throw DeltaErrors.notADeltaTableException(cmd)
+    }
   }
 
   /**

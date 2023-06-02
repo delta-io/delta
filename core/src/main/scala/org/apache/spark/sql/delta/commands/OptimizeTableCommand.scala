@@ -35,9 +35,11 @@ import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
 import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
-import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types._
@@ -99,6 +101,28 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
   }
 }
 
+object OptimizeTableCommand {
+  /**
+   * Alternate constructor that converts a provided path or table identifier into the
+   * correct child LogicalPlan node. If both path and tableIdentifier are specified (or
+   * if both are None), this method will throw an exception. If a table identifier is
+   * specified, the child LogicalPlan will be an [[UnresolvedTable]] whereas if a path
+   * is specified, it will be an [[UnresolvedPathBasedDeltaTable]].
+   *
+   * Note that the returned OptimizeTableCommand will have an *unresolved* child table
+   * and hence, the command needs to be analyzed before it can be executed.
+   */
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      userPartitionPredicates: Seq[String],
+      optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext())(
+      zOrderBy: Seq[UnresolvedAttribute]): OptimizeTableCommand = {
+    val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "OPTIMIZE")
+    OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext)(zOrderBy)
+  }
+}
+
 /**
  * The `optimize` command implementation for Spark SQL. Example SQL:
  * {{{
@@ -106,18 +130,19 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
  * }}}
  */
 case class OptimizeTableCommand(
-    path: Option[String],
-    tableId: Option[TableIdentifier],
+    override val child: LogicalPlan,
     userPartitionPredicates: Seq[String],
-    options: Map[String, String],
-    optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext()
+    optimizeContext: DeltaOptimizeContext
 )(val zOrderBy: Seq[UnresolvedAttribute])
-  extends OptimizeTableCommandBase with LeafRunnableCommand {
+  extends OptimizeTableCommandBase with RunnableCommand with UnaryLike[LogicalPlan] {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
+  override protected def withNewChildInternal(newChild: LogicalPlan): OptimizeTableCommand =
+    copy(child = newChild)(zOrderBy)
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = getDeltaLog(sparkSession, path, tableId, "OPTIMIZE", options)
+    val deltaLog = getDeltaTable(child, "OPTIMIZE").deltaLog
 
     val txn = deltaLog.startTransaction()
     if (txn.readVersion == -1) {

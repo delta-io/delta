@@ -17,14 +17,18 @@
 package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DeltaOptimizeContext
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._
-import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 
 /**
  * Builder class for constructing OPTIMIZE command and executing.
@@ -35,11 +39,11 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
  * @param options Hadoop file system options for read and write.
  * @since 2.0.0
  */
-class DeltaOptimizeBuilder private(
-    sparkSession: SparkSession,
-    tableIdentifier: String,
-    options: Map[String, String]) extends AnalysisHelper {
+class DeltaOptimizeBuilder private(table: DeltaTableV2) extends AnalysisHelper {
   private var partitionFilter: Seq[String] = Seq.empty
+
+  private lazy val tableIdentifier: String =
+    table.tableIdentifier.getOrElse(s"delta.`${table.deltaLog.dataPath.toString}`")
 
   /**
    * Apply partition filter on this optimize command builder to limit
@@ -76,12 +80,21 @@ class DeltaOptimizeBuilder private(
   }
 
   private def execute(zOrderBy: Seq[UnresolvedAttribute]): DataFrame = {
+    val sparkSession = table.spark
     val tableId: TableIdentifier = sparkSession
       .sessionState
       .sqlParser
       .parseTableIdentifier(tableIdentifier)
-    val optimize =
-      OptimizeTableCommand(None, Some(tableId), partitionFilter, options)(zOrderBy = zOrderBy)
+    val id = Identifier.of(tableId.database.toArray, tableId.identifier)
+    val catalogPlugin = sparkSession.sessionState.catalogManager.currentCatalog
+    val catalog = catalogPlugin match {
+      case tableCatalog: TableCatalog => tableCatalog
+      case _ => throw new IllegalArgumentException(
+        s"Catalog ${catalogPlugin.name} does not support tables")
+    }
+    val resolvedTable = ResolvedTable.create(catalog, id, table)
+    val optimize = OptimizeTableCommand(
+      resolvedTable, partitionFilter, DeltaOptimizeContext())(zOrderBy = zOrderBy)
     toDataset(sparkSession, optimize)
   }
 }
@@ -93,10 +106,6 @@ private[delta] object DeltaOptimizeBuilder {
    * Private method for internal usage only. Do not call this directly.
    */
   @Unstable
-  private[delta] def apply(
-      sparkSession: SparkSession,
-      tableIdentifier: String,
-      options: Map[String, String]): DeltaOptimizeBuilder = {
-    new DeltaOptimizeBuilder(sparkSession, tableIdentifier, options)
-  }
+  private[delta] def apply(table: DeltaTableV2): DeltaOptimizeBuilder =
+    new DeltaOptimizeBuilder(table)
 }

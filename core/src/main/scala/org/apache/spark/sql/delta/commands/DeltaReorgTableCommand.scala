@@ -17,9 +17,12 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LeafCommand, LogicalPlan, UnaryCommand}
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 
 case class DeltaReorgTable(target: LogicalPlan)(val predicates: Seq[String]) extends UnaryCommand {
 
@@ -34,17 +37,15 @@ case class DeltaReorgTable(target: LogicalPlan)(val predicates: Seq[String]) ext
 /**
  * The PURGE command.
  */
-case class DeltaReorgTableCommand(target: DeltaTableV2)(val predicates: Seq[String])
+case class DeltaReorgTableCommand(target: LogicalPlan)(val predicates: Seq[String])
   extends OptimizeTableCommandBase with LeafCommand with IgnoreCachedData {
 
   override val otherCopyArgs: Seq[AnyRef] = predicates :: Nil
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val command = OptimizeTableCommand(
-      Option(target.path.toString),
-      target.catalogTable.map(_.identifier),
+      target,
       predicates,
-      options = Map.empty,
       optimizeContext = DeltaOptimizeContext(
         isPurge = true,
         minFileSize = Some(0L),

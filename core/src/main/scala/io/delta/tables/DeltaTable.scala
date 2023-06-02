@@ -214,10 +214,7 @@ class DeltaTable private[tables](
    *
    * @since 2.0.0
    */
-  def optimize(): DeltaOptimizeBuilder = {
-    DeltaOptimizeBuilder(sparkSession,
-      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"), table.options)
-  }
+  def optimize(): DeltaOptimizeBuilder = DeltaOptimizeBuilder(table)
 
   /**
    * Update rows in the table based on the rules defined by `set`.

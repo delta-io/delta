@@ -610,6 +610,18 @@ class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
         baseDf.union(baseDf))
     }
   }
+
+  test("optimize command: subquery predicate") {
+    val tableName = "myTable"
+    withTable(tableName) {
+      spark.sql(s"create table $tableName (p int, id int) using delta partitioned by(p)")
+      val e = intercept[DeltaAnalysisException] {
+        spark.sql(s"optimize $tableName where p >= (select p from $tableName where id > 5)")
+      }
+      checkError(e, "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES",
+        "0AKDC", Map.empty[String, String])
+    }
+  }
 }
 
 /**

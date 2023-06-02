@@ -398,6 +398,15 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
+    case UnresolvedPathBasedDeltaTable(p, cmd) =>
+      val path = new Path(p)
+      val table = DeltaTableV2(session, path)
+      if (!table.tableExists) {
+        throw DeltaErrors.notADeltaTableException(cmd, DeltaTableIdentifier(Some(p), None))
+      }
+      val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
+      ResolvedTable.create(catalog, Seq(DeltaSourceUtils.ALT_NAME, p).asIdentifier, table)
+
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       DeltaRelation.fromV2Relation(d, dsv2, options)
@@ -487,13 +496,11 @@ class DeltaAnalysis(session: SparkSession)
 
       DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
-    case reorg@DeltaReorgTable(_@ResolvedTable(_, _, t, _)) =>
-      t match {
-        case table: DeltaTableV2 =>
-          DeltaReorgTableCommand(table)(reorg.predicates)
-        case _ =>
-          throw DeltaErrors.notADeltaTable(t.name())
-      }
+    case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
+      DeltaReorgTableCommand(resolved)(reorg.predicates)
+
+    case DeltaReorgTable(ResolvedTable(_, _, t, _)) =>
+      throw DeltaErrors.notADeltaTable(t.name())
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
