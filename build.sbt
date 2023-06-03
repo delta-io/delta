@@ -332,8 +332,8 @@ def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
 
 def getPrevName(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-  // name change happened in version 3.0.0
-  if (major == 3 && minor == 0 && patch == 0) "delta-core" else "delta-spark"
+  // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
+  if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
 }
 
 def getPrevVersion(currentVersion: String): String = {
