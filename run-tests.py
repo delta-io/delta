@@ -50,15 +50,22 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     print("##### Running SBT tests #####")
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
+
     test_cmd = "test"
     if test_group:
+        # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
+
     if coverage:
         cmd += ["coverage"]
+
     if scala_version is None:
-        cmd += ["+ %s" % test_cmd]
+        # when no scala version is specified, run test with all scala versions
+        cmd += ["+ %s" % test_cmd]  # build/sbt ... "+ project/test" ...
     else:
-        cmd += ["++ %s %s" % (scala_version, test_cmd)]
+        # when no scala version is specified, run test with only the specified scala version
+        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.5" "project/test" ...
+
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
     cmd += ["-v"]  # show java options used

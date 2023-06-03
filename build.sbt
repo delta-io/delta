@@ -33,9 +33,6 @@ scalaVersion := default_scala_version
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
-lazy val sparkGroup = project.aggregate(spark, contribs, storage, storageS3DynamoDB)
-lazy val kernelGroup = project.aggregate(kernelApi, kernelDefault)
-
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version,
@@ -176,7 +173,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     name := "delta-kernel-api",
     commonSettings,
     scalaStyleSettings,
-    releaseSettings,
+    javaOnlyReleaseSettings,
     libraryDependencies ++= Seq()
   )
 
@@ -187,7 +184,7 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
     name := "delta-kernel-default",
     commonSettings,
     scalaStyleSettings,
-    releaseSettings,
+    javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion, // Configuration, Path
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5", // ObjectMapper
@@ -285,6 +282,29 @@ def listPythonFiles(pythonBase: File): Seq[(File, String)] = {
 ThisBuild / parallelExecution := false
 
 val createTargetClassesDir = taskKey[Unit]("create target classes dir")
+
+/*
+ ******************
+ * Project groups *
+ ******************
+ */
+
+// Don't use these groups for any other projects
+lazy val sparkGroup = project
+  .aggregate(spark, contribs, storage, storageS3DynamoDB)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publish / skip := false
+  )
+
+lazy val kernelGroup = project
+  .aggregate(kernelApi, kernelDefault)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publish / skip := false
+  )
 
 /*
  ***********************
