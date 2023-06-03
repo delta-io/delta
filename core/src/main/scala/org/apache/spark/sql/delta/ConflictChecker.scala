@@ -106,8 +106,9 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val changedDataAddedFiles: Seq[AddFile] = if (isBlindAppendOption.getOrElse(false)) {
     Seq()
   } else {
-    addedFiles
+    addedFiles.filter(_.dataChange)
   }
+  val changedDataRemovedFiles: Seq[RemoveFile] = removedFiles.filter(_.dataChange)
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
 
@@ -271,7 +272,7 @@ private[delta] class ConflictChecker(
       // Fail if files have been deleted that the txn read.
       val readFilePaths = currentTransactionInfo.readFiles.map(
         f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = winningCommitSummary.removedFiles
+      val deleteReadOverlap = winningCommitSummary.changedDataRemovedFiles
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val filePath = deleteReadOverlap.get.path
@@ -279,10 +280,30 @@ private[delta] class ConflictChecker(
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo, s"$filePath in $partition")
       }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-        val filePath = winningCommitSummary.removedFiles.head.path
+      if (winningCommitSummary.changedDataRemovedFiles.nonEmpty &&
+        currentTransactionInfo.readWholeTable) {
+        val filePath = winningCommitSummary.changedDataRemovedFiles.head.path
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo, s"$filePath")
+      }
+
+      // scalastyle:off sparkimplicits
+      import spark.implicits._
+      // scalastyle:on sparkimplicits
+      val predicatesMatchingRemovedFiles = ExpressionSet(
+        currentTransactionInfo.readPredicates).iterator.flatMap { p =>
+        // ES-366661: use readSnapshot's partitionSchema as that is what we read in the
+        // beginning.
+        val conflictingFile = DeltaLog.filterFileList(
+          partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
+          winningCommitSummary.changedDataRemovedFiles.toDF(), p :: Nil).as[RemoveFile].take(1)
+        conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
+      }.take(1).toArray
+
+      if (predicatesMatchingRemovedFiles.nonEmpty) {
+        throw DeltaErrors.concurrentDeleteReadException(
+          winningCommitSummary.commitInfo,
+          predicatesMatchingRemovedFiles.head)
       }
     }
   }

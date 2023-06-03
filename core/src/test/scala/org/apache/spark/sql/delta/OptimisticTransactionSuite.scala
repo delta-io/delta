@@ -54,6 +54,62 @@ class OptimisticTransactionSuite
     actions = Seq(
       addB))
 
+  check("append / optimize",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("c", Map("x" -> "2"), 1, 1, dataChange = false)),
+    actions = Seq(
+      AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)))
+
+  check("append / delete / optimize",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("ad", Map("x" -> "2"), 1, 1, dataChange = false)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      RemoveFile("ad", None, partitionValues = Map("x" -> "2"), dataChange = true)
+    ),
+    actions = Seq(AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)))
+
+  check("optimize / append",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)),
+    actions = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("c", Map("x" -> "2"), 1, 1, dataChange = false)))
+
   check(
     "disjoint txns",
     conflicts = false,
@@ -107,6 +163,44 @@ class OptimisticTransactionSuite
       RemoveFile("a", Some(4))),
     actions = Seq(
       RemoveFile("a", Some(5))))
+
+  check("optimize / delete",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = true)),
+    actions = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("c", Map("x" -> "2"), 1, 1, dataChange = false)))
+
+  check("delete / optimize",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      AddFile("a", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true),
+      AddFile("d", partitionValues = Map("x" -> "2"), 1, 1, dataChange = true)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(2)) :: Nil)
+    ),
+    actions = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      RemoveFile("d", None, partitionValues = Map("x" -> "2"), dataChange = false),
+      AddFile("c", Map("x" -> "2"), 1, 1, dataChange = false)),
+    concurrentWrites = Seq(
+      RemoveFile("a", None, partitionValues = Map("x" -> "2"), dataChange = true)))
 
   check(
     "add / read + write",
