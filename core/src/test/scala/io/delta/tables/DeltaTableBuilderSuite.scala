@@ -27,7 +27,7 @@ import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
+import org.apache.spark.sql.types.{DataTypes, IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
 class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
@@ -238,6 +238,17 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         .build()
     }
     assert(e.getMessage == "The data type of the column value is not provided")
+  }
+
+  test("test addColumn using columnBuilder, with Null dataType") {
+    val e = intercept[AnalysisException] {
+      DeltaTable.columnBuilder("value")
+        .generatedAlwaysAs("true")
+        .dataType(DataTypes.NullType)
+        .nullable(true)
+        .build()
+    }
+    assert(e.getMessage == "The column value cannot have a Null DataType")
   }
 
   testCreateTable("create_table") { table =>
