@@ -160,6 +160,16 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TABLE_FEATURES_MIN_READER_VERSION,
           TABLE_FEATURES_MIN_WRITER_VERSION - 1)
       }
+      intercept[IllegalArgumentException] {
+        table.upgradeTableProtocol(
+          TABLE_FEATURES_MIN_READER_VERSION + 1,
+          TABLE_FEATURES_MIN_WRITER_VERSION)
+      }
+      intercept[IllegalArgumentException] {
+        table.upgradeTableProtocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION + 1)
+      }
     }
   }
 
