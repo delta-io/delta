@@ -322,6 +322,25 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
       .createOptional
 
+  val AUTO_VACUUM_ENABLED =
+    buildConf("autoVacuum.enabled")
+      .internal()
+      .doc("Enables auto vacuum after table update.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val AUTO_VACUUM_RETENTION_HOURS =
+    buildConf("autoVacuum.retentionHours")
+      .internal()
+      .doc(
+        """
+          |The retention threshold in hours. Files required by the table for reading versions
+          |earlier than this will be preserved and the rest of them will be deleted.
+          |""".stripMargin)
+      .doubleConf
+      .checkValue(_ >= 0, "must not be negative.")
+      .createWithDefault(7 * 24)
+
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")
