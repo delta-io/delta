@@ -297,6 +297,22 @@ class DeltaTableBuilder private[tables](
   /**
    * :: Evolving ::
    *
+   * Specify a group of properties to tag the table definition.
+   *
+   * @param properties key value map properties
+   *
+   * @since 2.3.0
+   */
+  @Evolving
+  def properties(properties: Map[String, String]): DeltaTableBuilder = {
+
+    this.properties = this.properties ++ properties
+    this
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Execute the command to create / replace a Delta table and returns a instance of [[DeltaTable]].
    *
    * @since 1.0.0
