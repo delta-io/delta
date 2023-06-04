@@ -66,10 +66,10 @@ class GeneratedColumnCompatibilitySuite extends GeneratedColumnTest {
    * or writing this table.
    */
   def withDBR8_0Table(func: String => Unit): Unit = {
-    val resourcePath = "src/test/resources/delta/dbr_8_0_non_generated_columns"
+    val resourceFile = getTestResourceFile("delta/dbr_8_0_non_generated_columns")
     withTempDir { tempDir =>
       // Prepare a table that has the old writer version and generation expressions
-      FileUtils.copyDirectory(new File(resourcePath), tempDir)
+      FileUtils.copyDirectory(resourceFile, tempDir)
       val path = tempDir.getCanonicalPath
       val deltaLog = DeltaLog.forTable(spark, path)
       // Verify the test table has the old writer version and generation expressions

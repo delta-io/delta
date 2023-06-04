@@ -35,12 +35,12 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
   import testImplicits._
 
   test("delta 0.1.0") {
-    testEvolvability("src/test/resources/delta/delta-0.1.0")
+    testEvolvability(getTestResourcePath("delta/delta-0.1.0"))
   }
 
   test("delta 0.1.0 - case sensitivity enabled") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
-      testEvolvability("src/test/resources/delta/delta-0.1.0")
+      testEvolvability(getTestResourcePath("delta/delta-0.1.0"))
     }
   }
 
@@ -245,7 +245,7 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
     // table created using Delta 1.2.1 which has additional field `numRecords` in
     // checkpoint schema. It is removed in version after 1.2.1.
     // Make sure we are able to read the Delta table in the latest version.
-    val tablePath = "src/test/resources/delta/delta-1.2.1"
+    val tablePath = getTestResourcePath("delta/delta-1.2.1")
     assert(
       spark.read.format("delta")
         .load(tablePath).where("col1 = 8").count() === 9L)

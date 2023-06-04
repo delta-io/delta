@@ -72,7 +72,7 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
     withTempDir { tempDir =>
       // copy the existing dir to the temp data dir.
       FileUtils.copyDirectory(
-        new File("src/test/resources/delta/transaction_log_schema_evolvability"), tempDir)
+        getTestResourceFile("delta/transaction_log_schema_evolvability"), tempDir)
       DeltaLog.clearCache()
       operation(tempDir.getAbsolutePath)
     }
