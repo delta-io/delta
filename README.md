@@ -165,7 +165,7 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 
 then follow these steps:
 1. Compile using the SBT CLI: `build/sbt compile`.
-2. Go to `File` > `Project Structure...` > `Modules` > `delta-core`.
+2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
 3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
 4. Click `Apply` and then re-run your test.
 
