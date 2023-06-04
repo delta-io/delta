@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        scala: [2.12.15, 2.13.5]
+        scala: [2.12.15, 2.13.10]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
