@@ -377,11 +377,13 @@ private[delta] class ConflictChecker(
     // The current transaction should only assign Row Ids if they are supported.
     if (!RowId.isSupported(currentTransactionInfo.protocol)) return
 
-    // The winning commit might either only have activated the table feature or it assigned Row IDs.
+    val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+
+    // The winning transaction might have bumped the high water mark or not in case it did
+    // not add new files to the table.
     val winningHighWaterMark = winningCommitSummary.actions.collectFirst {
       case RowIdHighWaterMark(winningHighWaterMark) => winningHighWaterMark
-    }.getOrElse(-1L)
-    val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+    }.getOrElse(readHighWaterMark)
 
     var highWaterMark = winningHighWaterMark
     val actionsWithReassignedRowIds = currentTransactionInfo.actions.flatMap {

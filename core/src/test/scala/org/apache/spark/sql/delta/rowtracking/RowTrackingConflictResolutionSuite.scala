@@ -129,4 +129,21 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       assert(currentHighWaterMark === numInitialRecords + numConcurrentRecords)
     }
   }
+
+  test("Handle commits that do not bump the high water mark") {
+    withTestTable {
+      val filePath = "file_path"
+      val numInitialRecords = 7
+      activateRowTracking()
+      commitRecords(numInitialRecords)
+
+      val txn = deltaLog.startTransaction()
+      val concurrentTxn = deltaLog.startTransaction()
+      val updatedProtocol = latestSnapshot.protocol
+      concurrentTxn.commit(Seq(updatedProtocol), DeltaOperations.ManualUpdate)
+      txn.commit(Seq(addFile(filePath)), DeltaOperations.ManualUpdate)
+
+      assertRowIdsAreValid(deltaLog)
+    }
+  }
 }
