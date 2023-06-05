@@ -467,8 +467,6 @@ case class CreateDeltaTableCommand(
       tableDesc: CatalogTable,
       options: DeltaOptions,
       schema: StructType): Unit = {
-    val isReplace = (operation == TableCreationModes.CreateOrReplace ||
-        operation == TableCreationModes.Replace)
     // If a user explicitly specifies not to overwrite the schema, during a replace, we should
     // tell them that it's not supported
     val dontOverwriteSchema = options.options.contains(DeltaOptions.OVERWRITE_SCHEMA_OPTION) &&
@@ -494,6 +492,12 @@ case class CreateDeltaTableCommand(
   private def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       classOf[DataFrameWriter[_]].getCanonicalName + "."))
+  }
+
+  /** Returns true if the current operation could be replacing a table. */
+  private def isReplace: Boolean = {
+    operation == TableCreationModes.CreateOrReplace ||
+      operation == TableCreationModes.Replace
   }
 }
 
