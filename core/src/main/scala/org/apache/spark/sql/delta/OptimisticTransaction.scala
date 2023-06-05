@@ -530,12 +530,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val newProtocolBeforeAddingFeatures = newProtocol.getOrElse(protocolBeforeUpdate)
     val newFeaturesFromTableConf =
       TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(newMetadataTmp.configuration)
-    val readerVersionForNewProtocol =
-      if (newFeaturesFromTableConf.exists(_.isReaderWriterFeature)) {
+    val readerVersionForNewProtocol = {
+      // All features including those required features are considered to decide reader version.
+      if (Protocol()
+        .withFeatures(newFeaturesFromTableConf)
+        .readerAndWriterFeatureNames
+        .flatMap(TableFeature.featureNameToFeature)
+        .exists(_.isReaderWriterFeature)) {
         TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION
       } else {
         newProtocolBeforeAddingFeatures.minReaderVersion
       }
+    }
     val existingFeatureNames = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
     if (!newFeaturesFromTableConf.map(_.name).subsetOf(existingFeatureNames)) {
       newProtocol = Some(
