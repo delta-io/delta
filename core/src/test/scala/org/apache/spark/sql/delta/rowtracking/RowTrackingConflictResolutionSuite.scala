@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowTrackingFeature}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowId, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 
