@@ -19,6 +19,7 @@ package io.delta.sql.parser
 import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
+import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
 import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
@@ -49,51 +50,63 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
   test("OPTIMIZE command is parsed as expected") {
     val parser = new DeltaSqlParser(null)
-    assert(parser.parsePlan("OPTIMIZE tbl") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+    var parsedCmd = parser.parsePlan("OPTIMIZE tbl")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("tbl"), "OPTIMIZE", None))
 
-    assert(parser.parsePlan("OPTIMIZE db.tbl") ===
-      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Seq.empty, Map.empty)(Seq()))
+    parsedCmd = parser.parsePlan("OPTIMIZE db.tbl")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("db", "tbl"), "OPTIMIZE", None))
 
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
-      OptimizeTableCommand(None, Some(tblId("tbl_true")), Seq.empty, Map.empty)(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil)(Nil))
 
     withSQLConf("tbl_var" -> "tbl") {
       assert(parser.parsePlan("OPTIMIZE ${tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${spark:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${sparkconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${hiveconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${hivevar:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(Seq()))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
     }
 
-    assert(parser.parsePlan("OPTIMIZE '/path/to/tbl'") ===
-      OptimizeTableCommand(Some("/path/to/tbl"), None, Seq.empty, Map.empty)(Seq()))
+    parsedCmd = parser.parsePlan("OPTIMIZE '/path/to/tbl'")
+    assert(parsedCmd ===
+      OptimizeTableCommand(Some("/path/to/tbl"), None, Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedPathBasedDeltaTable("/path/to/tbl", "OPTIMIZE"))
 
-    assert(parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`") ===
-      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Seq.empty, Map.empty)(Seq()))
+    parsedCmd = parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE", None))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), Map.empty)(Seq()))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(Nil))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (col1)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)
       (Seq(unresolvedAttr("col1"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY col1, col2.subcol") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), Map.empty)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY (col1, col2.subcol)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), Map.empty)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
   }
 
@@ -103,19 +116,19 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     // Use the new keywords in table name
     assert(parser.parsePlan("OPTIMIZE optimize") ===
-      OptimizeTableCommand(None, Some(tblId("optimize")), Seq.empty, Map.empty)(Seq()))
+      OptimizeTableCommand(None, Some(tblId("optimize")), Nil)(Nil))
 
     assert(parser.parsePlan("OPTIMIZE zorder") ===
-      OptimizeTableCommand(None, Some(tblId("zorder")), Seq.empty, Map.empty)(Seq()))
+      OptimizeTableCommand(None, Some(tblId("zorder")), Nil)(Nil))
 
     // Use the new keywords in column name
     assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2") ===
       OptimizeTableCommand(None,
         Some(tblId("tbl"))
-        , Seq("zorder = 1 and optimize = 2"), Map.empty)(Seq()))
+        , Seq("zorder = 1 and optimize = 2"))(Nil))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq.empty, Map.empty)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
   }
 
@@ -126,30 +139,30 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val parser = new DeltaSqlParser(null)
 
     assert(parser.parsePlan("REORG TABLE tbl APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
 
     assert(parser.parsePlan("REORG TABLE tbl_${system:spark.testing} APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("tbl_true"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("tbl_true"))(Nil))
 
     withSQLConf("tbl_var" -> "tbl") {
       assert(parser.parsePlan("REORG TABLE ${tbl_var} APPLY (PURGE)") ===
-        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+        DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
 
       assert(parser.parsePlan("REORG TABLE ${spark:tbl_var} APPLY (PURGE)") ===
-        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+        DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
 
       assert(parser.parsePlan("REORG TABLE ${sparkconf:tbl_var} APPLY (PURGE)") ===
-        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+        DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
 
       assert(parser.parsePlan("REORG TABLE ${hiveconf:tbl_var} APPLY (PURGE)") ===
-        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+        DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
 
       assert(parser.parsePlan("REORG TABLE ${hivevar:tbl_var} APPLY (PURGE)") ===
-        DeltaReorgTable(targetPlanForTable("tbl"))(Seq.empty))
+        DeltaReorgTable(targetPlanForTable("tbl"))(Nil))
     }
 
     assert(parser.parsePlan("REORG TABLE delta.`/path/to/tbl` APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("delta", "/path/to/tbl"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("delta", "/path/to/tbl"))(Nil))
 
     assert(parser.parsePlan("REORG TABLE tbl WHERE part = 1 APPLY (PURGE)") ===
       DeltaReorgTable(targetPlanForTable("tbl"))(Seq("part = 1")))
@@ -161,11 +174,11 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     // Use the new keywords in table name
     assert(parser.parsePlan("REORG TABLE reorg APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("reorg"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("reorg"))(Nil))
     assert(parser.parsePlan("REORG TABLE apply APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("apply"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("apply"))(Nil))
     assert(parser.parsePlan("REORG TABLE purge APPLY (PURGE)") ===
-      DeltaReorgTable(targetPlanForTable("purge"))(Seq.empty))
+      DeltaReorgTable(targetPlanForTable("purge"))(Nil))
 
     // Use the new keywords in column name
     assert(parser.parsePlan(

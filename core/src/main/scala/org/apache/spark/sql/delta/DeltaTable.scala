@@ -26,11 +26,11 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
-import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -457,6 +457,39 @@ object DeltaTableUtils extends PredicateHelper
       }
     } else {
       schema
+    }
+  }
+}
+
+/**
+ * Holds the path of a Delta table that has yet to be verified as a valid path to a valid
+ * Delta table. It will be resolved to [[ResolvedTable]] during analysis.
+ */
+case class UnresolvedPathBasedDeltaTable(
+    path: String,
+    commandName: String) extends LeafNode {
+
+  override lazy val resolved: Boolean = false
+  override val output: Seq[Attribute] = Nil
+}
+
+/**
+ * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
+ * If the path is set, it will be resolved to an [[UnresolvedPathBasedDeltaTable]] whereas if the
+ * tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]]. If neither of the two
+ * options or both of them are set, [[apply]] will throw an exception.
+ */
+object UnresolvedDeltaPathOrIdentifier {
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan = {
+    (path, tableIdentifier) match {
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, cmd)
+      case (None, Some(t)) =>
+        UnresolvedTable(t.nameParts, cmd, None)
+      case _ => throw new IllegalArgumentException(
+        s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
   }
 }
