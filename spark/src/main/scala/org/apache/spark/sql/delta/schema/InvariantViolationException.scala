@@ -21,11 +21,28 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaThrowable, DeltaThrowableHelper}
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
+import org.apache.commons.lang3.exception.ExceptionUtils
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /** Thrown when the given data doesn't match the rules defined on the table. */
 case class InvariantViolationException(message: String) extends RuntimeException(message)
+
+/**
+ * Match a [[SparkException]] and return the root cause Exception if it is a
+ * InvariantViolationException.
+ */
+object InnerInvariantViolationException {
+  def unapply(t: Throwable): Option[InvariantViolationException] = t match {
+    case s: SparkException =>
+      Option(ExceptionUtils.getRootCause(s)) match {
+        case Some(i: InvariantViolationException) => Some(i)
+        case _ => None
+      }
+    case _ => None
+  }
+}
 
 object DeltaInvariantViolationException {
   def apply(constraint: Constraints.NotNull): DeltaInvariantViolationException = {

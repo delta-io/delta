@@ -29,10 +29,8 @@ import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{DeltaJobStatisticsTracker, StatisticsCollection}
-import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
@@ -414,14 +412,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
             ++ statsTrackers,
           options = options)
       } catch {
-        case s: SparkException =>
+        case InnerInvariantViolationException(violationException) =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
-          val violationException = ExceptionUtils.getRootCause(s)
-          if (violationException.isInstanceOf[InvariantViolationException]) {
-            throw violationException
-          } else {
-            throw s
-          }
+          throw violationException
       }
     }
 
