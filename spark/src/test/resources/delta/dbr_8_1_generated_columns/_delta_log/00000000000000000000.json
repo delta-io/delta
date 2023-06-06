@@ -1,0 +1,3 @@
+{"commitInfo":{"timestamp":1617556462951,"operation":"CREATE TABLE","operationParameters":{"isManaged":"false","description":null,"partitionBy":"[]","properties":"{}"},"isolationLevel":"SnapshotIsolation","isBlindAppend":true,"operationMetrics":{}}}
+{"protocol":{"minReaderVersion":1,"minWriterVersion":4}}
+{"metaData":{"id":"b406888a-3eb9-4dd5-a81a-ed0b0b535c00","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},{\"name\":\"c2\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{\"delta.generationExpression\":\"c1 + 1\"}}]}","partitionColumns":[],"configuration":{},"createdTime":1617556462734}}

@@ -1,0 +1,66 @@
+name: docs
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - alabaster=0.7.12=py_0
+  - babel=2.9.0=pyhd3deb0d_0
+  - brotlipy=0.7.0=py37hf967b71_1001
+  - ca-certificates=2020.12.5=h033912b_0
+  - certifi=2020.12.5=py37hf985489_1
+  - cffi=1.14.5=py37h4d371b4_0
+  - chardet=4.0.0=py37hf985489_1
+  - colorama=0.4.4=pyh9f0ad1d_0
+  - cryptography=3.4.4=py37ha1e1f9f_0
+  - docutils=0.15.2=py37hf985489_1
+  - gitdb=4.0.5=py_0
+  - gitdb2=4.0.2=py_0
+  - gitpython=3.1.14=pyhd8ed1ab_0
+  - idna=2.10=pyh9f0ad1d_0
+  - imagesize=1.2.0=py_0
+  - jinja2=2.11.3=pyh44b312d_0
+  - libcxx=10.0.0=1
+  - libedit=3.1.20191231=h1de35cc_1
+  - libffi=3.3=hb1e8313_2
+  - livereload=2.6.3=pyh9f0ad1d_0
+  - markupsafe=1.1.1=py37hf967b71_3
+  - ncurses=6.2=h0a44026_1
+  - openssl=1.1.1j=hbcf498f_0
+  - packaging=20.9=pyh44b312d_0
+  - pip=21.0.1=py37hecd8cb5_0
+  - pycparser=2.20=pyh9f0ad1d_2
+  - pygments=2.8.0=pyhd8ed1ab_0
+  - pyopenssl=20.0.1=pyhd8ed1ab_0
+  - pyparsing=2.4.7=pyh9f0ad1d_0
+  - pysocks=1.7.1=py37hf985489_3
+  - python=3.7.9=h26836e1_0
+  - python_abi=3.7=1_cp37m
+  - pytz=2021.1=pyhd8ed1ab_0
+  - readline=8.1=h9ed2024_0
+  - requests=2.25.1=pyhd3deb0d_0
+  - setuptools=52.0.0=py37hecd8cb5_0
+  - six=1.15.0=pyh9f0ad1d_0
+  - smmap=4.0.0=pyhd8ed1ab_1
+  - smmap2=3.0.1=py_0
+  - snowballstemmer=2.1.0=pyhd8ed1ab_0
+  - sphinx=1.8.5=py37_0
+  - sphinx-autobuild=2020.9.1=pyhd8ed1ab_0
+  - sphinxcontrib=1.0=py37_1
+  - sphinxcontrib-applehelp=1.0.2=py_0
+  - sphinxcontrib-devhelp=1.0.2=py_0
+  - sphinxcontrib-htmlhelp=1.0.3=py_0
+  - sphinxcontrib-jsmath=1.0.1=py_0
+  - sphinxcontrib-qthelp=1.0.3=py_0
+  - sphinxcontrib-serializinghtml=1.1.4=py_0
+  - sphinxcontrib-websupport=1.2.4=pyh9f0ad1d_0
+  - sqlite=3.33.0=hffcf06c_0
+  - tk=8.6.10=hb0a8c7a_0
+  - tornado=6.1=py37hf967b71_1
+  - urllib3=1.26.3=pyhd8ed1ab_0
+  - wheel=0.36.2=pyhd3eb1b0_0
+  - xz=5.2.5=h1de35cc_0
+  - zlib=1.2.11=h1de35cc_3
+  - pip:
+    - sphinxcontrib-yt==0.2.2
+prefix: /opt/miniconda2/envs/docs
+
