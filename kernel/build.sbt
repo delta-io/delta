@@ -27,10 +27,18 @@ lazy val commonSettings = Seq(
   Compile / compile / javacOptions ++= Seq("-target", "1.8", "-Xlint:unchecked"),
   // Configurations to speed up tests and reduce memory footprint
   Test / javaOptions += "-Xmx1024m",
+
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  checkstyleConfigLocation := CheckstyleConfigLocation.File("dev/checkstyle.xml"),
+  checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+  (checkstyle in Compile) := (checkstyle in Compile).triggeredBy(compile in Compile).value,
+  (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
 )
 
-// TODO javastyle checkstyle tests
-// TODO unidoc/javadoc settings
+// TODO: after adding scala source files SBT will no longer automatically run javadoc instead of
+//  scaladoc
 
 lazy val kernelApi = (project in file("kernel-api"))
   .settings(
@@ -38,7 +46,16 @@ lazy val kernelApi = (project in file("kernel-api"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq()
+    libraryDependencies ++= Seq(),
+    Compile / doc / javacOptions := Seq(
+      "-public",
+      "-windowtitle", "Delta Kernel API " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+      "-noqualifier", "java.lang",
+      "-Xdoclint:all"
+      // TODO: exclude internal packages
+    ),
+    // Ensure doc is run with tests. Must be cleaned before test for docs to be generated
+    (Test / test) := ((Test / test) dependsOn (Compile / doc)).value
   )
 
 val hadoopVersion = "3.3.1"
