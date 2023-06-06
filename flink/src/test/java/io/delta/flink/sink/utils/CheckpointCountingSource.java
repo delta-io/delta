@@ -1,68 +1,44 @@
-package io.delta.flink.utils;
+package io.delta.flink.sink.utils;
 
-import java.io.Serializable;
 import java.util.Collections;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
 import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
-import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.logical.RowType.RowField;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static io.delta.flink.sink.utils.DeltaSinkTestUtils.TEST_ROW_TYPE;
 
 /**
- * Each of the source operators outputs records in given number of checkpoints. Number of records
- * per checkpoint is constant between checkpoints, and defined by user. When all records are
- * emitted, the source waits for two more checkpoints until it finishes.
+ * Each of the source operators outputs records in given number of checkpoints.
+ * Number of records per checkpoint is constant between checkpoints, and defined by user.
+ * When all records are emitted, the source waits for two more checkpoints until it
+ * finishes.
  * <p>
- * All credits for this implementation goes to <b>Grzegorz Kolakowski<b> who implemented the
- * original version of this class for end2end tests. This class was copied from his Pull Request
- * here.
+ * All credits for this implementation goes to <b>Grzegorz Kolakowski<b>
+ * who implemented the original version of this class for end2end tests.
+ * This class was copied from his Pull Request here.
  */
 public class CheckpointCountingSource extends RichParallelSourceFunction<RowData>
-    implements CheckpointListener, CheckpointedFunction, ResultTypeQueryable<RowData> {
+    implements CheckpointListener, CheckpointedFunction {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CheckpointCountingSource.class);
 
     private final int numberOfCheckpoints;
-
     private final int recordsPerCheckpoint;
-
-    private final RowProducer rowProducer;
-
     private ListState<Integer> nextValueState;
-
     private int nextValue;
-
     private volatile boolean isCanceled;
-
     private volatile boolean waitingForCheckpoint;
 
     public CheckpointCountingSource(int recordsPerCheckpoint, int numberOfCheckpoints) {
-        this(recordsPerCheckpoint, numberOfCheckpoints, new DefaultRowProducer());
-    }
-
-    public CheckpointCountingSource(
-            int recordsPerCheckpoint,
-            int numberOfCheckpoints,
-            RowProducer rowProducer) {
-
         this.numberOfCheckpoints = numberOfCheckpoints;
         this.recordsPerCheckpoint = recordsPerCheckpoint;
-        this.rowProducer = rowProducer;
     }
 
     @Override
@@ -84,8 +60,7 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
 
         sendRecordsUntil(numberOfCheckpoints, ctx);
         idleUntilNextCheckpoint(ctx);
-        LOGGER.info("Source task done; subtask={}.",
-            getRuntimeContext().getIndexOfThisSubtask());
+        LOGGER.info("Source task done; subtask={}.", getRuntimeContext().getIndexOfThisSubtask());
     }
 
     private void sendRecordsUntil(int targetCheckpoints, SourceContext<RowData> ctx)
@@ -104,7 +79,17 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
     }
 
     private void emitRecordsBatch(int batchSize, SourceContext<RowData> ctx) {
-        nextValue = rowProducer.emitRecordsBatch(nextValue, ctx, batchSize);
+        for (int i = 0; i < batchSize; ++i) {
+            RowData row = DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER.toInternal(
+                Row.of(
+                    String.valueOf(nextValue),
+                    String.valueOf((nextValue + nextValue)),
+                    nextValue
+                )
+            );
+            ctx.collect(row);
+            nextValue++;
+        }
         LOGGER.info("Emitted {} records (total {}); subtask={}.", batchSize, nextValue,
             getRuntimeContext().getIndexOfThisSubtask());
     }
@@ -151,44 +136,4 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
         isCanceled = true;
         waitingForCheckpoint = false;
     }
-
-    @Override
-    public TypeInformation<RowData> getProducedType() {
-        return rowProducer.getProducedType();
-    }
-
-    public interface RowProducer extends Serializable {
-
-        int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize);
-
-        TypeInformation<RowData> getProducedType();
-    }
-
-    private static class DefaultRowProducer implements RowProducer {
-
-        @Override
-        public int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize) {
-            for (int i = 0; i < batchSize; ++i) {
-                RowData row = DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER.toInternal(
-                    Row.of(
-                        String.valueOf(nextValue),
-                        String.valueOf((nextValue + nextValue)),
-                        nextValue
-                    )
-                );
-                ctx.collect(row);
-                nextValue++;
-            }
-            return nextValue;
-        }
-
-        @Override
-        public TypeInformation<RowData> getProducedType() {
-            LogicalType[] fieldTypes = TEST_ROW_TYPE.getFields().stream()
-                .map(RowField::getType).toArray(LogicalType[]::new);
-            String[] fieldNames = TEST_ROW_TYPE.getFieldNames().toArray(new String[0]);
-            return InternalTypeInfo.of(RowType.of(fieldTypes, fieldNames));
-        }
-    }
-
 }
