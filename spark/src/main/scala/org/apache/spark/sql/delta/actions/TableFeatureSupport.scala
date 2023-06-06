@@ -27,9 +27,10 @@ import com.fasterxml.jackson.annotation.JsonIgnore
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
  *
  * Protocol reader version 3 and writer version 7 start to support reader and writer table
- * features. In such a case, features can be <b>explicitly supported</b> by a protocol's reader
- * and/or writer features sets by adding its name. When read or write a table, clients MUST
- * respect all supported features.
+ * features. Reader version 3 supports only reader-writer features in an <b>explicit</b> way,
+ * by adding its name to `readerFeatures`. Similarly, writer version 7 supports only writer-only
+ * or reader-writer features in an <b>explicit</b> way, by adding its name to `writerFeatures`.
+ * When reading or writing a table, clients MUST respect all supported features.
  *
  * See also the document of [[TableFeature]] for feature-specific terminologies.
  */

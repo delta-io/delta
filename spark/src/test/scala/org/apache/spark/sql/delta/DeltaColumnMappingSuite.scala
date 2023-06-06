@@ -1750,4 +1750,29 @@ class DeltaColumnMappingSuite extends QueryTest
     // Max column IDs don't match
     assert(!DeltaColumnMapping.verifyInternalProperties(maxColumnIdOne, maxColumnIdTwo))
   }
+
+  test("column mapping upgrade with table features") {
+    val testTableName = "columnMappingTestTable"
+    withTable(testTableName) {
+      val minReaderKey = DeltaConfigs.MIN_READER_VERSION.key
+      val minWriterKey = DeltaConfigs.MIN_WRITER_VERSION.key
+      sql(
+        s"""CREATE TABLE $testTableName
+           |USING DELTA
+           |TBLPROPERTIES(
+           |'$minReaderKey' = '2',
+           |'$minWriterKey' = '7'
+           |)
+           |AS SELECT * FROM RANGE(1)
+           |""".stripMargin)
+
+      // [[DeltaColumnMapping.verifyAndUpdateMetadataChange]] should not throw an error. The table
+      // does not need to support read table features too.
+      val columnMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.key
+      sql(
+        s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
+           |'$columnMappingMode'='name'
+           |)""".stripMargin)
+    }
+  }
 }
