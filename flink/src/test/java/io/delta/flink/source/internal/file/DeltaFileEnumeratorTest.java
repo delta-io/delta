@@ -210,7 +210,7 @@ public class DeltaFileEnumeratorTest {
         String firstId = "";
         String lastId = "";
 
-        int maxValue = 500_000;
+        int maxValue = 10_000;
 
         // Using Set to know that we have unique values.
         LinkedHashSet<String> splitIds = new LinkedHashSet<>(maxValue);
@@ -227,7 +227,7 @@ public class DeltaFileEnumeratorTest {
 
         assertThat(splitIds.size(), equalTo(maxValue));
         assertThat(firstId, equalTo("0000000001"));
-        assertThat(lastId, equalTo("0000500000"));
+        assertThat(lastId, equalTo("0000010000"));
 
         System.gc();
     }

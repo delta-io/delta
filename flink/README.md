@@ -20,6 +20,7 @@ Official Delta Lake connector for [Apache Flink](https://flink.apache.org/).
   - [Maven](#maven)
   - [SBT](#sbt)
 - [Building](#building)
+- [UML diagrams](#uml-diagrams)
 - [FAQ](#frequently-asked-questions-faq)
 - [Known Issues](#known-issues)
 
@@ -389,7 +390,7 @@ libraryDependencies ++= Seq(
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
   "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
   "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
-  "org.apache.flink" %% "flink-table-runtime-blink" % flinkVersion % "provided")
+  "org.apache.flink" %% "flink-table-runtime" % flinkVersion % "provided")
 ```
 
 ## Building
@@ -406,6 +407,9 @@ The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-L
 - To compile the project, run `build/sbt flink/compile`
 - To test the project, run `build/sbt flink/test`
 - To publish the JAR, run `build/sbt flink/publishM2`
+
+## UML diagrams
+UML diagrams can be found [here](uml/README.md)
 
 ## Frequently asked questions (FAQ)
 

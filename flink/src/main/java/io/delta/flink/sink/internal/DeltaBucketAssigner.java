@@ -95,7 +95,7 @@ public class DeltaBucketAssigner<T> implements BucketAssigner<T, String> {
     }
 
     @Override
-    public String getBucketId(T element, Context context) {
+    public String getBucketId(T element, BucketAssigner.Context context) {
         LinkedHashMap<String, String> partitionValues =
             this.partitionComputer.generatePartitionValues(element, context);
         return PartitionPathUtils.generatePartitionPath(partitionValues);

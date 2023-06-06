@@ -2,6 +2,7 @@ package io.delta.flink.sink.utils;
 
 import java.io.IOException;
 
+import io.delta.flink.utils.CheckpointCountingSource;
 import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;

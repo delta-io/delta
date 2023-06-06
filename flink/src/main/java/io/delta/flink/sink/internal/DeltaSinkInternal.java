@@ -36,45 +36,42 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
-import io.delta.standalone.DeltaLog;
-
 /**
- * A unified sink that emits its input elements to file system files within buckets using
- * Parquet format and commits those files to the {@link DeltaLog}. This sink achieves exactly-once
- * semantics for both {@code BATCH} and {@code STREAMING}.
+ * A unified sink that emits its input elements to file system files within buckets using Parquet
+ * format and commits those files to the {@link io.delta.standalone.DeltaLog}. This sink achieves
+ * exactly-once semantics for both {@code BATCH} and {@code STREAMING}.
  * <p>
  * Behaviour of this sink splits down upon two phases. The first phase takes place between
  * application's checkpoints when records are being flushed to files (or appended to writers'
- * buffers) where the behaviour is almost identical as in case of
- * {@link org.apache.flink.connector.file.sink.FileSink}.
+ * buffers) where the behaviour is almost identical as in case of {@link
+ * org.apache.flink.connector.file.sink.FileSink}.
  * <p>
  * Next during the checkpoint phase files are "closed" (renamed) by the independent instances of
- * {@code io.delta.flink.sink.internal.committer.DeltaCommitter} that behave very similar
- * to {@link org.apache.flink.connector.file.sink.committer.FileCommitter}.
- * When all the parallel committers are done, then all the files are committed at once by
- * single-parallelism {@code io.delta.flink.sink.internal.committer.DeltaGlobalCommitter}.
+ * {@code io.delta.flink.sink.internal.committer.DeltaCommitter} that behave very similar to {@link
+ * org.apache.flink.connector.file.sink.committer.FileCommitter}. When all the parallel committers
+ * are done, then all the files are committed at once by single-parallelism {@code
+ * io.delta.flink.sink.internal.committer.DeltaGlobalCommitter}.
  * <p>
- * This {@link DeltaSinkInternal} sources many specific implementations from the
- * {@link org.apache.flink.connector.file.sink.FileSink} so for most of the low level behaviour one
- * may refer to the docs from this module. The most notable differences to the FileSinks are:
+ * This {@link DeltaSinkInternal} sources many specific implementations from the {@link
+ * org.apache.flink.connector.file.sink.FileSink} so for most of the low level behaviour one may
+ * refer to the docs from this module. The most notable differences to the FileSinks are:
  * <ul>
  *  <li>tightly coupling DeltaSink to the Bulk-/ParquetFormat</li>
  *  <li>extending committable information with files metadata (name, size, rows, last update
  *      timestamp)</li>
  *  <li>providing DeltaLake-specific behaviour which is mostly contained in the
  *      {@code io.delta.flink.sink.internal.committer.DeltaGlobalCommitter} implementing the commit
- *      to the {@link DeltaLog} at the final stage of each checkpoint.</li>
+ *      to the {@link io.delta.standalone.DeltaLog} at the final stage of each checkpoint.</li>
  * </ul>
  *
  * @param <IN> Type of the elements in the input of the sink that are also the elements to be
  *             written to its output
- * @implNote This sink sources many methods and solutions from
- * {@link org.apache.flink.connector.file.sink.FileSink} implementation simply by copying the
- * code since it was not possible to directly reuse those due to some access specifiers, use of
- * generics and need to provide some internal workarounds compared to the FileSink. To make it
- * explicit which methods are directly copied from FileSink we use `FileSink-specific methods`
- * comment marker inside class files to decouple DeltaLake's specific code from parts borrowed
- * from FileSink.
+ * @implNote This sink sources many methods and solutions from {@link
+ * org.apache.flink.connector.file.sink.FileSink} implementation simply by copying the code since it
+ * was not possible to directly reuse those due to some access specifiers, use of generics and need
+ * to provide some internal workarounds compared to the FileSink. To make it explicit which methods
+ * are directly copied from FileSink we use `FileSink-specific methods` comment marker inside class
+ * files to decouple DeltaLake's specific code from parts borrowed from FileSink.
  */
 public class DeltaSinkInternal<IN>
     implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> {
@@ -89,14 +86,15 @@ public class DeltaSinkInternal<IN>
 
     /**
      * This method creates the {@link SinkWriter} instance that will be responsible for passing
-     * incoming stream events to the correct bucket writer and then flushed to the underlying files.
+     * incoming stream events to the correct bucket writer and then flushed to the underlying
+     * files.
      * <p>
      * The logic for resolving constructor params differ depending on whether any previous writer's
-     * states were provided.
-     * If there are no previous states then we assume that this is a fresh start of the app and set
-     * next checkpoint id in {@code io.delta.flink.sink.internal.writer.DeltaWriter} to 1 and app id
-     * is taken from the {@link DeltaSinkBuilder#getAppId} what guarantees us that each
-     * writer will get the same value. In other case, if we are provided by the Flink framework
+     * states were provided. If there are no previous states then we assume that this is a fresh
+     * start of the app and set next checkpoint id in {@code io.delta.flink.sink.internal.writer
+     * .DeltaWriter}
+     * to 1 and app id is taken from the {@link DeltaSinkBuilder#getAppId} what guarantees us that
+     * each writer will get the same value. In other case, if we are provided by the Flink framework
      * with some previous writers' states then we use those to restore values of appId and
      * nextCheckpointId.
      *
@@ -115,15 +113,15 @@ public class DeltaSinkInternal<IN>
         DeltaWriter<IN> writer = sinkBuilder.createWriter(context, appId, checkpointId);
         writer.initializeState(states);
         LOG.info("Created new writer for: " +
-                    "appId=" + appId +
-                    " checkpointId=" + checkpointId
+            "appId=" + appId +
+            " checkpointId=" + checkpointId
         );
         return writer;
     }
 
     /**
-     * Restores application's id snapshotted in any of the {@link DeltaWriter}s' states or gets
-     * new one from the builder in case there is no previous states.
+     * Restores application's id snapshotted in any of the {@link DeltaWriter}s' states or gets new
+     * one from the builder in case there is no previous states.
      * <p>
      * In order to gurantee the idempotency of the GlobalCommitter we need unique identifier of the
      * app. We obtain it with simple logic: if it's the first run of the application (so no restart
