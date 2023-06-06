@@ -103,15 +103,7 @@ public class Utils {
     public static FileStatus getFileStatus(Row scanFileInfo) {
         String path = scanFileInfo.getString(0);
         Long size = scanFileInfo.getLong(2);
-        boolean hasDeletionVector = scanFileInfo.isNullAt(5);
 
-        return FileStatus.of(path, size, 0, hasDeletionVector);
-    }
-
-    // TODO should this be public? Documenting this means exposing details like partitionValues,
-    // dataChange flag, etc
-    public static Row getScanFileRow(FileStatus fileStatus) {
-        // TODO needs io.delta.kernel.internal.actions.AddFile
-        throw new UnsupportedOperationException("not implemented yet");
+        return FileStatus.of(path, size, 0);
     }
 }

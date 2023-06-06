@@ -75,7 +75,7 @@ public interface Scan {
         CloseableIterator<FileReadContext> filesReadContextsIter =
                 parquetHandler.contextualizeFileReads(
                         scanFileRowIter,
-                        Literal.TRUE);
+                        filter.orElse(Literal.TRUE));
 
         CloseableIterator<FileDataReadResult> data =
                 parquetHandler.readParquetFiles(filesReadContextsIter, readSchema);

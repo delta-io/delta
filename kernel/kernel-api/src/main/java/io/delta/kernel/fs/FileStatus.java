@@ -10,17 +10,14 @@ public class FileStatus {
     private final String path;
     private final long size;
     private final long modificationTime;
-    private final boolean hasDeletionVector;
 
     private FileStatus(
             String path,
             long size,
-            long modificationTime,
-            boolean hasDeletionVector) {
+            long modificationTime) {
         this.path = Objects.requireNonNull(path, "path is null");
         this.size = size; // TODO: validation
         this.modificationTime = modificationTime; // TODO: validation
-        this.hasDeletionVector = hasDeletionVector;
     }
 
     /**
@@ -50,37 +47,12 @@ public class FileStatus {
     }
 
     /**
-     * Whether this file has any associated deletion vector?
-     * @return True if the file has an associated deletion vector. Otherwise false.
-     */
-    public boolean isHasDeletionVector()
-    {
-        return hasDeletionVector;
-    }
-
-    /**
      * Create a {@link FileStatus} with the given path, size and modification time.
      * @param path Fully qualified file path.
      * @param size File size in bytes
      * @param modificationTime Modification time of the file in epoch millis
      */
     public static FileStatus of(String path, long size, long modificationTime) {
-        return new FileStatus(path, size, modificationTime, false);
-    }
-
-    /**
-     * Create a {@link FileStatus} with the given path, size, modification time, and
-     * hasDeletionVector.
-     * @param path Fully qualified file path.
-     * @param size File size in bytes
-     * @param modificationTime Modification time of the file in epoch millis
-     * @param hasDeletionVector Whether the file has an associated deletion vector file.
-     */
-    public static FileStatus of(
-            String path,
-            long size,
-            long modificationTime,
-            boolean hasDeletionVector) {
-        return new FileStatus(path, size, modificationTime, hasDeletionVector);
+        return new FileStatus(path, size, modificationTime);
     }
 }

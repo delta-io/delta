@@ -14,7 +14,7 @@ public interface ColumnarBatch {
 
     /**
      * Return the {@link ColumnVector} for the given ordinal in the columnar batch. If the ordinal
-     * is not valid throws error (TODO:
+     * is not valid throws error.
      * @param ordinal the ordinal of the column to retrieve
      * @return the {@link ColumnVector} for the given ordinal in the columnar batch
      */
@@ -27,6 +27,7 @@ public interface ColumnarBatch {
 
     /**
      * Return a slice of the current batch.
+     *
      * @param start Starting record index to include in the returned columnar batch
      * @param end Ending record index (exclusive) to include in the returned columnar batch
      * @return a columnar batch containing the records between [start, end)
