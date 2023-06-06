@@ -27,7 +27,6 @@ import io.delta.kernel.types.StructType;
  */
 public interface ExpressionHandler
 {
-    // TODO: specify 1:1 input and outout
     /**
      * Create an {@link ExpressionEvaluator} that can evaluate the given <i>expression</i> on
      * {@link io.delta.kernel.data.ColumnarBatch}s with the given <i>batchSchema</i>.
