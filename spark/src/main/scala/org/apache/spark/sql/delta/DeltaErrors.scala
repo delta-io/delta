@@ -2541,7 +2541,7 @@ trait DeltaErrorsBase
          |Please ensure that the delta-storage dependency is included.
          |
          |If using Python, please ensure you call `configure_spark_with_delta_pip` or use
-         |`--packages io.delta:delta-core_<scala-version>:<delta-lake-version>`.
+         |`--packages io.delta:delta-spark_<scala-version>:<delta-lake-version>`.
          |See https://docs.delta.io/latest/quick-start.html#python.
          |
          |More information about this dependency and how to include it can be found here:
