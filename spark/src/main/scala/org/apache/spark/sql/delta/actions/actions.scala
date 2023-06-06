@@ -552,13 +552,13 @@ case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
  * the same metadata domain.
  *
  * [[domain]]: A string used to identify a specific feature.
- * [[configuration]]: A map containing configuration options for the conflict domain.
+ * [[configuration]]: A JSON string containing configuration options for the conflict domain.
  * [[removed]]: If it is true it serves as a tombstone to logically delete a [[DomainMetadata]]
  *              action.
  */
 case class DomainMetadata(
     domain: String,
-    configuration: Map[String, String],
+    configuration: String,
     removed: Boolean) extends Action {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
 }

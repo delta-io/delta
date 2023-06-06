@@ -349,7 +349,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
            |""".stripMargin)
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
       val domainMetadatas = DomainMetadata(
-        domain = "testDomain", configuration = Map("key1" -> "value1"), removed = false) :: Nil
+        domain = "testDomain",
+        configuration = JsonUtils.toJson(Map("key1" -> "value1")),
+        removed = false) :: Nil
       val version = deltaLog.startTransaction().commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
         FileNames.deltaFile(deltaLog.logPath, version),
@@ -360,7 +362,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         """
           |{"domainMetadata":{
           |"domain":"testDomain",
-          |"configuration":{"key1":"value1"},
+          |"configuration":
+          |"{\"key1\":\"value1\"}",
           |"removed":false}
           |}""".stripMargin.replaceAll("\n", "")
       assert(serializedJson === expectedJson)
