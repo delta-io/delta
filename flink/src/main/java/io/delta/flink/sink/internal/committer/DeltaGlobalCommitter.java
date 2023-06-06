@@ -50,6 +50,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static io.delta.flink.internal.ConnectorUtils.ENGINE_INFO;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Operation;
@@ -60,6 +61,7 @@ import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.actions.SetTransaction;
 import io.delta.standalone.types.StructType;
+
 
 /**
  * A {@link GlobalCommitter} implementation for
@@ -90,10 +92,6 @@ public class DeltaGlobalCommitter
     private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
 
     private static final String APPEND_MODE = "Append";
-
-    private static final String ENGINE_INFO =
-        "flink-engine/" + io.delta.flink.sink.internal.committer.Meta.FLINK_VERSION +
-        " flink-delta-connector/" + io.delta.flink.sink.internal.committer.Meta.CONNECTOR_VERSION;
 
     /**
      * Hadoop configuration that is passed to {@link DeltaLog} instance when creating it

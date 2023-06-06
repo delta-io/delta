@@ -385,7 +385,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
      *
      * @param sourceTablePath  Path to delta log to change last modification time.
      * @param lastModifyValues An array of times to which last modification time should be change
-     *                         to.
+     *                         to. The timestamps must be in format of `2022-02-24 04:55:00`
      */
     protected void changeDeltaLogLastModifyTimestamp(
             String sourceTablePath,

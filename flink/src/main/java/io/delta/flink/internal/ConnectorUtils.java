@@ -1,9 +1,16 @@
 package io.delta.flink.internal;
 
+import java.util.HashSet;
+import java.util.List;
+
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 public class ConnectorUtils {
+
+    public static final String ENGINE_INFO =
+        "flink-engine/" + io.delta.flink.internal.Meta.FLINK_VERSION +
+            " flink-delta-connector/" + io.delta.flink.internal.Meta.CONNECTOR_VERSION;
 
     /**
      * Given a path `child`: 1. Returns `child` if the path is already relative 2. Tries
@@ -28,6 +35,10 @@ public class ConnectorUtils {
             }
         }
         return child.toString();
+    }
+
+    public static <T> boolean listEqualsIgnoreOrder(List<T> list1, List<T> list2) {
+        return new HashSet<>(list1).equals(new HashSet<>(list2));
     }
 
 }

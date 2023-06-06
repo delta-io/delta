@@ -741,16 +741,48 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
       "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided",
       "org.apache.flink" % "flink-runtime-web" % flinkVersion % "test",
+      "org.apache.flink" % "flink-sql-gateway-api" % flinkVersion % "test",
+      "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
       "org.apache.flink" % "flink-clients" % flinkVersion % "test",
       "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
-      "org.mockito" % "mockito-inline" % "3.8.0" % "test",
+      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
       "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
       "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
-      "org.mockito" % "mockito-junit-jupiter" % "4.5.0" % "test",
+      "org.mockito" % "mockito-junit-jupiter" % "4.11.0" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
       "io.github.artsok" % "rerunner-jupiter" % "2.1.6" % "test",
+
+      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
+      "org.apache.hive" % "hive-metastore" % "3.1.2" % "test" excludeAll(
+        ExclusionRule("org.apache.avro", "avro"),
+        ExclusionRule("org.slf4j", "slf4j-log4j12"),
+        ExclusionRule("org.pentaho"),
+        ExclusionRule("org.apache.hbase"),
+        ExclusionRule("org.apache.hbase"),
+        ExclusionRule("co.cask.tephra"),
+        ExclusionRule("com.google.code.findbugs", "jsr305"),
+        ExclusionRule("org.eclipse.jetty.aggregate", "module: 'jetty-all"),
+        ExclusionRule("org.eclipse.jetty.orbit", "javax.servlet"),
+        ExclusionRule("org.apache.parquet", "parquet-hadoop-bundle"),
+        ExclusionRule("com.tdunning", "json"),
+        ExclusionRule("javax.transaction", "transaction-api"),
+        ExclusionRule("'com.zaxxer", "HikariCP"),
+      ),
+      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
+      "org.apache.hive" % "hive-exec" % "3.1.2" % "test" classifier "core" excludeAll(
+        ExclusionRule("'org.apache.avro", "avro"),
+        ExclusionRule("org.slf4j", "slf4j-log4j12"),
+        ExclusionRule("org.pentaho"),
+        ExclusionRule("com.google.code.findbugs", "jsr305"),
+        ExclusionRule("org.apache.calcite.avatica"),
+        ExclusionRule("org.apache.calcite"),
+        ExclusionRule("org.apache.hive", "hive-llap-tez"),
+        ExclusionRule("org.apache.logging.log4j"),
+        ExclusionRule("com.google.protobuf", "protobuf-java"),
+      ),
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
@@ -761,7 +793,7 @@ lazy val flink = (project in file("flink"))
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
       IO.write(file,
-        s"""package io.delta.flink.sink.internal.committer;
+        s"""package io.delta.flink.internal;
            |
            |final class Meta {
            |  public static final String FLINK_VERSION = "${flinkVersion}";

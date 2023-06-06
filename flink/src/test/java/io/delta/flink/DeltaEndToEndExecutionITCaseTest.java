@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.delta.flink.sink.DeltaSink;
@@ -16,7 +15,6 @@ import io.delta.flink.utils.FailoverType;
 import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import io.delta.flink.utils.TableUpdateDescriptor;
 import io.delta.flink.utils.TestDescriptor;
-import io.delta.flink.utils.TestParquetReader;
 import io.github.artsok.ParameterizedRepeatedIfExceptionsTest;
 import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
@@ -26,9 +24,7 @@ import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.data.util.DataFormatConverters;
 import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterAll;
@@ -40,6 +36,7 @@ import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static io.delta.flink.utils.DeltaTestUtils.buildCluster;
+import static io.delta.flink.utils.DeltaTestUtils.verifyDeltaTable;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.ALL_DATA_TABLE_COLUMN_NAMES;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.ALL_DATA_TABLE_COLUMN_TYPES;
 import static io.delta.flink.utils.ExecutionITCaseTestConstants.ALL_DATA_TABLE_RECORD_COUNT;
@@ -54,9 +51,7 @@ import static org.hamcrest.core.IsEqual.equalTo;
 import static org.hamcrest.core.IsNot.not;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
-import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
 
@@ -334,46 +329,5 @@ public class DeltaEndToEndExecutionITCaseTest {
                 );
             }
         }
-    }
-
-    /**
-     * Verifies if Delta table under parameter {@code sinPath} contains expected number of rows with
-     * given rowType format.
-     *
-     * @param sinkPath                Path to Delta table.
-     * @param rowType                 {@link RowType} for test Delta table.
-     * @param expectedNumberOfRecords expected number of row in Delta table.
-     * @return Head snapshot of Delta table.
-     * @throws IOException If any issue while reading Delta Table.
-     */
-    @SuppressWarnings("unchecked")
-    private Snapshot verifyDeltaTable(
-            String sinkPath,
-            RowType rowType,
-            Integer expectedNumberOfRecords) throws IOException {
-
-        DeltaLog deltaLog = DeltaLog.forTable(DeltaTestUtils.getHadoopConf(), sinkPath);
-        Snapshot snapshot = deltaLog.snapshot();
-        List<AddFile> deltaFiles = snapshot.getAllFiles();
-        int finalTableRecordsCount = TestParquetReader
-            .readAndValidateAllTableRecords(
-                deltaLog,
-                rowType,
-                DataFormatConverters.getConverterForDataType(
-                    TypeConversions.fromLogicalToDataType(rowType)));
-        long finalVersion = snapshot.getVersion();
-
-        LOG.info(
-            String.format(
-                "RESULTS: final record count: [%d], final table version: [%d], number of Delta "
-                    + "files: [%d]",
-                finalTableRecordsCount,
-                finalVersion,
-                deltaFiles.size()
-            )
-        );
-
-        assertThat(finalTableRecordsCount, equalTo(expectedNumberOfRecords));
-        return snapshot;
     }
 }

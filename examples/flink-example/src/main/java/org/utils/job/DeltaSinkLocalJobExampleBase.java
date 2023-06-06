@@ -15,22 +15,12 @@
  */
 package org.utils.job;
 
-import java.util.Collections;
-
 import io.delta.flink.sink.DeltaSink;
-import org.apache.commons.lang.StringUtils;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
 import org.utils.Utils;
 
-import io.delta.standalone.DeltaLog;
-import io.delta.standalone.Snapshot;
-import io.delta.standalone.data.CloseableIterator;
-import io.delta.standalone.data.RowRecord;
-
 public abstract class DeltaSinkLocalJobExampleBase implements DeltaExampleLocalJobRunner {
-
-    static int PRINT_PAD_LENGTH = 4;
 
     public void run(String tablePath) throws Exception {
         System.out.println("Will use table path: " + tablePath);
@@ -38,53 +28,9 @@ public abstract class DeltaSinkLocalJobExampleBase implements DeltaExampleLocalJ
         Utils.prepareDirs(tablePath);
         StreamExecutionEnvironment env = createPipeline(tablePath, 2, 3);
         runFlinkJobInBackground(env);
-        printDeltaTableRows(tablePath);
+        Utils.printDeltaTableRows(tablePath);
     }
 
     public abstract DeltaSink<RowData> getDeltaSink(String tablePath);
 
-    public static void printDeltaTableRows(String tablePath) throws InterruptedException {
-        DeltaLog deltaLog =
-            DeltaLog.forTable(new org.apache.hadoop.conf.Configuration(), tablePath);
-
-        for (int i = 0; i < 30; i++) {
-            deltaLog.update();
-            Snapshot snapshot = deltaLog.snapshot();
-
-            System.out.println("===== current snapshot =====");
-            System.out.println("snapshot version: " + snapshot.getVersion());
-            System.out.println("number of total data files: " + snapshot.getAllFiles().size());
-
-            CloseableIterator<RowRecord> iter = snapshot.open();
-            System.out.println("\ntable rows:");
-            System.out.println(StringUtils.rightPad("f1", PRINT_PAD_LENGTH) + "| " +
-                                   StringUtils.rightPad("f2", PRINT_PAD_LENGTH) + " | " +
-                                   StringUtils.rightPad("f3", PRINT_PAD_LENGTH));
-            System.out.println(String.join("", Collections.nCopies(4 * PRINT_PAD_LENGTH, "-")));
-
-            RowRecord row = null;
-            int numRows = 0;
-            while (iter.hasNext()) {
-                row = iter.next();
-                numRows++;
-
-                String f1 = row.isNullAt("f1") ? null : row.getString("f1");
-                String f2 = row.isNullAt("f2") ? null : row.getString("f2");
-                Integer f3 = row.isNullAt("f3") ? null : row.getInt("f3");
-
-                System.out.println(StringUtils.rightPad(f1, PRINT_PAD_LENGTH) + "| " +
-                                       StringUtils.rightPad(f2, PRINT_PAD_LENGTH) + " | " +
-                                       StringUtils.rightPad(String.valueOf(f3), PRINT_PAD_LENGTH));
-            }
-            System.out.println("\nnumber rows: " + numRows);
-            if (row != null) {
-                System.out.println("data schema:");
-                System.out.println(row.getSchema().getTreeString());
-                System.out.println("partition cols:");
-                System.out.println(snapshot.getMetadata().getPartitionColumns());
-            }
-            System.out.println("\n");
-            Thread.sleep(5000);
-        }
-    }
 }
