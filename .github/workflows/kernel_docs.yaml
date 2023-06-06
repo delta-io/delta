@@ -18,10 +18,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  generate_docs:
-    runs-on: ubuntu-20.04
+  # Single deploy job since we're just deploying
+  deploy_docs:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
       - name: install java
         uses: actions/setup-java@v3
         with:
@@ -30,19 +35,8 @@ jobs:
       - name: Generate docs
         run: |
           cd kernel && build/sbt kernelApi/doc
-          mkdir -p docs/snapshot/kernel-api/api/java
-          cp -r kernel-api/target/api/ docs/snapshot/kernel-api/api/java
-
-  # Single deploy job since we're just deploying
-  deploy:
-    needs: generate_docs
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+          mkdir -p docs/snapshot/kernel-api/java
+          cp -r kernel-api/target/api/ docs/snapshot/kernel-api/java/
       - name: Setup Pages
         uses: actions/configure-pages@v3
       - name: Upload artifact
