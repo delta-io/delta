@@ -40,6 +40,8 @@ class JsonMetadataDomainSuite extends QueryTest
       val metadataDomain = TestMetadataDomain("key", 1000L, "test1" :: "value1" :: Nil)
       val domainMetadata = metadataDomain.toDomainMetadata
       assert(domainMetadata.configuration === JsonUtils.toJson[TestMetadataDomain](metadataDomain))
+      assert(domainMetadata.domain == metadataDomain.domainName)
+      assert(!domainMetadata.removed)
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
       deltaLog.startTransaction().commit(domainMetadata :: Nil, ManualUpdate)
