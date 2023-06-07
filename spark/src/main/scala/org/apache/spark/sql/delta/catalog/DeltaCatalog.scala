@@ -550,8 +550,23 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
     var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
+    val isReplaceColumnsCommand = {
+      // Decide from the provided table change operations, whether this is a replace columns
+      // command. Replace columns is represented as removing all existing columns and then adding
+      // all new columns.
+      if (!grouped.contains(classOf[AddColumn]) || !grouped.contains(classOf[DeleteColumn])) {
+        false
+      } else {
+        val tableSchema = table.schema().fieldNames.toSeq
+        // Now ensure that ALL columns are dropped, which is the behavior of REPLACE COLUMNS
+        val deletes = grouped(classOf[DeleteColumn]).asInstanceOf[Seq[DeleteColumn]]
+        deletes.length == tableSchema.length && deletes.zip(tableSchema).forall { case (c, name) =>
+          c.fieldNames().length == 1 && c.fieldNames().head == name
+        }
+      }
+    }
 
-    if (isReplaceColumnsCommand(grouped, table.schema().fieldNames.toSeq)) {
+    if (isReplaceColumnsCommand) {
       // The new schema is essentially the AddColumn operators
       val tableToUpdate = table
       val colsToAdd = grouped(classOf[AddColumn]).asInstanceOf[Seq[AddColumn]]
@@ -694,24 +709,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
     loadTable(ident)
-  }
-
-  /**
-   * Decide from the provided table change operations, whether this is a replace columns command.
-   * Replace columns is represented as removing all existing columns and then adding all new
-   * columns.
-   */
-  private def isReplaceColumnsCommand(
-      grouped: Map[Class[_], Seq[TableChange]],
-      tableSchema: Seq[String]): Boolean = {
-    if (!grouped.contains(classOf[AddColumn]) || !grouped.contains(classOf[DeleteColumn])) {
-      return false
-    }
-    // Now ensure that ALL columns are dropped, which is the behavior of REPLACE COLUMNS
-    val deletes = grouped(classOf[DeleteColumn]).asInstanceOf[Seq[DeleteColumn]]
-    deletes.length == tableSchema.length && deletes.zip(tableSchema).forall { case (c, name) =>
-      c.fieldNames().length == 1 && c.fieldNames().head == name
-    }
   }
 
   // We want our catalog to handle Delta, therefore for other data sources that want to be

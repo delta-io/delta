@@ -778,7 +778,7 @@ object SchemaUtils extends DeltaLogging {
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Seq.empty,
-      failOnAmbiguousChanges: Boolean): Option[String] = {
+      failOnAmbiguousChanges: Boolean = false): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
         throw DeltaErrors.cannotChangeDataType(err)
@@ -800,7 +800,7 @@ object SchemaUtils extends DeltaLogging {
           check(fromKey, toKey, columnPath :+ "key")
           check(fromValue, toValue, columnPath :+ "value")
 
-        case (StructType(fromFields), StructType(toFields)) =>
+        case (f @ StructType(fromFields), t @ StructType(toFields)) =>
           val remainingFields = mutable.Set[StructField]()
           remainingFields ++= fromFields
           var addingColumns = false
