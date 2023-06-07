@@ -16,42 +16,19 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.concurrent.TimeUnit
-
-import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
+import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
 class DeltaConfigSuite extends SparkFunSuite
   with SharedSparkSession  with DeltaSQLCommandTest {
-
-  test("parseCalendarInterval") {
-    for (input <- Seq("5 MINUTES", "5 minutes", "5 Minutes", "inTERval 5 minutes")) {
-      assert(parseCalendarInterval(input) ===
-        new CalendarInterval(0, 0, TimeUnit.MINUTES.toMicros(5)))
-    }
-
-    for (input <- Seq(null, "", " ")) {
-      val e = intercept[IllegalArgumentException] {
-        parseCalendarInterval(input)
-      }
-      assert(e.getMessage.contains("cannot be null or blank"))
-    }
-
-    for (input <- Seq("interval", "interval1 day", "foo", "foo 1 day")) {
-      val e = intercept[IllegalArgumentException] {
-        parseCalendarInterval(input)
-      }
-      assert(e.getMessage.contains("not a valid INTERVAL"))
-    }
-  }
 
   test("isValidIntervalConfigValue") {
     for (input <- Seq(
@@ -63,7 +40,7 @@ class DeltaConfigSuite extends SparkFunSuite
         "1 day",
         "-1 day 86400001 milliseconds", // This is 1 millisecond
         "1 day -1 microseconds")) {
-      assert(isValidIntervalConfigValue(parseCalendarInterval(input)))
+      assert(isValidIntervalConfigValue(IntervalUtils.fromIntervalString(input)))
     }
     for (input <- Seq(
         "-1 microseconds",
@@ -72,7 +49,7 @@ class DeltaConfigSuite extends SparkFunSuite
         "1 day -86400001 milliseconds", // This is -1 millisecond
         "1 month",
         "1 year")) {
-      assert(!isValidIntervalConfigValue(parseCalendarInterval(input)), s"$input")
+      assert(!isValidIntervalConfigValue(IntervalUtils.fromIntervalString(input)), s"$input")
     }
   }
 
@@ -102,20 +79,20 @@ class DeltaConfigSuite extends SparkFunSuite
       val retentionTimestampOpt = log.snapshot.minSetTransactionRetentionTimestamp
       assert(log.clock.getTimeMillis() == clock.getTimeMillis())
       val expectedRetentionTimestamp =
-        clock.getTimeMillis() - getMilliSeconds(parseCalendarInterval("interval 1 days"))
+        clock.getTimeMillis() - getMilliSeconds(IntervalUtils.fromIntervalString("interval 1 days"))
 
       assert(retentionTimestampOpt.contains(expectedRetentionTimestamp))
     }
 
     // case 3: invalid duration specified
     withTempDir { dir =>
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[AnalysisException ] {
         sql(
           s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
              |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 foo')
              |""".stripMargin)
       }
-      assert(e.getMessage.contains("not a valid INTERVAL"))
+      assert(e.getMessage.contains("Unable to parse 'interval 1 foo'."))
     }
   }
 
@@ -131,13 +108,13 @@ class DeltaConfigSuite extends SparkFunSuite
 
       // (2) we still validate matching properties
       withTempDir { tempDir =>
-        val e = intercept[IllegalArgumentException] {
+        val e = intercept[AnalysisException] {
           sql(
             s"""CREATE TABLE delta.`${tempDir.getCanonicalPath}` (id bigint) USING delta
                |TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 foo')
                |""".stripMargin)
         }
-        assert(e.getMessage.contains("not a valid INTERVAL"))
+        assert(e.getMessage.contains("Unable to parse 'interval 1 foo'."))
       }
     }
   }
