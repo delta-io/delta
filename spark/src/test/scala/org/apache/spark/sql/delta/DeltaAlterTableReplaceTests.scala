@@ -630,54 +630,54 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
       // trying to add not-null column, but it should fail because adding not-null column is
       // not supported.
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  v3 long NOT NULL,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  v3 long NOT NULL,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "NOT NULL is not supported in Hive-style REPLACE COLUMNS")
       // s.v3
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string, v3:long NOT NULL>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string, v3:long NOT NULL>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "adding non-nullable column", "s.v3")
       // a.element.v3
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string, v3:long NOT NULL>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string, v3:long NOT NULL>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "adding non-nullable column", "a.element.v3")
       // m.key.v3
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string, v3:long NOT NULL>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string, v3:long NOT NULL>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "adding non-nullable column", "m.key.v3")
       // m.value.v3
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string, v3:long NOT NULL>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string, v3:long NOT NULL>>
+        |)""".stripMargin,
         "adding non-nullable column", "m.value.v3")
     }
   }
@@ -692,53 +692,53 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
       // trying to change the data type of v1 of each struct to not null, but it should fail because
       // tightening nullability is not supported.
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int NOT NULL,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int NOT NULL,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "NOT NULL is not supported in Hive-style REPLACE COLUMNS")
       // s.v1
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int NOT NULL, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int NOT NULL, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "tightening nullability", "s.v1")
       // a.element.v1
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int NOT NULL, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int NOT NULL, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "tightening nullability", "a.element.v1")
       // m.key.v1
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int NOT NULL, v2:string>, STRUCT<v1:int, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int NOT NULL, v2:string>, STRUCT<v1:int, v2:string>>
+        |)""".stripMargin,
         "tightening nullability", "m.key.v1")
       // m.value.v1
       assertNotSupported(s"""
-                            |ALTER TABLE $tableName REPLACE COLUMNS (
-                            |  v1 int,
-                            |  v2 string,
-                            |  s STRUCT<v1:int, v2:string>,
-                            |  a ARRAY<STRUCT<v1:int, v2:string>>,
-                            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int NOT NULL, v2:string>>
-                            |)""".stripMargin,
+        |ALTER TABLE $tableName REPLACE COLUMNS (
+        |  v1 int,
+        |  v2 string,
+        |  s STRUCT<v1:int, v2:string>,
+        |  a ARRAY<STRUCT<v1:int, v2:string>>,
+        |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int NOT NULL, v2:string>>
+        |)""".stripMargin,
         "tightening nullability", "m.value.v1")
     }
   }
