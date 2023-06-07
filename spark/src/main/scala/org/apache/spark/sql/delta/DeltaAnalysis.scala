@@ -417,7 +417,8 @@ class DeltaAnalysis(session: SparkSession)
 
     case ResolvedTable(_, _, d: DeltaTableV2, _)
         if d.catalogTable.isEmpty && d.snapshot.version < 0 =>
-      // This is DDL on a path based table
+      // This is DDL on a path based table that doesn't exist. CREATE will not hit this path, most
+      // SHOW / DESC code paths will hit this
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(d.path.toString)))
 
     // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly

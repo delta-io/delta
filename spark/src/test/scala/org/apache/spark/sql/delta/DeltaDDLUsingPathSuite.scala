@@ -219,7 +219,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
     val e = intercept[AnalysisException] {
       sql(s"SHOW TBLPROPERTIES delta.`/path/to/delta`").as[(String, String)]
     }
-    assert(e.getMessage.contains(s"doesn't exist"))
+    assert(e.getMessage.contains(s"not a Delta table"))
   }
 
   testUsingPath("SHOW COLUMNS") { (table, path) =>
@@ -243,9 +243,10 @@ trait DeltaDDLUsingPathTests extends QueryTest
     checkDatasetUnorderly(
       sql(s"SHOW COLUMNS IN delta.`$path` IN delta").as[String],
       "v1", "v2", "struct")
-    intercept[DeltaAnalysisException] {
+    val e = intercept[AnalysisException] {
       sql("SHOW COLUMNS IN delta.`/path/to/delta`")
     }
+    assert(e.getMessage.contains(s"not a Delta table"))
   }
 
   testUsingPath("DESCRIBE COLUMN") { (table, path) =>
