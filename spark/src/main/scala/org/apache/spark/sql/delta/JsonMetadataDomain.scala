@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 /**
  * A trait for capturing metadata domain of type T.
  */
-trait MetadataDomain[T] {
+trait JsonMetadataDomain[T] {
   val domainName: String
 
   /**
@@ -34,7 +34,7 @@ trait MetadataDomain[T] {
   }
 }
 
-abstract class MetadataDomainUtils[T: Manifest] {
+abstract class JsonMetadataDomainUtils[T: Manifest] {
   protected val domainName: String
 
   /**
