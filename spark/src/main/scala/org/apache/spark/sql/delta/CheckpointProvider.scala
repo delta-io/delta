@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames.checkpointVersion
 import org.apache.hadoop.fs.FileStatus
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -29,6 +30,9 @@ import org.apache.spark.sql.types.StructType
  * A trait which provides information about a checkpoint to the Snapshot.
  */
 trait CheckpointProvider {
+
+  /** True if the checkpoint provider is empty (does not refer to a valid checkpoint) */
+  def isEmpty: Boolean = version < 0
 
   /** Checkpoint version */
   def version: Long
@@ -66,9 +70,25 @@ case class PreloadedCheckpointProvider(
   private lazy val fileIndex =
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, files).get
 
-  override lazy val version: Long = checkpointVersion(files.head)
+  override def version: Long = checkpointVersion(files.head)
 
   override def effectiveCheckpointSizeInBytes(): Long = fileIndex.sizeInBytes
 
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Seq(fileIndex)
+}
+
+/**
+ * An implementation for [[CheckpointProvider]] which could be used to represent a scenario when
+ * checkpoint doesn't exist. This helps us simplify the code by making
+ * [[LogSegment.checkpointProvider]] as non-optional.
+ *
+ * The [[CheckpointProvider.isEmpty]] method returns true for [[EmptyCheckpointProvider]]. Also
+ * version is returned as -1.
+ * For a real checkpoint, this will be returned true and version will be >= 0.
+ */
+object EmptyCheckpointProvider extends CheckpointProvider {
+  override def version: Long = -1
+  override def files: Seq[FileStatus] = Nil
+  override def effectiveCheckpointSizeInBytes(): Long = 0L
+  override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Nil
 }
