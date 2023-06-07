@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RowIdHighWaterMark}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 
 /**
@@ -24,7 +24,32 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
  */
 object RowId {
 
-  val MISSING_HIGH_WATER_MARK: RowIdHighWaterMark = RowIdHighWaterMark(highWaterMark = -1L)
+  /**
+   * Constructor and extractor for the high water mark stored using a [[DomainMetadata]] action.
+   */
+  object RowIdHighWaterMark {
+    private val DOMAIN_NAME = "delta.rowTracking"
+    private val FIELD_NAME = "rowIdHighWaterMark"
+
+    def isRowIdHighWaterMark(d: DomainMetadata): Boolean = d.domain == DOMAIN_NAME
+
+    def apply(highWaterMark: Long): DomainMetadata = {
+      DomainMetadata(
+        DOMAIN_NAME,
+        Map[String, String](FIELD_NAME -> highWaterMark.toString),
+        removed = false)
+    }
+
+    def unapply(d: DomainMetadata): Option[Long] = {
+      if (isRowIdHighWaterMark(d)) {
+        Some(d.configuration(FIELD_NAME).toLong)
+      } else {
+        None
+      }
+    }
+  }
+
+  val MISSING_HIGH_WATER_MARK: Long = -1L
 
   /**
    * Returns whether the protocol version supports the Row ID table feature. Whenever Row IDs are
@@ -77,9 +102,8 @@ object RowId {
       actions: Iterator[Action]): Iterator[Action] = {
     if (!isSupported(protocol)) return actions
 
-    val oldHighWatermark = extractHighWatermark(snapshot)
-        .getOrElse(MISSING_HIGH_WATER_MARK)
-        .highWaterMark
+    val oldHighWatermark = extractHighWatermark(snapshot).getOrElse(MISSING_HIGH_WATER_MARK)
+
     var newHighWatermark = oldHighWatermark
 
     val actionsWithFreshRowIds = actions.map {
@@ -89,7 +113,7 @@ object RowId {
           throw DeltaErrors.rowIdAssignmentWithoutStats
         }
         a.copy(baseRowId = Some(baseRowId))
-      case _: RowIdHighWaterMark =>
+      case d: DomainMetadata if RowIdHighWaterMark.isRowIdHighWaterMark(d) =>
         throw new IllegalStateException(
           "Manually setting the Row ID high water mark is not allowed")
       case other => other
@@ -108,8 +132,8 @@ object RowId {
   /**
    * Extracts the high watermark of row IDs from a snapshot.
    */
-  private[delta] def extractHighWatermark(snapshot: Snapshot): Option[RowIdHighWaterMark] = {
-    snapshot.rowIdHighWaterMarkOpt
+  private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] = {
+    snapshot.domainMetadata.collectFirst { case RowIdHighWaterMark(v) => v }
   }
 
   /**

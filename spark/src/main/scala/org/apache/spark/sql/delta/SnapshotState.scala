@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, RowIdHighWaterMark, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -52,7 +52,6 @@ case class SnapshotState(
   numOfMetadata: Long,
   numOfProtocol: Long,
   setTransactions: Seq[SetTransaction],
-  rowIdHighWaterMark: RowIdHighWaterMark,
   domainMetadata: Seq[DomainMetadata],
   metadata: Metadata,
   protocol: Protocol,
@@ -146,7 +145,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "numOfMetadata" -> count(col("metaData")),
       "numOfProtocol" -> count(col("protocol")),
       "setTransactions" -> collect_set(col("txn")),
-      "rowIdHighWaterMark" -> last(col("rowIdHighWaterMark"), ignoreNulls = true),
       "domainMetadata" -> collect_list(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
@@ -169,8 +167,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected[delta] def sizeInBytesIfKnown: Option[Long] = Some(sizeInBytes)
   protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
-  protected[delta] def rowIdHighWaterMarkOpt: Option[RowIdHighWaterMark] =
-    Option(computedState.rowIdHighWaterMark)
   protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
 
   /** Generate a default SnapshotState of a new table, given the table metadata */
@@ -185,7 +181,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       numOfMetadata = 1L,
       numOfProtocol = 1L,
       setTransactions = Nil,
-      rowIdHighWaterMark = null,
       domainMetadata = Nil,
       metadata = metadata,
       protocol = protocol

@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
+import org.apache.spark.sql.delta.RowId.RowIdHighWaterMark
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -137,10 +139,18 @@ case class CreateDeltaTableCommand(
             replaceMetadataIfNecessary(
               txn, tableWithLocation, options, schema)
           }
-          val actions = deltaWriter.write(
+          var actions = deltaWriter.write(
             txn,
             sparkSession
           )
+          val newDomainMetadata = Seq.empty[DomainMetadata]
+          if (isReplace) {
+            // Ensure to remove any domain metadata for REPLACE TABLE.
+            actions = actions ++ handleDomainMetadataForReplaceTable(
+              txn.snapshot.domainMetadata, newDomainMetadata)
+          } else {
+            actions = actions ++ newDomainMetadata
+          }
           val op = getOperation(txn.metadata, isManagedTable, Some(options))
           (actions, op)
         }
@@ -498,6 +508,26 @@ case class CreateDeltaTableCommand(
   private def isReplace: Boolean = {
     operation == TableCreationModes.CreateOrReplace ||
       operation == TableCreationModes.Replace
+  }
+
+  /**
+   * Generates a new sequence of DomainMetadata to commits for REPLACE TABLE.
+   * If the domain of an existing domain metadata is present in the set of new domain
+   * metadata, the existing domain metadata is filtered out so that the new one
+   * can override it. Otherwise, it is marked as removed (tombstone).
+   */
+  private def handleDomainMetadataForReplaceTable(
+      existingDomainMetadata: Seq[DomainMetadata],
+      newDomainMetadata: Seq[DomainMetadata]): Seq[DomainMetadata] = {
+    val newDomainNames = newDomainMetadata.map(_.domain).toSet
+    existingDomainMetadata
+      .filter {
+        // The row ID high water mark must never be removed from the table, to ensure that a fresh
+        // row id is never assigned twice.
+        case m: DomainMetadata if RowIdHighWaterMark.isRowIdHighWaterMark(m) => false
+        case m => !newDomainNames.contains(m.domain)
+      }
+      .map(_.copy(removed = true)) ++ newDomainMetadata
   }
 }
 

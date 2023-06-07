@@ -540,13 +540,6 @@ case class SetTransaction(
 }
 
 /**
- * Stores the highest (inclusive) ID that has been assigned to a row in during history of the table.
- */
-case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
-  override def wrap: SingleAction = SingleAction(rowIdHighWaterMark = this)
-}
-
-/**
  * The domain metadata action contains a configuration (string-string map) for a named metadata
  * domain. Two overlapping transactions conflict if they both contain a domain metadata action for
  * the same metadata domain.
@@ -1165,7 +1158,6 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
-    rowIdHighWaterMark: RowIdHighWaterMark = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
@@ -1182,8 +1174,6 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
-    } else if (rowIdHighWaterMark != null) {
-      rowIdHighWaterMark
     } else if (domainMetadata != null) {
       domainMetadata
     } else if (commitInfo != null) {

@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile, RowIdHighWaterMark, SetTransaction}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.storage.ClosableIterator._
 
 import org.apache.spark.sql.DataFrame
 
@@ -333,7 +332,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case commitInfo: CommitInfo =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           false
-        case _: AddCDCFile | _: RowIdHighWaterMark | _: SetTransaction | _: DomainMetadata =>
+        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata =>
           false
         case null => // Some crazy future feature. Ignore
           false
