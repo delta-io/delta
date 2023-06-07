@@ -44,9 +44,7 @@ class JsonMetadataDomainSuite extends QueryTest
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
       deltaLog.startTransaction().commit(domainMetadata :: Nil, ManualUpdate)
 
-      val found =
-        TestMetadataDomain.fromSnapshot(deltaLog.update()).contains(metadataDomain)
-      assert(found)
+      assert(TestMetadataDomain.fromSnapshot(deltaLog.update()).contains(metadataDomain))
     }
 
   }
