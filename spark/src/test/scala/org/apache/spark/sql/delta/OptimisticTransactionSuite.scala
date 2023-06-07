@@ -425,7 +425,7 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.version == 1)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
-      assert(testTxn.preCommitLogSegment.checkpointVersionOpt == None)
+      assert(testTxn.preCommitLogSegment.checkpointProvider.isEmpty)
 
       testTxn.commit(Seq.empty, ManualUpdate)
 
@@ -433,7 +433,7 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.version == 12)
       assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
-      assert(testTxn.preCommitLogSegment.checkpointVersionOpt == Some(10))
+      assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
     }
   }
 

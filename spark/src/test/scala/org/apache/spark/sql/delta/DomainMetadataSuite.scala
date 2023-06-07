@@ -71,7 +71,7 @@ class DomainMetadataSuite
           DomainMetadata("testDomain2", Map("key1" -> "value1"), false) :: Nil
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
-        assert(deltaLog.update().logSegment.checkpointProviderOpt.isEmpty)
+        assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
         if (doCheckpoint) {
           deltaLog.checkpoint(deltaLog.unsafeVolatileSnapshot)
@@ -79,7 +79,7 @@ class DomainMetadataSuite
           // the Snapshot from the checkpoint file.
           DeltaLog.clearCache()
           deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-          assert(deltaLog.unsafeVolatileSnapshot.logSegment.checkpointProviderOpt.nonEmpty)
+          assert(!deltaLog.unsafeVolatileSnapshot.logSegment.checkpointProvider.isEmpty)
 
           assertEquals(
             sortByDomain(domainMetadata),
@@ -114,7 +114,7 @@ class DomainMetadataSuite
 
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
-        assert(deltaLog.unsafeVolatileSnapshot.logSegment.checkpointProviderOpt.isEmpty)
+        assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
         // Delete testDomain1.
         deltaLog.startTransaction().commit(
