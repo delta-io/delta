@@ -1409,7 +1409,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
   }
 }
 
-trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
+trait DeltaAlterTableByNameTests extends DeltaAlterTableTests with DeltaAlterTableReplaceTests {
   import testImplicits._
 
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
@@ -1693,6 +1693,7 @@ class DeltaAlterTableByNameSuite
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
+  with DeltaAlterTableReplaceTests
 
 
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {

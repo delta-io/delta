@@ -1712,6 +1712,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def ambiguousDataTypeChange(column: String, from: StructType, to: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE",
+      messageParameters = Array(column, from.toDDL, to.toDDL)
+    )
+  }
+
   def unsupportedDataTypes(
       unsupportedDataType: UnsupportedDataTypeInfo,
       moreUnsupportedDataTypes: UnsupportedDataTypeInfo*): Throwable = {

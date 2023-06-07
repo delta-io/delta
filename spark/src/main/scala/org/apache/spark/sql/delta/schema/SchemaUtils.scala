@@ -767,6 +767,9 @@ object SchemaUtils extends DeltaLogging {
   /**
    * Check if the two data types can be changed.
    *
+   * @param failOnAmbiguousChanges Throw an error if a StructField both has columns dropped and new
+   *                               columns added. These are ambiguous changes, because we don't
+   *                               know if a column needs to be renamed, dropped, or added.
    * @return None if the data types can be changed, otherwise Some(err) containing the reason.
    */
   def canChangeDataType(
@@ -774,7 +777,8 @@ object SchemaUtils extends DeltaLogging {
       to: DataType,
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
-      columnPath: Seq[String] = Seq.empty): Option[String] = {
+      columnPath: Seq[String] = Seq.empty,
+      failOnAmbiguousChanges: Boolean): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
         throw DeltaErrors.cannotChangeDataType(err)
@@ -799,6 +803,7 @@ object SchemaUtils extends DeltaLogging {
         case (StructType(fromFields), StructType(toFields)) =>
           val remainingFields = mutable.Set[StructField]()
           remainingFields ++= fromFields
+          var addingColumns = false
           toFields.foreach { toField =>
             fromFields.find(field => resolver(field.name, toField.name)) match {
               case Some(fromField) =>
@@ -808,15 +813,20 @@ object SchemaUtils extends DeltaLogging {
                 verifyNullability(fromField.nullable, toField.nullable, newPath)
                 check(fromField.dataType, toField.dataType, newPath)
               case None =>
+                addingColumns = true
                 verify(toField.nullable,
                   "adding non-nullable column " +
                   UnresolvedAttribute(columnPath :+ toField.name).name)
             }
           }
+          val columnName = UnresolvedAttribute(columnPath).name
+          if (failOnAmbiguousChanges && remainingFields.nonEmpty && addingColumns) {
+            throw DeltaErrors.ambiguousDataTypeChange(columnName, f, t)
+          }
           if (columnMappingMode == NoMapping) {
             verify(remainingFields.isEmpty,
               s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-                (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+                (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
 
         case (fromDataType, toDataType) =>

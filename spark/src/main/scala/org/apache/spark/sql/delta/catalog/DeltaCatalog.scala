@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
@@ -551,6 +551,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
 
+    if (isReplaceColumnsCommand(grouped, table.schema().fieldNames.toSeq)) {
+      // The new schema is essentially the AddColumn operators
+      val tableToUpdate = table
+      val colsToAdd = grouped(classOf[AddColumn]).asInstanceOf[Seq[AddColumn]]
+      val structFields = colsToAdd.map { col =>
+        var field = StructField(col.fieldNames().last, col.dataType, col.isNullable)
+        Option(col.comment()).foreach { comment =>
+          field = field.withComment(comment)
+        }
+        Option(col.defaultValue()).foreach { defValue =>
+          field = field.withCurrentDefaultValue(defValue.getSql)
+        }
+        field
+      }
+      AlterTableReplaceColumnsDeltaCommand(tableToUpdate, structFields).run(spark)
+      return loadTable(ident)
+    }
+
     grouped.foreach {
       case (t, newColumns) if t == classOf[AddColumn] =>
         val tableToUpdate = table
@@ -676,6 +694,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
     loadTable(ident)
+  }
+
+  /**
+   * Decide from the provided table change operations, whether this is a replace columns command.
+   * Replace columns is represented as removing all existing columns and then adding all new
+   * columns.
+   */
+  private def isReplaceColumnsCommand(
+      grouped: Map[Class[_], Seq[TableChange]],
+      tableSchema: Seq[String]): Boolean = {
+    if (!grouped.contains(classOf[AddColumn]) || !grouped.contains(classOf[DeleteColumn])) {
+      return false
+    }
+    // Now ensure that ALL columns are dropped, which is the behavior of REPLACE COLUMNS
+    val deletes = grouped(classOf[DeleteColumn]).asInstanceOf[Seq[DeleteColumn]]
+    deletes.length == tableSchema.length && deletes.zip(tableSchema).forall { case (c, name) =>
+      c.fieldNames().length == 1 && c.fieldNames().head == name
+    }
   }
 
   // We want our catalog to handle Delta, therefore for other data sources that want to be

@@ -65,6 +65,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE" : {
+    "message" : [
+      "Cannot change data type of <column> from <from> to <to>. This change contains column removals and additions, therefore they are ambiguous. Please make these changes individually using ALTER TABLE [ADD | DROP | RENAME] COLUMN."
+    ],
+    "sqlState" : "429BQ"
+  },
   "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
     "message" : [
       "Ambiguous partition column <column> can be <colMatches>."
