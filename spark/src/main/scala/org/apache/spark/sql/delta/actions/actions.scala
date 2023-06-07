@@ -552,7 +552,7 @@ case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
  * the same metadata domain.
  *
  * [[domain]]: A string used to identify a specific feature.
- * [[configuration]]: A JSON string containing configuration options for the conflict domain.
+ * [[configuration]]: A string containing configuration options for the conflict domain.
  * [[removed]]: If it is true it serves as a tombstone to logically delete a [[DomainMetadata]]
  *              action.
  */

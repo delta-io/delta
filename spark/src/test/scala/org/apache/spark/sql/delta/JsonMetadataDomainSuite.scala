@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 
 class JsonMetadataDomainSuite extends QueryTest
@@ -37,9 +38,11 @@ class JsonMetadataDomainSuite extends QueryTest
            |""".stripMargin)
 
       val metadataDomain = TestMetadataDomain("key", 1000L, "test1" :: "value1" :: Nil)
+      val domainMetadata = metadataDomain.toDomainMetadata
+      assert(domainMetadata.configuration === JsonUtils.toJson[TestMetadataDomain](metadataDomain))
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-      deltaLog.startTransaction().commit(metadataDomain.toDomainMetadata :: Nil, ManualUpdate)
+      deltaLog.startTransaction().commit(domainMetadata :: Nil, ManualUpdate)
 
       val found =
         TestMetadataDomain.fromSnapshot(deltaLog.update()).contains(metadataDomain)
