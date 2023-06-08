@@ -25,13 +25,8 @@ import io.delta.kernel.utils.Tuple2;
 
 public final class StructType extends DataType {
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Static Fields / Methods
-    ////////////////////////////////////////////////////////////////////////////////
-
     public static StructType EMPTY_INSTANCE = new StructType();
 
-    // TODO: docs
     public static StructType fromRow(Row row) {
         final List<Row> fields = row.getList(0);
         return new StructType(
@@ -45,10 +40,6 @@ public final class StructType extends DataType {
     // TODO: docs
     public static StructType READ_SCHEMA = new StructType()
         .add("fields", new ArrayType(StructField.READ_SCHEMA, false /* contains null */ ));
-
-    ////////////////////////////////////////////////////////////////////////////////
-    // Instance Fields / Methods
-    ////////////////////////////////////////////////////////////////////////////////
 
     private final Map<String, Tuple2<StructField, Integer>> nameToFieldAndOrdinal;
     private final List<StructField> fields;

@@ -19,9 +19,11 @@ package io.delta.kernel.utils;
 import java.io.IOException;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -39,9 +41,7 @@ public class Utils {
             private boolean accessed;
 
             @Override
-            public void close() throws IOException {
-                // nothing to close
-            }
+            public void close() { /* nothing to close */ }
 
             @Override
             public boolean hasNext() {
@@ -105,8 +105,8 @@ public class Utils {
      * @return Physical schema to read from the data files.
      */
     public static StructType getPhysicalSchema(Row scanState) {
-        // TODO needs io.delta.kernel.internal.data.ScanStateRow
-        throw new UnsupportedOperationException("not implemented yet");
+        // TODO: pending serialization and deserialization of the `StructType` schmea
+        return ((ScanStateRow) scanState).getReadSchema();
     }
 
     /**

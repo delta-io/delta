@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.internal.TableImpl;
 
 /**
  * Represents the Delta Lake table for a given path.
@@ -33,8 +34,7 @@ public interface Table {
     static Table forPath(String path)
         throws TableNotFoundException
     {
-        // TODO requires io.delta.kernel.internal.TableImpl
-        throw new UnsupportedOperationException("not implemented yet");
+        return TableImpl.forPath(path);
     }
 
     /**
