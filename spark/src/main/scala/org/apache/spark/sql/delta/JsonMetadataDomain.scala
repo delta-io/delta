@@ -20,7 +20,8 @@ import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.util.JsonUtils
 
 /**
- * A trait for capturing metadata domain of type T and JSON serialize it into DomainMetadata's config.
+ * A trait for capturing metadata domain of type T and JSON serialize it into DomainMetadata's
+ * config.
  */
 trait JsonMetadataDomain[T] {
   val domainName: String
