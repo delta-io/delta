@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.RowId.RowIdHighWaterMark
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -531,7 +531,7 @@ case class CreateDeltaTableCommand(
       .filter {
         // The row ID high water mark must never be removed from the table, to ensure that a fresh
         // row id is never assigned twice.
-        case m: DomainMetadata if RowIdHighWaterMark.isRowIdHighWaterMark(m) => false
+        case m: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(m) => false
         case m => !newDomainNames.contains(m.domain)
       }
       .map(_.copy(removed = true)) ++ newDomainMetadata

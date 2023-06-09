@@ -574,7 +574,7 @@ The following is an example `rowIdHighWaterMark` action:
 ```
 
 ### Domain Metadata
-The domain metadata action contains a configuration (string-string map) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
+The domain metadata action contains a configuration (string) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
 
 There are two types of metadata domains:
 1. **User-controlled metadata domains** have names that start with anything other than the `delta.` prefix. Any Delta client implementation or user application can modify these metadata domains, and can allow users to modify them arbitrarily. Delta clients and user applications are encouraged to use a naming convention designed to avoid conflicts with other clients' or users' metadata domains (e.g. `com.databricks.*` or `org.apache.*`).
@@ -585,7 +585,7 @@ The schema of the `domainMetadata` action is as follows:
 Field Name | Data Type | Description
 -|-|-
 domain | String | Identifier for this domain (system- or user-provided)
-configuration | Map[String, String] | A map containing configuration for the metadata domain
+configuration | String | String containing configuration for the metadata domain
 removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain. Writers should preserve an accurate pre-image of the configuration.
 
 Enablement:
@@ -606,7 +606,7 @@ The following is an example `domainMetadata` action:
 {
   "domainMetadata": {
     "domain": "delta.deltaTableFeatureX",
-    "configuration": {"key1": "..."},
+    "configuration": "{\"key1\":\"value1\"}",
     "removed": false
   }
 }
