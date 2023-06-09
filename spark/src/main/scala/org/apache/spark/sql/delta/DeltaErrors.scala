@@ -2419,12 +2419,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def overwriteSchemaUsedWithDynamicPartitionOverwrite(): Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE"
-    )
-  }
-
   def replaceWhereUsedInOverwrite(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty

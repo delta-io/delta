@@ -19,10 +19,11 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.parquet.format.CompressionCodec
@@ -280,25 +281,6 @@ class DeltaOptionSuite extends QueryTest
           .option("partitionOverwriteMode", invalidMode)
           .save(tempDir.getAbsolutePath)
       }
-    }
-  }
-
-  test("overwriteSchema=true should be invalid with partitionOverwriteMode=dynamic") {
-    withTempDir { tempDir =>
-      val e = intercept[DeltaIllegalArgumentException] {
-        withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-          Seq(1, 2, 3).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .mode("overwrite")
-            .format("delta")
-            .partitionBy("part")
-            .option(OVERWRITE_SCHEMA_OPTION, "true")
-            .option(PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-            .save(tempDir.getAbsolutePath)
-        }
-      }
-      assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
     }
   }
 }
