@@ -197,6 +197,15 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  def forTableFeature(tf: TableFeature): Protocol = {
+    val writerFeatures = Some(Set(tf.name)) // every table feature is a writer feature
+    val readerFeatures = if (tf.isReaderWriterFeature) writerFeatures else None
+    val minReaderVersion = if (readerFeatures.isDefined) TABLE_FEATURES_MIN_READER_VERSION else 1
+    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+
+    new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures)
+  }
+
   /**
    * Picks the protocol version for a new table given the Delta table metadata. The result
    * satisfies all active features in the metadata and protocol-related configs in table
