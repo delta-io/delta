@@ -389,29 +389,36 @@ case class CreateDeltaTableCommand(
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
       DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata))
+        options.flatMap(_.userMetadata)
+      )
 
     // DataSourceV2 table creation
     // CREATE TABLE (non-DataFrameWriter API) doesn't have options syntax
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
-      DeltaOperations.CreateTable(metadata, isManagedTable, query.isDefined)
+      DeltaOperations.CreateTable(
+        metadata, isManagedTable, query.isDefined
+      )
 
     // DataSourceV2 table replace
     // REPLACE TABLE (non-DataFrameWriter API) doesn't have options syntax
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = false, query.isDefined)
+      DeltaOperations.ReplaceTable(
+        metadata, isManagedTable, orCreate = false, query.isDefined
+      )
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
       DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata))
+        options.flatMap(_.userMetadata)
+      )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata))
+        options.flatMap(_.userMetadata)
+      )
   }
 
   /**
