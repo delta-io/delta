@@ -17,7 +17,8 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, DeltaUDF, OptimisticTransaction}
+import org.apache.spark.sql.delta.metric.IncrementMetric
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -27,6 +28,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, If, Literal}
+import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -136,16 +138,12 @@ case class UpdateCommand(
       // that only involves the affected files instead of all files.
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
-      val updatedRowCount = metrics("numUpdatedRows")
-      val updatedRowUdf = DeltaUDF.boolean { () =>
-        updatedRowCount += 1
-        true
-      }.asNondeterministic()
+      val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
       val pathsToRewrite =
         withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
           data.filter(new Column(updateCondition))
             .select(input_file_name())
-            .filter(updatedRowUdf())
+            .filter(new Column(incrUpdatedCountExpr))
             .distinct()
             .as[String]
             .collect()
@@ -260,18 +258,14 @@ case class UpdateCommand(
 
     // Number of total rows that we have seen, i.e. are either copying or updating (sum of both).
     // This will be used later, along with numUpdatedRows, to determine numCopiedRows.
-    val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
-      numTouchedRows += 1
-      true
-    }.asNondeterministic()
+    val incrTouchedCountExpr = IncrementMetric(TrueLiteral, metrics("numTouchedRows"))
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
       target,
       updateExpressions,
       condition,
       targetDf
-        .filter(numTouchedRowsUdf())
+        .filter(new Column(incrTouchedCountExpr))
         .withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition)),
       UpdateCommand.shouldOutputCdc(txn))
 

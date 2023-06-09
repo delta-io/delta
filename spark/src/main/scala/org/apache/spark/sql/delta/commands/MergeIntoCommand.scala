@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeStats}
@@ -316,8 +317,7 @@ case class MergeIntoCommand(
         deltaTxn.filterFiles()
       }
 
-    // UDF to increment metrics
-    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
     val sourceDF = getSourceDF()
       .filter(new Column(incrSourceRowCountExpr))
 
@@ -422,9 +422,9 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction
     ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
 
-    // UDFs to update metrics
-    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
-    val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
+    val incrInsertedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsInserted", valueToReturn = true)
 
     val outputColNames = getTargetOutputCols(deltaTxn).map(_.name)
     // we use head here since we know there is only a single notMatchedClause
@@ -540,18 +540,25 @@ case class MergeIntoCommand(
                 |  newTarget.output: ${baseTargetDF.queryExecution.logical.outputSet}
        """.stripMargin)
 
-    // UDFs to update metrics
-    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRowsInSecondScan")
-    val incrUpdatedCountExpr = makeMetricUpdateUDF("numTargetRowsUpdated")
-    val incrUpdatedMatchedCountExpr = makeMetricUpdateUDF("numTargetRowsMatchedUpdated")
+    // Expressions to update metrics
+    val incrSourceRowCountExpr =
+      incrementMetricAndReturnBool("numSourceRowsInSecondScan", valueToReturn = true)
+    val incrUpdatedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsUpdated", valueToReturn = true)
+    val incrUpdatedMatchedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsMatchedUpdated", valueToReturn = true)
     val incrUpdatedNotMatchedBySourceCountExpr =
-      makeMetricUpdateUDF("numTargetRowsNotMatchedBySourceUpdated")
-    val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
-    val incrNoopCountExpr = makeMetricUpdateUDF("numTargetRowsCopied")
-    val incrDeletedCountExpr = makeMetricUpdateUDF("numTargetRowsDeleted")
-    val incrDeletedMatchedCountExpr = makeMetricUpdateUDF("numTargetRowsMatchedDeleted")
+      incrementMetricAndReturnBool("numTargetRowsNotMatchedBySourceUpdated", valueToReturn = true)
+    val incrInsertedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsInserted", valueToReturn = true)
+    val incrNoopCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsCopied", valueToReturn = true)
+    val incrDeletedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsDeleted", valueToReturn = true)
+    val incrDeletedMatchedCountExpr =
+      incrementMetricAndReturnBool("numTargetRowsMatchedDeleted", valueToReturn = true)
     val incrDeletedNotMatchedBySourceCountExpr =
-      makeMetricUpdateUDF("numTargetRowsNotMatchedBySourceDeleted")
+      incrementMetricAndReturnBool("numTargetRowsNotMatchedBySourceDeleted", valueToReturn = true)
 
     // Apply an outer join to find both, matches and non-matches. We are adding two boolean fields
     // with value `true`, one to each side of the join. Whether this field is null or not after
@@ -581,13 +588,13 @@ case class MergeIntoCommand(
     // If there are N columns in the target table, there will be N + 3 columns after processing
     // - N columns for target table
     // - ROW_DROPPED_COL to define whether the generated row should dropped or written
-    // - INCR_ROW_COUNT_COL containing a UDF to update the output row row counter
+    // - INCR_ROW_COUNT_COL containing an expression to update the output row row counter
     // - CDC_TYPE_COLUMN_NAME containing the type of change being performed in a particular row
 
     // To generate these N + 3 columns, we will generate N + 3 expressions and apply them to the
     // rows in the joinedDF. The CDC column will be either used for CDC generation or dropped before
     // performing the final write, and the other two will always be dropped after executing the
-    // metrics UDF and filtering on ROW_DROPPED_COL.
+    // metrics expressions and filtering on ROW_DROPPED_COL.
 
     // We produce rows for both the main table data (with CDC_TYPE_COLUMN_NAME = CDC_TYPE_NOT_CDC),
     // and rows for the CDC data which will be output to CDCReader.CDC_LOCATION.
@@ -862,11 +869,8 @@ case class MergeIntoCommand(
   }
 
   /** Expressions to increment SQL metrics */
-  private def makeMetricUpdateUDF(name: String): Expression = {
-    // only capture the needed metric in a local variable
-    val metric = metrics(name)
-    DeltaUDF.boolean { () => metric += 1; true }.asNondeterministic().apply().expr
-  }
+  private def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
+    IncrementMetric(Literal(valueToReturn), metrics(name))
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>
