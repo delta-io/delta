@@ -28,7 +28,6 @@ import org.apache.commons.io.FileUtils
 import org.apache.parquet.format.CompressionCodec
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.internal.SQLConf.PARTITION_OVERWRITE_MODE
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -280,35 +279,6 @@ class DeltaOptionSuite extends QueryTest
           .partitionBy("part")
           .option("partitionOverwriteMode", invalidMode)
           .save(tempDir.getAbsolutePath)
-      }
-    }
-  }
-
-  test("Prohibit spark.databricks.delta.dynamicPartitionOverwrite.enabled=false in " +
-    "dynamic partition overwrite mode") {
-    withTempDir { tempDir =>
-      withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
-        var e = intercept[DeltaIllegalArgumentException] {
-          Seq(1, 2, 3).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .option("partitionOverwriteMode", "dynamic")
-            .save(tempDir.getAbsolutePath)
-        }
-        assert(e.getErrorClass == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
-        withSQLConf(PARTITION_OVERWRITE_MODE.key -> "dynamic") {
-          e = intercept[DeltaIllegalArgumentException] {
-            Seq(1, 2, 3).toDF
-              .withColumn("part", $"value" % 2)
-              .write
-              .format("delta")
-              .partitionBy("part")
-              .save(tempDir.getAbsolutePath)
-          }
-        }
-        assert(e.getErrorClass == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
       }
     }
   }

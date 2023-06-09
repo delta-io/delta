@@ -603,12 +603,6 @@
     ],
     "sqlState" : "42601"
   },
-  "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
-    "message" : [
-      "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
-    ],
-    "sqlState" : "0A000"
-  },
   "DELTA_EMPTY_DATA" : {
     "message" : [
       "Data used in creating the Delta table doesn't have any columns."
