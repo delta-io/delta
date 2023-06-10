@@ -146,7 +146,7 @@ case class CreateDeltaTableCommand(
           val newDomainMetadata = Seq.empty[DomainMetadata]
           if (isReplace) {
             // Ensure to remove any domain metadata for REPLACE TABLE.
-            actions = actions ++ handleDomainMetadataForReplaceTable(
+            actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
               txn.snapshot.domainMetadata, newDomainMetadata)
           } else {
             actions = actions ++ newDomainMetadata
@@ -515,26 +515,6 @@ case class CreateDeltaTableCommand(
   private def isReplace: Boolean = {
     operation == TableCreationModes.CreateOrReplace ||
       operation == TableCreationModes.Replace
-  }
-
-  /**
-   * Generates a new sequence of DomainMetadata to commits for REPLACE TABLE.
-   * If the domain of an existing domain metadata is present in the set of new domain
-   * metadata, the existing domain metadata is filtered out so that the new one
-   * can override it. Otherwise, it is marked as removed (tombstone).
-   */
-  private def handleDomainMetadataForReplaceTable(
-      existingDomainMetadata: Seq[DomainMetadata],
-      newDomainMetadata: Seq[DomainMetadata]): Seq[DomainMetadata] = {
-    val newDomainNames = newDomainMetadata.map(_.domain).toSet
-    existingDomainMetadata
-      .filter {
-        // The row ID high water mark must never be removed from the table, to ensure that a fresh
-        // row id is never assigned twice.
-        case m: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(m) => false
-        case m => !newDomainNames.contains(m.domain)
-      }
-      .map(_.copy(removed = true)) ++ newDomainMetadata
   }
 }
 

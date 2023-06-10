@@ -219,4 +219,27 @@ class DomainMetadataSuite
           "but DomainMetadataTableFeature is not enabled.")
     }
   }
+
+  test("Validate the lifespan of metadata domains for the REPLACE TABLE operation") {
+    val existingDomainMetadatas =
+      DomainMetadata("testDomain1", "", false) ::
+        DomainMetadata("testDomain2", "", false) ::
+        Nil
+    val newDomainMetadatas =
+        DomainMetadata("testDomain2", "key=val", false) ::
+        DomainMetadata("testDomain3", "", false) ::
+        Nil
+
+    val result = DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+      existingDomainMetadatas, newDomainMetadatas)
+
+    // testDomain1: survives by default (not in the final list since it already
+    //              exists in the snapshot).
+    // testDomain2: overwritten by new domain metadata
+    // testDomain3: added to the final list since it only appears in the new set.
+    assert(result ===
+        DomainMetadata("testDomain2", "key=val", false) :: // Overwritten
+        DomainMetadata("testDomain3", "", false) :: // New metadata domain
+        Nil)
+  }
 }

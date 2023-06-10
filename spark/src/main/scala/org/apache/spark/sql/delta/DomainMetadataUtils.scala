@@ -20,6 +20,10 @@ import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 object DomainMetadataUtils extends DeltaLogging {
+  // List of metadata domains that will be removed for the REPLACE TABLE operation.
+  private val METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE: Set[String] = Set(
+  )
+
   /**
    * Returns whether the protocol version supports the [[DomainMetadata]] action.
    */
@@ -56,5 +60,24 @@ object DomainMetadataUtils extends DeltaLogging {
         domainMetadatas.map(_._2.domain).mkString("[", ",", "]"))
     }
     domainMetadatas.values.toSeq
+  }
+
+  /**
+   * Generates a new sequence of DomainMetadata to commits for REPLACE TABLE.
+   *  - By default, existing metadata domains survive as long as they don't appear in the
+   *    new metadata domains, in which case new metadata domains overwrite the existing ones.
+   *  - Existing domains will be removed only if they appear in the pre-defined
+   *    "removal" list (e.g., table features require some specific domains to be removed).
+   */
+  def handleDomainMetadataForReplaceTable(
+      existingDomainMetadatas: Seq[DomainMetadata],
+      newDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
+    val newDomainNames = newDomainMetadatas.map(_.domain).toSet
+    existingDomainMetadatas
+      // Filter out metadata domains unless they are in the list to be removed
+      // and they don't appear in the new metadata domains.
+      .filter(m => !newDomainNames.contains(m.domain) &&
+        METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE.contains(m.domain))
+      .map(_.copy(removed = true)) ++ newDomainMetadatas
   }
 }
