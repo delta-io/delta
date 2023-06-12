@@ -22,6 +22,7 @@ import java.util.Locale
 
 import scala.language.implicitConversions
 
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -89,6 +90,8 @@ abstract class MergeIntoSuiteBase
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
+
+  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
 
   protected def withCrossJoinEnabled(body: => Unit): Unit = {
     withSQLConf(SQLConf.CROSS_JOINS_ENABLED.key -> "true") { body }
@@ -5273,6 +5276,77 @@ abstract class MergeIntoSuiteBase
         checkAnswer(sql("select * from target"), resultData)
       }
     }
+  }
+  test("recorded operations - write all changes") {
+    var events: Seq[UsageRecord] = Seq.empty
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+      target = (1, 1) :: (2, 2) :: (3, 3) :: (5, 5) :: (6, 6) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+
+      events = Log4jUsageLogger.track {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          update(condition = "s.key > 1", set = "key = s.key, value = s.value"),
+          insert(condition = "s.key < 1", values = "(key, value) VALUES (s.key, s.value)"),
+          deleteNotMatched(condition = "t.key > 5"))
+      }
+
+      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+        Row(0, 0),   // inserted
+        Row(1, 1),   // existed previously
+        Row(2, 20),  // updated
+        Row(3, 30),  // updated
+        Row(5, 5)    // existed previously
+        // Row(6, 6)    deleted
+      ))
+    }
+
+    // Get recorded operations from usage events
+    val opTypes = events.filter { e =>
+      e.metric == "sparkOperationDuration" && e.opType.get.typeName.contains("delta.dml.merge")
+    }.map(_.opType.get.typeName).toSet
+
+    assert(opTypes == expectedOpTypes)
+  }
+
+  protected lazy val expectedOpTypes: Set[String] = Set(
+    "delta.dml.merge.findTouchedFiles", "delta.dml.merge.writeAllChanges", "delta.dml.merge")
+
+  test("insert only merge - recorded operation") {
+    var events: Seq[UsageRecord] = Seq.empty
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+      target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+
+      withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+        events = Log4jUsageLogger.track {
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = "s.key = t.key AND t.key > 1",
+            insert(condition = "s.key = 4", values = "(key, value) VALUES (s.key, s.value)"))
+        }
+      }
+
+      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+        Row(1, 1),  // existed previously
+        Row(2, 2),  // existed previously
+        Row(3, 3),  // existed previously
+        Row(4, 40)  // inserted
+      ))
+    }
+
+    // Get recorded operations from usage events
+    val opTypes = events.filter { e =>
+      e.metric == "sparkOperationDuration" && e.opType.get.typeName.contains("delta.dml.merge")
+    }.map(_.opType.get.typeName).toSet
+
+    assert(opTypes == Set(
+      "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
 }
 
