@@ -26,7 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, If, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -267,7 +267,7 @@ case class UpdateCommand(
     }.asNondeterministic()
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
-      target,
+      target.output,
       updateExpressions,
       condition,
       targetDf
@@ -302,7 +302,7 @@ object UpdateCommand {
    * When CDC is enabled, includes the generation of CDC pre-image and post-image columns for
    * changed rows.
    *
-   * @param target target we are updating into
+   * @param originalExpressions the original column values
    * @param updateExpressions the update transformation to perform on the input DataFrame
    * @param dfWithEvaluatedCondition source DataFrame on which we will apply the update expressions
    *                                 with an additional column CONDITION_COLUMN_NAME which is the
@@ -312,26 +312,26 @@ object UpdateCommand {
    * @return the updated DataFrame, with extra CDC columns if CDC is enabled
    */
   def withUpdatedColumns(
-      target: LogicalPlan,
+      originalExpressions: Seq[Attribute],
       updateExpressions: Seq[Expression],
       condition: Expression,
       dfWithEvaluatedCondition: DataFrame,
       shouldOutputCdc: Boolean): DataFrame = {
     val resultDf = if (shouldOutputCdc) {
-      val namedUpdateCols = updateExpressions.zip(target.output).map {
-        case (expr, targetCol) => new Column(expr).as(targetCol.name)
+      val namedUpdateCols = updateExpressions.zip(originalExpressions).map {
+        case (expr, targetCol) => new Column(expr).as(targetCol.name, targetCol.metadata)
       }
 
       // Build an array of output rows to be unpacked later. If the condition is matched, we
       // generate CDC pre and postimages in addition to the final output row; if the condition
       // isn't matched, we just generate a rewritten no-op row without any CDC events.
-      val preimageCols = target.output.map(new Column(_)) :+
+      val preimageCols = originalExpressions.map(new Column(_)) :+
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
       val updatedDataCols = namedUpdateCols :+ notCdcCol
-      val noopRewriteCols = target.output.map(new Column(_)) :+ notCdcCol
+      val noopRewriteCols = originalExpressions.map(new Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),
@@ -348,18 +348,20 @@ object UpdateCommand {
       }
 
       // Explode the packed array, and project back out the final data columns.
-      val finalColNames = target.output.map(_.name) :+ CDC_TYPE_COLUMN_NAME
+      val finalColumns = (originalExpressions :+ UnresolvedAttribute(CDC_TYPE_COLUMN_NAME)).map {
+        a => col(s"packedData.`${a.name}`").as(a.name, a.metadata)
+      }
       dfWithEvaluatedCondition
         .select(explode(new Column(packedData)).as("packedData"))
-        .select(finalColNames.map { n => col(s"packedData.`$n`").as(s"$n") }: _*)
+        .select(finalColumns: _*)
     } else {
-      val finalCols = updateExpressions.zip(target.output).map { case (update, original) =>
+      val finalCols = updateExpressions.zip(originalExpressions).map { case (update, original) =>
         val updated = if (condition == Literal.TrueLiteral) {
           update
         } else {
           If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
         }
-        new Column(Alias(updated, original.name)())
+        new Column(updated).as(original.name, original.metadata)
       }
 
       dfWithEvaluatedCondition.select(finalCols: _*)
