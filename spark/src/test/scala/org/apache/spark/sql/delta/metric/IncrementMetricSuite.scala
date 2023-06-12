@@ -37,12 +37,12 @@ abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSessio
     spark.range(ROWS_IN_DF).toDF("a")
       .withColumn("gb", rand(0).multiply(10).cast("integer"))
       .write
-      .format("memcache")
+      .format("parquet")
       .mode("overwrite")
       .save("test-df")
   }
 
-  def testDf: DataFrame = spark.read.format("memcache").load("test-df")
+  def testDf: DataFrame = spark.read.format("parquet").load("test-df")
 
   test("Increment the same metric") {
     val metric = createMetric(sparkContext, "metric")
