@@ -264,10 +264,13 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                 final CountingOutputStream stream =
                     new CountingOutputStream(fs.create(resolvedPath, overwrite));
 
-                while (actions.hasNext()) {
-                    stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
+                try {
+                    while (actions.hasNext()) {
+                        stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
+                    }
+                } finally {
+                    stream.close();
                 }
-                stream.close();
 
                 // When a Delta log starts afresh, all cached files in that Delta log become
                 // obsolete, so we remove them from the cache.
