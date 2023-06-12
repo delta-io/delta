@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DefaultColumnarBatch;
+import io.delta.kernel.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.JsonRow;
 import io.delta.kernel.data.Row;
@@ -87,7 +87,7 @@ public class DefaultJsonHandler
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
         }
-        return new DefaultColumnarBatch(outputSchema, rows);
+        return new DefaultRowBasedColumnarBatch(outputSchema, rows);
     }
 
     @Override
@@ -146,16 +146,18 @@ public class DefaultJsonHandler
             public FileDataReadResult next()
             {
                 List<Row> rows = new ArrayList<>();
-                for (int i = 0; i < 1024 && nextLine != null; i++) {
-                    // TODO: decide on the batch size
+                int i = 0;
+                do {
+                    // hasNext already reads the next one and keeps it in member variable `nextLine`
                     rows.add(parseJson(nextLine, physicalSchema));
                     try {
                         nextLine = currentFileReader.readLine();
                     } catch (IOException ex) {
                         throw new RuntimeException(ex);
                     }
-                }
-                ColumnarBatch nextBatch = new DefaultColumnarBatch(physicalSchema, rows);
+                    // TODO: decide on the batch size
+                } while(i < 1024 && nextLine != null);
+                ColumnarBatch nextBatch = new DefaultRowBasedColumnarBatch(physicalSchema, rows);
 
                 return new FileDataReadResult() {
                     @Override

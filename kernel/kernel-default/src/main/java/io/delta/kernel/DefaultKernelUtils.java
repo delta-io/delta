@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.client;
+package io.delta.kernel;
 
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
@@ -25,9 +25,9 @@ import org.apache.parquet.schema.Type;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Utils
+public class DefaultKernelUtils
 {
-    private Utils() {
+    private DefaultKernelUtils() {
     }
 
     /**
@@ -96,5 +96,72 @@ public class Utils
             newParquetSubFields.add(parquetSubFieldType);
         }
         return groupType.withNewFields(newParquetSubFields);
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid, String message) throws IllegalArgumentException {
+        if (!isValid) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @param args Objects used to fill in {@code %s} placeholders in the message
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid, String message, Object... args)
+            throws IllegalArgumentException {
+        if (!isValid) {
+            throw new IllegalArgumentException(
+                    String.format(String.valueOf(message), args));
+        }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalStateException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @throws IllegalStateException if {@code isValid} is false
+     */
+    public static void checkState(boolean isValid, String message) throws IllegalStateException {
+        if (!isValid) {
+            throw new IllegalStateException(message);
+        }
+    }
+
+    /**
+     * Search for the Parquet type for in the {@code groupType} for the field equilant to
+     * {@code field}.
+     *
+     * @param groupType Parquet group type coming from the file schema.
+     * @param field Sub field given as Delta Kernel's {@link StructField}
+     * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
+     */
+    public static Type findFieldType(GroupType groupType, StructField field) {
+        // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
+        final String columnName = field.getName();
+        if (groupType.containsField(columnName)) {
+            return groupType.getType(columnName);
+        }
+        // Parquet is case-sensitive, but hive is not. all hive columns get converted to lowercase
+        // check for direct match above but if no match found, try case-insensitive match
+        for (org.apache.parquet.schema.Type type : groupType.getFields()) {
+            if (type.getName().equalsIgnoreCase(columnName)) {
+                return type;
+            }
+        }
+
+        return null;
     }
 }

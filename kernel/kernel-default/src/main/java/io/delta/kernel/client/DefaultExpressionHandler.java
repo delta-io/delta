@@ -18,14 +18,15 @@ package io.delta.kernel.client;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DefaultBooleanColumnVector;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.data.vector.DefaultBooleanVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Optional;
 
 public class DefaultExpressionHandler
     implements ExpressionHandler
@@ -53,9 +54,20 @@ public class DefaultExpressionHandler
                 throw new UnsupportedOperationException("not yet supported");
             }
 
-            List<Boolean> result = new ArrayList<>();
-            input.getRows().forEachRemaining(row -> result.add((Boolean) expression.eval(row)));
-            return new DefaultBooleanColumnVector(result);
+            final int batchSize = input.getSize();
+            boolean[] result = new boolean[batchSize];
+            boolean[] nullResult = new boolean[batchSize];
+
+            CloseableIterator<Row> rows = input.getRows();
+            for (int currentIndex = 0; currentIndex < batchSize; currentIndex++) {
+                Object evalResult = expression.eval(rows.next());
+                if (evalResult == null) {
+                    nullResult[currentIndex] = true;
+                } else {
+                    result[currentIndex] = ((Boolean) evalResult).booleanValue();
+                }
+            }
+            return new DefaultBooleanVector(batchSize, Optional.of(nullResult), result);
         }
 
         @Override

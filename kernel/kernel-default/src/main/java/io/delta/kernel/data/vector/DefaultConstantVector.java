@@ -13,113 +13,123 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.data;
+package io.delta.kernel.data.vector;
 
-import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 
 import java.util.List;
 import java.util.Map;
 
-public class DefaultBooleanColumnVector
-    implements ColumnVector
+public class DefaultConstantVector implements ColumnVector
 {
-    private final List<Boolean> values;
+    private final DataType dataType;
+    private final int numRows;
+    private final Object value;
 
-    public DefaultBooleanColumnVector(List<Boolean> values) {
-        this.values = values; // TODO: validation and use ImmutableList
+    public DefaultConstantVector(DataType dataType, int numRows, Object value)
+    {
+        // TODO: Validate datatype and value object type
+        this.dataType = dataType;
+        this.numRows = numRows;
+        this.value = value;
     }
 
     @Override
     public DataType getDataType()
     {
-        return BooleanType.INSTANCE;
+        return dataType;
     }
 
     @Override
     public int getSize()
     {
-        return values.size();
+        return numRows;
     }
 
     @Override
-    public void close() { }
+    public void close()
+    {
+        // nothing to close
+    }
 
     @Override
     public boolean isNullAt(int rowId)
     {
-        return values.get(rowId) == null;
+        return value == null;
     }
 
     @Override
     public boolean getBoolean(int rowId)
     {
-        return values.get(rowId);
+        return (boolean) value;
     }
 
     @Override
     public byte getByte(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (byte) value;
     }
 
     @Override
     public short getShort(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (short) value;
     }
 
     @Override
     public int getInt(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (int) value;
     }
 
     @Override
     public long getLong(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (long) value;
     }
 
     @Override
     public float getFloat(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (float) value;
     }
 
     @Override
     public double getDouble(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (double) value;
     }
 
     @Override
     public byte[] getBinary(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (byte[]) value;
     }
 
     @Override
     public String getString(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (String) value;
     }
 
     @Override
     public <K, V> Map<K, V> getMap(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (Map<K, V>) value;
     }
 
     @Override
     public Row getStruct(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (Row) value;
     }
 
     @Override
     public <T> List<T> getArray(int rowId)
     {
-        throw new UnsupportedOperationException("Invalid type");
+        return (List<T>) value;
     }
+
 }

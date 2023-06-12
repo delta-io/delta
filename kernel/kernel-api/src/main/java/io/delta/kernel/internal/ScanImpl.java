@@ -145,7 +145,10 @@ public class ScanImpl implements Scan
             }
 
             private Optional<AddFile> findNextValid() {
-                return filesIter.next()
+                if (filesIter.hasNext()) {
+                    return Optional.of(filesIter.next());
+                }
+                return Optional.empty();
             }
         };
     }

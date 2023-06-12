@@ -87,15 +87,6 @@ public class ReverseActionsToAddFilesIterator
         return Optional.empty();
     }
 
-    private Optional<AddFile> findNextValid() {
-        while (reverseActionIter.hasNext()) {
-            final Tuple2<Action, Boolean> tuple = reverseActionIter.next();
-
-        }
-
-        return Optional.empty();
-    }
-
     private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
         public UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorURI) {
             super(fileURI, deletionVectorURI);

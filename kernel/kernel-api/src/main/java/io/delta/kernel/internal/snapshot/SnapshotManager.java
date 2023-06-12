@@ -361,7 +361,7 @@ public class SnapshotManager implements Logging
                     // last checkpoint we thought should exist (the `_last_checkpoint` file) no longer exists.
                     // Try to look up another valid checkpoint and create `LogSegment` from it.
                     //
-                    // FIXME(ryan.johnson): Something has gone very wrong if the checkpoint doesn't
+                    // FIXME: Something has gone very wrong if the checkpoint doesn't
                     // exist at all. This code should only handle rejected incomplete checkpoints.
                     final long snapshotVersion = versionToLoadOpt.orElseGet(() -> {
                         final FileStatus lastDelta = deltas.get(deltas.size() - 1);
@@ -382,8 +382,7 @@ public class SnapshotManager implements Logging
             });
         logDebug(String.format("newCheckpointVersion: %s", newCheckpointVersion));
 
-        // TODO(SCOTT): we can calculate deltasAfterCheckpoint and deltaVersions more efficiently
-
+        // TODO: we can calculate deltasAfterCheckpoint and deltaVersions more efficiently
         // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
         // it will list all existing delta files.
         final List<FileStatus> deltasAfterCheckpoint = deltas
@@ -421,7 +420,7 @@ public class SnapshotManager implements Logging
             verifyDeltaVersions(deltaVersions, Optional.of(newCheckpointVersion + 1), versionToLoadOpt);
         }
 
-        // TODO(SCOTT): double check newCheckpointOpt.get() won't error out
+        // TODO: double check newCheckpointOpt.get() won't error out
 
         final long newVersion = deltaVersions.isEmpty() ? newCheckpointOpt.get().version : deltaVersions.getLast();
 

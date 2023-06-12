@@ -40,7 +40,6 @@ import io.delta.kernel.utils.CloseableIterator;
 
 public class ReverseFilesToActionsIterable implements CloseableIterable<Tuple2<Action, Boolean>>
 {
-
     private final TableClient tableClient;
     private final List<FileStatus> reverseSortedFiles;
 
@@ -72,10 +71,6 @@ public class ReverseFilesToActionsIterable implements CloseableIterable<Tuple2<A
 
             @Override
             public Tuple2<Action, Boolean> next() {
-                if (!hasNext()) throw new NoSuchElementException();
-
-                // By the definition of hasNext, we know that actionsIter is non-empty
-
                 return actionsIter.get().next();
             }
 
