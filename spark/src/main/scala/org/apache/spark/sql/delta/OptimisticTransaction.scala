@@ -1123,6 +1123,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var numRemoveFiles: Int = 0
       var numSetTransaction: Int = 0
       var bytesNew: Long = 0L
+      var numOfDomainMetadatas: Long = 0L
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
@@ -1144,6 +1145,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             assertMetadata(m)
           case p: Protocol =>
             recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+          case d: DomainMetadata =>
+            numOfDomainMetadatas += 1
           case _ =>
         }
         action
@@ -1202,6 +1205,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
+        numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
