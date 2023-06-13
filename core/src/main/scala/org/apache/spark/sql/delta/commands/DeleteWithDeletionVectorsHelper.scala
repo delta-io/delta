@@ -345,13 +345,13 @@ object DeletionVectorBitmapGenerator {
     // Build two maps, using Path or String as keys. The one with String keys is used in UDF.
     val canonicalizedPathMap = buildCanonicalizedPathMap(txn.deltaLog, candidateFiles)
     val canonicalizedPathStringMap =
-      canonicalizedPathMap.map { case (k, v) => (k.toString, v)}.toMap
+      canonicalizedPathMap.map { case (k, v) => k.toString -> v }
     val broadcastCanonicalizedPathStringMap =
       sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
 
     val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
     val matchedRowsDf = targetDf
-      .withColumn(FILE_NAME_COL, lookupPathUdf(col(s"$METADATA_NAME.$FILE_PATH")))
+      .withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
