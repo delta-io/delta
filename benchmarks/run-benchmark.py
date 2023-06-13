@@ -19,7 +19,7 @@
 import argparse
 from scripts.benchmarks import *
 
-delta_version = "2.1.0"
+delta_version = "2.3.0"
 
 # Benchmark name to their specifications. See the imported benchmarks.py for details of benchmark.
 
@@ -42,6 +42,14 @@ benchmarks = {
     "tpcds-3tb-delta": DeltaTPCDSBenchmarkSpec(delta_version=delta_version, scale_in_gb=3000),
     "tpcds-1gb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=1),
     "tpcds-3tb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=3000),
+
+    # Merge data load
+    "merge-1gb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=1),
+    "merge-3tb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=3000),
+
+    # Merge benchmark
+    "merge-1gb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=1),
+    "merge-3tb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=3000),
 
 }
 

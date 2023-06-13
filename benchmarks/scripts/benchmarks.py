@@ -117,6 +117,34 @@ class TPCDSBenchmarkSpec(BenchmarkSpec):
         ])
 
 
+class MergeDataLoadSpec(BenchmarkSpec):
+    """
+    Specifications of Merge data load process.
+    Always mixin in this first before the base benchmark class.
+    """
+    def __init__(self, scale_in_gb, exclude_nulls=True, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.MergeDataLoad", **kwargs)
+        self.benchmark_main_class_args.extend([
+            "--scale-in-gb", str(scale_in_gb),
+        ])
+        # To access the public TPCDS parquet files on S3
+        self.spark_confs.extend(["spark.hadoop.fs.s3.useRequesterPaysHeader=true"])
+
+
+class MergeBenchmarkSpec(BenchmarkSpec):
+    """
+    Specifications of Merge benchmark
+    """
+    def __init__(self, scale_in_gb, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.MergeBenchmark", **kwargs)
+        # after init of super class, use the format to add main class args
+        self.benchmark_main_class_args.extend([
+            "--scale-in-gb", str(scale_in_gb)
+        ])
+
+
 
 # ============== Delta benchmark specifications ==============
 
@@ -160,6 +188,16 @@ class DeltaTPCDSDataLoadSpec(TPCDSDataLoadSpec, DeltaBenchmarkSpec):
 
 
 class DeltaTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+class DeltaMergeDataLoadSpec(MergeDataLoadSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+class DeltaMergeBenchmarkSpec(MergeBenchmarkSpec, DeltaBenchmarkSpec):
     def __init__(self, delta_version, scale_in_gb=1):
         super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
 

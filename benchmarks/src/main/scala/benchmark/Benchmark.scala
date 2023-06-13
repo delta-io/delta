@@ -31,8 +31,8 @@ import com.fasterxml.jackson.databind.{DeserializationFeature, MapperFeature, Ob
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 
 import org.apache.spark.SparkUtils
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions.{col}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.functions.col
 
 trait BenchmarkConf extends Product {
   /** Cloud path where benchmark data is going to be written. */
@@ -131,7 +131,7 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
       queryName: String = "",
       iteration: Option[Int] = None,
       printRows: Boolean = false,
-      ignoreError: Boolean = true): DataFrame = synchronized {
+      ignoreError: Boolean = true): Seq[Row] = synchronized {
     val iterationStr = iteration.map(i => s" - iteration $i").getOrElse("")
     var banner = s"$queryName$iterationStr"
     if (banner.trim.isEmpty) {
@@ -151,13 +151,13 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
       queryResults += QueryResult(queryName, iteration, Some(durationMs), errorMsg = None)
       log(s"END took $durationMs ms: $banner")
       log("=" * 80)
-      df
+      r
     } catch {
       case NonFatal(e) =>
         log(s"ERROR: $banner\n${e.getMessage}")
         queryResults +=
           QueryResult(queryName, iteration, durationMs = None, errorMsg = Some(e.getMessage))
-        if (!ignoreError) throw e else spark.emptyDataFrame
+        if (!ignoreError) throw e else spark.empty
     }
   }
 
