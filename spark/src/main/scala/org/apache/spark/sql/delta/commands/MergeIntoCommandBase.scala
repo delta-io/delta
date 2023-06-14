@@ -127,7 +127,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
         matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))
+      ),
       tags)
 
     // Record metrics.
