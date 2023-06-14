@@ -15,14 +15,15 @@
  */
 package io.delta.kernel.data.vector;
 
+import java.util.List;
+import java.util.Map;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 
-import java.util.List;
-import java.util.Map;
-
-public class DefaultConstantVector implements ColumnVector
+public class DefaultConstantVector
+        implements ColumnVector
 {
     private final DataType dataType;
     private final int numRows;
@@ -131,5 +132,4 @@ public class DefaultConstantVector implements ColumnVector
     {
         return (List<T>) value;
     }
-
 }

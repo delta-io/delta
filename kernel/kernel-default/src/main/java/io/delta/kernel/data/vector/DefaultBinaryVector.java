@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StringType;
-
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for binary type data.

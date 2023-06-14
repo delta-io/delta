@@ -16,11 +16,10 @@
 
 package io.delta.kernel.parquet;
 
-import io.delta.kernel.DefaultKernelUtils;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.parquet.ParquetConverters.RowRecordGroupConverter;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.CloseableIterator;
+import java.io.IOException;
+import java.util.Map;
+import static java.util.Objects.requireNonNull;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -34,10 +33,11 @@ import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 
-import java.io.IOException;
-import java.util.Map;
-
-import static java.util.Objects.requireNonNull;
+import io.delta.kernel.DefaultKernelUtils;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.parquet.ParquetConverters.RowRecordGroupConverter;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 
 public class ParquetBatchReader
 {
@@ -97,7 +97,8 @@ public class ParquetBatchReader
                     // hasNext reads to row to confirm there is a next element.
                     batchReadSupport.moveToNextRow();
                     batchSize++;
-                } while (batchSize < maxBatchSize && hasNext());
+                }
+                while (batchSize < maxBatchSize && hasNext());
 
                 return batchReadSupport.getDataAsColumnarBatch(batchSize);
             }
@@ -124,7 +125,8 @@ public class ParquetBatchReader
         @Override
         public ReadContext init(InitContext context)
         {
-            return new ReadContext(DefaultKernelUtils.pruneSchema(context.getFileSchema(), readSchema));
+            return new ReadContext(
+                    DefaultKernelUtils.pruneSchema(context.getFileSchema(), readSchema));
         }
 
         @Override
@@ -143,7 +145,8 @@ public class ParquetBatchReader
             return rowRecordCollector.getDataAsColumnarBatch(batchSize);
         }
 
-        public void moveToNextRow() {
+        public void moveToNextRow()
+        {
             rowRecordCollector.moveToNextRow();
         }
     }
@@ -198,7 +201,8 @@ public class ParquetBatchReader
             return rowRecordGroupConverter.getDataAsColumnarBatch(batchSize);
         }
 
-        public void moveToNextRow() {
+        public void moveToNextRow()
+        {
             rowRecordGroupConverter.moveToNextRow();
         }
     }

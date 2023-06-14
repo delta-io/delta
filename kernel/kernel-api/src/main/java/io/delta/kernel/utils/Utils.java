@@ -16,40 +16,44 @@
 
 package io.delta.kernel.utils;
 
-import java.io.IOException;
-
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-public class Utils {
+import io.delta.kernel.internal.data.ScanStateRow;
+
+public class Utils
+{
     /**
      * Utility method to create a singleton {@link CloseableIterator}.
      *
      * @param elem Element to create iterator with.
-     * @param <T>  Element type.
+     * @param <T> Element type.
      * @return A {@link CloseableIterator} with just one element.
      */
-    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
-        return new CloseableIterator<T>() {
+    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem)
+    {
+        return new CloseableIterator<T>()
+        {
             private boolean accessed;
 
             @Override
             public void close() { /* nothing to close */ }
 
             @Override
-            public boolean hasNext() {
+            public boolean hasNext()
+            {
                 return !accessed;
             }
 
             @Override
-            public T next() {
+            public T next()
+            {
                 accessed = true;
                 return elem;
             }
@@ -63,8 +67,10 @@ public class Utils {
      * @return A {@link ColumnVector} with a single element {@code value}
      */
     // TODO: add String to method name or make generic?
-    public static ColumnVector singletonColumnVector(String value) {
-        return new ColumnVector() {
+    public static ColumnVector singletonColumnVector(String value)
+    {
+        return new ColumnVector()
+        {
             @Override
             public DataType getDataType()
             {
@@ -104,7 +110,8 @@ public class Utils {
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(Row scanState) {
+    public static StructType getPhysicalSchema(Row scanState)
+    {
         // TODO: pending serialization and deserialization of the `StructType` schmea
         return ((ScanStateRow) scanState).getReadSchema();
     }
@@ -116,7 +123,8 @@ public class Utils {
      * @param scanFileInfo {@link Row} representing one scan file.
      * @return a {@link FileStatus} object created from the given scan file row.
      */
-    public static FileStatus getFileStatus(Row scanFileInfo) {
+    public static FileStatus getFileStatus(Row scanFileInfo)
+    {
         String path = scanFileInfo.getString(0);
         Long size = scanFileInfo.getLong(2);
 

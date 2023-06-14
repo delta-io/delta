@@ -16,27 +16,28 @@
 
 package io.delta.kernel.internal;
 
+import java.util.Optional;
+
 import io.delta.kernel.InvalidExpressionException;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.fs.Path;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
-import java.util.Optional;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.lang.Lazy;
 
 /**
  * Implementation of {@link ScanBuilder}.
  */
 public class ScanBuilderImpl
-        implements ScanBuilder
+    implements ScanBuilder
 {
 
     private final StructType snapshotSchema;
@@ -50,12 +51,12 @@ public class ScanBuilderImpl
     private Optional<Expression> filter;
 
     public ScanBuilderImpl(
-            Path dataPath,
-            Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-            StructType snapshotSchema,
-            StructType snapshotPartitionSchema,
-            CloseableIterator<AddFile> filesIter,
-            TableClient tableClient)
+        Path dataPath,
+        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
+        StructType snapshotSchema,
+        StructType snapshotPartitionSchema,
+        CloseableIterator<AddFile> filesIter,
+        TableClient tableClient)
     {
         this.dataPath = dataPath;
         this.snapshotSchema = snapshotSchema;
@@ -70,7 +71,7 @@ public class ScanBuilderImpl
 
     @Override
     public ScanBuilder withFilter(TableClient tableClient, Expression filter)
-            throws InvalidExpressionException
+        throws InvalidExpressionException
     {
         if (this.filter.isPresent()) {
             throw new IllegalArgumentException("There already exists a filter in current builder");
@@ -91,13 +92,13 @@ public class ScanBuilderImpl
     public Scan build()
     {
         return new ScanImpl(
-                snapshotSchema,
-                readSchema,
-                snapshotPartitionSchema,
-                protocolAndMetadata,
-                filesIter,
-                filter,
-                dataPath,
-                tableClient);
+            snapshotSchema,
+            readSchema,
+            snapshotPartitionSchema,
+            protocolAndMetadata,
+            filesIter,
+            filter,
+            dataPath,
+            tableClient);
     }
 }

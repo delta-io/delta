@@ -15,6 +15,10 @@
  */
 package io.delta.kernel.client;
 
+import java.io.IOException;
+
+import org.apache.hadoop.conf.Configuration;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
@@ -24,9 +28,6 @@ import io.delta.kernel.parquet.ParquetBatchReader;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
-import org.apache.hadoop.conf.Configuration;
-
-import java.io.IOException;
 
 public class DefaultParquetHandler
     implements ParquetHandler

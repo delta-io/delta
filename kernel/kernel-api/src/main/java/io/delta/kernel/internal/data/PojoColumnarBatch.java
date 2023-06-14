@@ -15,23 +15,22 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-
-import static java.util.Objects.requireNonNull;
-
 /**
  * Exposes a given a list of POJO objects and their schema as a {@link ColumnarBatch}.
  */
 public class PojoColumnarBatch<POJO_TYPE>
-    implements ColumnarBatch
+        implements ColumnarBatch
 {
     private final List<POJO_TYPE> pojoObjects;
     private final StructType schema;
@@ -59,7 +58,8 @@ public class PojoColumnarBatch<POJO_TYPE>
     @Override
     public ColumnVector getColumnVector(int ordinal)
     {
-        return new ColumnVector() {
+        return new ColumnVector()
+        {
             @Override
             public DataType getDataType()
             {
@@ -151,7 +151,7 @@ public class PojoColumnarBatch<POJO_TYPE>
             }
 
             @Override
-            public <K, V>  Map<K, V> getMap(int rowId)
+            public <K, V> Map<K, V> getMap(int rowId)
             {
                 return (Map<K, V>) ordinalToAccessor.get(ordinal).apply(pojoObjects.get(rowId));
             }
@@ -163,7 +163,7 @@ public class PojoColumnarBatch<POJO_TYPE>
             }
 
             @Override
-            public <T> List<T>  getArray(int rowId)
+            public <T> List<T> getArray(int rowId)
             {
                 return (List<T>) ordinalToAccessor.get(ordinal).apply(pojoObjects.get(rowId));
             }

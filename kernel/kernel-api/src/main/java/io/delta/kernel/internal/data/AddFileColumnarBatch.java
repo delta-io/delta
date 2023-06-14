@@ -16,23 +16,24 @@
 
 package io.delta.kernel.internal.data;
 
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.internal.actions.AddFile;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.ColumnarBatch;
+
+import io.delta.kernel.internal.actions.AddFile;
 
 /**
  * Expose the array of {@link AddFile}s as a {@link ColumnarBatch}.
  */
 public class AddFileColumnarBatch
-        extends PojoColumnarBatch
+    extends PojoColumnarBatch
 {
-    private static final Map<Integer, Function<AddFile, Object>> ordinalToAccessor = new HashMap<>();
+    private static final Map<Integer, Function<AddFile, Object>> ordinalToAccessor =
+        new HashMap<>();
     private static final Map<Integer, String> ordinalToColName = new HashMap<>();
 
     static {
@@ -55,9 +56,9 @@ public class AddFileColumnarBatch
     public AddFileColumnarBatch(List<AddFile> addFiles)
     {
         super(
-                requireNonNull(addFiles, "addFiles is null"),
-                AddFile.READ_SCHEMA,
-                ordinalToAccessor,
-                ordinalToColName);
+            requireNonNull(addFiles, "addFiles is null"),
+            AddFile.READ_SCHEMA,
+            ordinalToAccessor,
+            ordinalToColName);
     }
 }

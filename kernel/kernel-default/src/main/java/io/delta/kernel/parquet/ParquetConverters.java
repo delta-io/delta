@@ -15,6 +15,18 @@
  */
 package io.delta.kernel.parquet;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import static java.util.Objects.requireNonNull;
+
+import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.io.api.Converter;
+import org.apache.parquet.io.api.GroupConverter;
+import org.apache.parquet.io.api.PrimitiveConverter;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.Type;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.DefaultColumnarBatch;
@@ -34,20 +46,9 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-import org.apache.parquet.io.api.Binary;
-import org.apache.parquet.io.api.Converter;
-import org.apache.parquet.io.api.GroupConverter;
-import org.apache.parquet.io.api.PrimitiveConverter;
-import org.apache.parquet.schema.GroupType;
-import org.apache.parquet.schema.Type;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.DefaultKernelUtils.findFieldType;
-import static java.util.Objects.requireNonNull;
+
 
 class ParquetConverters
 {
@@ -113,7 +114,7 @@ class ParquetConverters
         private int currentRowIndex;
         private final boolean[] nullability;
 
-        public RowRecordGroupConverter(
+        RowRecordGroupConverter(
                 int maxBatchSize,
                 StructType readSchema,
                 GroupType fileSchema)
@@ -197,7 +198,7 @@ class ParquetConverters
         }
     }
 
-    public static abstract class BasePrimitiveColumnConverter
+    public abstract static class BasePrimitiveColumnConverter
             extends PrimitiveConverter
             implements BaseConverter
     {
@@ -205,7 +206,7 @@ class ParquetConverters
         protected int currentRowIndex;
         protected boolean[] nullability;
 
-        public BasePrimitiveColumnConverter(int maxBatchSize)
+        BasePrimitiveColumnConverter(int maxBatchSize)
         {
             checkArgument(maxBatchSize >= 0, "invalid maxBatchSize: %s", maxBatchSize);
 
@@ -230,7 +231,7 @@ class ParquetConverters
         // working state
         private boolean[] values;
 
-        public BooleanColumnConverter(int maxBatchSize)
+        BooleanColumnConverter(int maxBatchSize)
         {
             super(maxBatchSize);
             this.values = new boolean[maxBatchSize];
@@ -266,7 +267,7 @@ class ParquetConverters
         // working state
         private int[] values;
 
-        public IntColumnConverter(int maxBatchSize)
+        IntColumnConverter(int maxBatchSize)
         {
             super(maxBatchSize);
             this.values = new int[maxBatchSize];
@@ -302,7 +303,7 @@ class ParquetConverters
         // working state
         private long[] values;
 
-        public LongColumnConverter(int maxBatchSize)
+        LongColumnConverter(int maxBatchSize)
         {
             super(maxBatchSize);
             this.values = new long[maxBatchSize];
@@ -338,7 +339,7 @@ class ParquetConverters
         // working state
         private float[] values;
 
-        public FloatColumnConverter(int maxBatchSize)
+        FloatColumnConverter(int maxBatchSize)
         {
             super(maxBatchSize);
             this.values = new float[maxBatchSize];
@@ -374,7 +375,7 @@ class ParquetConverters
         // working state
         private double[] values;
 
-        public DoubleColumnConverter(int maxBatchSize)
+        DoubleColumnConverter(int maxBatchSize)
         {
             super(maxBatchSize);
             this.values = new double[maxBatchSize];
@@ -411,7 +412,7 @@ class ParquetConverters
         // working state
         private byte[][] values;
 
-        public BinaryColumnConverter(DataType dataType, int maxBatchSize)
+        BinaryColumnConverter(DataType dataType, int maxBatchSize)
         {
             super(maxBatchSize);
             this.dataType = dataType;

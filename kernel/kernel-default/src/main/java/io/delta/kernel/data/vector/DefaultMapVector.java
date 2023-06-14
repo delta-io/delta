@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.types.DataType;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.types.DataType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for map type data.
@@ -40,16 +39,16 @@ public class DefaultMapVector
      *
      * @param size number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
+     * All values in the vector are considered non-null when parameter is empty.
      * @param offsets Offsets into key and value column vectors on where the index of particular row
-     *                values start and end.
+     * values start and end.
      * @param keyVector Vector containing the `key` values from the kv map.
      * @param valueVector Vector containing the `value` values from the kv map.
      */
     public DefaultMapVector(
             int size,
             DataType type,
-            Optional<boolean []> nullability,
+            Optional<boolean[]> nullability,
             int[] offsets,
             ColumnVector keyVector,
             ColumnVector valueVector)

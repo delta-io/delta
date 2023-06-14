@@ -15,24 +15,27 @@
  */
 package io.delta.kernel;
 
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.Type;
 
-import java.util.ArrayList;
-import java.util.List;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 
 public class DefaultKernelUtils
 {
-    private DefaultKernelUtils() {
+    private DefaultKernelUtils()
+    {
     }
 
     /**
      * Given the file schema in Parquet file and selected columns by Delta, return
      * a subschema of the file schema.
+     *
      * @param fileSchema
      * @param deltaType
      * @return
@@ -74,7 +77,8 @@ public class DefaultKernelUtils
         return null;
     }
 
-    private static Type pruneSubfields(Type type, DataType deltaDatatype) {
+    private static Type pruneSubfields(Type type, DataType deltaDatatype)
+    {
         if (!(deltaDatatype instanceof StructType)) {
             // there is no pruning for non-struct types
             return type;
@@ -105,7 +109,9 @@ public class DefaultKernelUtils
      * @param message A String message for the exception.
      * @throws IllegalArgumentException if {@code isValid} is false
      */
-    public static void checkArgument(boolean isValid, String message) throws IllegalArgumentException {
+    public static void checkArgument(boolean isValid, String message)
+            throws IllegalArgumentException
+    {
         if (!isValid) {
             throw new IllegalArgumentException(message);
         }
@@ -120,7 +126,8 @@ public class DefaultKernelUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid, String message, Object... args)
-            throws IllegalArgumentException {
+            throws IllegalArgumentException
+    {
         if (!isValid) {
             throw new IllegalArgumentException(
                     String.format(String.valueOf(message), args));
@@ -134,7 +141,9 @@ public class DefaultKernelUtils
      * @param message A String message for the exception.
      * @throws IllegalStateException if {@code isValid} is false
      */
-    public static void checkState(boolean isValid, String message) throws IllegalStateException {
+    public static void checkState(boolean isValid, String message)
+            throws IllegalStateException
+    {
         if (!isValid) {
             throw new IllegalStateException(message);
         }
@@ -148,7 +157,8 @@ public class DefaultKernelUtils
      * @param field Sub field given as Delta Kernel's {@link StructField}
      * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
      */
-    public static Type findFieldType(GroupType groupType, StructField field) {
+    public static Type findFieldType(GroupType groupType, StructField field)
+    {
         // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
         final String columnName = field.getName();
         if (groupType.containsField(columnName)) {

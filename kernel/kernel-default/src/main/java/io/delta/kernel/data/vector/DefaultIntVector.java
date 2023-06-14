@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.types.IntegerType;
-
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.types.IntegerType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for integer type data.

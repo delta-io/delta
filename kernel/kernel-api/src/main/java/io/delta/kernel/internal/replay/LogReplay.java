@@ -22,7 +22,9 @@ import java.util.stream.Stream;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.fs.Path;
-import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.Tuple2;
+
 import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
@@ -30,10 +32,9 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.lang.CloseableIterable;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.CloseableIterator;
 
-public class LogReplay {
+public class LogReplay
+{
 
     private final Path logPath;
     private final Path dataPath;
@@ -42,39 +43,45 @@ public class LogReplay {
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
     public LogReplay(
-            Path logPath,
-            Path dataPath,
-            TableClient tableHelper,
-            LogSegment logSegment) {
+        Path logPath,
+        Path dataPath,
+        TableClient tableHelper,
+        LogSegment logSegment)
+    {
         this.logPath = logPath;
         this.dataPath = dataPath;
         this.logSegment = logSegment;
 
         final Stream<FileStatus> allFiles = Stream.concat(
-                logSegment.checkpoints.stream(),
-                logSegment.deltas.stream());
+            logSegment.checkpoints.stream(),
+            logSegment.deltas.stream());
         assertLogFilesBelongToTable(logPath, allFiles);
 
         this.reverseActionsIterable = new ReverseFilesToActionsIterable(
-                tableHelper,
-                allFiles);
+            tableHelper,
+            allFiles);
         this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
     }
 
-    public Lazy<Tuple2<Protocol, Metadata>> lazyLoadProtocolAndMetadata() {
+    public Lazy<Tuple2<Protocol, Metadata>> lazyLoadProtocolAndMetadata()
+    {
         return this.protocolAndMetadata;
     }
 
-    public CloseableIterator<AddFile> getAddFiles() {
-        final CloseableIterator<Tuple2<Action, Boolean>> reverseActionsIter = reverseActionsIterable.iterator();
+    public CloseableIterator<AddFile> getAddFiles()
+    {
+        final CloseableIterator<Tuple2<Action, Boolean>> reverseActionsIter =
+            reverseActionsIterable.iterator();
         return new ReverseActionsToAddFilesIterator(dataPath, reverseActionsIter);
     }
 
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata() {
+    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata()
+    {
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (final CloseableIterator<Tuple2<Action, Boolean>> reverseIter = reverseActionsIterable.iterator()) {
+        try (CloseableIterator<Tuple2<Action, Boolean>> reverseIter =
+            reverseActionsIterable.iterator()) {
             while (reverseIter.hasNext()) {
                 final Action action = reverseIter.next()._1;
 
@@ -86,7 +93,8 @@ public class LogReplay {
                         // Stop since we have found the latest Protocol and Metadata.
                         return new Tuple2<>(protocol, metadata);
                     }
-                } else if (action instanceof Metadata && metadata == null) {
+                }
+                else if (action instanceof Metadata && metadata == null) {
                     // We only need the latest Metadata
                     metadata = (Metadata) action;
 
@@ -96,7 +104,8 @@ public class LogReplay {
                     }
                 }
             }
-        } catch (IOException ex) {
+        }
+        catch (IOException ex) {
             throw new RuntimeException("Could not close iterator", ex);
         }
 
@@ -114,7 +123,8 @@ public class LogReplay {
     /**
      * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
      */
-    private void assertLogFilesBelongToTable(Path logPath, Stream<FileStatus> allFiles) {
+    private void assertLogFilesBelongToTable(Path logPath, Stream<FileStatus> allFiles)
+    {
         // TODO:
     }
 }

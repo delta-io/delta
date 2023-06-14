@@ -16,11 +16,12 @@
 
 package io.delta.kernel.data;
 
-import io.delta.kernel.types.DataType;
-import org.apache.parquet.Preconditions;
-
 import java.util.List;
 import java.util.Map;
+
+import org.apache.parquet.Preconditions;
+
+import io.delta.kernel.types.DataType;
 
 /**
  * Wrapper around list of {@link Row}s to expose the rows as a columnar vector

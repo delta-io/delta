@@ -16,14 +16,16 @@
 
 package io.delta.kernel.data;
 
-import io.delta.kernel.internal.ColumnarBatchRow;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+
+import io.delta.kernel.internal.ColumnarBatchRow;
 
 /**
  * Represents zero or more rows of records with same schema type.
  */
-public interface ColumnarBatch {
+public interface ColumnarBatch
+{
     /**
      * @return the schema of the data in this batch.
      */
@@ -32,6 +34,7 @@ public interface ColumnarBatch {
     /**
      * Return the {@link ColumnVector} for the given ordinal in the columnar batch. If the ordinal
      * is not valid throws error.
+     *
      * @param ordinal the ordinal of the column to retrieve
      * @return the {@link ColumnVector} for the given ordinal in the columnar batch
      */
@@ -49,33 +52,38 @@ public interface ColumnarBatch {
      * @param end Ending record index (exclusive) to include in the returned columnar batch
      * @return a columnar batch containing the records between [start, end)
      */
-    default ColumnarBatch slice(int start, int end) {
+    default ColumnarBatch slice(int start, int end)
+    {
         throw new UnsupportedOperationException("Not yet implemented!");
     }
 
     /**
      * @return iterator of {@link Row}s in this batch
      */
-    default CloseableIterator<Row> getRows() {
+    default CloseableIterator<Row> getRows()
+    {
         final ColumnarBatch batch = this;
-        return new CloseableIterator<Row>() {
+        return new CloseableIterator<Row>()
+        {
             int rowId = 0;
             int maxRowId = getSize();
 
             @Override
-            public boolean hasNext() {
+            public boolean hasNext()
+            {
                 return rowId < maxRowId;
             }
 
             @Override
-            public Row next() {
+            public Row next()
+            {
                 Row row = new ColumnarBatchRow(batch, rowId);
                 rowId += 1;
                 return row;
             }
 
             @Override
-            public void close() { }
+            public void close() {}
         };
     }
 }

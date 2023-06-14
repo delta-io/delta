@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.types.LongType;
-
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.types.LongType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for float type data.
@@ -35,10 +34,10 @@ public class DefaultFloatVector
      *
      * @param size number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
+     * All values in the vector are considered non-null when parameter is empty.
      * @param values column vector values.
      */
-    public DefaultFloatVector(int size, Optional<boolean []> nullability, float[] values)
+    public DefaultFloatVector(int size, Optional<boolean[]> nullability, float[] values)
     {
         super(size, LongType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");

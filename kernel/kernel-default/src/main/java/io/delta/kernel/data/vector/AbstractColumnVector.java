@@ -15,29 +15,28 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.types.DataType;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.DataType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * Abstract implementation of {@link ColumnVector} that provides the default functionality
  * common to most of the specific data type {@link ColumnVector} implementations.
  */
 public abstract class AbstractColumnVector
-    implements ColumnVector
+        implements ColumnVector
 {
     private final int size;
     private final DataType dataType;
     private final Optional<boolean[]> nullability;
 
-    protected AbstractColumnVector(int size, DataType dataType, Optional<boolean []> nullability)
+    protected AbstractColumnVector(int size, DataType dataType, Optional<boolean[]> nullability)
     {
         checkArgument(size >= 0, "invalid size: %s", size);
         this.size = size;
@@ -46,12 +45,14 @@ public abstract class AbstractColumnVector
     }
 
     @Override
-    public DataType getDataType() {
+    public DataType getDataType()
+    {
         return dataType;
     }
 
     @Override
-    public int getSize() {
+    public int getSize()
+    {
         return size;
     }
 
@@ -147,7 +148,8 @@ public abstract class AbstractColumnVector
         throw unsupportedDataAccessException("array");
     }
 
-    protected UnsupportedOperationException unsupportedDataAccessException(String accessType) {
+    protected UnsupportedOperationException unsupportedDataAccessException(String accessType)
+    {
         String msg = String.format(
                 "Trying to access a `%s` value from vector of type `%s`",
                 accessType,
@@ -157,9 +159,11 @@ public abstract class AbstractColumnVector
 
     /**
      * Helper method that make sure the given {@code rowId} position is valid in this vector
+     *
      * @param rowId
      */
-    protected void checkValidRowId(int rowId) {
+    protected void checkValidRowId(int rowId)
+    {
         if (rowId < 0 || rowId >= size) {
             throw new IllegalArgumentException("invalid row access");
         }

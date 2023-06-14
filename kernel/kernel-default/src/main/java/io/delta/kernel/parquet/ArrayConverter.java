@@ -16,16 +16,16 @@
 
 package io.delta.kernel.parquet;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.vector.DefaultArrayVector;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.MapType;
+import java.util.Arrays;
+import java.util.Optional;
+
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
 
-import java.util.Arrays;
-import java.util.Optional;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.vector.DefaultArrayVector;
+import io.delta.kernel.types.ArrayType;
 
 public class ArrayConverter
         extends GroupConverter
@@ -161,7 +161,8 @@ public class ArrayConverter
         }
 
         public ColumnVector getArrayVector() {
-            return ((ParquetConverters.BaseConverter) converter).getDataColumnVector(currentEntryIndex);
+            return ((ParquetConverters.BaseConverter) converter)
+                    .getDataColumnVector(currentEntryIndex);
         }
     }
 }

@@ -18,14 +18,16 @@ package io.delta.kernel.internal;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.internal.checkpoint.Checkpointer;
 import io.delta.kernel.fs.Path;
+
+import io.delta.kernel.internal.checkpoint.Checkpointer;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Logging;
 
 public class TableImpl implements Table, Logging
 {
-    public static Table forPath(String path) {
+    public static Table forPath(String path)
+    {
         final Path dataPath = new Path(path);
         final Path logPath = new Path(dataPath, "_delta_log");
 
@@ -37,7 +39,8 @@ public class TableImpl implements Table, Logging
     public final Checkpointer checkpointer;
     public final SnapshotManager snapshotManager;
 
-    public TableImpl(Path logPath, Path dataPath) {
+    public TableImpl(Path logPath, Path dataPath)
+    {
         logDebug(String.format("TableImpl created for path %s", dataPath));
 
         this.logPath = logPath;
@@ -48,7 +51,8 @@ public class TableImpl implements Table, Logging
     }
 
     @Override
-    public Snapshot getLatestSnapshot(TableClient tableClient) {
+    public Snapshot getLatestSnapshot(TableClient tableClient)
+    {
         return snapshotManager.update(tableClient, this);
     }
 }

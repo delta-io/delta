@@ -16,6 +16,8 @@
 
 package io.delta.kernel.client;
 
+import java.util.Optional;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -26,10 +28,8 @@ import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
-import java.util.Optional;
-
 public class DefaultExpressionHandler
-    implements ExpressionHandler
+        implements ExpressionHandler
 {
     @Override
     public ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression)
@@ -38,7 +38,7 @@ public class DefaultExpressionHandler
     }
 
     private static class DefaultExpressionEvaluator
-        implements ExpressionEvaluator
+            implements ExpressionEvaluator
     {
         private final Expression expression;
 
@@ -63,7 +63,8 @@ public class DefaultExpressionHandler
                 Object evalResult = expression.eval(rows.next());
                 if (evalResult == null) {
                     nullResult[currentIndex] = true;
-                } else {
+                }
+                else {
                     result[currentIndex] = ((Boolean) evalResult).booleanValue();
                 }
             }

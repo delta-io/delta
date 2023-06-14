@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.types.DataType;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.types.DataType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for array type data.
@@ -39,15 +38,15 @@ public class DefaultArrayVector
      *
      * @param size number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
+     * All values in the vector are considered non-null when parameter is empty.
      * @param offsets Offsets into element vector on where the index of particular row
-     *                values start and end.
+     * values start and end.
      * @param elementVector Vector containing the array elements.
      */
     public DefaultArrayVector(
             int size,
             DataType type,
-            Optional<boolean []> nullability,
+            Optional<boolean[]> nullability,
             int[] offsets,
             ColumnVector elementVector)
     {

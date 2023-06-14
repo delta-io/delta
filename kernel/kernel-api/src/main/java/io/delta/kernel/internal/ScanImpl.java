@@ -31,38 +31,47 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.Path;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.Tuple2;
+
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
-import io.delta.kernel.internal.data.PartitionRow;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.internal.util.PartitionUtils;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Implementation of {@link Scan}
  */
-public class ScanImpl implements Scan
+public class ScanImpl
+    implements Scan
 {
-    /** Complete schema of the snapshot to be scanned. */
+    /**
+     * Complete schema of the snapshot to be scanned.
+     */
     private final StructType snapshotSchema;
 
     private final Path dataPath;
 
-    /** Schema that we actually want to read. */
+    /**
+     * Schema that we actually want to read.
+     */
     private final StructType readSchema;
 
-    /** Partition schema. */
+    /**
+     * Partition schema.
+     */
     private final StructType snapshotPartitionSchema;
 
     private final CloseableIterator<AddFile> filesIter;
     private final TableClient tableClient;
 
-    /** Mapping from partitionColumnName to its ordinal in the `snapshotSchema`. */
+    /**
+     * Mapping from partitionColumnName to its ordinal in the `snapshotSchema`.
+     */
     private final Map<String, Integer> partitionColumnOrdinals;
 
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
@@ -71,20 +80,22 @@ public class ScanImpl implements Scan
     private final Optional<Expression> dataFilterConjunction;
 
     public ScanImpl(
-            StructType snapshotSchema,
-            StructType readSchema,
-            StructType snapshotPartitionSchema,
-            Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-            CloseableIterator<AddFile> filesIter,
-            Optional<Expression> filter,
-            Path dataPath,
-            TableClient tableClient) {
+        StructType snapshotSchema,
+        StructType readSchema,
+        StructType snapshotPartitionSchema,
+        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
+        CloseableIterator<AddFile> filesIter,
+        Optional<Expression> filter,
+        Path dataPath,
+        TableClient tableClient)
+    {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
         this.snapshotPartitionSchema = snapshotPartitionSchema;
         this.protocolAndMetadata = protocolAndMetadata;
         this.filesIter = filesIter;
-        this.partitionColumnOrdinals = PartitionUtils.getPartitionOrdinals(snapshotSchema, snapshotPartitionSchema);
+        this.partitionColumnOrdinals =
+            PartitionUtils.getPartitionOrdinals(snapshotSchema, snapshotPartitionSchema);
         this.dataPath = dataPath;
         this.tableClient = tableClient;
 
@@ -95,7 +106,8 @@ public class ScanImpl implements Scan
 
             this.metadataFilterConjunction = metadataAndDataConjunctions._1;
             this.dataFilterConjunction = metadataAndDataConjunctions._2;
-        } else {
+        }
+        else {
             this.metadataFilterConjunction = Optional.empty();
             this.dataFilterConjunction = Optional.empty();
         }
@@ -107,13 +119,16 @@ public class ScanImpl implements Scan
      * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
      */
     @Override
-    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient) {
-        return new CloseableIterator<ColumnarBatch>() {
+    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient)
+    {
+        return new CloseableIterator<ColumnarBatch>()
+        {
             private Optional<AddFile> nextValid = Optional.empty();
             private boolean closed;
 
             @Override
-            public boolean hasNext() {
+            public boolean hasNext()
+            {
                 if (closed) {
                     throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
                 }
@@ -124,27 +139,34 @@ public class ScanImpl implements Scan
             }
 
             @Override
-            public ColumnarBatch next() {
+            public ColumnarBatch next()
+            {
                 if (closed) {
                     throw new IllegalStateException("Can't call `next` on a closed iterator.");
                 }
-                if (!hasNext()) throw new NoSuchElementException();
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
 
                 List<AddFile> batchAddFiles = new ArrayList<>();
                 do {
                     batchAddFiles.add(nextValid.get());
                     nextValid = Optional.empty();
-                } while (batchAddFiles.size() < 8 && hasNext());
+                }
+                while (batchAddFiles.size() < 8 && hasNext());
                 return new AddFileColumnarBatch(Collections.unmodifiableList(batchAddFiles));
             }
 
             @Override
-            public void close() throws IOException {
+            public void close()
+                throws IOException
+            {
                 filesIter.close();
                 this.closed = true;
             }
 
-            private Optional<AddFile> findNextValid() {
+            private Optional<AddFile> findNextValid()
+            {
                 if (filesIter.hasNext()) {
                     return Optional.of(filesIter.next());
                 }
@@ -157,10 +179,10 @@ public class ScanImpl implements Scan
     public Row getScanState(TableClient tableClient)
     {
         return new ScanStateRow(
-                protocolAndMetadata.get()._2,
-                protocolAndMetadata.get()._1,
-                readSchema,
-                dataPath.toUri().toString());
+            protocolAndMetadata.get()._2,
+            protocolAndMetadata.get()._1,
+            readSchema,
+            dataPath.toUri().toString());
     }
 
     @Override

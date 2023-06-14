@@ -15,29 +15,29 @@
  */
 package io.delta.kernel.data.vector;
 
-import io.delta.kernel.types.BooleanType;
-
 import java.util.Optional;
-
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.types.BooleanType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for boolean type data.
  */
 public class DefaultBooleanVector
-    extends AbstractColumnVector
+        extends AbstractColumnVector
 {
     private final boolean[] values;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for boolean type.
+     *
      * @param size number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
+     * All values in the vector are considered non-null when parameter is empty.
      * @param values column vector values.
      */
-    public DefaultBooleanVector(int size, Optional<boolean []> nullability, boolean[] values)
+    public DefaultBooleanVector(int size, Optional<boolean[]> nullability, boolean[] values)
     {
         super(size, BooleanType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");

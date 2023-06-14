@@ -15,26 +15,22 @@
  */
 package io.delta.kernel.data.vector;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
-
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static java.util.Objects.requireNonNull;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for struct type data.
  */
 public class DefaultStructVector
-    extends AbstractColumnVector
+        extends AbstractColumnVector
 {
     private final ColumnVector[] memberVectors;
     private final int size;
@@ -45,7 +41,7 @@ public class DefaultStructVector
      * @param size number of elements in the vector.
      * @param dataType {@code struct} datatype definition.
      * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
+     * All values in the vector are considered non-null when parameter is empty.
      * @param memberVectors column vectors for each member of the struct.
      */
     public DefaultStructVector(
@@ -78,11 +74,13 @@ public class DefaultStructVector
     /**
      * Wrapper class to expose one member as a {@link Row}
      */
-    private static class StructRow implements Row {
+    private static class StructRow
+            implements Row
+    {
         private final DefaultStructVector structVector;
         private final int rowId;
 
-        public StructRow(DefaultStructVector structVector, int rowId)
+        StructRow(DefaultStructVector structVector, int rowId)
         {
             this.structVector = requireNonNull(structVector, "structVector is null");
             checkArgument(

@@ -15,28 +15,30 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.util.Collections;
+
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
+
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
-
-import java.util.Collections;
 
 public class InternalUtils
 {
     private InternalUtils() {}
 
-    public static Row getScanFileRow(FileStatus fileStatus) {
+    public static Row getScanFileRow(FileStatus fileStatus)
+    {
         AddFile addFile = new AddFile(
-                fileStatus.getPath(),
-                Collections.emptyMap(),
-                fileStatus.getSize(),
-                fileStatus.getModificationTime(),
-                false /* dataChange */
+            fileStatus.getPath(),
+            Collections.emptyMap(),
+            fileStatus.getSize(),
+            fileStatus.getModificationTime(),
+            false /* dataChange */
         );
 
         return new AddFileColumnarBatch(Collections.singletonList(addFile))
-                .getRows()
-                .next();
+            .getRows()
+            .next();
     }
 }

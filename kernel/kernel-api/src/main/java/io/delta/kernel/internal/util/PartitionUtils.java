@@ -15,23 +15,32 @@
  */
 package io.delta.kernel.internal.util;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.Tuple2;
 
-public class PartitionUtils {
+import io.delta.kernel.internal.lang.ListUtils;
 
-    private PartitionUtils() { }
+public class PartitionUtils
+{
+
+    private PartitionUtils() {}
 
     public static Map<String, Integer> getPartitionOrdinals(
-            StructType snapshotSchema,
-            StructType partitionSchema) {
+        StructType snapshotSchema,
+        StructType partitionSchema)
+    {
         final Map<String, Integer> output = new HashMap<>();
         partitionSchema
             .fieldNames()
@@ -47,8 +56,9 @@ public class PartitionUtils {
      * - D: conjunction of other predicates.
      */
     public static Tuple2<Optional<Expression>, Optional<Expression>> splitMetadataAndDataPredicates(
-            Expression condition,
-            List<String> partitionColumns) {
+        Expression condition,
+        List<String> partitionColumns)
+    {
         final Tuple2<List<Expression>, List<Expression>> metadataAndDataPredicates = ListUtils
             .partition(
                 splitConjunctivePredicates(condition),
@@ -58,20 +68,23 @@ public class PartitionUtils {
         final Optional<Expression> metadataConjunction;
         if (metadataAndDataPredicates._1.isEmpty()) {
             metadataConjunction = Optional.empty();
-        } else {
+        }
+        else {
             metadataConjunction = Optional.of(And.apply(metadataAndDataPredicates._1));
         }
 
         final Optional<Expression> dataConjunction;
         if (metadataAndDataPredicates._2.isEmpty()) {
             dataConjunction = Optional.empty();
-        } else {
+        }
+        else {
             dataConjunction = Optional.of(And.apply(metadataAndDataPredicates._2));
         }
         return new Tuple2<>(metadataConjunction, dataConjunction);
     }
 
-    private static List<Expression> splitConjunctivePredicates(Expression condition) {
+    private static List<Expression> splitConjunctivePredicates(Expression condition)
+    {
         if (condition instanceof And) {
             final And andExpr = (And) condition;
             return Stream.concat(
@@ -83,8 +96,9 @@ public class PartitionUtils {
     }
 
     private static boolean isPredicateMetadataOnly(
-            Expression condition,
-            List<String> partitionColumns) {
+        Expression condition,
+        List<String> partitionColumns)
+    {
         Set<String> lowercasePartCols = partitionColumns
             .stream().map(s -> s.toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());

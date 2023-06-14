@@ -15,36 +15,38 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 
 /**
  * Expose the {@link Metadata}  as a {@link Row}.
  */
-public class ScanStateRow implements Row
+public class ScanStateRow
+    implements Row
 {
     private static final Map<Integer, Function<ScanStateRow, Object>>
-            ordinalToAccessor = new HashMap<>();
+        ordinalToAccessor = new HashMap<>();
     private static final Map<Integer, String> ordinalToColName = new HashMap<>();
     private static final StructType schema = new StructType()
-            .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE,false))
-            .add("schemaString", StringType.INSTANCE)
-            .add("partitionColumns", new ArrayType(StringType.INSTANCE, false))
-            .add("minReaderVersion", IntegerType.INSTANCE)
-            .add("minWriterVersion", IntegerType.INSTANCE)
-            .add("readSchemaString", StringType.INSTANCE)
-            .add("tablePath", StringType.INSTANCE);
+        .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
+        .add("schemaString", StringType.INSTANCE)
+        .add("partitionColumns", new ArrayType(StringType.INSTANCE, false))
+        .add("minReaderVersion", IntegerType.INSTANCE)
+        .add("minWriterVersion", IntegerType.INSTANCE)
+        .add("readSchemaString", StringType.INSTANCE)
+        .add("tablePath", StringType.INSTANCE);
 
     static {
         ordinalToAccessor.put(0, (a) -> a.getConfiguration());
@@ -74,10 +76,10 @@ public class ScanStateRow implements Row
     private String tablePath;
 
     public ScanStateRow(
-            Metadata metadata,
-            Protocol protocol,
-            StructType readSchema,
-            String tablePath)
+        Metadata metadata,
+        Protocol protocol,
+        StructType readSchema,
+        String tablePath)
     {
         this.configuration = metadata.getConfiguration();
         this.schemaString = metadata.getSchemaString();
@@ -124,7 +126,8 @@ public class ScanStateRow implements Row
         return tablePath;
     }
 
-    public StructType getReadSchema() {
+    public StructType getReadSchema()
+    {
         return readSchema;
     }
 
@@ -182,7 +185,8 @@ public class ScanStateRow implements Row
         return (Map<K, V>) getValue(ordinal);
     }
 
-    private Object getValue(int ordinal) {
+    private Object getValue(int ordinal)
+    {
         return ordinalToAccessor.get(ordinal).apply(this);
     }
 }

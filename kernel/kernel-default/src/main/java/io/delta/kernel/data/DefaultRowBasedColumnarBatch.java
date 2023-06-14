@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.data;
 
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 
 /**
  * {@link ColumnarBatch} wrapper around list of {@link Row} objects.
@@ -32,7 +32,8 @@ public class DefaultRowBasedColumnarBatch
     private final List<Row> rows;
     private final Map<Integer, String> columnIndexToNameMap;
 
-    public DefaultRowBasedColumnarBatch(StructType schema, List<Row> rows) {
+    public DefaultRowBasedColumnarBatch(StructType schema, List<Row> rows)
+    {
         this.schema = schema;
         this.rows = rows;
         this.columnIndexToNameMap = constructColumnIndexMap(schema);
@@ -65,7 +66,8 @@ public class DefaultRowBasedColumnarBatch
         return new DefaultColumnVector(field.getDataType(), rows, ordinal);
     }
 
-    private static Map<Integer, String> constructColumnIndexMap(StructType schema) {
+    private static Map<Integer, String> constructColumnIndexMap(StructType schema)
+    {
         // TODO: explore Java's zipWithIndex if available
         Map<Integer, String> columnIndexToNameMap = new HashMap<>();
         int index = 0;

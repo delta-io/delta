@@ -15,19 +15,20 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-
 /**
  * Row abstraction around a columnar batch and a particular row within the columnar batch.
  */
-public class ColumnarBatchRow implements Row
+public class ColumnarBatchRow
+        implements Row
 {
     private final ColumnarBatch columnarBatch;
     private final int rowId;
@@ -92,7 +93,8 @@ public class ColumnarBatchRow implements Row
         return columnVector(ordinal).getMap(rowId);
     }
 
-    private ColumnVector columnVector(int ordinal) {
+    private ColumnVector columnVector(int ordinal)
+    {
         return columnarBatch.getColumnVector(ordinal);
     }
 }

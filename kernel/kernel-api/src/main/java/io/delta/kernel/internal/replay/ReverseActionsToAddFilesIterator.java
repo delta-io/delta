@@ -21,15 +21,17 @@ import java.util.HashMap;
 import java.util.Optional;
 
 import io.delta.kernel.fs.Path;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.Tuple2;
+
 import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.lang.FilteredCloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.CloseableIterator;
 
 public class ReverseActionsToAddFilesIterator
-    extends FilteredCloseableIterator<AddFile, Tuple2<Action, Boolean>> {
+    extends FilteredCloseableIterator<AddFile, Tuple2<Action, Boolean>>
+{
 
     private final Path dataPath;
     private final CloseableIterator<Tuple2<Action, Boolean>> reverseActionIter;
@@ -37,8 +39,9 @@ public class ReverseActionsToAddFilesIterator
     private final HashMap<UniqueFileActionTuple, AddFile> addFilesFromJson;
 
     public ReverseActionsToAddFilesIterator(
-            Path dataPath,
-            CloseableIterator<Tuple2<Action, Boolean>> reverseActionIter) {
+        Path dataPath,
+        CloseableIterator<Tuple2<Action, Boolean>> reverseActionIter)
+    {
         super(reverseActionIter);
         this.dataPath = dataPath;
         this.reverseActionIter = reverseActionIter;
@@ -47,14 +50,15 @@ public class ReverseActionsToAddFilesIterator
     }
 
     @Override
-    protected Optional<AddFile> accept(Tuple2<Action, Boolean> element) {
+    protected Optional<AddFile> accept(Tuple2<Action, Boolean> element)
+    {
         final Action action = element._1;
         final boolean isFromCheckpoint = element._2;
 
         if (action instanceof AddFile) {
             final AddFile add = ((AddFile) action)
-                    .copyWithDataChange(false)
-                    .withAbsolutePath(dataPath);
+                .copyWithDataChange(false)
+                .withAbsolutePath(dataPath);
             final UniqueFileActionTuple key =
                 new UniqueFileActionTuple(add.toURI(), add.getDeletionVectorUniqueId());
             final boolean alreadyDeleted = tombstonesFromJson.containsKey(key);
@@ -71,13 +75,14 @@ public class ReverseActionsToAddFilesIterator
                     return Optional.of(add);
                 }
             }
-        } else if (action instanceof RemoveFile && !isFromCheckpoint) {
+        }
+        else if (action instanceof RemoveFile && !isFromCheckpoint) {
             // Note: There's no reason to put a RemoveFile from a checkpoint into tombstones map
             //       since, when we generate a checkpoint, any corresponding AddFile would have
             //       been excluded
             final RemoveFile remove = ((RemoveFile) action)
-                    .copyWithDataChange(false)
-                    .withAbsolutePath(dataPath);
+                .copyWithDataChange(false)
+                .withAbsolutePath(dataPath);
             final UniqueFileActionTuple key =
                 new UniqueFileActionTuple(remove.toURI(), remove.getDeletionVectorUniqueId());
 
@@ -87,8 +92,11 @@ public class ReverseActionsToAddFilesIterator
         return Optional.empty();
     }
 
-    private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
-        public UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorURI) {
+    private static class UniqueFileActionTuple
+        extends Tuple2<URI, Optional<String>>
+    {
+        UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorURI)
+        {
             super(fileURI, deletionVectorURI);
         }
     }

@@ -15,19 +15,20 @@
  */
 package io.delta.kernel.client;
 
-import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.utils.CloseableIterator;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-
 import java.io.FileNotFoundException;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+
+import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.utils.CloseableIterator;
+
 public class DefaultFileSystemClient
-    implements FileSystemClient
+        implements FileSystemClient
 {
     private final Configuration hadoopConf;
 
@@ -39,8 +40,10 @@ public class DefaultFileSystemClient
     @Override
     public CloseableIterator<FileStatus> listFrom(String filePath)
     {
-        return new CloseableIterator<FileStatus>() {
+        return new CloseableIterator<FileStatus>()
+        {
             private final Iterator<org.apache.hadoop.fs.FileStatus> iter;
+
             {
                 try {
                     Path path = new Path(filePath);
@@ -55,18 +58,21 @@ public class DefaultFileSystemClient
                             .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
                             .sorted(Comparator.comparing(o -> o.getPath().getName()))
                             .iterator();
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     throw new RuntimeException("Could not resolve the FileSystem", ex);
                 }
             }
 
             @Override
-            public boolean hasNext() {
+            public boolean hasNext()
+            {
                 return iter.hasNext();
             }
 
             @Override
-            public FileStatus next() {
+            public FileStatus next()
+            {
                 final org.apache.hadoop.fs.FileStatus impl = iter.next();
                 return FileStatus.of(
                         impl.getPath().toString(),
@@ -75,7 +81,7 @@ public class DefaultFileSystemClient
             }
 
             @Override
-            public void close() { }
+            public void close() {}
         };
     }
 }
