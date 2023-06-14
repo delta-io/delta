@@ -344,6 +344,8 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
+
+  override def requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
 }
 
 object DomainMetadataTableFeature extends WriterFeature(name = "domainMetadata")

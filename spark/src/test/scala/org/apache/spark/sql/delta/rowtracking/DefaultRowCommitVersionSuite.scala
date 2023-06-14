@@ -24,12 +24,14 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFi
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
-class DefaultRowCommitVersionSuite extends QueryTest with SharedSparkSession with RowIdTestUtils {
+class DefaultRowCommitVersionSuite extends QueryTest
+  with SharedSparkSession
+  with RowIdTestUtils {
   def expectedCommitVersionsForAllFiles(deltaLog: DeltaLog): Map[String, Long] = {
     val commitVersionForFiles = mutable.Map.empty[String, Long]
     deltaLog.getChanges(startVersion = 0).foreach { case (commitVersion, actions) =>

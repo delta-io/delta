@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowTrackingFeature}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, RowIdHighWaterMark}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowId, RowTrackingFeature}
+import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 
 import org.apache.spark.sql.QueryTest
@@ -125,7 +125,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       val committedAddFile = latestSnapshot.allFiles.collect().filter(_.path == filePath)
       assert(committedAddFile.size === 1)
       assert(committedAddFile.head.baseRowId === Some(numInitialRecords + numConcurrentRecords))
-      val currentHighWaterMark = latestSnapshot.rowIdHighWaterMarkOpt.get.highWaterMark
+      val currentHighWaterMark = RowId.extractHighWatermark(latestSnapshot).get
       assert(currentHighWaterMark === numInitialRecords + numConcurrentRecords)
     }
   }

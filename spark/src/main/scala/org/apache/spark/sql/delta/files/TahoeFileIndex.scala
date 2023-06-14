@@ -203,14 +203,18 @@ case class TahoeLogFileIndex(
 
   def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
-    if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
-      // Ensure that the schema hasn't changed in an incompatible manner since analysis time
+    // Always check read compatibility with column mapping tables
+    if (checkSchemaOnRead) {
+      // Ensure that the schema hasn't changed in an incompatible manner since analysis time:
+      // 1. Check logical schema incompatibility
+      // 2. Check column mapping read compatibility. The above check is not sufficient
+      //    when the schema's logical names are not changing but the underlying physical name has
+      //    changed. In this case, the data files cannot be read using the old schema any more.
       val snapshotSchema = snapshotToScan.metadata.schema
-      if (!SchemaUtils.isReadCompatible(snapshotAtAnalysis.schema, snapshotSchema)) {
-        throw DeltaErrors.schemaChangedSinceAnalysis(
-            snapshotAtAnalysis.schema,
-            snapshotSchema,
-            mentionLegacyFlag = snapshotToScan.metadata.columnMappingMode == NoMapping)
+      if (!SchemaUtils.isReadCompatible(snapshotAtAnalysis.schema, snapshotSchema) ||
+          !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+            snapshotToScan.metadata, snapshotAtAnalysis.metadata)) {
+        throw DeltaErrors.schemaChangedSinceAnalysis(snapshotAtAnalysis.schema, snapshotSchema)
       }
     }
 

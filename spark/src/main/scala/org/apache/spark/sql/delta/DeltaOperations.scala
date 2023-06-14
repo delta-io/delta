@@ -72,7 +72,8 @@ object DeltaOperations {
       mode: SaveMode,
       partitionBy: Option[Seq[String]] = None,
       predicate: Option[String] = None,
-      override val userMetadata: Option[String] = None) extends Operation("WRITE") {
+      override val userMetadata: Option[String] = None
+  ) extends Operation("WRITE") {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
@@ -260,8 +261,11 @@ object DeltaOperations {
     override def changesData: Boolean = true
   }
   /** Recorded when the table is created. */
-  case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)
-      extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
+  case class CreateTable(
+      metadata: Metadata,
+      isManaged: Boolean,
+      asSelect: Boolean = false
+  ) extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
@@ -280,8 +284,8 @@ object DeltaOperations {
       isManaged: Boolean,
       orCreate: Boolean,
       asSelect: Boolean = false,
-      override val userMetadata: Option[String] = None)
-    extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
+      override val userMetadata: Option[String] = None
+  ) extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
