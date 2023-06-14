@@ -1102,6 +1102,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
+      val tags = Map.empty[String, String]
       val commitInfo = CommitInfo(
         time = clock.getTimeMillis(),
         operation = op.name,
@@ -1112,7 +1113,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = getUserMetadata(op),
-        tags = None,
+        tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       val extraActions = Seq(commitInfo, metadata)
