@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction}
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.FileAction
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.files.TahoeFileIndex
@@ -97,7 +98,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       spark: SparkSession,
       deltaTxn: OptimisticTransaction,
       startTime: Long,
-      mergeActions: Seq[FileAction],
+      mergeActions: Seq[Action],
       materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason,
       tags: Map[String, String] = Map.empty)
     : MergeStats = {
