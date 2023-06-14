@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.FileAction
@@ -26,7 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeIntoMatchedClause, DeltaMergeIntoNotMatchedBySourceClause, DeltaMergeIntoNotMatchedClause, LogicalPlan}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -144,5 +145,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
   }
+  /** Expressions to increment SQL metrics */
+  protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
+    IncrementMetric(Literal(valueToReturn), metrics(name))
 }
 

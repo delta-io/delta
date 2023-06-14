@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
@@ -28,6 +29,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
+import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -275,11 +277,7 @@ case class DeleteCommand(
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
             val data = Dataset.ofRows(sparkSession, newTarget)
-            val deletedRowCount = metrics("numDeletedRows")
-            val deletedRowUdf = DeltaUDF.boolean { () =>
-              deletedRowCount += 1
-              true
-            }.asNondeterministic()
+            val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
                 if (candidateFiles.isEmpty) {
@@ -287,7 +285,7 @@ case class DeleteCommand(
                 } else {
                   data.filter(new Column(cond))
                     .select(input_file_name())
-                    .filter(deletedRowUdf())
+                    .filter(new Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
                     .collect()
@@ -409,11 +407,7 @@ case class DeleteCommand(
     val shouldWriteCdc = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)
 
     // number of total rows that we have seen / are either copying or deleting (sum of both).
-    val numTouchedRows = metrics("numTouchedRows")
-    val numTouchedRowsUdf = DeltaUDF.boolean { () =>
-      numTouchedRows += 1
-      true
-    }.asNondeterministic()
+    val incrTouchedCountExpr = IncrementMetric(TrueLiteral, metrics("numTouchedRows"))
 
     withStatusCode(
       "DELTA", rewritingFilesMsg(numFilesToRewrite)) {
@@ -425,14 +419,14 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(numTouchedRowsUdf())
+          .filter(new Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
             new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData
-          .filter(numTouchedRowsUdf())
+          .filter(new Column(incrTouchedCountExpr))
           .filter(new Column(filterCondition))
       }
 
