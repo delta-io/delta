@@ -84,7 +84,8 @@ trait DeltaSourceSuiteBase extends StreamTest {
           schemaString = updatedMetadata.json,
           format = Format(format)),
         baseMetadata,
-        false) :: Nil, DeltaOperations.ManualUpdate)
+        isChangingModeOnExistingTable = false,
+        isOverwritingSchema = false) :: Nil, DeltaOperations.ManualUpdate)
   }
 
   object AddToReservoir {

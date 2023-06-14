@@ -275,6 +275,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
+  // Whether this transaction is overwriting the existing schema (i.e. overwriteSchema = true).
+  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true.
+  private var isOverwritingSchema: Boolean = false
+
   // Whether this is a transaction that can select any new protocol, potentially downgrading
   // the existing protocol of the table during REPLACE table operations.
   private def canAssignAnyNewProtocol: Boolean =
@@ -395,7 +399,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataInternal(
       proposedNewMetadata: Metadata,
-      ignoreDefaultProperties: Boolean = false): Unit = {
+      ignoreDefaultProperties: Boolean): Unit = {
     var newMetadataTmp = proposedNewMetadata
     // Validate all indexed columns are inside table's schema.
     StatisticsCollection.validateDeltaStatsColumns(newMetadataTmp)
@@ -415,7 +419,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocolBeforeUpdate,
       snapshot.metadata,
       newMetadataTmp,
-      isCreatingNewTable)
+      isCreatingNewTable,
+      isOverwritingSchema)
 
     if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
@@ -587,6 +592,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def updateMetadataForNewTable(metadata: Metadata): Unit = {
     isCreatingNewTable = true
     updateMetadata(metadata)
+  }
+
+  /**
+   * Records an update to the metadata that should be committed with this transaction and when
+   * this transaction is attempt to overwrite the data and schema using .mode('overwrite') and
+   * .option('overwriteSchema', true).
+   * REPLACE the table is not considered in this category, because that is logically equivalent
+   * to DROP and RECREATE the table.
+   */
+  def updateMetadataForTableOverwrite(proposedNewMetadata: Metadata): Unit = {
+    isOverwritingSchema = true
+    updateMetadata(proposedNewMetadata)
   }
 
   protected def assertMetadata(metadata: Metadata): Unit = {

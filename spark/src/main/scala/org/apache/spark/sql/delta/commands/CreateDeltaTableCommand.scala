@@ -136,8 +136,7 @@ case class CreateDeltaTableCommand(
           // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
           // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
           if (!isV1Writer) {
-            replaceMetadataIfNecessary(
-              txn, tableWithLocation, options, schema)
+            replaceMetadataIfNecessary(txn, tableWithLocation, options, schema)
           }
           var actions = deltaWriter.write(
             txn,
