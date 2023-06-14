@@ -151,7 +151,8 @@ case class CreateDeltaTableCommand(
           } else {
             actions = actions ++ newDomainMetadata
           }
-          val op = getOperation(txn.metadata, isManagedTable, Some(options))
+          val op = getOperation(txn.metadata, isManagedTable, Some(options)
+          )
           (actions, op)
         }
 
@@ -220,7 +221,8 @@ case class CreateDeltaTableCommand(
             protocol.foreach { protocol =>
               txn.updateProtocol(protocol)
             }
-            val op = getOperation(newMetadata, isManagedTable, None)
+            val op = getOperation(newMetadata, isManagedTable, None
+            )
             val actionsToCommit = Seq.empty[Action]
             txn.commit(actionsToCommit, op)
           } else {
@@ -252,7 +254,8 @@ case class CreateDeltaTableCommand(
             var actionsToCommit = Seq.empty[Action]
             val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
             actionsToCommit = removes
-            val op = getOperation(txn.metadata, isManagedTable, None)
+            val op = getOperation(txn.metadata, isManagedTable, None
+            )
             txn.commit(actionsToCommit, op)
         }
       }
@@ -385,7 +388,8 @@ case class CreateDeltaTableCommand(
   private def getOperation(
       metadata: Metadata,
       isManagedTable: Boolean,
-      options: Option[DeltaOptions]): DeltaOperations.Operation = operation match {
+      options: Option[DeltaOptions]
+  ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
       DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
