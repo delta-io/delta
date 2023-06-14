@@ -23,14 +23,12 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
-import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeStats}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -39,9 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, And, Attribute, Attribu
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{DataTypes, LongType, StructType}
 
@@ -80,16 +76,13 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType]) extends LeafRunnableCommand
-  with DeltaCommand
+    migratedSchema: Option[StructType]) extends MergeIntoCommandBase
   with PredicateHelper
   with AnalysisHelper
-  with ImplicitMetadataOperation
-  with MergeIntoMaterializeSource {
+  with ImplicitMetadataOperation {
 
   import MergeIntoCommand._
 
-  import SQLMetrics._
   import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
@@ -101,8 +94,6 @@ case class MergeIntoCommand(
     AttributeReference("num_deleted_rows", LongType)(),
     AttributeReference("num_inserted_rows", LongType)())
 
-  @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
-  @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
   /**
    * Map to get target output attributes by name.
    * The case sensitivity of the map is set accordingly to Spark configuration.
@@ -127,48 +118,6 @@ case class MergeIntoCommand(
   // We over-count numTargetRowsDeleted when there are multiple matches;
   // this is the amount of the overcount, so we can subtract it to get a correct final metric.
   private var multipleMatchDeleteOnlyOvercount: Option[Long] = None
-
-  override lazy val metrics = Map[String, SQLMetric](
-    "numSourceRows" -> createMetric(sc, "number of source rows"),
-    "numSourceRowsInSecondScan" ->
-      createMetric(sc, "number of source rows (during repeated scan)"),
-    "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
-    "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
-    "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
-    "numTargetRowsMatchedUpdated" ->
-      createMetric(sc, "number of rows updated by a matched clause"),
-    "numTargetRowsNotMatchedBySourceUpdated" ->
-      createMetric(sc, "number of rows updated by a not matched by source clause"),
-    "numTargetRowsDeleted" -> createMetric(sc, "number of deleted rows"),
-    "numTargetRowsMatchedDeleted" ->
-      createMetric(sc, "number of rows deleted by a matched clause"),
-    "numTargetRowsNotMatchedBySourceDeleted" ->
-      createMetric(sc, "number of rows deleted by a not matched by source clause"),
-    "numTargetFilesBeforeSkipping" -> createMetric(sc, "number of target files before skipping"),
-    "numTargetFilesAfterSkipping" -> createMetric(sc, "number of target files after skipping"),
-    "numTargetFilesRemoved" -> createMetric(sc, "number of files removed to target"),
-    "numTargetFilesAdded" -> createMetric(sc, "number of files added to target"),
-    "numTargetChangeFilesAdded" ->
-      createMetric(sc, "number of change data capture files generated"),
-    "numTargetChangeFileBytes" ->
-      createMetric(sc, "total size of change data capture files generated"),
-    "numTargetBytesBeforeSkipping" -> createMetric(sc, "number of target bytes before skipping"),
-    "numTargetBytesAfterSkipping" -> createMetric(sc, "number of target bytes after skipping"),
-    "numTargetBytesRemoved" -> createMetric(sc, "number of target bytes removed"),
-    "numTargetBytesAdded" -> createMetric(sc, "number of target bytes added"),
-    "numTargetPartitionsAfterSkipping" ->
-      createMetric(sc, "number of target partitions after skipping"),
-    "numTargetPartitionsRemovedFrom" ->
-      createMetric(sc, "number of target partitions from which files were removed"),
-    "numTargetPartitionsAddedTo" ->
-      createMetric(sc, "number of target partitions to which files were added"),
-    "executionTimeMs" ->
-      createTimingMetric(sc, "time taken to execute the entire operation"),
-    "scanTimeMs" ->
-      createTimingMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" ->
-      createTimingMetric(sc, "time taken to rewrite the matched files"))
-
   override def run(spark: SparkSession): Seq[Row] = {
     metrics("executionTimeMs").set(0)
     metrics("scanTimeMs").set(0)
@@ -239,41 +188,12 @@ case class MergeIntoCommand(
             filesToRewrite.map(_.remove) ++ newWrittenFiles
           }
         }
-
-        val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ deltaActions
-        // Metrics should be recorded before commit (where they are written to delta logs).
-        metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
-        deltaTxn.registerSQLMetrics(spark, metrics)
-
-        // This is a best-effort sanity check.
-        if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-            metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
-          log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
-            s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
-          if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
-            throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
-          }
-        }
-
-        deltaTxn.commitIfNeeded(
-          finalActions,
-          DeltaOperations.Merge(
-            Option(condition),
-            matchedClauses.map(DeltaOperations.MergePredicate(_)),
-            notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
-            notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
-
-        // Record metrics
-        var stats = MergeStats.fromMergeSQLMetrics(
-          metrics,
-          condition,
-          matchedClauses,
-          notMatchedClauses,
-          notMatchedBySourceClauses,
-          deltaTxn.metadata.partitionColumns.nonEmpty)
-        stats = stats.copy(
-          materializeSourceReason = Some(materializeSourceReason.toString),
-          materializeSourceAttempts = Some(attempt))
+      val stats = collectMergeStats(
+        spark,
+        deltaTxn,
+        startTime,
+        deltaActions,
+        materializeSourceReason)
 
         recordDeltaEvent(targetFileIndex.deltaLog, "delta.dml.merge.stats", data = stats)
 
