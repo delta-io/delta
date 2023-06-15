@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.commands
 
-import java.util.concurrent.TimeUnit
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -213,8 +211,11 @@ case class MergeIntoCommand(
    */
   private def findTouchedFiles(
     spark: SparkSession,
-    deltaTxn: OptimisticTransaction
-  ): Seq[AddFile] = recordMergeOperation(sqlMetricName = "scanTimeMs") {
+    deltaTxn: OptimisticTransaction)
+    : Seq[AddFile] = recordMergeOperation(
+      extraOpType = "findTouchedFiles",
+      status = "MERGE operation - scanning files for matches",
+      sqlMetricName = "scanTimeMs") {
 
     // Accumulator to collect all the distinct touched files
     val touchedFilesAccum = new SetAccumulator[String]()
@@ -338,8 +339,11 @@ case class MergeIntoCommand(
    */
   private def writeInsertsOnlyWhenNoMatchedClauses(
       spark: SparkSession,
-      deltaTxn: OptimisticTransaction
-    ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
+      deltaTxn: OptimisticTransaction)
+    : Seq[FileAction] = recordMergeOperation(
+      extraOpType = "writeInsertsOnlyWhenNoMatchedClauses",
+      status = "MERGE operation - writing new files for only inserts",
+      sqlMetricName = "rewriteTimeMs") {
 
     val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
     val incrInsertedCountExpr =
@@ -411,8 +415,11 @@ case class MergeIntoCommand(
   private def writeAllChanges(
     spark: SparkSession,
     deltaTxn: OptimisticTransaction,
-    filesToRewrite: Seq[AddFile]
-  ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
+    filesToRewrite: Seq[AddFile])
+    : Seq[FileAction] = recordMergeOperation(
+      extraOpType = "writeAllChanges",
+      status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
+      sqlMetricName = "rewriteTimeMs") {
     import org.apache.spark.sql.catalyst.expressions.Literal.{TrueLiteral, FalseLiteral}
 
     val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
@@ -812,22 +819,6 @@ case class MergeIntoCommand(
     } else {
       df
     }
-  }
-
-  /**
-   * Execute the given `thunk` and return its result while recording the time taken to do it.
-   *
-   * @param sqlMetricName name of SQL metric to update with the time taken by the thunk
-   * @param thunk the code to execute
-   */
-  private def recordMergeOperation[A](sqlMetricName: String = null)(thunk: => A): A = {
-    val startTimeNs = System.nanoTime()
-    val r = thunk
-    val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
-    if (sqlMetricName != null && timeTakenMs > 0) {
-      metrics(sqlMetricName) += timeTakenMs
-    }
-    r
   }
 }
 

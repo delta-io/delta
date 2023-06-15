@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.Action
@@ -148,5 +150,57 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   /** Expressions to increment SQL metrics */
   protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
     IncrementMetric(Literal(valueToReturn), metrics(name))
+  /**
+   * Execute the given `thunk` and return its result while recording the time taken to do it
+   * and setting additional local properties for better UI visibility.
+   *
+   * @param extraOpType extra operation name recorded in the logs
+   * @param status human readable status string describing what the thunk is doing
+   * @param sqlMetricName name of SQL metric to update with the time taken by the thunk
+   * @param thunk the code to execute
+   */
+  protected def recordMergeOperation[A](
+      extraOpType: String = "",
+      status: String = null,
+      sqlMetricName: String = null)(
+      thunk: => A): A = {
+    val changedOpType = if (extraOpType == "") {
+      "delta.dml.merge"
+    } else {
+      s"delta.dml.merge.$extraOpType"
+    }
+
+    val prevDesc = sc.getLocalProperty(SparkContext.SPARK_JOB_DESCRIPTION)
+    val newDesc = Option(status).map { s =>
+      // Append the status to existing description if any
+      val prefix = Option(prevDesc).filter(_.nonEmpty).map(_ + " - ").getOrElse("")
+      prefix + s
+    }
+
+    def executeThunk(): A = {
+      try {
+        val startTimeNs = System.nanoTime()
+        newDesc.foreach { d => sc.setJobDescription(d) }
+        val r = thunk
+        val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+        if (sqlMetricName != null && timeTakenMs > 0) {
+          metrics(sqlMetricName) += timeTakenMs
+        }
+        r
+      } finally {
+        if (newDesc.isDefined) {
+          sc.setJobDescription(prevDesc)
+        }
+      }
+    }
+
+    recordDeltaOperation(targetDeltaLog, changedOpType) {
+      if (status == null) {
+        executeThunk()
+      } else {
+        withStatusCode("DELTA", status) { executeThunk() }
+      }
+    }
+  }
 }
 
