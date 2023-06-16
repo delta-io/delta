@@ -18,7 +18,7 @@ package io.delta.kernel.expressions;
 
 import java.util.Collection;
 
-import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.PrimitiveType;
 
 /**
  * Evaluates logical {@code expr1} AND {@code expr2} for {@code new And(expr1, expr2)}.
@@ -42,14 +42,14 @@ public final class And extends BinaryOperator implements Predicate {
 
     public And(Expression left, Expression right) {
         super(left, right, "&&");
-        if (!(left.dataType() instanceof BooleanType) ||
-            !(right.dataType() instanceof BooleanType)) {
+        if (!(left.dataType().equals(PrimitiveType.BOOLEAN)) ||
+            !(right.dataType().equals(PrimitiveType.BOOLEAN))) {
 
             throw new IllegalArgumentException(
                 String.format(
                     "'And' requires expressions of type boolean. Got %s and %s.",
-                    left.dataType().typeName(),
-                    right.dataType().typeName()
+                    left.dataType(),
+                    right.dataType()
                 )
             );
         }

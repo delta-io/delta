@@ -29,13 +29,13 @@ public abstract class BinaryOperator extends BinaryExpression {
         super(left, right);
         this.symbol = symbol;
 
-        if (!left.dataType().equivalent(right.dataType())) {
+        if (!left.dataType().equals(right.dataType())) {
             throw new IllegalArgumentException(
                 String.format(
                     "BinaryOperator left and right DataTypes must be the same. Found %s and %s.",
-                    left.dataType().typeName(),
-                    right.dataType().typeName())
-            );
+                    left.dataType(),
+                    right.dataType()
+            ));
         }
     }
 

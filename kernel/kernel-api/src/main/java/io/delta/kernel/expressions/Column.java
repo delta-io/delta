@@ -21,12 +21,8 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.*;
-import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.PrimitiveType;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -49,19 +45,19 @@ public final class Column extends LeafExpression {
         this.name = name;
         this.dataType = dataType;
 
-        if (dataType instanceof IntegerType) {
+        if (dataType.equals(PrimitiveType.INTEGER)) {
             evaluator = (row -> row.getInt(ordinal));
-        } else if (dataType instanceof BooleanType) {
+        } else if (dataType.equals(PrimitiveType.BOOLEAN)) {
             evaluator = (row -> row.getBoolean(ordinal));
-        } else if (dataType instanceof LongType) {
+        } else if (dataType.equals(PrimitiveType.LONG)) {
             evaluator = (row -> row.getLong(ordinal));
-        } else if (dataType instanceof StringType) {
+        } else if (dataType.equals(PrimitiveType.STRING)) {
             evaluator = (row -> row.getString(ordinal));
         } else {
             throw new UnsupportedOperationException(
                 String.format(
                     "The data type %s of column %s at ordinal %s is not supported",
-                    dataType.typeName(),
+                    dataType,
                     name,
                     ordinal)
             );

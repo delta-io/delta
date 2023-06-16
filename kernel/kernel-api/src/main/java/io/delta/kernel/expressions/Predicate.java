@@ -16,8 +16,8 @@
 
 package io.delta.kernel.expressions;
 
-import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.PrimitiveType;
 
 /**
  * An {@link Expression} that defines a relation on inputs. Evaluates to true, false, or null.
@@ -25,6 +25,6 @@ import io.delta.kernel.types.DataType;
 public interface Predicate extends Expression {
     @Override
     default DataType dataType() {
-        return BooleanType.INSTANCE;
+        return PrimitiveType.BOOLEAN;
     }
 }

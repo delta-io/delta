@@ -17,13 +17,15 @@
 package io.delta.kernel.utils;
 
 import java.io.IOException;
+import java.util.Iterator;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.PrimitiveType;
 import io.delta.kernel.types.StructType;
 
 public class Utils {
@@ -57,6 +59,32 @@ public class Utils {
     }
 
     /**
+     * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
+     * for arguments that require {@link CloseableIterator} type.
+     * @param iter {@link Iterator} instance
+     * @param <T> Element type
+     * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
+     */
+    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
+        return new CloseableIterator<T>() {
+            @Override
+            public void close() { }
+
+            @Override
+            public boolean hasNext()
+            {
+                return iter.hasNext();
+            }
+
+            @Override
+            public T next()
+            {
+                return iter.next();
+            }
+        };
+    }
+
+    /**
      * Utility method to create a singleton string {@link ColumnVector}
      *
      * @param value the string element to create the vector with
@@ -66,29 +94,26 @@ public class Utils {
     public static ColumnVector singletonColumnVector(String value) {
         return new ColumnVector() {
             @Override
-            public DataType getDataType()
-            {
-                return StringType.INSTANCE;
+            public DataType getDataType() {
+                return PrimitiveType.STRING;
             }
 
             @Override
-            public int getSize()
-            {
+            public int getSize() {
                 return 1;
             }
 
             @Override
-            public void close() {}
+            public void close() {
+            }
 
             @Override
-            public boolean isNullAt(int rowId)
-            {
+            public boolean isNullAt(int rowId) {
                 return value == null;
             }
 
             @Override
-            public String getString(int rowId)
-            {
+            public String getString(int rowId) {
                 if (rowId != 0) {
                     throw new IllegalArgumentException("Invalid row id: " + rowId);
                 }
@@ -99,7 +124,7 @@ public class Utils {
 
     /**
      * Utility method to get the physical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
+     * {@link Scan#getScanState(TableClient)}}.
      *
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.

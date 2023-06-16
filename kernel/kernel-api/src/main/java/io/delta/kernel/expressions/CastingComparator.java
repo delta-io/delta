@@ -18,36 +18,31 @@ package io.delta.kernel.expressions;
 
 import java.util.Comparator;
 
-import io.delta.kernel.types.*;
-import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.PrimitiveType;
 
 // TODO: exclude from public interfaces (move to "internal" somewhere?)
 public class CastingComparator<T extends Comparable<T>> implements Comparator<Object> {
 
     public static Comparator<Object> forDataType(DataType dataType) {
-        if (dataType instanceof IntegerType) {
+        if (dataType.equals(PrimitiveType.INTEGER)) {
             return new CastingComparator<Integer>();
         }
 
-        if (dataType instanceof BooleanType) {
+        if (dataType.equals(PrimitiveType.BOOLEAN)) {
             return new CastingComparator<Boolean>();
         }
 
-        if (dataType instanceof LongType) {
+        if (dataType.equals(PrimitiveType.LONG)) {
             return new CastingComparator<Long>();
         }
 
-        if (dataType instanceof StringType) {
+        if (dataType.equals(PrimitiveType.STRING)) {
             return new CastingComparator<String>();
         }
 
         throw new IllegalArgumentException(
-            String.format("Unsupported DataType: %s", dataType.typeName())
-        );
+            String.format("Unsupported DataType: %s", dataType));
     }
 
     private final Comparator<T> comparator;

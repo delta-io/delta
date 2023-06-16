@@ -46,7 +46,13 @@ lazy val kernelApi = (project in file("kernel-api"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq(),
+    libraryDependencies ++= Seq(
+
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "junit" % "junit" % "4.11" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
+    ),
     Compile / doc / javacOptions := Seq(
       "-public",
       "-windowtitle", "Delta Kernel API " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
