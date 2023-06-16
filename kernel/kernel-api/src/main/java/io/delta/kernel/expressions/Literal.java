@@ -19,7 +19,6 @@ package io.delta.kernel.expressions;
 import java.util.Objects;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.*;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;

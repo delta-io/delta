@@ -16,14 +16,12 @@
 package io.delta.kernel.types;
 
 /**
- * The data type representing {@code long} type values.
+ * The data type representing {@code short} type values.
  */
-public class LongType extends BasePrimitiveType
-{
-    public static final LongType INSTANCE = new LongType();
+public class ShortType extends BasePrimitiveType {
+    public static final ShortType INSTANCE = new ShortType();
 
-    private LongType()
-    {
-        super("long");
+    private ShortType() {
+        super("short");
     }
 }

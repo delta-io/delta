@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.types;
 
-public class BooleanType extends DataType {
+/**
+ * Data type representing {@code boolean} type values.
+ */
+public class BooleanType extends BasePrimitiveType
+{
     public static final BooleanType INSTANCE = new BooleanType();
 
-    private BooleanType() { }
+    private BooleanType() {
+        super("boolean");
+    }
 }

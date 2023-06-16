@@ -14,40 +14,53 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.expressions;
+package io.delta.kernel.internal.expressions;
 
 import java.util.Comparator;
 
-import io.delta.kernel.types.*;
+import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.ByteType;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
+import io.delta.kernel.types.DoubleType;
 import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.FloatType;
 import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.ShortType;
 import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.TimestampType;
 
-// TODO: exclude from public interfaces (move to "internal" somewhere?)
 public class CastingComparator<T extends Comparable<T>> implements Comparator<Object> {
 
     public static Comparator<Object> forDataType(DataType dataType) {
-        if (dataType instanceof IntegerType) {
-            return new CastingComparator<Integer>();
-        }
-
         if (dataType instanceof BooleanType) {
             return new CastingComparator<Boolean>();
-        }
-
-        if (dataType instanceof LongType) {
+        } else if (dataType instanceof ByteType) {
+            return new CastingComparator<Byte>();
+        } else if (dataType instanceof ShortType) {
+            return new CastingComparator<Short>();
+        } else if (dataType instanceof IntegerType) {
+            return new CastingComparator<Integer>();
+        } else if (dataType instanceof LongType) {
+            return new CastingComparator<Long>();
+        } else if (dataType instanceof FloatType) {
+            return new CastingComparator<Float>();
+        } else if (dataType instanceof DoubleType) {
+            return new CastingComparator<Double>();
+        } else if (dataType instanceof StringType) {
+            return new CastingComparator<String>();
+        } else if (dataType instanceof DateType) {
+            // Date value is accessed as integer (number of days since epoch).
+            // This may change in the future.
+            return new CastingComparator<Integer>();
+        } else if (dataType instanceof TimestampType) {
+            // Timestamp value is accessed as long (epoch seconds). This may change in the future.
             return new CastingComparator<Long>();
         }
 
-        if (dataType instanceof StringType) {
-            return new CastingComparator<String>();
-        }
-
         throw new IllegalArgumentException(
-            String.format("Unsupported DataType: %s", dataType.typeName())
-        );
+            String.format("Unsupported DataType: %s", dataType));
     }
 
     private final Comparator<T> comparator;

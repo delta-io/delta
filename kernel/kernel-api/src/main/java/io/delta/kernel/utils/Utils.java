@@ -17,8 +17,10 @@
 package io.delta.kernel.utils;
 
 import java.io.IOException;
+import java.util.Iterator;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
@@ -57,6 +59,32 @@ public class Utils {
     }
 
     /**
+     * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
+     * for arguments that require {@link CloseableIterator} type.
+     * @param iter {@link Iterator} instance
+     * @param <T> Element type
+     * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
+     */
+    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
+        return new CloseableIterator<T>() {
+            @Override
+            public void close() { }
+
+            @Override
+            public boolean hasNext()
+            {
+                return iter.hasNext();
+            }
+
+            @Override
+            public T next()
+            {
+                return iter.next();
+            }
+        };
+    }
+
+    /**
      * Utility method to create a singleton string {@link ColumnVector}
      *
      * @param value the string element to create the vector with
@@ -72,23 +100,21 @@ public class Utils {
             }
 
             @Override
-            public int getSize()
-            {
+            public int getSize() {
                 return 1;
             }
 
             @Override
-            public void close() {}
+            public void close() {
+            }
 
             @Override
-            public boolean isNullAt(int rowId)
-            {
+            public boolean isNullAt(int rowId) {
                 return value == null;
             }
 
             @Override
-            public String getString(int rowId)
-            {
+            public String getString(int rowId) {
                 if (rowId != 0) {
                     throw new IllegalArgumentException("Invalid row id: " + rowId);
                 }
@@ -121,5 +147,17 @@ public class Utils {
         Long size = scanFileInfo.getLong(2);
 
         return FileStatus.of(path, size, 0);
+    }
+
+    /**
+     * Close the iterator.
+     * @param i1
+     */
+    public static void safeClose(CloseableIterator i1) {
+        try {
+            i1.close();
+        } catch (IOException ioe) {
+            throw new RuntimeException(ioe);
+        }
     }
 }

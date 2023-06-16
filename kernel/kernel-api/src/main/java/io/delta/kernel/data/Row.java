@@ -65,13 +65,13 @@ public interface Row {
      * Return struct value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of struct type,
      */
-    Row getRecord(int ordinal);
+    Row getStruct(int ordinal);
 
     /**
      * Return array value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of array type,
      */
-    <T> List<T> getList(int ordinal);
+    <T> List<T> getArray(int ordinal);
 
     /**
      * Return map value of the column located at the given ordinal.

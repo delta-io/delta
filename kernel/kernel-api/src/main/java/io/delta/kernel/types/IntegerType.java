@@ -13,11 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.types;
 
-public class IntegerType extends DataType {
+/**
+ * The data type representing {@code integer} type values.
+ */
+public class IntegerType extends BasePrimitiveType
+{
     public static final IntegerType INSTANCE = new IntegerType();
 
-    private IntegerType() { }
+    private IntegerType()
+    {
+        super("integer");
+    }
 }

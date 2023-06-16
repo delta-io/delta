@@ -21,7 +21,6 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.*;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
@@ -61,7 +60,7 @@ public final class Column extends LeafExpression {
             throw new UnsupportedOperationException(
                 String.format(
                     "The data type %s of column %s at ordinal %s is not supported",
-                    dataType.typeName(),
+                    dataType,
                     name,
                     ordinal)
             );
