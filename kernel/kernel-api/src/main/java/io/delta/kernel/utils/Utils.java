@@ -25,7 +25,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.PrimitiveType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
 public class Utils {
@@ -94,8 +94,9 @@ public class Utils {
     public static ColumnVector singletonColumnVector(String value) {
         return new ColumnVector() {
             @Override
-            public DataType getDataType() {
-                return PrimitiveType.STRING;
+            public DataType getDataType()
+            {
+                return StringType.INSTANCE;
             }
 
             @Override

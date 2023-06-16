@@ -19,8 +19,11 @@ package io.delta.kernel.expressions;
 import java.util.Objects;
 
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.PrimitiveType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.StringType;
 
 /**
  * A literal value.
@@ -40,37 +43,37 @@ public final class Literal extends LeafExpression {
     /**
      * Create an integer {@link Literal} object
      * @param value integer value
-     * @return a {@link Literal} with data type {@link PrimitiveType#INTEGER}
+     * @return a {@link Literal} with data type {@link IntegerType}
      */
     public static Literal of(int value) {
-        return new Literal(value, PrimitiveType.INTEGER);
+        return new Literal(value, IntegerType.INSTANCE);
     }
 
     /**
      * Create a boolean {@link Literal} object
      * @param value boolean value
-     * @return a {@link Literal} with data type {@link PrimitiveType#BOOLEAN}
+     * @return a {@link Literal} with data type {@link BooleanType}
      */
     public static Literal of(boolean value) {
-        return new Literal(value, PrimitiveType.BOOLEAN);
+        return new Literal(value, BooleanType.INSTANCE);
     }
 
     /**
      * Create a long {@link Literal} object
      * @param value long value
-     * @return a {@link Literal} with data type {@link PrimitiveType#LONG}
+     * @return a {@link Literal} with data type {@link FloatType}
      */
     public static Literal of(long value) {
-        return new Literal(value, PrimitiveType.LONG);
+        return new Literal(value, FloatType.INSTANCE);
     }
 
     /**
      * Create a string {@link Literal} object
      * @param value string value
-     * @return a {@link Literal} with data type {@link PrimitiveType#STRING}
+     * @return a {@link Literal} with data type {@link StringType}
      */
     public static Literal of(String value) {
-        return new Literal(value, PrimitiveType.STRING);
+        return new Literal(value, StringType.INSTANCE);
     }
 
     ////////////////////////////////////////////////////////////////////////////////

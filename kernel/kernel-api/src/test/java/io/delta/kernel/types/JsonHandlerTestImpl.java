@@ -20,6 +20,9 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+/**
+ * Implementation of {@link JsonHandler} for testing Delta Kernel APIs
+ */
 public class JsonHandlerTestImpl
     implements JsonHandler
 {
@@ -108,27 +111,22 @@ public class JsonHandlerTestImpl
                 throwIfTypeMismatch("object or string", false, jsonValue);
             }
 
-            if (dataType.equals(PrimitiveType.BOOLEAN)) {
+            if (dataType instanceof BooleanType) {
                 throwIfTypeMismatch("boolean", jsonValue.isBoolean(), jsonValue);
                 return jsonValue.booleanValue();
             }
 
-            if (dataType.equals(PrimitiveType.BOOLEAN)) {
-                throwIfTypeMismatch("boolean", jsonValue.isBoolean(), jsonValue);
-                return jsonValue.booleanValue();
-            }
-
-            if (dataType.equals(PrimitiveType.INTEGER)) {
+            if (dataType instanceof IntegerType) {
                 throwIfTypeMismatch("integer", jsonValue.isInt(), jsonValue);
                 return jsonValue.intValue();
             }
 
-            if (dataType.equals(PrimitiveType.LONG)) {
+            if (dataType instanceof LongType) {
                 throwIfTypeMismatch("long", jsonValue.isLong(), jsonValue);
                 return jsonValue.numberValue().longValue();
             }
 
-            if (dataType.equals(PrimitiveType.STRING)) {
+            if (dataType instanceof StringType) {
                 throwIfTypeMismatch("string", jsonValue.isTextual(), jsonValue);
                 return jsonValue.asText();
             }

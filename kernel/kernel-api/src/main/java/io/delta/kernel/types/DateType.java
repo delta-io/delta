@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package io.delta.kernel.expressions;
-
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
+package io.delta.kernel.types;
 
 /**
- * An {@link Expression} that defines a relation on inputs. Evaluates to true, false, or null.
+ * A date type, supporting "0001-01-01" through "9999-12-31".
+ * Internally, this is represented as the number of days from 1970-01-01.
  */
-public interface Predicate extends Expression {
-    @Override
-    default DataType dataType() {
-        return BooleanType.INSTANCE;
+public class DateType extends BasePrimitiveType
+{
+    public static final DateType INSTANCE = new DateType();
+
+    private DateType()
+    {
+        super("date");
     }
 }

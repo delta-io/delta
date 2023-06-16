@@ -21,8 +21,11 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.PrimitiveType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -45,13 +48,13 @@ public final class Column extends LeafExpression {
         this.name = name;
         this.dataType = dataType;
 
-        if (dataType.equals(PrimitiveType.INTEGER)) {
+        if (dataType instanceof IntegerType) {
             evaluator = (row -> row.getInt(ordinal));
-        } else if (dataType.equals(PrimitiveType.BOOLEAN)) {
+        } else if (dataType instanceof BooleanType) {
             evaluator = (row -> row.getBoolean(ordinal));
-        } else if (dataType.equals(PrimitiveType.LONG)) {
+        } else if (dataType instanceof FloatType) {
             evaluator = (row -> row.getLong(ordinal));
-        } else if (dataType.equals(PrimitiveType.STRING)) {
+        } else if (dataType instanceof StringType) {
             evaluator = (row -> row.getString(ordinal));
         } else {
             throw new UnsupportedOperationException(

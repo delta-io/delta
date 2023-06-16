@@ -13,18 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package io.delta.kernel.expressions;
-
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
+package io.delta.kernel.types;
 
 /**
- * An {@link Expression} that defines a relation on inputs. Evaluates to true, false, or null.
+ * The data type representing {@code short} type values.
  */
-public interface Predicate extends Expression {
-    @Override
-    default DataType dataType() {
-        return BooleanType.INSTANCE;
+public class ShortType extends BasePrimitiveType {
+    public static final ShortType INSTANCE = new ShortType();
+
+    private ShortType() {
+        super("short");
     }
 }

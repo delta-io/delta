@@ -13,22 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.types;
 
-import static io.delta.kernel.types.PrimitiveType.BINARY;
-import static io.delta.kernel.types.PrimitiveType.BOOLEAN;
-import static io.delta.kernel.types.PrimitiveType.BYTE;
-import static io.delta.kernel.types.PrimitiveType.DATE;
-import static io.delta.kernel.types.PrimitiveType.DOUBLE;
-import static io.delta.kernel.types.PrimitiveType.FLOAT;
-import static io.delta.kernel.types.PrimitiveType.INTEGER;
-import static io.delta.kernel.types.PrimitiveType.LONG;
-import static io.delta.kernel.types.PrimitiveType.SHORT;
-import static io.delta.kernel.types.PrimitiveType.STRING;
-import static io.delta.kernel.types.PrimitiveType.TIMESTAMP;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -41,11 +28,8 @@ public class TestTableSchemaSerDe
     @Test
     public void primitiveTypeRoundTrip()
     {
-        List<DataType> primitiveTypeList = Arrays.asList(
-            BOOLEAN, BYTE, SHORT, INTEGER, LONG, FLOAT, DOUBLE, BINARY, STRING, DATE, TIMESTAMP);
-
         List<StructField> fieldList = new ArrayList<>();
-        for (DataType dataType : primitiveTypeList) {
+        for (DataType dataType : BasePrimitiveType.getAllPrimitiveTypes()) {
             fieldList.add(structField("col1" + dataType, dataType, true));
             fieldList.add(structField("col2" + dataType, dataType, false));
             fieldList.add(structField("col3" + dataType, dataType, false, sampleMetadata()));
@@ -57,7 +41,8 @@ public class TestTableSchemaSerDe
 
         StructType expSchem = new StructType(fieldList);
         String serializedFormat = TableSchemaSerDe.toJson(expSchem);
-        StructType actSchema = TableSchemaSerDe.fromJson(new JsonHandlerTestImpl(), serializedFormat);
+        StructType actSchema =
+            TableSchemaSerDe.fromJson(new JsonHandlerTestImpl(), serializedFormat);
 
         assertEquals(expSchem, actSchema);
     }
@@ -67,14 +52,14 @@ public class TestTableSchemaSerDe
     {
         List<StructField> fieldList = new ArrayList<>();
 
-        ArrayType arrayType = array(INTEGER, true);
+        ArrayType arrayType = array(IntegerType.INSTANCE, true);
         ArrayType arrayArrayType = array(arrayType, false);
-        MapType mapType = map(FLOAT, BINARY, false);
-        MapType mapMapType = map(mapType, BINARY, true);
+        MapType mapType = map(FloatType.INSTANCE, BinaryType.INSTANCE, false);
+        MapType mapMapType = map(mapType, BinaryType.INSTANCE, true);
         StructType structType = new StructType()
-            .add("simple", DATE);
+            .add("simple", DateType.INSTANCE);
         StructType structAllType = new StructType()
-            .add("prim", BOOLEAN)
+            .add("prim", BooleanType.INSTANCE)
             .add("arr", arrayType)
             .add("map", mapType)
             .add("struct", structType);
@@ -88,7 +73,8 @@ public class TestTableSchemaSerDe
 
         StructType expSchem = new StructType(fieldList);
         String serializedFormat = TableSchemaSerDe.toJson(expSchem);
-        StructType actSchema = TableSchemaSerDe.fromJson(new JsonHandlerTestImpl(), serializedFormat);
+        StructType actSchema =
+            TableSchemaSerDe.fromJson(new JsonHandlerTestImpl(), serializedFormat);
 
         assertEquals(expSchem, actSchema);
     }
@@ -112,7 +98,8 @@ public class TestTableSchemaSerDe
         return new ArrayType(elemType, containsNull);
     }
 
-    private MapType map(DataType keyType, DataType valueType, boolean valueContainsNull) {
+    private MapType map(DataType keyType, DataType valueType, boolean valueContainsNull)
+    {
         return new MapType(keyType, valueType, valueContainsNull);
     }
 

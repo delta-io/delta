@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.types;
 
-import static io.delta.kernel.types.PrimitiveType.BOOLEAN;
-import static io.delta.kernel.types.PrimitiveType.STRING;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -98,8 +96,8 @@ public class TableSchemaSerDe
     {
         final String typeName = row.getString(ordinal);
 
-        if (PrimitiveType.isPrimitiveType(typeName)) {
-            return PrimitiveType.createPrimitive(typeName);
+        if (BasePrimitiveType.isPrimitiveType(typeName)) {
+            return BasePrimitiveType.createPrimitive(typeName);
         }
 
         // Check if it is decimal type
@@ -186,10 +184,11 @@ public class TableSchemaSerDe
      * Schema of the one member ({@link StructField}) in {@link StructType}.
      */
     private static final StructType STRUCT_FIELD_SCHEMA = new StructType()
-        .add("name", STRING)
+        .add("name", StringType.INSTANCE)
         .add("type", MixedDataType.INSTANCE) // Data type can be a string or a object.
-        .add("nullable", BOOLEAN)
-        .add("metadata", new MapType(STRING, STRING, false /* valueContainsNull*/));
+        .add("nullable", BooleanType.INSTANCE)
+        .add("metadata",
+            new MapType(StringType.INSTANCE, StringType.INSTANCE, false /* valueContainsNull */));
 
     /**
      * Schema of the serialized {@link StructType}.
@@ -201,24 +200,24 @@ public class TableSchemaSerDe
     /**
      * Example Array Type in serialized format
      * {
-     * "type" : "array",
-     * "elementType" : {
-     * "type" : "struct",
-     * "fields" : [ {
-     * "name" : "d",
-     * "type" : "integer",
-     * "nullable" : false,
-     * "metadata" : { }
-     * } ]
-     * },
-     * "containsNull" : true
+     *   "type" : "array",
+     *   "elementType" : {
+     *     "type" : "struct",
+     *     "fields" : [ {
+     *       "name" : "d",
+     *       "type" : "integer",
+     *       "nullable" : false,
+     *       "metadata" : { }
+     *     } ]
+     *   },
+     *   "containsNull" : true
      * }
      */
     private static StructType ARRAY_TYPE_SCHEMA =
         new StructType()
-            .add("type", STRING)
+            .add("type", StringType.INSTANCE)
             .add("elementType", MixedDataType.INSTANCE)
-            .add("containsNull", BOOLEAN);
+            .add("containsNull", BooleanType.INSTANCE);
 
     /**
      * Example Map Type in serialized format
@@ -231,10 +230,10 @@ public class TableSchemaSerDe
      */
     private static StructType MAP_TYPE_SCHEMA =
         new StructType()
-            .add("type", STRING)
+            .add("type", StringType.INSTANCE)
             .add("keyType", MixedDataType.INSTANCE)
             .add("valueType", MixedDataType.INSTANCE)
-            .add("valueContainsNull", BOOLEAN);
+            .add("valueContainsNull", BooleanType.INSTANCE);
 
     private static Pattern DECIMAL_TYPE_PATTERN =
         Pattern.compile("decimal\\(\\s*(?<precision>[0-9]+),\\s*(?<scale>[0-9]+)\\s*\\)");
