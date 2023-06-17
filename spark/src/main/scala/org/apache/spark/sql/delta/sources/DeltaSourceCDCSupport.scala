@@ -309,9 +309,23 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       verifyMetadataAction: Boolean = true): (Seq[FileAction], Boolean, Option[Metadata]) = {
     var shouldSkipIndexedFile = false
     var metadataAction: Option[Metadata] = None
+    def checkAndCacheMetadata(m: Metadata): Unit = {
+      if (verifyMetadataAction) {
+        checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
+      }
+      assert(metadataAction.isEmpty,
+        "Should not encounter two metadata actions in the same commit")
+      metadataAction = Some(m)
+    }
+
     if (actions.exists(_.isInstanceOf[AddCDCFile])) {
-      (actions.filter(_.isInstanceOf[AddCDCFile]).asInstanceOf[Seq[FileAction]],
-       shouldSkipIndexedFile, metadataAction)
+      (actions.filter {
+        case _: AddCDCFile => true
+        case m: Metadata =>
+          checkAndCacheMetadata(m)
+          false
+        case _ => false
+      }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile, metadataAction)
     } else {
       (actions.filter {
         case a: AddFile =>
@@ -319,12 +333,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case r: RemoveFile =>
           r.dataChange
         case m: Metadata =>
-          if (verifyMetadataAction) {
-            checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
-          }
-          assert(metadataAction.isEmpty,
-            "Should not encounter two metadata actions in the same commit")
-          metadataAction = Some(m)
+          checkAndCacheMetadata(m)
           false
         case protocol: Protocol =>
           deltaLog.protocolRead(protocol)

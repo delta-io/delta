@@ -475,8 +475,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * is valid.
    */
   def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
-    val physicalSchema =
-      createPhysicalSchema(schema, schema, NameMapping, checkSupportedMode = false)
+    val physicalSchema = renameColumns(schema)
 
     val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
 
@@ -580,6 +579,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         !isDropColumnOperation(newMetadata, upgradedMetadata)
     } else {
       // Not column mapping, don't block
+      // TODO: support column mapping downgrade check once that's rolled out.
       true
     }
   }

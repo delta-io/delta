@@ -432,12 +432,16 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     // Check schema read-compatibility
-    val forceEnableUnsafeBatchReadOnIncompatibleSchemaChanges =
+    val allowUnsafeBatchReadOnIncompatibleSchemaChanges =
       spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES)
 
+    if (allowUnsafeBatchReadOnIncompatibleSchemaChanges) {
+      recordDeltaEvent(deltaLog, "delta.unsafe.cdf.readOnColumnMappingSchemaChanges")
+    }
+
     val shouldCheckSchemaToBlockBatchRead =
-        !isStreaming && !forceEnableUnsafeBatchReadOnIncompatibleSchemaChanges
+      !isStreaming && !allowUnsafeBatchReadOnIncompatibleSchemaChanges
     /**
      * Check metadata (which may contain schema change)'s read compatibility with read schema.
      */

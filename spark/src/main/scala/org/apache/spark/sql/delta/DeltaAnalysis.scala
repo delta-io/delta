@@ -956,13 +956,12 @@ class DeltaAnalysis(session: SparkSession)
     inputQuery.foreach {
       case streamingRelation @ StreamingRelation(dataSourceV1, sourceName, _)
         if DeltaSourceUtils.isDeltaDataSourceName(sourceName) =>
-          val options = CaseInsensitiveMap(dataSourceV1.options)
-          options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION).orElse(
-            options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)
+          DeltaDataSource.extractSchemaTrackingLocationConfig(
+            session, dataSourceV1.options
           ).foreach { rootSchemaTrackingLocation =>
-            assert(options.get("path").isDefined, "Path for Delta table must be defined")
-            val log = DeltaLog.forTable(session, options.get("path").get)
-            val sourceIdOpt = options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
+            assert(dataSourceV1.options.contains("path"), "Path for Delta table must be defined")
+            val log = DeltaLog.forTable(session, dataSourceV1.options("path"))
+            val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
               DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
                 rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
@@ -978,6 +977,7 @@ class DeltaAnalysis(session: SparkSession)
           }
       case _ =>
     }
+
     // Now verify all schema locations are distinct
     val conflictSchemaOpt = schemaLocationMap
       .keys
