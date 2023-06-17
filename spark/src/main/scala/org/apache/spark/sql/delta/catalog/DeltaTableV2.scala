@@ -22,7 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, GeneratedColumn, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -166,7 +166,8 @@ case class DeltaTableV2(
 
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
-    new WriteIntoDeltaBuilder(deltaLog, info.options)
+    new WriteIntoDeltaBuilder(
+      deltaLog, info.options, spark.sessionState.conf.useNullsForMissingDefaultColumnValues)
   }
 
   /**
@@ -245,7 +246,8 @@ case class DeltaTableV2(
 
 private class WriteIntoDeltaBuilder(
     log: DeltaLog,
-    writeOptions: CaseInsensitiveStringMap)
+    writeOptions: CaseInsensitiveStringMap,
+    nullAsDefault: Boolean)
   extends WriteBuilder with SupportsOverwrite with SupportsTruncate with SupportsDynamicOverwrite {
 
   private var forceOverwrite = false
@@ -280,7 +282,15 @@ private class WriteIntoDeltaBuilder(
       new InsertableRelation {
         override def insert(data: DataFrame, overwrite: Boolean): Unit = {
           val session = data.sparkSession
-
+          // Normal table insertion should be the only place that can use null as the default
+          // column value. We put a special option here so that `TransactionalWrite#writeFiles`
+          // will recognize it and apply null-as-default.
+          if (nullAsDefault) {
+            options.put(
+              ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION,
+              "true"
+            )
+          }
           // TODO: Get the config from WriteIntoDelta's txn.
           WriteIntoDelta(
             log,

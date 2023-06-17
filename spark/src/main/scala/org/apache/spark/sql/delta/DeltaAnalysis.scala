@@ -826,9 +826,11 @@ class DeltaAnalysis(session: SparkSession)
         // here in case target attributes may have the metadata columns for Delta in future.
         throw DeltaErrors.schemaNotConsistentWithTarget(s"$tableSchema", s"$targetAttrs")
       }
+      val nullAsDefault = deltaTable.spark.sessionState.conf.useNullsForMissingDefaultColumnValues
       deltaTable.snapshot.metadata.schema.foreach { col =>
         if (!userSpecifiedNames.contains(col.name) &&
-          !ColumnWithDefaultExprUtils.columnHasDefaultExpr(deltaTable.snapshot.protocol, col)) {
+          !ColumnWithDefaultExprUtils.columnHasDefaultExpr(
+            deltaTable.snapshot.protocol, col, nullAsDefault)) {
           throw DeltaErrors.missingColumnsInInsertInto(col.name)
         }
       }

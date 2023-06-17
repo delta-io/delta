@@ -420,7 +420,12 @@ object DeltaMergeInto {
      */
     def resolveOrFail(expr: Expression, plan: LogicalPlan, mergeClauseType: String): Expression = {
       val resolvedExpr = resolveExpr(expr, plan)
-      resolvedExpr.flatMap(_.references).filter(!_.resolved).foreach { a =>
+      assertResolved(resolvedExpr, plan, mergeClauseType)
+      resolvedExpr
+    }
+
+    def assertResolved(expr: Expression, plan: LogicalPlan, mergeClauseType: String): Unit = {
+      expr.flatMap(_.references).filter(!_.resolved).foreach { a =>
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
         val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
@@ -429,7 +434,6 @@ object DeltaMergeInto {
           messageParameters = Array(a.sql, mergeClauseType, cols),
           origin = Some(a.origin))
       }
-      resolvedExpr
     }
 
     val canAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
@@ -513,25 +517,23 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = {
-              try {
-                DeltaUpdateTable.getTargetColNameParts(
-                  resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
-                  resolutionErrorMsg)
-              } catch {
-                // Allow schema evolution for update and insert non-star when the column is not in
-                // the target.
-                case _: AnalysisException
-                  if canAutoMigrate && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
-                    clause.isInstanceOf[DeltaMergeIntoNotMatchedClause]) =>
-                  DeltaUpdateTable.getTargetColNameParts(
-                    resolveOrFail(unresolvedAttrib, fakeSourcePlan, s"$typ clause"),
-                    resolutionErrorMsg)
-                case e: Throwable => throw e
-              }
+            val resolvedKey = try {
+              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause")
+            } catch {
+              // Allow schema evolution for update and insert non-star when the column is not in
+              // the target.
+              case _: AnalysisException
+                if canAutoMigrate && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
+                  clause.isInstanceOf[DeltaMergeIntoNotMatchedClause]) =>
+                resolveOrFail(unresolvedAttrib, fakeSourcePlan, s"$typ clause")
+              case e: Throwable => throw e
             }
 
-            val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
+            val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
+              resolvedKey, resolutionErrorMsg)
+
+            val resolvedExpr = resolveExpr(expr, planToResolveAction)
+            assertResolved(resolvedExpr, planToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
 
           case d: DeltaMergeAction =>

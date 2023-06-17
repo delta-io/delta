@@ -38,6 +38,7 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * Provide utilities to handle columns with default expressions.
  */
 object ColumnWithDefaultExprUtils extends DeltaLogging {
+  val USE_NULL_AS_DEFAULT_DELTA_OPTION = "__use_null_as_default"
 
   // Returns true if column `field` is defined as an IDENTITY column.
   def isIdentityColumn(field: StructField): Boolean = {
@@ -61,12 +62,24 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
   // insertion list).
-  def columnHasDefaultExpr(protocol: Protocol, col: StructField): Boolean = {
+  def columnHasDefaultExpr(
+      protocol: Protocol,
+      col: StructField,
+      nullAsDefault: Boolean): Boolean = {
+    GeneratedColumn.isGeneratedColumn(protocol, col)
+  }
+
+  // Return true if the column `col` cannot be included as the input data column of COPY INTO.
+  // TODO: ideally column with default value can be optionally excluded.
+  def shouldBeExcludedInCopyInto(protocol: Protocol, col: StructField): Boolean = {
     GeneratedColumn.isGeneratedColumn(protocol, col)
   }
 
   // Return true if the table with `metadata` has default expressions.
-  def tableHasDefaultExpr(protocol: Protocol, metadata: Metadata): Boolean = {
+  def tableHasDefaultExpr(
+      protocol: Protocol,
+      metadata: Metadata,
+      nullAsDefault: Boolean): Boolean = {
     GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
   }
 
@@ -79,34 +92,37 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
    * @param queryExecution Used to check whether the original query is a streaming query or not.
    * @param schema Table schema.
    * @param data The data to be written into the table.
+   * @param nullAsDefault If true, use null literal as the default value for missing columns.
    * @return The data with potentially additional default expressions projected and constraints
    *         from generated columns if any.
    */
   def addDefaultExprsOrReturnConstraints(
       deltaLog: DeltaLog,
+      protocol: Protocol,
       queryExecution: QueryExecution,
       schema: StructType,
-      data: DataFrame): (DataFrame, Seq[Constraint], Set[String]) = {
+      data: DataFrame,
+      nullAsDefault: Boolean): (DataFrame, Seq[Constraint], Set[String]) = {
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
     val track = mutable.Set[String]()
     var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
-        case Some(expr) =>
+        case Some(expr) if GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) =>
           if (topLevelOutputNames.contains(f.name)) {
             val column = SchemaUtils.fieldToColumn(f)
             // Add a constraint to make sure the value provided by the user is the same as the value
             // calculated by the generation expression.
             constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
-            Some(column.alias(f.name))
+            Some(column)
           } else {
             Some(new Column(expr).alias(f.name))
           }
-        case None =>
+        case _ =>
             if (topLevelOutputNames.contains(f.name) ||
                 !data.sparkSession.conf.get(DeltaSQLConf.GENERATED_COLUMN_ALLOW_NULLABLE)) {
-              Some(SchemaUtils.fieldToColumn(f).alias(f.name))
+              Some(SchemaUtils.fieldToColumn(f))
             } else {
               // we only want to consider columns that are in the data's schema or are generated
               // to allow DataFrame with null columns to be written.
