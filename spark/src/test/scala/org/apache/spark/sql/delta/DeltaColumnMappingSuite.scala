@@ -1120,6 +1120,36 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
+  testColumnMapping(
+    "column mapping batch scan should detect physical name changes",
+    enableSQLConf = true
+  ) { _ =>
+    withTempDir { dir =>
+      spark.range(10).toDF("id")
+        .write.format("delta").save(dir.getCanonicalPath)
+      // Analysis phase
+      val df = spark.read.format("delta").load(dir.getCanonicalPath)
+      // Overwrite schema but with same logical schema
+      spark.range(10).toDF("id")
+        .write.format("delta").option("overwriteSchema", "true").mode("overwrite")
+        .save(dir.getCanonicalPath)
+      // The previous analyzed DF no longer is able to read the data any more because it generates
+      // new physical name for the underlying columns, so we should fail.
+      assert {
+        intercept[DeltaAnalysisException] {
+          df.collect()
+        }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      }
+      // See we can't read back the same data any more
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key -> "false") {
+        checkAnswer(
+          df,
+          (0 until 10).map(_ => Row(null))
+        )
+      }
+    }
+  }
+
   protected def testPartitionPath(tableName: String)(createFunc: Boolean => Unit): Unit = {
     withTable(tableName) {
       Seq(true, false).foreach { isPartitioned =>

@@ -96,8 +96,10 @@ case class WriteIntoDelta(
       }
 
       val actions = write(txn, sparkSession)
-      val operation = DeltaOperations.Write(mode, Option(partitionColumns),
-        options.replaceWhere, options.userMetadata)
+      val operation = DeltaOperations.Write(
+        mode, Option(partitionColumns),
+        options.replaceWhere, options.userMetadata
+      )
       txn.commit(actions, operation)
 
     }
@@ -237,10 +239,6 @@ case class WriteIntoDelta(
           false
         }
       } else options.isDynamicPartitionOverwriteMode
-    }
-
-    if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {
-      throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()
     }
 
     // Validate partition predicates

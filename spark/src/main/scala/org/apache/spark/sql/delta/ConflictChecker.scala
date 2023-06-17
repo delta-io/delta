@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.RowId.RowIdHighWaterMark
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
@@ -51,7 +52,7 @@ private[delta] case class CurrentTransactionInfo(
     val actions: Seq[Action],
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
-    val readRowIdHighWatermark: RowIdHighWaterMark,
+    val readRowIdHighWatermark: Long,
     val domainMetadata: Seq[DomainMetadata]) {
 
   /**
@@ -345,6 +346,7 @@ private[delta] class ConflictChecker(
         winningDomainMetadataMap.get(domainMetadataFromCurrentTransaction.domain)) match {
         // No-conflict case.
         case (domain, None) => domain
+        case (domain, _) if RowIdHighWaterMark.isRowIdHighWaterMark(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
           throw new io.delta.exceptions.ConcurrentTransactionException(
@@ -377,7 +379,7 @@ private[delta] class ConflictChecker(
     // The current transaction should only assign Row Ids if they are supported.
     if (!RowId.isSupported(currentTransactionInfo.protocol)) return
 
-    val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark.highWaterMark
+    val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark
 
     // The winning transaction might have bumped the high water mark or not in case it did
     // not add new files to the table.
@@ -398,13 +400,13 @@ private[delta] class ConflictChecker(
         }
         Some(a.copy(baseRowId = Some(newBaseRowId)))
       // The RowIdHighWaterMark will be replaced if it exists.
-      case _: RowIdHighWaterMark => None
+      case d: DomainMetadata if RowIdHighWaterMark.isRowIdHighWaterMark(d) => None
       case a => Some(a)
     }
     currentTransactionInfo = currentTransactionInfo.copy(
       // Add RowIdHighWaterMark at the front for faster retrieval.
       actions = RowIdHighWaterMark(highWaterMark) +: actionsWithReassignedRowIds,
-      readRowIdHighWatermark = RowIdHighWaterMark(winningHighWaterMark))
+      readRowIdHighWatermark = winningHighWaterMark)
   }
 
   /**

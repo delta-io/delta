@@ -1262,10 +1262,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     assert(!committed, "Transaction already committed.")
 
-    // If the metadata has changed, add that to the set of actions
+    val (metadatasAndProtocols, otherActions) = actions
+      .partition(a => a.isInstanceOf[Metadata] || a.isInstanceOf[Protocol])
+
     // New metadata can come either from `newMetadata` or from the `actions` there.
-    var finalActions = newMetadata.toSeq ++ actions
-    val metadataChanges = finalActions.collect { case m: Metadata => m }
+    val metadataChanges =
+      newMetadata.toSeq ++ metadatasAndProtocols.collect { case m: Metadata => m }
     if (metadataChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.metadataCheck.multipleMetadataActions", data = Map(
         "metadataChanges" -> metadataChanges
@@ -1288,8 +1290,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // new table properties that enable features that require a protocol upgrade. These implicit
     // changes are usually captured in newProtocol. In case there is more than one protocol action,
     // it is likely that it is due to a mix of explicit and implicit changes.
-    finalActions = newProtocol.toSeq ++ finalActions
-    val protocolChanges = finalActions.collect { case p: Protocol => p }
+    val protocolChanges =
+      newProtocol.toSeq ++ metadatasAndProtocols.collect { case p: Protocol => p }
     if (protocolChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
         "protocolChanges" -> protocolChanges
@@ -1307,6 +1309,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
     }
 
+    // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
+    // Protocol change (stored in newProtocol)
+
+
+    var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
     // Block future cases of CDF + Column Mapping changes + file changes
     // This check requires having called

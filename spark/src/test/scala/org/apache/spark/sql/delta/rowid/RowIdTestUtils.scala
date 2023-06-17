@@ -46,14 +46,14 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     val snapshot = log.update()
     val files = snapshot.allFiles.collect()
 
-    val highWatermarkOpt = snapshot.rowIdHighWaterMarkOpt
+    val highWatermarkOpt = RowId.extractHighWatermark(snapshot)
     if (files.isEmpty) {
       assert(highWatermarkOpt.isDefined)
     } else {
       val maxAssignedRowId = files
         .map(a => a.baseRowId.get + a.numPhysicalRecords.get - 1L)
         .max
-      assert(highWatermarkOpt.get.highWaterMark == maxAssignedRowId)
+      assert(highWatermarkOpt.get == maxAssignedRowId)
     }
   }
 
@@ -64,8 +64,7 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
 
   def assertHighWatermarkIsCorrectAfterUpdate(
       log: DeltaLog, highWatermarkBeforeUpdate: Long, expectedNumRecordsWritten: Long): Unit = {
-    val highWaterMarkAfterUpdate =
-      RowId.extractHighWatermark(log.update()).get.highWaterMark
+    val highWaterMarkAfterUpdate = RowId.extractHighWatermark(log.update()).get
     assert((highWatermarkBeforeUpdate + expectedNumRecordsWritten) === highWaterMarkAfterUpdate)
     assertRowIdsAreValid(log)
   }
@@ -73,7 +72,7 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   def assertRowIdsAreNotSet(log: DeltaLog): Unit = {
     val snapshot = log.update()
 
-    val highWatermarks = snapshot.rowIdHighWaterMarkOpt
+    val highWatermarks = RowId.extractHighWatermark(snapshot)
     assert(highWatermarks.isEmpty)
 
     val files = snapshot.allFiles.collect()

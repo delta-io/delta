@@ -314,7 +314,7 @@ trait Checkpoints extends DeltaLogging {
    * Finds the first verified, complete checkpoint before the given [[CheckpointInstance]].
    * If `checkpointInstance` is passed as None, then we return the last complete checkpoint in the
    * deltalog directory.
-   * @param cv The checkpoint instance to compare against
+   * @param checkpointInstance The checkpoint instance to compare against
    */
   protected def findLastCompleteCheckpointBefore(
       checkpointInstance: Option[CheckpointInstance] = None): Option[CheckpointInstance] = {

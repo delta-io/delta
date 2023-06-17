@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Protocol}
+import org.apache.spark.sql.delta.actions._
+
 
 object DefaultRowCommitVersion {
   def assignIfMissing(

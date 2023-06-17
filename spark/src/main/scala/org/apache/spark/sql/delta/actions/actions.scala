@@ -197,6 +197,15 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  def forTableFeature(tf: TableFeature): Protocol = {
+    val writerFeatures = Some(Set(tf.name)) // every table feature is a writer feature
+    val readerFeatures = if (tf.isReaderWriterFeature) writerFeatures else None
+    val minReaderVersion = if (readerFeatures.isDefined) TABLE_FEATURES_MIN_READER_VERSION else 1
+    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+
+    new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures)
+  }
+
   /**
    * Picks the protocol version for a new table given the Delta table metadata. The result
    * satisfies all active features in the metadata and protocol-related configs in table
@@ -537,13 +546,6 @@ case class SetTransaction(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     lastUpdated: Option[Long]) extends Action {
   override def wrap: SingleAction = SingleAction(txn = this)
-}
-
-/**
- * Stores the highest (inclusive) ID that has been assigned to a row in during history of the table.
- */
-case class RowIdHighWaterMark(highWaterMark: Long) extends Action {
-  override def wrap: SingleAction = SingleAction(rowIdHighWaterMark = this)
 }
 
 /**
@@ -1165,7 +1167,6 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
-    rowIdHighWaterMark: RowIdHighWaterMark = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
@@ -1182,8 +1183,6 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
-    } else if (rowIdHighWaterMark != null) {
-      rowIdHighWaterMark
     } else if (domainMetadata != null) {
       domainMetadata
     } else if (commitInfo != null) {
