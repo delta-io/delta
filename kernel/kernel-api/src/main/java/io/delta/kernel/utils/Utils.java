@@ -16,6 +16,7 @@
 
 package io.delta.kernel.utils;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 
@@ -182,22 +183,23 @@ public class Utils
     }
 
     /**
-     * Close the given one or more {@link CloseableIterator}s. {@link CloseableIterator#close()}
-     * will be called on all given non-null iterators. Will throw unchecked {@link RuntimeException}
-     * if an error occurs while closing. If multiple iterators causes exceptions in closing, the
-     * exceptions will be added as suppressed to the main exception that is thrown.
+     * Close the given one or more {@link Closeable}s. {@link Closeable#close()}
+     * will be called on all given non-null closeables. Will throw unchecked
+     * {@link RuntimeException} if an error occurs while closing. If multiple closeables causes
+     * exceptions in closing, the exceptions will be added as suppressed to the main exception
+     * that is thrown.
      *
-     * @param iters
+     * @param closeables
      */
-    public static void closeIterators(CloseableIterator<? extends Object>... iters)
+    public static void closeCloseables(Closeable... closeables)
     {
         RuntimeException exception = null;
-        for (CloseableIterator<? extends Object> iter : iters) {
-            if (iter == null) {
+        for (Closeable closeable : closeables) {
+            if (closeable == null) {
                 continue;
             }
             try {
-                iter.close();
+                closeable.close();
             }
             catch (Exception ex) {
                 if (exception == null) {

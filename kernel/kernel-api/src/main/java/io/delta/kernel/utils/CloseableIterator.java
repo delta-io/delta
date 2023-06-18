@@ -24,9 +24,11 @@ import java.util.function.Function;
 
 public interface CloseableIterator<T> extends Iterator<T>, Closeable
 {
-    default <U> CloseableIterator<U> map(Function<T, U> mapper) {
+    default <U> CloseableIterator<U> map(Function<T, U> mapper)
+    {
         CloseableIterator<T> delegate = this;
-        return new CloseableIterator<U>() {
+        return new CloseableIterator<U>()
+        {
             @Override
             public void remove()
             {
@@ -53,7 +55,7 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable
 
             @Override
             public void close()
-                    throws IOException
+                throws IOException
             {
                 delegate.close();
             }

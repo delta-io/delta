@@ -33,7 +33,6 @@ public class DefaultStructVector
     extends AbstractColumnVector
 {
     private final ColumnVector[] memberVectors;
-    private final int size;
 
     /**
      * Create an instance of {@link ColumnVector} for {@code struct} type.
@@ -57,7 +56,6 @@ public class DefaultStructVector
             structType.length() == memberVectors.length,
             "expected a one column vector for each member");
         this.memberVectors = memberVectors;
-        this.size = size;
     }
 
     @Override
@@ -107,6 +105,18 @@ public class DefaultStructVector
         }
 
         @Override
+        public byte getByte(int ordinal)
+        {
+            return structVector.memberVectors[ordinal].getByte(rowId);
+        }
+
+        @Override
+        public short getShort(int ordinal)
+        {
+            return structVector.memberVectors[ordinal].getShort(rowId);
+        }
+
+        @Override
         public int getInt(int ordinal)
         {
             return structVector.memberVectors[ordinal].getInt(rowId);
@@ -119,9 +129,27 @@ public class DefaultStructVector
         }
 
         @Override
+        public float getFloat(int ordinal)
+        {
+            return structVector.memberVectors[ordinal].getFloat(rowId);
+        }
+
+        @Override
+        public double getDouble(int ordinal)
+        {
+            return structVector.memberVectors[ordinal].getDouble(rowId);
+        }
+
+        @Override
         public String getString(int ordinal)
         {
             return structVector.memberVectors[ordinal].getString(rowId);
+        }
+
+        @Override
+        public byte[] getBinary(int ordinal)
+        {
+            return structVector.memberVectors[ordinal].getBinary(rowId);
         }
 
         @Override

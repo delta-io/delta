@@ -15,7 +15,9 @@
  */
 package io.delta.kernel;
 
-import java.util.ArrayList;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -29,6 +31,8 @@ import io.delta.kernel.types.StructType;
 
 public class DefaultKernelUtils
 {
+    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+
     private DefaultKernelUtils() {}
 
     /**
@@ -160,5 +164,16 @@ public class DefaultKernelUtils
         if (!isValid) {
             throw new IllegalStateException(message);
         }
+    }
+
+    /**
+     * Utility method to get the number of days since epoch this given date is.
+     *
+     * @param date
+     */
+    public static int daysSinceEpoch(Date date)
+    {
+        LocalDate localDate = date.toLocalDate();
+        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 }

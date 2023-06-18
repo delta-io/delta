@@ -39,6 +39,10 @@ public abstract class AbstractColumnVector
     protected AbstractColumnVector(int size, DataType dataType, Optional<boolean[]> nullability)
     {
         checkArgument(size >= 0, "invalid size: %s", size);
+        nullability.ifPresent(array ->
+            checkArgument(array.length >= size,
+                "invalid number of values (%s) for given size (%s)", array.length, size)
+        );
         this.size = size;
         this.dataType = requireNonNull(dataType);
         this.nullability = requireNonNull(nullability);
@@ -165,7 +169,7 @@ public abstract class AbstractColumnVector
     protected void checkValidRowId(int rowId)
     {
         if (rowId < 0 || rowId >= size) {
-            throw new IllegalArgumentException("invalid row access");
+            throw new IllegalArgumentException("invalid row access: " + rowId);
         }
     }
 }
