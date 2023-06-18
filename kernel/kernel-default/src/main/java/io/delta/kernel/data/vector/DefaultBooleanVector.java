@@ -43,13 +43,6 @@ public class DefaultBooleanVector
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);
-        if (nullability.isPresent()) {
-            checkArgument(values.length == nullability.get().length,
-                "vector element components are not of same size" +
-                    "value array size = %s, nullability array size = %s",
-                values.length, nullability.get().length
-            );
-        }
     }
 
     /**

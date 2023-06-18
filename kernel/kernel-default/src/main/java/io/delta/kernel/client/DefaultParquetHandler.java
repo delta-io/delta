@@ -21,15 +21,13 @@ import org.apache.hadoop.conf.Configuration;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.parquet.ParquetBatchReader;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
-public class DefaultParquetHandler
-    implements ParquetHandler
+public class DefaultParquetHandler extends DefaultFileHandler implements ParquetHandler
 {
     private final Configuration hadoopConf;
 
@@ -39,22 +37,8 @@ public class DefaultParquetHandler
     }
 
     @Override
-    public CloseableIterator<FileReadContext> contextualizeFileReads(
-        CloseableIterator<Row> fileIter,
-        Expression predicate)
-    {
-        return fileIter.map(
-            scanFileRow -> {
-                Row row = fileIter.next();
-                return () -> row;
-            }
-        );
-    }
-
-    @Override
     public CloseableIterator<FileDataReadResult> readParquetFiles(
-        CloseableIterator<FileReadContext> fileIter,
-        StructType physicalSchema) throws IOException
+        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) throws IOException
     {
         return new CloseableIterator<FileDataReadResult>()
         {
@@ -63,10 +47,9 @@ public class DefaultParquetHandler
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
-            public void close()
-                throws IOException
+            public void close() throws IOException
             {
-                Utils.closeIterators(currentFileReader, fileIter);
+                Utils.closeCloseables(currentFileReader, fileIter);
             }
 
             @Override
@@ -76,7 +59,8 @@ public class DefaultParquetHandler
                 // initialize the next file reader or return false if there are no more files to
                 // read.
                 if (currentFileReader == null || !currentFileReader.hasNext()) {
-                    Utils.closeIterators(currentFileReader);
+                    Utils.closeCloseables(currentFileReader);
+                    currentFileReader = null;
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
                         FileStatus fileStatus = Utils.getFileStatus(currentFile.getScanFileRow());

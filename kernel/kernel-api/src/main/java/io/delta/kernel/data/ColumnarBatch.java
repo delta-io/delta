@@ -19,6 +19,8 @@ package io.delta.kernel.data;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
+import io.delta.kernel.internal.data.ColumnarBatchRow;
+
 /**
  * Represents zero or more rows of records with same schema type.
  */
@@ -55,8 +57,30 @@ public interface ColumnarBatch {
     /**
      * @return iterator of {@link Row}s in this batch
      */
-    default CloseableIterator<Row> getRows() {
-        // TODO needs io.delta.kernel.internal.ColumnarBatchRow
-        throw new UnsupportedOperationException("Not yet implemented!");
+    default CloseableIterator<Row> getRows()
+    {
+        final ColumnarBatch batch = this;
+        return new CloseableIterator<Row>()
+        {
+            int rowId = 0;
+            int maxRowId = getSize();
+
+            @Override
+            public boolean hasNext()
+            {
+                return rowId < maxRowId;
+            }
+
+            @Override
+            public Row next()
+            {
+                Row row = new ColumnarBatchRow(batch, rowId);
+                rowId += 1;
+                return row;
+            }
+
+            @Override
+            public void close() {}
+        };
     }
 }

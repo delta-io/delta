@@ -231,6 +231,18 @@ public class JsonHandlerTestImpl
         }
 
         @Override
+        public byte getByte(int ordinal)
+        {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public short getShort(int ordinal)
+        {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
         public int getInt(int ordinal)
         {
             return (int) parsedValues[ordinal];
@@ -243,9 +255,27 @@ public class JsonHandlerTestImpl
         }
 
         @Override
+        public float getFloat(int ordinal)
+        {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public double getDouble(int ordinal)
+        {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
         public String getString(int ordinal)
         {
             return (String) parsedValues[ordinal];
+        }
+
+        @Override
+        public byte[] getBinary(int ordinal)
+        {
+            throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
