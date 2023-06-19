@@ -473,7 +473,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[AnalysisException] {
           f
         }
-        assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
+          assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
       }
 
       assertFormatFailure {
