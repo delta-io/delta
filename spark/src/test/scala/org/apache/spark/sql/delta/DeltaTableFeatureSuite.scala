@@ -272,6 +272,24 @@ class DeltaTableFeatureSuite
     assert(p.implicitlySupportedFeatures.isEmpty)
   }
 
+  test("Table features are not automatically enabled by default table property settings") {
+    withTable("tbl") {
+      spark.range(10).write.format("delta").saveAsTable("tbl")
+      val metadata = DeltaLog.forTable(spark, TableIdentifier("tbl")).update().metadata
+      TableFeature.allSupportedFeaturesMap.values.foreach {
+        case feature: FeatureAutomaticallyEnabledByMetadata =>
+          assert(
+            !feature.metadataRequiresFeatureToBeEnabled(metadata, spark),
+            s"""
+               |${feature.name} is automatically enabled by the default metadata. This will lead to
+               |the inability of reading existing tables that do not have the feature enabled and
+               |should not reach production! If this is only for testing purposes, ignore this test.
+               """.stripMargin)
+        case _ =>
+      }
+    }
+  }
+
   test("Can enable legacy metadata table feature by setting default table property key") {
     withSQLConf(
       s"$DEFAULT_FEATURE_PROP_PREFIX${TestWriterFeature.name}" -> "enabled",
