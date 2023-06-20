@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 /**
  * Base class for all primitive types {@link DataType}.
  */
-class BasePrimitiveType extends DataType
+public abstract class BasePrimitiveType extends DataType
 {
     /**
      * Create a primitive type {@link DataType}
@@ -32,7 +32,7 @@ class BasePrimitiveType extends DataType
      * @param primitiveTypeName Primitive type name.
      * @return
      */
-    protected static DataType createPrimitive(String primitiveTypeName)
+    public static DataType createPrimitive(String primitiveTypeName)
     {
         return Optional.ofNullable(nameToPrimitiveTypeMap.get(primitiveTypeName))
             .orElseThrow(
@@ -42,13 +42,13 @@ class BasePrimitiveType extends DataType
     /**
      * Is the given type name a primitive type?
      */
-    protected static boolean isPrimitiveType(String typeName)
+    public static boolean isPrimitiveType(String typeName)
     {
         return nameToPrimitiveTypeMap.containsKey(typeName);
     }
 
     /** For testing only */
-    protected static List<DataType> getAllPrimitiveTypes() {
+    public static List<DataType> getAllPrimitiveTypes() {
         return nameToPrimitiveTypeMap.values().stream().collect(Collectors.toList());
     }
 

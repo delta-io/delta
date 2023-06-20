@@ -13,11 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.types;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -26,6 +27,17 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BasePrimitiveType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DecimalType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.MixedDataType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
 /**
@@ -68,12 +80,15 @@ public class TableSchemaSerDe
      */
     private static StructType parseStructType(JsonHandler jsonHandler, String serializedStructType)
     {
-        Row row = parse(jsonHandler, serializedStructType, STRUCT_TYPE_SCHEMA);
-        final List<Row> fields = row.getArray(0);
-        return new StructType(
-            fields.stream()
-                .map(field -> parseStructField(jsonHandler, field))
-                .collect(Collectors.toList()));
+        Function<Row, StructType> evalMethod = (row) -> {
+            final List<Row> fields = row.getArray(0);
+            return new StructType(
+                fields.stream()
+                    .map(field -> parseStructField(jsonHandler, field))
+                    .collect(Collectors.toList()));
+        };
+        return parseAndEvalSingleRow(
+            jsonHandler, serializedStructType, STRUCT_TYPE_SCHEMA, evalMethod);
     }
 
     /**
@@ -82,7 +97,8 @@ public class TableSchemaSerDe
     private static StructField parseStructField(JsonHandler jsonHandler, Row row)
     {
         String name = row.getString(0);
-        DataType type = parseDataType(jsonHandler, row, 1);
+        String serializedDataType = row.getString(1);
+        DataType type = parseDataType(jsonHandler, serializedDataType);
         boolean nullable = row.getBoolean(2);
         Map<String, String> metadata = row.getMap(3);
 
@@ -92,24 +108,23 @@ public class TableSchemaSerDe
     /**
      * Utility method to parse the data type from the {@link Row}.
      */
-    private static DataType parseDataType(JsonHandler jsonHandler, Row row, int ordinal)
+    private static DataType parseDataType(JsonHandler jsonHandler, String serializedDataType)
     {
-        final String typeName = row.getString(ordinal);
-
-        if (BasePrimitiveType.isPrimitiveType(typeName)) {
-            return BasePrimitiveType.createPrimitive(typeName);
+        if (BasePrimitiveType.isPrimitiveType(serializedDataType)) {
+            return BasePrimitiveType.createPrimitive(serializedDataType);
         }
 
         // Check if it is decimal type
-        if (typeName.startsWith("decimal")) {
-            if (typeName.equalsIgnoreCase("decimal")) {
+        if (serializedDataType.startsWith("decimal")) {
+            if (serializedDataType.equalsIgnoreCase("decimal")) {
                 return DecimalType.USER_DEFAULT;
             }
 
             // parse the precision and scale
-            Matcher matcher = DECIMAL_TYPE_PATTERN.matcher(typeName);
+            Matcher matcher = DECIMAL_TYPE_PATTERN.matcher(serializedDataType);
             if (!matcher.matches()) {
-                throw new IllegalArgumentException("Invalid decimal type format: " + typeName);
+                throw new IllegalArgumentException(
+                    "Invalid decimal type format: " + serializedDataType);
             }
             return new DecimalType(
                 Integer.valueOf(matcher.group("precision")),
@@ -117,67 +132,83 @@ public class TableSchemaSerDe
         }
         // This must be a complex type which is described as an JSON object.
 
-        Optional<ArrayType> arrayType = parseAsArrayType(jsonHandler, typeName);
+        Optional<ArrayType> arrayType = parseAsArrayType(jsonHandler, serializedDataType);
         if (arrayType.isPresent()) {
             return arrayType.get();
         }
 
-        Optional<MapType> mapType = parseAsMapType(jsonHandler, typeName);
+        Optional<MapType> mapType = parseAsMapType(jsonHandler, serializedDataType);
         if (mapType.isPresent()) {
             return mapType.get();
         }
 
-        return parseStructType(jsonHandler, typeName);
+        return parseStructType(jsonHandler, serializedDataType);
     }
 
     private static Optional<ArrayType> parseAsArrayType(JsonHandler jsonHandler, String json)
     {
-        Row row = parse(jsonHandler, json, ARRAY_TYPE_SCHEMA);
-        if (!"array".equalsIgnoreCase(row.getString(0))) {
-            return Optional.empty();
-        }
+        Function<Row, Optional<ArrayType>> evalMethod = (row) -> {
+            if (!"array".equalsIgnoreCase(row.getString(0))) {
+                return Optional.empty();
+            }
 
-        if (row.isNullAt(1) || row.isNullAt(2)) {
-            throw new IllegalArgumentException("invalid array serialized format: " + json);
-        }
+            if (row.isNullAt(1) || row.isNullAt(2)) {
+                throw new IllegalArgumentException("invalid array serialized format: " + json);
+            }
 
-        // Now parse the element type and create an array data type object
-        DataType elementType = parseDataType(jsonHandler, row, 1);
-        boolean containsNull = row.getBoolean(2);
+            // Now parse the element type and create an array data type object
+            DataType elementType = parseDataType(jsonHandler, row.getString(1));
+            boolean containsNull = row.getBoolean(2);
 
-        return Optional.of(new ArrayType(elementType, containsNull));
+            return Optional.of(new ArrayType(elementType, containsNull));
+        };
+
+        return parseAndEvalSingleRow(jsonHandler, json, ARRAY_TYPE_SCHEMA, evalMethod);
     }
 
     private static Optional<MapType> parseAsMapType(JsonHandler jsonHandler, String json)
     {
-        Row row = parse(jsonHandler, json, MAP_TYPE_SCHEMA);
-        if (!"map".equalsIgnoreCase(row.getString(0))) {
-            return Optional.empty();
-        }
+        Function<Row, Optional<MapType>> evalMethod = (row -> {
+            if (!"map".equalsIgnoreCase(row.getString(0))) {
+                return Optional.empty();
+            }
 
-        if (row.isNullAt(1) || row.isNullAt(2) || row.isNullAt(3)) {
-            throw new IllegalArgumentException("invalid map serialized format: " + json);
-        }
+            if (row.isNullAt(1) || row.isNullAt(2) || row.isNullAt(3)) {
+                throw new IllegalArgumentException("invalid map serialized format: " + json);
+            }
 
-        // Now parse the key and value types and create a map data type object
-        DataType keyType = parseDataType(jsonHandler, row, 1);
-        DataType valueType = parseDataType(jsonHandler, row, 2);
-        boolean valueContainsNull = row.getBoolean(3);
+            // Now parse the key and value types and create a map data type object
+            DataType keyType = parseDataType(jsonHandler, row.getString(1));
+            DataType valueType = parseDataType(jsonHandler, row.getString(2));
+            boolean valueContainsNull = row.getBoolean(3);
 
-        return Optional.of(new MapType(keyType, valueType, valueContainsNull));
+            return Optional.of(new MapType(keyType, valueType, valueContainsNull));
+        });
+
+        return parseAndEvalSingleRow(jsonHandler, json, MAP_TYPE_SCHEMA, evalMethod);
     }
 
     /**
      * Helper method to parse a single json string
      */
-    private static Row parse(JsonHandler jsonHandler, String jsonString, StructType outputSchema)
+    private static <R> R parseAndEvalSingleRow(
+        JsonHandler jsonHandler,
+        String jsonString,
+        StructType outputSchema,
+        Function<Row, R> evalFunction)
     {
         ColumnVector columnVector = Utils.singletonColumnVector(jsonString);
         ColumnarBatch result = jsonHandler.parseJson(columnVector, outputSchema);
 
         assert result.getSize() == 1;
 
-        return result.getRows().next();
+        CloseableIterator<Row> rows = result.getRows();
+        try {
+            return evalFunction.apply(rows.next());
+        }
+        finally {
+            Utils.safeClose(rows);
+        }
     }
 
     /**
@@ -200,17 +231,17 @@ public class TableSchemaSerDe
     /**
      * Example Array Type in serialized format
      * {
-     *   "type" : "array",
-     *   "elementType" : {
-     *     "type" : "struct",
-     *     "fields" : [ {
-     *       "name" : "d",
-     *       "type" : "integer",
-     *       "nullable" : false,
-     *       "metadata" : { }
-     *     } ]
-     *   },
-     *   "containsNull" : true
+     * "type" : "array",
+     * "elementType" : {
+     * "type" : "struct",
+     * "fields" : [ {
+     * "name" : "d",
+     * "type" : "integer",
+     * "nullable" : false,
+     * "metadata" : { }
+     * } ]
+     * },
+     * "containsNull" : true
      * }
      */
     private static StructType ARRAY_TYPE_SCHEMA =

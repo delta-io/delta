@@ -125,7 +125,7 @@ public class Utils {
 
     /**
      * Utility method to get the physical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}}.
+     * {@link Scan#getScanState(TableClient)}.
      *
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
@@ -147,5 +147,17 @@ public class Utils {
         Long size = scanFileInfo.getLong(2);
 
         return FileStatus.of(path, size, 0);
+    }
+
+    /**
+     * Close the iterator.
+     * @param i1
+     */
+    public static void safeClose(CloseableIterator i1) {
+        try {
+            i1.close();
+        } catch (IOException ioe) {
+            throw new RuntimeException(ioe);
+        }
     }
 }

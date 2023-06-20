@@ -36,7 +36,7 @@ import io.delta.kernel.data.ColumnVector;
  *   }
  *  </pre>
  * <p>
- * `map` type column schema is serailized as:
+ * `struct` type column schema is serialized as:
  * <pre>
  *   {
  *     "type" : "struct",

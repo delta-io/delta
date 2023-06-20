@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.types;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,6 +22,22 @@ import java.util.List;
 import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import org.junit.Test;
+
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BasePrimitiveType;
+import io.delta.kernel.types.BinaryType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
+import io.delta.kernel.types.DecimalType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.types.JsonHandlerTestImpl;
+import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class TestTableSchemaSerDe
 {

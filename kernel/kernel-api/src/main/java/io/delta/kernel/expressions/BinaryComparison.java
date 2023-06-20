@@ -18,6 +18,8 @@ package io.delta.kernel.expressions;
 
 import java.util.Comparator;
 
+import io.delta.kernel.internal.expressions.CastingComparator;
+
 /**
  * A {@link BinaryOperator} that compares the left and right {@link Expression}s and evaluates to a
  * boolean value.

@@ -1,4 +1,4 @@
-package io.delta.kernel.types;
+package io.delta.kernel.internal.types;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,6 +17,16 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.MixedDataType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 

@@ -35,6 +35,11 @@ public final class DecimalType extends DataType
 
     public DecimalType(int precision, int scale)
     {
+        if (precision < 0 || precision > 38 || scale < 0 || scale > 38 || scale > precision) {
+            throw new IllegalArgumentException(String.format(
+                "Invalid precision and scale combo (%d, %d). They should be in the range [0, 38] " +
+                    "and scale can not be more than the precision.", precision, scale));
+        }
         this.precision = precision;
         this.scale = scale;
     }
