@@ -5,6 +5,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
+        # These Scala versions must match those in the build.sbt
         scala: [2.12.15, 2.13.5]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
