@@ -600,8 +600,9 @@ object DeltaLog extends DeltaLogging {
   /** The name of the subdirectory that holds Delta metadata files */
   private val LOG_DIR_NAME = "_delta_log"
 
-  private[delta] def logPathFor(dataPath: String): Path = new Path(dataPath, LOG_DIR_NAME)
-  private[delta] def logPathFor(dataPath: Path): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
+  private[delta] def logPathFor(dataPath: Path): Path =
+    DeltaTableUtils.safeConcatPaths(dataPath, LOG_DIR_NAME)
   private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
 
   /**
