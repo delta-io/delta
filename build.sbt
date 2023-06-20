@@ -872,6 +872,14 @@ lazy val flink = (project in file("connectors/flink"))
            |""".stripMargin)
       Seq(file)
     },
+
+    // Javadoc settings needed for successful doc generation needed for publishing.
+    Compile / doc / javacOptions ++= Seq(
+      "-public",
+      "-noqualifier", "java.lang",
+      "-tag", "implNote:a:Implementation Note:",
+      "-tag", "apiNote:a:API Note:",
+      "-Xdoclint:all")
   )
 
 
