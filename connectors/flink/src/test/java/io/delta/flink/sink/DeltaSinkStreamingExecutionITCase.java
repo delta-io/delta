@@ -468,7 +468,7 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
             return stream
                 .filter(file -> !Files.isDirectory(file))
                 .map(file -> file.getFileName().toString())
-                .filter(fileName -> !fileName.endsWith(".json"))
+                .filter(fileName -> fileName.endsWith(".checkpoint.parquet"))
                 .collect(Collectors.toList());
         }
     }
