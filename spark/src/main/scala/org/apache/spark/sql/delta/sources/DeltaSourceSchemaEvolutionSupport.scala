@@ -89,19 +89,20 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    * legacy mode), we will ignore the schema log.
    */
   protected def trackingSchemaChange: Boolean =
-    !forceEnableStreamingReadOnColumnMappingSchemaChanges &&
+    !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
       schemaTrackingLog.flatMap(_.getCurrentTrackedSchema).nonEmpty
 
   /**
-   * Whether a schema tracking log is provided (and is empty), so we could initialize.
+   * Whether a schema tracking log is provided (and is empty), so we could initialize eagerly.
    * This should only be used for the first write to the schema log, after then, schema tracking
    * should not rely on this state any more.
    */
-  protected def readyToInitializeSchemaTrackingUponProvided: Boolean =
-    !forceEnableStreamingReadOnColumnMappingSchemaChanges &&
+  protected def readyToInitializeSchemaTrackingEagerly: Boolean =
+    !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
       schemaTrackingLog.exists { log =>
         log.getCurrentTrackedSchema.isEmpty && log.initSchemaLogEagerly
       }
+
 
   /**
    * This is called from getFileChangesWithRateLimit() during latestOffset().
@@ -127,12 +128,12 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    *    phase and we are using the merged schema as the read schema. All the schema changes in
    *    between can be safely ignored because they won't contribute any data.
    */
-  protected def hasSchemaChangeComparedToStreamSchema(
-      newSchema: StructType,
+  private def hasSchemaChangeComparedToStreamSchema(
+      newMetadata: Metadata,
       newSchemaVersion: Long): Boolean =
-    newSchema != readSchemaAtSourceInit && !persistedSchemaAtSourceInit.exists { schemaEntry =>
-      schemaEntry.deltaCommitVersion >= newSchemaVersion
-    }
+    (newMetadata.schema != readSchemaAtSourceInit ||
+      newMetadata.partitionSchema != readPartitionSchemaAtSourceInit) &&
+      !persistedSchemaAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)
 
   /**
    * If the current stream schema is not equal to the schema change in [[metadataChangeOpt]], return
@@ -141,9 +142,8 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    */
   protected def getSchemaChangeIndexedFileIterator(
       metadataChangeOpt: Option[Metadata], version: Long): ClosableIterator[IndexedFile] = {
-    // TODO: It would be nice to capture partition schema change as well.
     if (trackingSchemaChange &&
-        metadataChangeOpt.exists(m => hasSchemaChangeComparedToStreamSchema(m.schema, version))) {
+        metadataChangeOpt.exists(m => hasSchemaChangeComparedToStreamSchema(m, version))) {
       // Create an IndexedFile with metadata change
       Iterator.single(IndexedFile(version, DeltaSourceOffset.SCHEMA_CHANGE_INDEX, null)).toClosable
     } else {
@@ -185,7 +185,7 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    */
   private def resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(
       startVersion: Long, endVersion: Long): (Long, Metadata) = {
-    assert(readyToInitializeSchemaTrackingUponProvided)
+    assert(readyToInitializeSchemaTrackingEagerly)
     val schemaChanges = collectMetadataActions(startVersion, endVersion)
     // If no schema changes in between, just serve the start version
     val startSchemaMetadata = getSnapshotFromDeltaLog(startVersion).metadata
@@ -217,7 +217,7 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
   /**
    * If we know there must exist a schema change at `version`, we read it out directly.
    */
-  private def collectSchemaChangeAtVersion(version: Long): Metadata = {
+  private def collectMetadataChangeAtVersion(version: Long): Metadata = {
     val Seq((_, metadata)) = collectMetadataActions(version, version)
     metadata
   }
@@ -240,7 +240,7 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
     // occurred, simply block as no-op.
     if (previousOffset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
       hasSchemaChangeComparedToStreamSchema(
-        collectSchemaChangeAtVersion(previousOffset.reservoirVersion).schema,
+        collectMetadataChangeAtVersion(previousOffset.reservoirVersion),
         previousOffset.reservoirVersion)) {
       return Some(previousOffset)
     }
@@ -256,9 +256,12 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    * @param batchEndVersionOpt Optionally, if we are looking at a constructed batch with existing
    *                           end offset, we need to double verify to ensure no read-incompatible
    *                           within the batch range.
+   * @param alwaysFail Whether we should always fail with the schema evolution exception.
    */
   protected def initializeSchemaTrackingAndExitStream(
-      batchStartVersion: Long, batchEndVersionOpt: Option[Long] = None): Unit = {
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
+      alwaysFail: Boolean = false): Unit = {
     // If possible, initialize the schema log with the desired start schema instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
@@ -269,11 +272,10 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
         val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
         (startSnapshot.version, startSnapshot.metadata)
       }
-    val schemaToUse =
-      PersistedSchema(tableId, version, metadata.schema, metadata.partitionSchema, metadataPath)
+    val schemaToUse = PersistedSchema(tableId, version, metadata, metadataPath)
     // Always initialize the schema log
     schemaTrackingLog.get.writeNewSchema(schemaToUse)
-    if (hasSchemaChangeComparedToStreamSchema(metadata.schema, version)) {
+    if (hasSchemaChangeComparedToStreamSchema(metadata, version) || alwaysFail) {
       // But trigger schema evolution exception when there's a difference
       throw DeltaErrors.streamingSchemaEvolutionException(schemaToUse.dataSchema)
     }
@@ -292,12 +294,11 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
           offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX)) {
 
       // The offset must point to a schema change metadata action
-      val schemaChange = collectSchemaChangeAtVersion(offset.reservoirVersion)
+      val schemaChangeMetadata = collectMetadataChangeAtVersion(offset.reservoirVersion)
       val schemaToPersist = PersistedSchema(
         deltaLog.tableId,
         offset.reservoirVersion,
-        schemaChange.schema,
-        schemaChange.partitionSchema,
+        schemaChangeMetadata,
         metadataPath
       )
 
@@ -309,11 +310,11 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
       // second one is committed.
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
-      if (hasSchemaChangeComparedToStreamSchema(schemaChange.schema, offset.reservoirVersion)) {
+      if (hasSchemaChangeComparedToStreamSchema(schemaChangeMetadata, offset.reservoirVersion)) {
         // Update schema log
         schemaTrackingLog.get.writeNewSchema(schemaToPersist)
         // Fail the stream with schema evolution exception
-        throw DeltaErrors.streamingSchemaEvolutionException(schemaChange.schema)
+        throw DeltaErrors.streamingSchemaEvolutionException(schemaChangeMetadata.schema)
       }
     }
   }

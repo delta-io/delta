@@ -105,17 +105,6 @@ class GeneratedColumnCompatibilitySuite extends GeneratedColumnTest {
           )
         }
 
-        def updateTableAndAssertMissingColumn(func: String => Unit): Unit = {
-          val e = intercept[AnalysisException] {
-            func(path)
-          }
-          assert(e.getMessage.contains("Column c2 is not specified in INSERT"))
-          val e2 = intercept[AnalysisException] {
-            func(normalTablePath)
-          }
-          assert(e2.getMessage.contains("Column c2 is not specified in INSERT"))
-        }
-
 
         // Insert values that violate the generation expression should be okay because the table
         // should not be treated as a generated column table.

@@ -67,8 +67,8 @@ class DomainMetadataSuite
         var deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
         assert(deltaLog.unsafeVolatileSnapshot.domainMetadata.isEmpty)
 
-        val domainMetadata = DomainMetadata("testDomain1", Map.empty, false) ::
-          DomainMetadata("testDomain2", Map("key1" -> "value1"), false) :: Nil
+        val domainMetadata = DomainMetadata("testDomain1", "", false) ::
+          DomainMetadata("testDomain2", "{\"key1\":\"value1\"", false) :: Nil
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
         assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
@@ -109,8 +109,8 @@ class DomainMetadataSuite
         var deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
         assert(deltaLog.unsafeVolatileSnapshot.domainMetadata.isEmpty)
 
-        val domainMetadata = DomainMetadata("testDomain1", Map.empty, false) ::
-          DomainMetadata("testDomain2", Map("key1" -> "value1"), false) :: Nil
+        val domainMetadata = DomainMetadata("testDomain1", "", false) ::
+          DomainMetadata("testDomain2", "{\"key1\":\"value1\"}", false) :: Nil
 
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
@@ -118,10 +118,10 @@ class DomainMetadataSuite
 
         // Delete testDomain1.
         deltaLog.startTransaction().commit(
-          DomainMetadata("testDomain1", Map.empty, true) :: Nil, Truncate())
+          DomainMetadata("testDomain1", "", true) :: Nil, Truncate())
         val domainMetadatasAfterDeletion = DomainMetadata(
           "testDomain2",
-          Map("key1" -> "value1"), false) :: Nil
+          "{\"key1\":\"value1\"}", false) :: Nil
         assertEquals(
           sortByDomain(domainMetadatasAfterDeletion),
           sortByDomain(deltaLog.update().domainMetadata))
@@ -195,8 +195,8 @@ class DomainMetadataSuite
       (1 to 100).toDF("id").write.format("delta").mode("append").saveAsTable(table)
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
       val domainMetadata =
-        DomainMetadata("testDomain1", Map.empty, false) ::
-          DomainMetadata("testDomain1", Map.empty, false) :: Nil
+        DomainMetadata("testDomain1", "", false) ::
+          DomainMetadata("testDomain1", "", false) :: Nil
       val e = intercept[DeltaIllegalArgumentException] {
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
       }
@@ -210,7 +210,7 @@ class DomainMetadataSuite
     withTempDir { dir =>
       (1 to 100).toDF().write.format("delta").save(dir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, dir)
-      val domainMetadata = DomainMetadata("testDomain1", Map.empty, false) :: Nil
+      val domainMetadata = DomainMetadata("testDomain1", "", false) :: Nil
       val e = intercept[DeltaIllegalArgumentException] {
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
       }
@@ -218,5 +218,28 @@ class DomainMetadataSuite
         "Detected DomainMetadata action(s) for domains [testDomain1], " +
           "but DomainMetadataTableFeature is not enabled.")
     }
+  }
+
+  test("Validate the lifespan of metadata domains for the REPLACE TABLE operation") {
+    val existingDomainMetadatas =
+      DomainMetadata("testDomain1", "", false) ::
+        DomainMetadata("testDomain2", "", false) ::
+        Nil
+    val newDomainMetadatas =
+        DomainMetadata("testDomain2", "key=val", false) ::
+        DomainMetadata("testDomain3", "", false) ::
+        Nil
+
+    val result = DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+      existingDomainMetadatas, newDomainMetadatas)
+
+    // testDomain1: survives by default (not in the final list since it already
+    //              exists in the snapshot).
+    // testDomain2: overwritten by new domain metadata
+    // testDomain3: added to the final list since it only appears in the new set.
+    assert(result ===
+        DomainMetadata("testDomain2", "key=val", false) :: // Overwritten
+        DomainMetadata("testDomain3", "", false) :: // New metadata domain
+        Nil)
   }
 }

@@ -16,17 +16,18 @@
 
 package org.apache.spark.sql.delta.sources
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.{InputStream, OutputStream}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.Locale
 
 import scala.io.{Source => IOSource}
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -35,6 +36,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
 import org.apache.spark.sql.types.{DataType, StructType}
+// scalastyle:on import.ordering.noEmptyLine
 
 /**
  * A PersistedSchema is an entry in Delta streaming source schema log, which can be used to read
@@ -50,13 +52,18 @@ import org.apache.spark.sql.types.{DataType, StructType}
  * @param dataSchemaJson Full schema json
  * @param partitionSchemaJson Partition schema json
  * @param sourceMetadataPath The checkpoint path that is unique to each source.
+ * @param tableConfigurations The configurations of the table inside the metadata when the schema
+ *                            change was detected. It is used to correctly create the right file
+ *                            format when we use a particular schema to read.
+ *                            Default to None for backward compatibility.
  */
 case class PersistedSchema(
     tableId: String,
     deltaCommitVersion: Long,
     dataSchemaJson: String,
     partitionSchemaJson: String,
-    sourceMetadataPath: String) {
+    sourceMetadataPath: String,
+    tableConfigurations: Option[Map[String, String]] = None) {
 
   def toJson: String = JsonUtils.toJson(this)
 
@@ -69,17 +76,15 @@ case class PersistedSchema(
     }
   }
 
-  def dataSchema: StructType = parseSchema(dataSchemaJson)
+  @JsonIgnore
+  lazy val dataSchema: StructType = parseSchema(dataSchemaJson)
 
-  def partitionSchema: StructType = parseSchema(partitionSchemaJson)
+  @JsonIgnore
+  lazy val partitionSchema: StructType = parseSchema(partitionSchemaJson)
 
   def validateAgainstSnapshot(snapshot: Snapshot): Unit = {
     if (snapshot.deltaLog.tableId != tableId) {
       throw DeltaErrors.incompatibleSchemaLogDeltaTable(tableId, snapshot.deltaLog.tableId)
-    }
-    if (snapshot.metadata.partitionSchema != partitionSchema) {
-      throw DeltaErrors.incompatibleSchemaLogPartitionSchema(
-        partitionSchema, snapshot.metadata.partitionSchema)
     }
   }
 
@@ -96,12 +101,14 @@ object PersistedSchema {
   def apply(
       tableId: String,
       deltaCommitVersion: Long,
-      dataSchema: StructType,
-      partitionSchema: StructType,
+      metadata: Metadata,
       sourceMetadataPath: String): PersistedSchema = {
-    PersistedSchema(tableId, deltaCommitVersion, dataSchema.json, partitionSchema.json,
+    PersistedSchema(tableId, deltaCommitVersion,
+      metadata.schema.json, metadata.partitionSchema.json,
       // The schema is bound to the specific source
-      sourceMetadataPath
+      sourceMetadataPath,
+      // Table configurations come from the Metadata action
+      Some(metadata.configuration)
     )
   }
 }
@@ -260,7 +267,8 @@ object DeltaSourceSchemaTrackingLog extends Logging {
             s"The Delta source metadata path used for execution '${metadataPath}' is different " +
               s"from the one persisted for previous processing '${schema.sourceMetadataPath}'. " +
               s"Please check if the schema location has been reused across different streaming " +
-              s"sources. Pick a new `schemaTrackingLocation` or use `schemaTrackingId` to " +
+              s"sources. Pick a new `${DeltaOptions.SCHEMA_TRACKING_LOCATION}` or use " +
+              s"`${DeltaOptions.STREAMING_SOURCE_TRACKING_ID}` to " +
               s"distinguish between streaming sources.")
         }
       }
@@ -283,13 +291,9 @@ object DeltaSourceSchemaTrackingLog extends Logging {
     // While loading the current persisted schema, validate against previous persisted schema
     // to check if the stream can move ahead with the custom SQL conf.
     (log.getPreviousTrackedSchema, log.getCurrentTrackedSchema, sourceMetadataPathOpt) match {
-      case (Some(prev), Some(curr), Some(metadataPath))
-        // Don't verify SQL conf if the table does not have column mapping, non additive schema
-        // changes without column mapping typically requires an overwrite in which the schema
-        // tracking log (and the stream checkpoint) typically needs to be reset anyway.
-        if sourceSnapshot.metadata.columnMappingMode != NoMapping =>
-          DeltaSourceSchemaEvolutionSupport
-            .validateIfSchemaChangeCanBeUnblockedWithSQLConf(sparkSession, metadataPath, curr, prev)
+      case (Some(prev), Some(curr), Some(metadataPath)) =>
+        DeltaSourceSchemaEvolutionSupport
+          .validateIfSchemaChangeCanBeUnblockedWithSQLConf(sparkSession, metadataPath, curr, prev)
       case _ =>
     }
 
@@ -331,7 +335,7 @@ object DeltaSourceSchemaTrackingLog extends Logging {
           s"will use schema at version $version to read Delta stream.")
         Some(
           PersistedSchema(
-            deltaLog.tableId, version, metadata.schema, metadata.partitionSchema,
+            deltaLog.tableId, version, metadata,
             // Keep the same metadata path
             sourceMetadataPath = currentSchema.sourceMetadataPath
           )

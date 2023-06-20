@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
+
 /**
  * Utility functions for Row Tracking that are shared between Row IDs and Row Commit Versions.
  */

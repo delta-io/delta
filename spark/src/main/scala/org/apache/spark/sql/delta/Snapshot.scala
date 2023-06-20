@@ -324,7 +324,7 @@ class Snapshot(
     numMetadata = numOfMetadata,
     numProtocol = numOfProtocol,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
+    domainMetadata = domainMetadatasIfKnown,
     metadata = metadata,
     protocol = protocol,
     histogramOpt = fileSizeHistogram,

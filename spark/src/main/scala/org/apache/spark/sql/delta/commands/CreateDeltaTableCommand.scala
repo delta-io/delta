@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.RowId.RowIdHighWaterMark
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -146,12 +146,13 @@ case class CreateDeltaTableCommand(
           val newDomainMetadata = Seq.empty[DomainMetadata]
           if (isReplace) {
             // Ensure to remove any domain metadata for REPLACE TABLE.
-            actions = actions ++ handleDomainMetadataForReplaceTable(
+            actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
               txn.snapshot.domainMetadata, newDomainMetadata)
           } else {
             actions = actions ++ newDomainMetadata
           }
-          val op = getOperation(txn.metadata, isManagedTable, Some(options))
+          val op = getOperation(txn.metadata, isManagedTable, Some(options)
+          )
           (actions, op)
         }
 
@@ -220,7 +221,8 @@ case class CreateDeltaTableCommand(
             protocol.foreach { protocol =>
               txn.updateProtocol(protocol)
             }
-            val op = getOperation(newMetadata, isManagedTable, None)
+            val op = getOperation(newMetadata, isManagedTable, None
+            )
             val actionsToCommit = Seq.empty[Action]
             txn.commit(actionsToCommit, op)
           } else {
@@ -252,7 +254,8 @@ case class CreateDeltaTableCommand(
             var actionsToCommit = Seq.empty[Action]
             val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
             actionsToCommit = removes
-            val op = getOperation(txn.metadata, isManagedTable, None)
+            val op = getOperation(txn.metadata, isManagedTable, None
+            )
             txn.commit(actionsToCommit, op)
         }
       }
@@ -385,7 +388,8 @@ case class CreateDeltaTableCommand(
   private def getOperation(
       metadata: Metadata,
       isManagedTable: Boolean,
-      options: Option[DeltaOptions]): DeltaOperations.Operation = operation match {
+      options: Option[DeltaOptions]
+  ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
       DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
@@ -515,26 +519,6 @@ case class CreateDeltaTableCommand(
   private def isReplace: Boolean = {
     operation == TableCreationModes.CreateOrReplace ||
       operation == TableCreationModes.Replace
-  }
-
-  /**
-   * Generates a new sequence of DomainMetadata to commits for REPLACE TABLE.
-   * If the domain of an existing domain metadata is present in the set of new domain
-   * metadata, the existing domain metadata is filtered out so that the new one
-   * can override it. Otherwise, it is marked as removed (tombstone).
-   */
-  private def handleDomainMetadataForReplaceTable(
-      existingDomainMetadata: Seq[DomainMetadata],
-      newDomainMetadata: Seq[DomainMetadata]): Seq[DomainMetadata] = {
-    val newDomainNames = newDomainMetadata.map(_.domain).toSet
-    existingDomainMetadata
-      .filter {
-        // The row ID high water mark must never be removed from the table, to ensure that a fresh
-        // row id is never assigned twice.
-        case m: DomainMetadata if RowIdHighWaterMark.isRowIdHighWaterMark(m) => false
-        case m => !newDomainNames.contains(m.domain)
-      }
-      .map(_.copy(removed = true)) ++ newDomainMetadata
   }
 }
 

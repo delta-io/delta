@@ -97,18 +97,24 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    */
   protected def normalizeData(
       deltaLog: DeltaLog,
+      options: Option[DeltaOptions],
       data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
-    val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(protocol, metadata)
+    val nullAsDefault = options.isDefined &&
+      options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
+    val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(
+      protocol, metadata, nullAsDefault)
     val (dataWithDefaultExprs, generatedColumnConstraints, trackHighWaterMarks) =
       if (enforcesDefaultExprs) {
         ColumnWithDefaultExprUtils.addDefaultExprsOrReturnConstraints(
           deltaLog,
+          protocol,
           // We need the original query execution if this is a streaming query, because
           // `normalizedData` may add a new projection and change its type.
           data.queryExecution,
           metadata.schema,
-          normalizedData)
+          normalizedData,
+          nullAsDefault)
       } else {
         (normalizedData, Nil, Set[String]())
       }
@@ -349,7 +355,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val outputPath = deltaLog.dataPath
 
     val (queryExecution, output, generatedColumnConstraints, _) =
-      normalizeData(deltaLog, data)
+      normalizeData(deltaLog, writeOptions, data)
     val partitioningColumns = getPartitioningColumns(partitionSchema, output)
 
     val committer = getCommitter(outputPath)

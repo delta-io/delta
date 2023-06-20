@@ -201,7 +201,13 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
-    libraryDependencies ++= Seq()
+    libraryDependencies ++= Seq(
+
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "junit" % "junit" % "4.11" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
+    )
   )
 
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
@@ -213,15 +219,11 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
     scalaStyleSettings,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion, // Configuration, Path
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5", // ObjectMapper
+      "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test", // SparkSession
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     )
@@ -269,9 +271,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
-// Requires iceberg release on 3.4
-/**
-lazy val deltaIceberg = (project in file("delta-iceberg"))
+lazy val iceberg = (project in file("iceberg"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-iceberg",
@@ -280,7 +280,7 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     releaseSettings,
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.1.0" % "provided")
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.3.0" % "provided")
           .cross(CrossVersion.binary)
       },
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
@@ -288,7 +288,6 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1"
     )
   )
-*/
 
 
 lazy val hive = (project in file("connectors/hive"))
@@ -911,7 +910,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
