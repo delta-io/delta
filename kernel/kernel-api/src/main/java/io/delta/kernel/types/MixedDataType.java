@@ -48,6 +48,8 @@ import io.delta.kernel.data.ColumnVector;
  *     } ]
  *   }
  * </pre>
+ * Reader implementations should convert interpret the values encountered either as `string`
+ * or `struct` type to string type. 
  */
 public class MixedDataType extends DataType
 {
