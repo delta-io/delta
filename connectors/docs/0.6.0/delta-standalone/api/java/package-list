@@ -1,0 +1,7 @@
+io.delta.standalone
+io.delta.standalone.actions
+io.delta.standalone.data
+io.delta.standalone.exceptions
+io.delta.standalone.expressions
+io.delta.standalone.types
+io.delta.standalone.util
