@@ -115,7 +115,7 @@ class Snapshot(
   }
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
-    val checkpointFileIndexes = getCheckpointProvider.allActionsFileIndexes()
+    val checkpointFileIndexes = checkpointProvider.allActionsFileIndexes()
     checkpointFileIndexes ++ deltaFileIndexOpt.toSeq
   }
 
@@ -190,7 +190,7 @@ class Snapshot(
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
-  def checkpointSizeInBytes(): Long = getCheckpointProvider.effectiveCheckpointSizeInBytes()
+  def checkpointSizeInBytes(): Long = checkpointProvider.effectiveCheckpointSizeInBytes()
 
   override def metadata: Metadata = _metadata
 
@@ -360,11 +360,11 @@ class Snapshot(
     }
   }
 
-  /**
-   * Returns the [[CheckpointProvider]] for the underlying checkpoint.
-   * Returns None if the Snapshot isn't backed by a checkpoint.
-   */
-  def getCheckpointProvider: CheckpointProvider = logSegment.checkpointProvider
+  /** The [[CheckpointProvider]] for the underlying checkpoint */
+  lazy val checkpointProvider: CheckpointProvider = logSegment.checkpointProvider match {
+    case cp: CheckpointProvider => cp
+    case o => throw new IllegalStateException(s"Unknown checkpoint provider: ${o.getClass.getName}")
+  }
 
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)

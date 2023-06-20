@@ -40,6 +40,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -71,8 +72,10 @@ case class CheckpointInstance(
   def getCheckpointProvider(
       deltaLog: DeltaLog,
       filesForCheckpointConstruction: Seq[FileStatus],
-      lastCheckpointInfoHint: Option[LastCheckpointInfo] = None): CheckpointProvider = {
+      lastCheckpointInfoHint: Option[LastCheckpointInfo] = None)
+      : UninitializedCheckpointProvider = {
     val logPath = deltaLog.logPath
+    val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
     format match {
       case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
         val filePaths = if (format == CheckpointInstance.Format.WITH_PARTS) {
@@ -86,9 +89,7 @@ case class CheckpointInstance(
           "Failed in getting the file information for:\n" +
             filePaths.mkString(" -", "\n -", "") + "\namong\n" +
             filesForCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
-        PreloadedCheckpointProvider(
-          newCheckpointFileArray,
-          lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this))
+        PreloadedCheckpointProvider(newCheckpointFileArray, lastCheckpointInfo)
       case CheckpointInstance.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
           s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")

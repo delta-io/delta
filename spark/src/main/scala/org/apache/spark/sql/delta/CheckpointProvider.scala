@@ -16,20 +16,20 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames.checkpointVersion
+import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.hadoop.fs.FileStatus
 
-import org.apache.spark.SparkException
+import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.StructType
 
 /**
- * A trait which provides information about a checkpoint to the Snapshot.
+ * Represents basic information about a checkpoint.
+ * This is the info we always can know about a checkpoint, without doing any additional I/O.
  */
-trait CheckpointProvider {
+trait UninitializedCheckpointProvider {
 
   /** True if the checkpoint provider is empty (does not refer to a valid checkpoint) */
   def isEmpty: Boolean = version < 0
@@ -42,6 +42,12 @@ trait CheckpointProvider {
    * These files could be reused again to initialize the [[CheckpointProvider]].
    */
   def files: Seq[FileStatus]
+}
+
+/**
+ * A trait which provides information about a checkpoint to the Snapshot.
+ */
+trait CheckpointProvider extends UninitializedCheckpointProvider {
 
   /** Effective size of checkpoint across all files */
   def effectiveCheckpointSizeInBytes(): Long
@@ -62,9 +68,10 @@ trait CheckpointProvider {
  *                                This comes from _last_checkpoint file
  */
 case class PreloadedCheckpointProvider(
-  override val files: Seq[FileStatus],
-  lastCheckpointInfoOpt: Option[LastCheckpointInfo]
-) extends CheckpointProvider with DeltaLogging {
+    override val files: Seq[FileStatus],
+    lastCheckpointInfoOpt: Option[LastCheckpointInfo])
+  extends CheckpointProvider
+  with DeltaLogging {
 
   require(files.nonEmpty, "There should be atleast 1 checkpoint file")
   private lazy val fileIndex =

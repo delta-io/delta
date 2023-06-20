@@ -344,7 +344,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
-  private[delta] var preCommitLogSegment: LogSegment = snapshot.logSegment
+  private[delta] var preCommitLogSegment: LogSegment =
+    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
