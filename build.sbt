@@ -873,6 +873,10 @@ lazy val flink = (project in file("connectors/flink"))
     },
 
     // Javadoc settings needed for successful doc generation needed for publishing.
+    Compile / doc / sources := {
+      (Compile / doc / sources).value.filterNot(_.getName() == "Meta.java")
+    },
+
     Compile / doc / javacOptions ++= Seq(
       "-public",
       "-noqualifier", "java.lang",
