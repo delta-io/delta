@@ -48,11 +48,12 @@ def get_args():
 
 def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     print("##### Running SBT tests #####")
+    is_running_spark_tests = test_group is None or test_group == "spark"
+
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
 
     test_cmd = "test"
-    is_running_spark_tests = test_group is None or test_group == "spark"
 
     if test_group:
         # if test group is specified, then run tests only on that test group
