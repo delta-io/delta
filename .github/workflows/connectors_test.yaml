@@ -30,8 +30,8 @@ jobs:
       - name: Run Delta Standalone tests
         run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test testParquetUtilsWithStandaloneCosmetic/test
       - name: Run Flink tests (Scala 2.12 only)
-          run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
-          if: ${{ startsWith(matrix.scala, '2.12.') }}
+        run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
+        if: ${{ startsWith(matrix.scala, '2.12.') }}
       - name: Run Hive 3 tests
         run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
       - name: Run Hive 2 tests
@@ -41,5 +41,5 @@ jobs:
       #    run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
       #    if: startsWith(matrix.scala, '2.12.')
       - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
-          run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
-          if: ${{ !startsWith(matrix.scala, '2.11.') }}
+        run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
+        if: ${{ !startsWith(matrix.scala, '2.11.') }}
