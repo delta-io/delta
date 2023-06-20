@@ -6,7 +6,8 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        scala: [2.13.8, 2.12.8]
+        # These Scala versions must match those in the build.sbt
+        scala: [2.13.5, 2.12.15]
     steps:
       - uses: actions/checkout@v2
       - name: install java

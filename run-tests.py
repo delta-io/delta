@@ -52,6 +52,8 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     cmd = [sbt_path, "clean"]
 
     test_cmd = "test"
+    is_running_spark_tests = test_group is None or test_group == "spark"
+
     if test_group:
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
@@ -66,7 +68,8 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
         # when no scala version is specified, run test with only the specified scala version
         cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.5" "project/test" ...
 
-    cmd += ["unidoc"]
+    if is_running_spark_tests:
+        cmd += ["unidoc"]
 
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]

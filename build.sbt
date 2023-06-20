@@ -19,8 +19,8 @@
 import java.nio.file.Files
 
 // Scala versions
-val scala212 = "2.12.17"
-val scala213 = "2.13.8"
+val scala212 = "2.12.15"
+val scala213 = "2.13.5"
 val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
 
