@@ -17,10 +17,11 @@
 package org.apache.spark.sql.delta.commands
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.ROW_DROPPED_COL
+import org.apache.spark.sql.delta.commands.merge.InsertOnlyMergeExecutor
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -73,9 +74,11 @@ case class MergeIntoCommand(
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
     migratedSchema: Option[StructType]) extends MergeIntoCommandBase
   with AnalysisHelper
+  with InsertOnlyMergeExecutor
   with ImplicitMetadataOperation {
 
   import MergeIntoCommand._
+  import MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 
   import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
@@ -87,10 +90,6 @@ case class MergeIntoCommand(
     AttributeReference("num_updated_rows", LongType)(),
     AttributeReference("num_deleted_rows", LongType)(),
     AttributeReference("num_inserted_rows", LongType)())
-
-  /** Whether this merge statement has only a single insert (NOT MATCHED) clause. */
-  private def isSingleInsertOnly: Boolean =
-    matchedClauses.isEmpty && notMatchedBySourceClauses.isEmpty && notMatchedClauses.length == 1
 
   // We over-count numTargetRowsDeleted when there are multiple matches;
   // this is the amount of the overcount, so we can subtract it to get a correct final metric.
@@ -113,7 +112,7 @@ case class MergeIntoCommand(
         )
       }
     }
-    val (materializeSource, _) = shouldMaterializeSource(spark, source, isSingleInsertOnly)
+    val (materializeSource, _) = shouldMaterializeSource(spark, source, isInsertOnly)
     if (!materializeSource) {
       runMerge(spark)
     } else {
@@ -152,25 +151,37 @@ case class MergeIntoCommand(
           condition,
           matchedClauses,
           notMatchedClauses,
-          isSingleInsertOnly)
+          isInsertOnly)
 
         val deltaActions = {
-          if (isSingleInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
-            writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
+          if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
+            // This is a single-job execution so there is no WriteChanges.
+            metrics("numSourceRowsInSecondScan").set(-1)
+            writeOnlyInserts(
+              spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
             val filesToRewrite = findTouchedFiles(spark, deltaTxn)
-            val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
-              writeAllChanges(spark, deltaTxn, filesToRewrite)
+            if (filesToRewrite.nonEmpty) {
+              val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
+                writeAllChanges(spark, deltaTxn, filesToRewrite)
+              }
+              filesToRewrite.map(_.remove) ++ newWrittenFiles
+            } else {
+              // Run an insert-only job instead of WriteChanges
+              writeOnlyInserts(
+                spark,
+                deltaTxn,
+                filterMatchedRows = false,
+                numSourceRowsMetric = "numSourceRowsInSecondScan")
             }
-            filesToRewrite.map(_.remove) ++ newWrittenFiles
           }
         }
-      val stats = collectMergeStats(
-        spark,
-        deltaTxn,
-        startTime,
-        deltaActions,
-        materializeSourceReason)
+        val stats = collectMergeStats(
+          spark,
+          deltaTxn,
+          startTime,
+          deltaActions,
+          materializeSourceReason)
 
         recordDeltaEvent(targetFileIndex.deltaLog, "delta.dml.merge.stats", data = stats)
 
@@ -344,83 +355,6 @@ case class MergeIntoCommand(
     metrics("numTargetBytesRemoved") += removedBytes
     metrics("numTargetPartitionsRemovedFrom") += removedPartitions
     touchedAddFiles
-  }
-
-  /**
-   * This is an optimization of the case when there is no update clause for the merge.
-   * We perform an left anti join on the source data to find the rows to be inserted.
-   *
-   * This will currently only optimize for the case when there is a _single_ notMatchedClause.
-   */
-  private def writeInsertsOnlyWhenNoMatchedClauses(
-      spark: SparkSession,
-      deltaTxn: OptimisticTransaction)
-    : Seq[FileAction] = recordMergeOperation(
-      extraOpType = "writeInsertsOnlyWhenNoMatchedClauses",
-      status = "MERGE operation - writing new files for only inserts",
-      sqlMetricName = "rewriteTimeMs") {
-
-    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
-    val incrInsertedCountExpr =
-      incrementMetricAndReturnBool("numTargetRowsInserted", valueToReturn = true)
-
-    val outputColNames = getTargetOutputCols(deltaTxn).map(_.name)
-    // we use head here since we know there is only a single notMatchedClause
-    val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
-    val outputCols = outputExprs.zip(outputColNames).map { case (expr, name) =>
-      new Column(Alias(expr, name)())
-    }
-
-    // source DataFrame
-    val sourceDF = getSourceDF()
-      .filter(new Column(incrSourceRowCountExpr))
-      .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal.TrueLiteral)))
-
-    // Skip data based on the merge condition
-    val conjunctivePredicates = splitConjunctivePredicates(condition)
-    val targetOnlyPredicates =
-      conjunctivePredicates.filter(_.references.subsetOf(target.outputSet))
-    val dataSkippedFiles = deltaTxn.filterFiles(targetOnlyPredicates)
-
-    // target DataFrame
-    val targetPlan = buildTargetPlanWithFiles(
-      spark,
-      deltaTxn,
-      dataSkippedFiles,
-      columnsToDrop = Nil)
-    val targetDF = Dataset.ofRows(spark, targetPlan)
-    val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
-      .select(outputCols: _*)
-      .filter(new Column(incrInsertedCountExpr))
-
-    val newFiles = deltaTxn
-      .writeFiles(repartitionIfNeeded(spark, insertDf, deltaTxn.metadata.partitionColumns))
-      .filter {
-        // In some cases (e.g. insert-only when all rows are matched, insert-only with an empty
-        // source, insert-only with an unsatisfied condition) we can write out an empty insertDf.
-        // This is hard to catch before the write without collecting the DF ahead of time. Instead,
-        // we can just accept only the AddFiles that actually add rows or
-        // when we don't know the number of records
-        case a: AddFile => a.numLogicalRecords.forall(_ > 0)
-        case _ => true
-      }
-
-    // Update metrics
-    metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
-    metrics("numTargetBytesBeforeSkipping") += deltaTxn.snapshot.sizeInBytes
-    val (afterSkippingBytes, afterSkippingPartitions) =
-      totalBytesAndDistinctPartitionValues(dataSkippedFiles)
-    metrics("numTargetFilesAfterSkipping") += dataSkippedFiles.size
-    metrics("numTargetBytesAfterSkipping") += afterSkippingBytes
-    metrics("numTargetPartitionsAfterSkipping") += afterSkippingPartitions
-    metrics("numTargetFilesRemoved") += 0
-    metrics("numTargetBytesRemoved") += 0
-    metrics("numTargetPartitionsRemovedFrom") += 0
-    val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
-    metrics("numTargetFilesAdded") += newFiles.count(_.isInstanceOf[AddFile])
-    metrics("numTargetBytesAdded") += addedBytes
-    metrics("numTargetPartitionsAddedTo") += addedPartitions
-    newFiles
   }
 
   /**
@@ -725,8 +659,7 @@ case class MergeIntoCommand(
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
-    val newFiles = deltaTxn
-      .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
+    val newFiles = writeFiles(spark, deltaTxn, outputDF)
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
@@ -749,21 +682,6 @@ case class MergeIntoCommand(
 
     newFiles
   }
-
-  /**
-   * Repartitions the output DataFrame by the partition columns if table is partitioned
-   * and `merge.repartitionBeforeWrite.enabled` is set to true.
-   */
-  protected def repartitionIfNeeded(
-      spark: SparkSession,
-      df: DataFrame,
-      partitionColumns: Seq[String]): DataFrame = {
-    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
-      df.repartition(partitionColumns.map(col): _*)
-    } else {
-      df
-    }
-  }
 }
 
 object MergeIntoCommand {
@@ -783,7 +701,6 @@ object MergeIntoCommand {
   val FILE_NAME_COL = "_file_name_"
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
   val TARGET_ROW_PRESENT_COL = "_target_row_present_"
-  val ROW_DROPPED_COL = "_row_dropped_"
   val INCR_ROW_COUNT_COL = "_incr_row_count_"
 
   /**
@@ -892,22 +809,5 @@ object MergeIntoCommand {
           fromRow(outputProj(notDeletedInternalRow))
         }
     }
-  }
-
-  /** Count the number of distinct partition values among the AddFiles in the given set. */
-  def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
-    val distinctValues = new mutable.HashSet[Map[String, String]]()
-    var bytes = 0L
-    val iter = files.collect { case a: AddFile => a }.iterator
-    while (iter.hasNext) {
-      val file = iter.next()
-      distinctValues += file.partitionValues
-      bytes += file.size
-    }
-    // If the only distinct value map is an empty map, then it must be an unpartitioned table.
-    // Return 0 in that case.
-    val numDistinctValues =
-      if (distinctValues.size == 1 && distinctValues.head.isEmpty) 0 else distinctValues.size
-    (bytes, numDistinctValues)
   }
 }

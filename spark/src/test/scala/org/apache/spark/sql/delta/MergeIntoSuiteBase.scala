@@ -259,6 +259,47 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  test("basic case - multiple inserts") {
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3), (3, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` as trgNew",
+        src = "source src",
+        cond = "src.key1 = key2",
+        insert(condition = "key1 = 0", values = "(key2, value) VALUES (src.key1, src.value + 3)"),
+        insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
+          Row(0, 6) :: // Insert
+          Row(-7, 15) :: // Insert
+          Nil)
+    }
+  }
+
+  test("basic case - upsert with only rows inserted") {
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` as trgNew",
+        src = "source src",
+        cond = "src.key1 = key2",
+        update(condition = "key2 = 5", set = "value = src.value + 3"),
+        insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
+          Row(-10, 13) :: // Insert
+          Nil)
+    }
+  }
+
   protected def testNullCase(name: String)(
       target: Seq[(JInt, JInt)],
       source: Seq[(JInt, JInt)],
@@ -5539,6 +5580,43 @@ abstract class MergeIntoSuiteBase
     assert(opTypes == Set(
       "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
+
+  test("recorded operations - write inserts only") {
+    var events: Seq[UsageRecord] = Seq.empty
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+      target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+
+      events = Log4jUsageLogger.track {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key AND s.key > 5",
+          update(condition = "s.key > 10", set = "key = s.key, value = s.value"),
+          insert(condition = "s.key < 1", values = "(key, value) VALUES (s.key, s.value)"))
+      }
+
+      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+        Row(0, 0),   // inserted
+        Row(1, 1),   // existed previously
+        Row(2, 2),   // existed previously
+        Row(3, 3)    // existed previously
+      ))
+    }
+
+    // Get recorded operations from usage events
+    val opTypes = events.filter { e =>
+      e.metric == "sparkOperationDuration" && e.opType.get.typeName.contains("delta.dml.merge")
+    }.map(_.opType.get.typeName).toSet
+
+    assert(opTypes == expectedOpTypesInsertOnly)
+  }
+
+  protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
+    "delta.dml.merge")
 }
 
 

@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.commands
 
 import java.util.concurrent.TimeUnit
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
@@ -27,12 +29,13 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
 abstract class MergeIntoCommandBase extends LeafRunnableCommand
@@ -72,6 +75,11 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   /** Whether this merge statement has only MATCHED clauses. */
   protected def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
+
+  /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
+  protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
+    notMatchedBySourceClauses.isEmpty
+
   import SQLMetrics._
 
   override lazy val metrics: Map[String, SQLMetric] = baseMetrics
@@ -170,6 +178,22 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   protected def shouldOptimizeMatchedOnlyMerge(spark: SparkSession): Boolean = {
     isMatchedOnly && spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED)
   }
+  /**
+   * Write the output data to files, repartitioning the output DataFrame by the partition columns
+   * if table is partitioned and `merge.repartitionBeforeWrite.enabled` is set to true.
+   */
+  protected def writeFiles(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      outputDF: DataFrame): Seq[FileAction] = {
+    val partitionColumns = txn.metadata.partitionColumns
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+      txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
+    } else {
+      txn.writeFiles(outputDF)
+    }
+  }
+
   /**
    * Build a new logical plan to read the given `files` instead of the whole target table.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
@@ -292,6 +316,9 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
     }
   }
+
+  protected def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
+
   /**
    * Execute the given `thunk` and return its result while recording the time taken to do it
    * and setting additional local properties for better UI visibility.
@@ -346,3 +373,24 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 }
 
+object MergeIntoCommandBase {
+  val ROW_DROPPED_COL = "_row_dropped_"
+  val PRECOMPUTED_CONDITION_COL = "_condition_"
+
+  /** Count the number of distinct partition values among the AddFiles in the given set. */
+  def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
+    val distinctValues = new mutable.HashSet[Map[String, String]]()
+    var bytes = 0L
+    val iter = files.collect { case a: AddFile => a }.iterator
+    while (iter.hasNext) {
+      val file = iter.next()
+      distinctValues += file.partitionValues
+      bytes += file.size
+    }
+    // If the only distinct value map is an empty map, then it must be an unpartitioned table.
+    // Return 0 in that case.
+    val numDistinctValues =
+      if (distinctValues.size == 1 && distinctValues.head.isEmpty) 0 else distinctValues.size
+    (bytes, numDistinctValues)
+  }
+}
