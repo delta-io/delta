@@ -886,7 +886,8 @@ trait DeltaErrorsBase
   def modifyAppendOnlyTableException(tableName: String): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_CANNOT_MODIFY_APPEND_ONLY",
-      messageParameters = Array(tableName, DeltaConfigs.IS_APPEND_ONLY.key)
+      // `tableName` could be null here, so convert to string first.
+      messageParameters = Array(s"$tableName", DeltaConfigs.IS_APPEND_ONLY.key)
     )
   }
 
