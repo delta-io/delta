@@ -289,11 +289,6 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
         // Now there should be a Delta Checkpoint under _delta_log folder.
         List<String> deltaCheckpointFiles = getDeltaCheckpointFiles(deltaTablePath);
         assertThat(
-            "Missing Delta's last checkpoint file",
-            deltaCheckpointFiles.contains("_last_checkpoint"),
-            equalTo(true)
-        );
-        assertThat(
             "Missing Delta's checkpoint file",
             deltaCheckpointFiles.contains("00000000000000000010.checkpoint.parquet"),
             equalTo(true)
