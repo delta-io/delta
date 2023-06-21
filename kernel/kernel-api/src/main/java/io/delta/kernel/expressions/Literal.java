@@ -22,7 +22,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 
 /**
@@ -61,10 +61,10 @@ public final class Literal extends LeafExpression {
     /**
      * Create a long {@link Literal} object
      * @param value long value
-     * @return a {@link Literal} with data type {@link FloatType}
+     * @return a {@link Literal} with data type {@link LongType}
      */
     public static Literal of(long value) {
-        return new Literal(value, FloatType.INSTANCE);
+        return new Literal(value, LongType.INSTANCE);
     }
 
     /**
