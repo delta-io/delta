@@ -24,7 +24,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
@@ -52,7 +52,7 @@ public final class Column extends LeafExpression {
             evaluator = (row -> row.getInt(ordinal));
         } else if (dataType instanceof BooleanType) {
             evaluator = (row -> row.getBoolean(ordinal));
-        } else if (dataType instanceof FloatType) {
+        } else if (dataType instanceof LongType) {
             evaluator = (row -> row.getLong(ordinal));
         } else if (dataType instanceof StringType) {
             evaluator = (row -> row.getString(ordinal));
