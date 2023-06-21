@@ -127,9 +127,15 @@ public class TestParquetBatchReader
         StructType readSchema = new StructType()
             .add("booleanType", BooleanType.INSTANCE)
             .add("integerType", IntegerType.INSTANCE)
-            .add("missing_column_primitive", DateType.INSTANCE)
             .add("missing_column_struct",
-                new StructType().add("ab", IntegerType.INSTANCE));
+                new StructType().add("ab", IntegerType.INSTANCE))
+            .add("longType", LongType.INSTANCE)
+            .add("missing_column_primitive", DateType.INSTANCE)
+            .add("nested_struct",
+                new StructType()
+                    .add("aa", StringType.INSTANCE)
+                    .add("ac", new StructType().add("aca", IntegerType.INSTANCE))
+            );
 
         readAndVerify(readSchema, 23 /* readBatchSize */);
     }

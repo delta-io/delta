@@ -69,7 +69,7 @@ class RowConverter
     @Override
     public Converter getConverter(int fieldIndex)
     {
-        return converters[fieldIndex];
+        return converters[parquetOrdinalToConverterOrdinal.get(fieldIndex)];
     }
 
     @Override
