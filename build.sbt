@@ -862,9 +862,8 @@ lazy val flink = (project in file("connectors/flink"))
       val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
       IO.write(file,
         s"""package io.delta.flink.internal;
-
            |
-           |final class Meta {
+           |final public class Meta {
            |  public static final String FLINK_VERSION = "${flinkVersion}";
            |  public static final String CONNECTOR_VERSION = "${version.value}";
            |}
@@ -873,10 +872,6 @@ lazy val flink = (project in file("connectors/flink"))
     },
 
     // Javadoc settings needed for successful doc generation needed for publishing.
-    Compile / doc / sources := {
-      (Compile / doc / sources).value.filterNot(_.getName() == "Meta.java")
-    },
-
     Compile / doc / javacOptions ++= Seq(
       "-public",
       "-noqualifier", "java.lang",
