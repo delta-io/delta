@@ -39,17 +39,23 @@ import io.delta.kernel.data.ColumnVector;
  * `struct` type column schema is serialized as:
  * <pre>
  *   {
- *     "type" : "struct",
- *     "fields" : [ {
- *       "name" : "d",
- *       "type" : "integer",
- *       "nullable" : false,
- *       "metadata" : { }
- *     } ]
+ *     "name" : "b",
+ *     "type" : {
+ *       "type" : "struct",
+ *       "fields" : [ {
+ *         "name" : "d",
+ *         "type" : "integer",
+ *         "nullable" : false,
+ *         "metadata" : { }
+ *       } ]
+ *     },
+ *     "nullable" : true,
+ *     "metadata" : { }
  *   }
  * </pre>
- * Reader implementations should convert interpret the values encountered either as `string`
- * or `struct` type to string type. 
+ * Whenever this type is specified, reader should expect either a `string` value or `struct` value.
+ * The implementation of reader should convert the `string` or `struct` value to `string` type.
+ * Reader implementations can expect this type only for JSON format data reading cases only.
  */
 public class MixedDataType extends DataType
 {
