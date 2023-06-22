@@ -19,7 +19,7 @@ package io.delta.kernel.data;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
-import io.delta.kernel.internal.ColumnarBatchRow;
+import io.delta.kernel.internal.data.ColumnarBatchRow;
 
 /**
  * Represents zero or more rows of records with same schema type.

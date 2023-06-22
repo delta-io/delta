@@ -235,7 +235,7 @@ public class DefaultJsonRow implements Row
 
     private static Object decodeField(ObjectNode rootNode, StructField field)
     {
-        if (rootNode.get(field.getName()) == null) {
+        if (rootNode.get(field.getName()) == null || rootNode.get(field.getName()).isNull()) {
             if (field.isNullable()) {
                 return null;
             }
