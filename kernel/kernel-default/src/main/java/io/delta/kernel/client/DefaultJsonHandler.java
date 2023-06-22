@@ -168,6 +168,7 @@ public class DefaultJsonHandler
                             new InputStreamReader(stream, StandardCharsets.UTF_8));
                     } catch (Exception e){
                         Utils.closeCloseablesSilently(stream); // close it avoid leaking resources
+                        throw e;
                     }
                 }
             }
