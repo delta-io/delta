@@ -62,7 +62,6 @@ class RowConverter
                         field.isMetadataColumn()) {
                     checkArgument(field.getDataType() instanceof LongType,
                             "row index metadata column must be type long");
-                    // TODO: how to enforce only top level rowIndex metadata columns?
                     converters[i] =
                             new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
                 } else {
@@ -109,24 +108,33 @@ class RowConverter
     }
 
     /**
-     * @param fileRowIndex the file row index of the row processed
+     * @return true if all members were null
      */
-    public boolean moveToNextRow(long fileRowIndex) {
-        resizeIfNeeded();
-        long memberNullCount = Arrays.stream(converters)
+    private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
+        long memberNonNullCount = Arrays.stream(converters)
                 .map(converter -> (ParquetConverters.BaseConverter) converter)
                 .map(converter -> {
-                    if (converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                        return ((ParquetConverters.FileRowIndexColumnConverter) converter)
-                                .moveToNextRow(fileRowIndex);
+                    if (fileRowIndex.isPresent() &&
+                            converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
+                        ((ParquetConverters.FileRowIndexColumnConverter) converter)
+                                .moveToNextRow(fileRowIndex.get());
+                        return false; // We don't count row_index toward non-null columns
                     } else {
-                        return converter.moveToNextRow();
+                        return !converter.moveToNextRow();
                     }
                 })
                 .filter(result -> result)
                 .count();
+        return memberNonNullCount > 0;
+    }
 
-        boolean isNull = memberNullCount == converters.length;
+    /**
+     * @param fileRowIndex the file row index of the row processed
+     */
+    public boolean moveToNextRow(long fileRowIndex) {
+        resizeIfNeeded();
+
+        boolean isNull = moveConvertersToNextRow(Optional.of(fileRowIndex));
         nullability[currentRowIndex] = isNull;
 
         currentRowIndex++;
@@ -138,13 +146,8 @@ class RowConverter
     public boolean moveToNextRow()
     {
         resizeIfNeeded();
-        long memberNullCount = Arrays.stream(converters)
-            .map(converter -> (ParquetConverters.BaseConverter) converter)
-            .map(converters -> converters.moveToNextRow())
-            .filter(result -> result)
-            .count();
 
-        boolean isNull = memberNullCount == converters.length;
+        boolean isNull = moveConvertersToNextRow(Optional.empty());
         nullability[currentRowIndex] = isNull;
 
         currentRowIndex++;
