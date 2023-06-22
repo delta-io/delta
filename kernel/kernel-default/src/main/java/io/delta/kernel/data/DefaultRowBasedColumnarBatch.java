@@ -51,12 +51,6 @@ public class DefaultRowBasedColumnarBatch
     }
 
     @Override
-    public ColumnarBatch slice(int start, int end)
-    {
-        throw new UnsupportedOperationException("not yet implemented");
-    }
-
-    @Override
     public ColumnVector getColumnVector(int ordinal)
     {
         StructField field = schema.at(ordinal);

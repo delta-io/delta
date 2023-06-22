@@ -41,9 +41,7 @@ public class TestDefaultFileSystemClient
             }
         }
 
-        List<String> expListOutput = Arrays.asList(
-            "file:" + basePath + "/2.json",
-            "file:" + basePath + "/3.json");
+        List<String> expListOutput = Arrays.asList(basePath + "/2.json", basePath + "/3.json");
 
         assertEquals(expListOutput, actListOutput);
     }

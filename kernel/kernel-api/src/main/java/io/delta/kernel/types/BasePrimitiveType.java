@@ -15,10 +15,13 @@
  */
 package io.delta.kernel.types;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -34,7 +37,7 @@ public abstract class BasePrimitiveType extends DataType
      */
     public static DataType createPrimitive(String primitiveTypeName)
     {
-        return Optional.ofNullable(nameToPrimitiveTypeMap.get(primitiveTypeName))
+        return Optional.ofNullable(nameToPrimitiveTypeMap.get().get(primitiveTypeName))
             .orElseThrow(
                 () -> new IllegalArgumentException("Unknown primitive type " + primitiveTypeName));
     }
@@ -44,29 +47,32 @@ public abstract class BasePrimitiveType extends DataType
      */
     public static boolean isPrimitiveType(String typeName)
     {
-        return nameToPrimitiveTypeMap.containsKey(typeName);
+        return nameToPrimitiveTypeMap.get().containsKey(typeName);
     }
 
-    /** For testing only */
-    public static List<DataType> getAllPrimitiveTypes() {
-        return nameToPrimitiveTypeMap.values().stream().collect(Collectors.toList());
+    /**
+     * For testing only
+     */
+    public static List<DataType> getAllPrimitiveTypes()
+    {
+        return nameToPrimitiveTypeMap.get().values().stream().collect(Collectors.toList());
     }
 
-    private static HashMap<String, DataType> nameToPrimitiveTypeMap = new HashMap<>();
-
-    static {
-        nameToPrimitiveTypeMap.put("boolean", BooleanType.INSTANCE);
-        nameToPrimitiveTypeMap.put("byte", ByteType.INSTANCE);
-        nameToPrimitiveTypeMap.put("short", ShortType.INSTANCE);
-        nameToPrimitiveTypeMap.put("integer", IntegerType.INSTANCE);
-        nameToPrimitiveTypeMap.put("long", LongType.INSTANCE);
-        nameToPrimitiveTypeMap.put("float", FloatType.INSTANCE);
-        nameToPrimitiveTypeMap.put("double", DoubleType.INSTANCE);
-        nameToPrimitiveTypeMap.put("date", DateType.INSTANCE);
-        nameToPrimitiveTypeMap.put("timestamp", TimestampType.INSTANCE);
-        nameToPrimitiveTypeMap.put("binary", BinaryType.INSTANCE);
-        nameToPrimitiveTypeMap.put("string", StringType.INSTANCE);
-    }
+    private static final Supplier<Map<String, DataType>> nameToPrimitiveTypeMap = () ->
+        Collections.unmodifiableMap(new HashMap<String, DataType>()
+        {{
+            put("boolean", BooleanType.INSTANCE);
+            put("byte", ByteType.INSTANCE);
+            put("short", ShortType.INSTANCE);
+            put("integer", IntegerType.INSTANCE);
+            put("long", LongType.INSTANCE);
+            put("float", FloatType.INSTANCE);
+            put("double", DoubleType.INSTANCE);
+            put("date", DateType.INSTANCE);
+            put("timestamp", TimestampType.INSTANCE);
+            put("binary", BinaryType.INSTANCE);
+            put("string", StringType.INSTANCE);
+        }});
 
     private final String primitiveTypeName;
 

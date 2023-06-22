@@ -19,6 +19,8 @@ package io.delta.kernel.utils;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
@@ -28,6 +30,9 @@ import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class Utils
 {
@@ -140,16 +145,58 @@ public class Utils
     }
 
     /**
+     * Utility method to get the logical schema from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState Scan state {@link Row}
+     * @return Logical schema to read from the data files.
+     */
+    public static StructType getLogicalSchema(TableClient tableClient, Row scanState)
+    {
+        int schemaStringOrdinal = ScanStateRow.getLogicalSchemaStringColOrdinal();
+        String serializedSchema = scanState.getString(schemaStringOrdinal);
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+    }
+
+    /**
      * Utility method to get the physical schema from the scan state {@link Row} returned by
      * {@link Scan#getScanState(TableClient)}.
      *
+     * @param tableClient instance of {@link TableClient} to use.
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(Row scanState)
+    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState)
     {
-        // TODO needs io.delta.kernel.internal.data.ScanStateRow
-        throw new UnsupportedOperationException("not implemented yet");
+        int schemaStringOrdinal = ScanStateRow.getPhysicalSchemaStringColOrdinal();
+        String serializedSchema = scanState.getString(schemaStringOrdinal);
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+    }
+
+    /**
+     * Get the list of partition column names from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param scanState Scan state {@link Row}
+     * @return List of partition column names according to the scan state.
+     */
+    public static List<String> getPartitionColumns(Row scanState)
+    {
+        int partitionColumnsOrdinal = ScanStateRow.getPartitionColumnsColOrdinal();
+        return scanState.getArray(partitionColumnsOrdinal);
+    }
+
+    /**
+     * Get the column mapping mode from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     */
+    public static String getColumnMappingMode(Row scanState)
+    {
+        int configOrdinal = ScanStateRow.getConfigurationColOrdinal();
+        Map<String, String> configuration = scanState.getMap(configOrdinal);
+        String cmMode = configuration.get("delta.columnMapping.mode");
+        return cmMode == null ? "none" : cmMode;
     }
 
     /**
@@ -168,18 +215,14 @@ public class Utils
     }
 
     /**
-     * Close the iterator.
+     * Get the partition columns and value belonging to the given scan file row.
      *
-     * @param i1
+     * @param scanFileInfo {@link Row} representing one scan file.
+     * @return Map of partition column name to partition column value.
      */
-    public static void safeClose(CloseableIterator i1)
+    public static Map<String, String> getPartitionValues(Row scanFileInfo)
     {
-        try {
-            i1.close();
-        }
-        catch (IOException ioe) {
-            throw new RuntimeException(ioe);
-        }
+        return scanFileInfo.getMap(1);
     }
 
     /**
@@ -217,13 +260,24 @@ public class Utils
 
     /**
      * Close the given list of {@link Closeable} objects. Any exception thrown is silently ignored.
+     *
      * @param closeables
      */
-    public static void closeCloseablesSilently(Closeable... closeables) {
+    public static void closeCloseablesSilently(Closeable... closeables)
+    {
         try {
             closeCloseables(closeables);
-        } catch (Throwable throwable) {
+        }
+        catch (Throwable throwable) {
             // ignore
         }
+    }
+
+    public static Row requireNonNull(Row row, int ordinal, String columnName)
+    {
+        if (row.isNullAt(ordinal)) {
+            throw new IllegalArgumentException("Expected a non-null value for column: " + columnName);
+        }
+        return row;
     }
 }

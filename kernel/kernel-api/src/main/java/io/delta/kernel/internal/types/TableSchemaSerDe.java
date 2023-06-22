@@ -207,7 +207,7 @@ public class TableSchemaSerDe
             return evalFunction.apply(rows.next());
         }
         finally {
-            Utils.safeClose(rows);
+            Utils.closeCloseables(rows);
         }
     }
 

@@ -40,6 +40,13 @@ public class ArrayType extends DataType
     }
 
     @Override
+    public boolean equivalent(DataType dataType)
+    {
+        return dataType instanceof ArrayType &&
+            ((ArrayType) dataType).getElementType().equivalent(elementType);
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (this == o) {
