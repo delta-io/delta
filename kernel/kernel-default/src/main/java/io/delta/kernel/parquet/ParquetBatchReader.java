@@ -17,6 +17,7 @@ package io.delta.kernel.parquet;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import static java.util.Objects.requireNonNull;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -69,6 +70,8 @@ public class ParquetBatchReader
 
         return new CloseableIterator<ColumnarBatch>()
         {
+            private boolean hasNotConsumedNextElement;
+
             @Override
             public void close()
                 throws IOException
@@ -80,7 +83,11 @@ public class ParquetBatchReader
             public boolean hasNext()
             {
                 try {
-                    return reader.nextKeyValue();
+                    if (hasNotConsumedNextElement) {
+                        return true;
+                    }
+                    hasNotConsumedNextElement = reader.nextKeyValue();
+                    return hasNotConsumedNextElement;
                 }
                 catch (IOException | InterruptedException e) {
                     throw new RuntimeException(e);
@@ -90,8 +97,12 @@ public class ParquetBatchReader
             @Override
             public ColumnarBatch next()
             {
+                if (!hasNotConsumedNextElement) {
+                    throw new NoSuchElementException();
+                }
                 int batchSize = 0;
                 do {
+                    hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
                     batchReadSupport.moveToNextRow();
                     batchSize++;
