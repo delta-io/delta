@@ -104,7 +104,11 @@ public class ParquetBatchReader
                 do {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
-                    batchReadSupport.moveToNextRow();
+                    try {
+                        batchReadSupport.moveToNextRow(reader.getCurrentRowIndex());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
                     batchSize++;
                 }
                 while (batchSize < maxBatchSize && hasNext());
@@ -154,9 +158,12 @@ public class ParquetBatchReader
             return rowRecordCollector.getDataAsColumnarBatch(batchSize);
         }
 
-        public void moveToNextRow()
+        /**
+         * @param fileRowIndex the file row index of the row just processed
+         */
+        public void moveToNextRow(long fileRowIndex)
         {
-            rowRecordCollector.moveToNextRow();
+            rowRecordCollector.moveToNextRow(fileRowIndex);
         }
     }
 
@@ -210,9 +217,12 @@ public class ParquetBatchReader
             return rowRecordGroupConverter.getDataAsColumnarBatch(batchSize);
         }
 
-        public void moveToNextRow()
+        /**
+         * @param fileRowIndex the file row index of the row just processed
+         */
+        public void moveToNextRow(long fileRowIndex)
         {
-            rowRecordGroupConverter.moveToNextRow();
+            rowRecordGroupConverter.moveToNextRow(fileRowIndex);
         }
     }
 }

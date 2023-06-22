@@ -122,9 +122,56 @@ class ParquetConverters
          */
         boolean moveToNextRow();
 
+        /**
+         * Override this for converters that use the `fileRowIndex`.
+         * @param fileRowIndex the file row index of the row processed
+         */
+        default boolean moveToNextRow(long fileRowIndex) {
+            return moveToNextRow();
+        }
+
         default void resizeIfNeeded() {}
 
         default void resetWorkingState() {}
+    }
+
+    public static class FileRowIndexColumnConverter
+            extends BasePrimitiveColumnConverter {
+
+        private long[] values;
+
+        public FileRowIndexColumnConverter(int initialBatchSize) {
+            super(initialBatchSize);
+            this.values = new long[initialBatchSize];
+        }
+
+        @Override
+        public ColumnVector getDataColumnVector(int batchSize) {
+            ColumnVector vector = new DefaultLongVector(batchSize, Optional.of(nullability), values);
+            this.nullability = initNullabilityVector(nullability.length);
+            this.values = new long[values.length];
+            this.currentRowIndex = 0;
+            return vector;
+        }
+
+        @Override
+        public void resizeIfNeeded()
+        {
+            if (values.length == currentRowIndex) {
+                int newSize = values.length * 2;
+                this.values = Arrays.copyOf(this.values, newSize);
+                this.nullability = Arrays.copyOf(this.nullability, newSize);
+                setNullabilityToTrue(this.nullability, newSize / 2, newSize);
+            }
+        }
+
+        // If moveToNextRow() is called instead the value will be null
+        @Override
+        public boolean moveToNextRow(long fileRowIndex) {
+            this.values[currentRowIndex] = fileRowIndex;
+            this.nullability[currentRowIndex] = false;
+            return moveToNextRow();
+        }
     }
 
     public static class NonExistentColumnConverter

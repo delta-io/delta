@@ -1,5 +1,6 @@
 package io.delta.kernel.parquet;
 
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -7,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+
+import io.delta.kernel.types.LongType;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
@@ -55,7 +58,16 @@ class RowConverter
             final DataType typeFromClient = field.getDataType();
             final Type typeFromFile = findSubFieldType(fileSchema, field);
             if (typeFromFile == null) {
-                converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
+                if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
+                        field.isMetadataColumn()) {
+                    checkArgument(field.getDataType() instanceof LongType,
+                            "row index metadata column must be type long");
+                    // TODO: how to enforce only top level rowIndex metadata columns?
+                    converters[i] =
+                            new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
+                } else {
+                    converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
+                }
             }
             else {
                 converters[i] = ParquetConverters.createConverter(
@@ -94,6 +106,23 @@ class RowConverter
         ColumnarBatch batch = new DefaultColumnarBatch(batchSize, readSchema, memberVectors);
         resetWorkingState();
         return batch;
+    }
+
+    @Override
+    public boolean moveToNextRow(long fileRowIndex) {
+        resizeIfNeeded();
+        long memberNullCount = Arrays.stream(converters)
+                .map(converter -> (ParquetConverters.BaseConverter) converter)
+                .map(converters -> converters.moveToNextRow(fileRowIndex))
+                .filter(result -> result)
+                .count();
+
+        boolean isNull = memberNullCount == converters.length;
+        nullability[currentRowIndex] = isNull;
+
+        currentRowIndex++;
+
+        return isNull;
     }
 
     @Override
