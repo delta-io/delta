@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -1413,20 +1414,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       preparedActions: Seq[Action], op: DeltaOperations.Operation): Boolean = {
 
     var dataChanged = false
-    var hasNonFileActions = false
+    var hasIncompatibleActions = false
     preparedActions.foreach {
       case f: FileAction =>
         if (f.dataChange) {
           dataChanged = true
         }
+      // Row tracking is able to resolve write conflicts regardless of isolation level.
+      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) =>
+        // Do nothing
       case _ =>
-        hasNonFileActions = true
+        hasIncompatibleActions = true
     }
     val noDataChanged = !dataChanged
 
-    if (hasNonFileActions) {
-      // if Non-file-actions are present (e.g. METADATA etc.), then don't downgrade the isolation
-      // level to SnapshotIsolation.
+    if (hasIncompatibleActions) {
+      // if incompatible actions are present (e.g. METADATA etc.), then don't downgrade the
+      // isolation level to SnapshotIsolation.
       return false
     }
 
