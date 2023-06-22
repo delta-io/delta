@@ -13,17 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.delta.kernel.internal.actions;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.StructType;
 
-package io.delta.kernel;
-
-import io.delta.kernel.expressions.Expression;
-
-/**
- * Thrown when the given {@link Expression} is not valid.
- * TODO: we may need to divide this further into multiple exceptions.
- */
-public class InvalidExpressionException
-    extends Exception
+public class CommitInfo implements Action
 {
+    public static CommitInfo fromRow(Row row)
+    {
+        if (row == null) {
+            return null;
+        }
+
+        return new CommitInfo();
+    }
+
+    // TODO: This is a concern, we expect the data to be in certain format, but
+    // CommitInfo has no schema specification.
+    public static final StructType READ_SCHEMA = new StructType()
+        .add("timestamp", LongType.INSTANCE);
 }

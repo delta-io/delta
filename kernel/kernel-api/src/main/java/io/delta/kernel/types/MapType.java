@@ -50,6 +50,15 @@ public class MapType extends DataType
     }
 
     @Override
+    public boolean equivalent(DataType dataType)
+    {
+        return dataType instanceof MapType &&
+            ((MapType) dataType).getKeyType().equivalent(keyType) &&
+            ((MapType) dataType).getValueType().equivalent(valueType) &&
+            ((MapType) dataType).valueContainsNull == valueContainsNull;
+    }
+
+    @Override
     public boolean equals(Object o)
     {
         if (this == o) {
