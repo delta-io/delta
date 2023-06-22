@@ -381,12 +381,10 @@ object MergeIntoCommandBase {
   def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
     val distinctValues = new mutable.HashSet[Map[String, String]]()
     var bytes = 0L
-    val iter = files.collect { case a: AddFile => a }.iterator
-    while (iter.hasNext) {
-      val file = iter.next()
+    files.collect { case file: AddFile =>
       distinctValues += file.partitionValues
       bytes += file.size
-    }
+    }.toList
     // If the only distinct value map is an empty map, then it must be an unpartitioned table.
     // Return 0 in that case.
     val numDistinctValues =
