@@ -167,7 +167,7 @@ public class DefaultJsonHandler
                         currentFileReader = new BufferedReader(
                             new InputStreamReader(stream, StandardCharsets.UTF_8));
                     } catch (Exception e){
-                        Utils.closeCloseables(stream); // close it avoid leaking resources
+                        Utils.closeCloseablesSilently(stream); // close it avoid leaking resources
                     }
                 }
             }

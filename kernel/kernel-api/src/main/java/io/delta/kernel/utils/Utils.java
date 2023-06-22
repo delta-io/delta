@@ -214,4 +214,16 @@ public class Utils
             throw exception;
         }
     }
+
+    /**
+     * Close the given list of {@link Closeable} objects. Any exception thrown is silently ignored.
+     * @param closeables
+     */
+    public static void closeCloseablesSilently(Closeable... closeables) {
+        try {
+            closeCloseables(closeables);
+        } catch (Throwable throwable) {
+            // ignore
+        }
+    }
 }
