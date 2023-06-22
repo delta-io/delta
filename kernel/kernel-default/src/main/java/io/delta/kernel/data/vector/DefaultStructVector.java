@@ -52,7 +52,6 @@ public class DefaultStructVector
     {
         super(size, dataType, nullability);
         checkArgument(dataType instanceof StructType, "not a struct type");
-
         StructType structType = (StructType) dataType;
         checkArgument(
             structType.length() == memberVectors.length,

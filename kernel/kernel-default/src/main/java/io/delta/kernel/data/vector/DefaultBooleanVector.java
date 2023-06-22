@@ -41,7 +41,6 @@ public class DefaultBooleanVector
     {
         super(size, BooleanType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");
-        checkArgument(values.length >= 0, "invalid vector size: %s", values.length);
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);
         if (nullability.isPresent()) {

@@ -42,21 +42,21 @@ class ArrayConverter
     private int collectorIndexAtStart;
 
     public ArrayConverter(
-        int maxBatchSize,
+        int initialBatchSize,
         ArrayType typeFromClient,
         GroupType typeFromFile)
     {
         this.typeFromClient = typeFromClient;
         final GroupType innerElementType = (GroupType) typeFromFile.getType("list");
         this.converter = new ArrayCollector(
-            maxBatchSize,
+            initialBatchSize,
             typeFromClient,
             innerElementType
         );
 
         // initialize working state
-        this.nullability = initNullabilityVector(maxBatchSize);
-        this.offsets = new int[maxBatchSize + 1];
+        this.nullability = initNullabilityVector(initialBatchSize);
+        this.offsets = new int[initialBatchSize + 1];
     }
 
     @Override
@@ -67,7 +67,7 @@ class ArrayConverter
                 return converter;
             default:
                 throw new IllegalArgumentException(
-                    "Invalid field index for a map column: " + fieldIndex);
+                    "Invalid field index for a array column: " + fieldIndex);
         }
     }
 
@@ -95,10 +95,7 @@ class ArrayConverter
             offsets,
             converter.getArrayVector()
         );
-        this.currentRowIndex = 0;
-        this.nullability = initNullabilityVector(nullability.length);
-        this.offsets = new int[offsets.length];
-
+        resetWorkingState();
         return vector;
     }
 
@@ -121,6 +118,14 @@ class ArrayConverter
 
             this.offsets = Arrays.copyOf(this.offsets, newSize + 1);
         }
+    }
+
+    @Override
+    public void resetWorkingState()
+    {
+        this.currentRowIndex = 0;
+        this.nullability = initNullabilityVector(nullability.length);
+        this.offsets = new int[offsets.length];
     }
 
     public static class ArrayCollector

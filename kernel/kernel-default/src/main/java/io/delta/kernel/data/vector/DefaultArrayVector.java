@@ -66,6 +66,9 @@ public class DefaultArrayVector
     @Override
     public <T> List<T> getArray(int rowId)
     {
+        if (isNullAt(rowId)) {
+            return null;
+        }
         checkValidRowId(rowId);
         int start = offsets[rowId];
         int end = offsets[rowId + 1];

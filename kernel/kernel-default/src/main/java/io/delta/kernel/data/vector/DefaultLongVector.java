@@ -41,16 +41,8 @@ public class DefaultLongVector
     {
         super(size, LongType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");
-        checkArgument(values.length >= 0, "invalid vector size: %s", values.length);
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);
-        if (nullability.isPresent()) {
-            checkArgument(values.length == nullability.get().length,
-                "vector element components are not of same size" +
-                    "value array size = %s, nullability array size = %s",
-                values.length, nullability.get().length
-            );
-        }
     }
 
     /**

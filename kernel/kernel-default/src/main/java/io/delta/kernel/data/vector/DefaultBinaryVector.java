@@ -43,11 +43,10 @@ public class DefaultBinaryVector
     {
         super(size, dataType, Optional.empty());
         checkArgument(dataType instanceof StringType || dataType instanceof BinaryType,
-            "invalid type");
+            "invalid type for binary vector: " + dataType);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);
-        checkArgument(values.length >= 0, "invalid vector size: %s", values.length);
     }
 
     @Override
@@ -90,6 +89,9 @@ public class DefaultBinaryVector
     @Override
     public byte[] getBinary(int rowId)
     {
+        if (!(getDataType() instanceof BinaryType)) {
+            throw unsupportedDataAccessException("binary");
+        }
         checkValidRowId(rowId);
         return values[rowId];
     }

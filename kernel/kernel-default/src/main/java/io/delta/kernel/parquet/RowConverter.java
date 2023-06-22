@@ -1,6 +1,6 @@
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.DefaultKernelUtils.findFieldType;
+import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -37,7 +37,7 @@ class RowConverter
     private boolean[] nullability;
 
     RowConverter(
-        int maxBatchSize,
+        int initialBatchSize,
         StructType readSchema,
         GroupType fileSchema)
     {
@@ -47,19 +47,19 @@ class RowConverter
         this.parquetOrdinalToConverterOrdinal = new HashMap<>();
 
         // Initialize the working state
-        this.nullability = ParquetConverters.initNullabilityVector(maxBatchSize);
+        this.nullability = ParquetConverters.initNullabilityVector(initialBatchSize);
 
         int parquetOrdinal = 0;
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
-            final Type typeFromFile = findFieldType(fileSchema, field);
+            final Type typeFromFile = findSubFieldType(fileSchema, field);
             if (typeFromFile == null) {
                 converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
             }
             else {
-                converters[i] =
-                    ParquetConverters.createConverter(maxBatchSize, typeFromClient, typeFromFile);
+                converters[i] = ParquetConverters.createConverter(
+                    initialBatchSize, typeFromClient, typeFromFile);
                 parquetOrdinalToConverterOrdinal.put(parquetOrdinal, i);
                 parquetOrdinal++;
             }
@@ -145,7 +145,8 @@ class RowConverter
         }
     }
 
-    private void resetWorkingState()
+    @Override
+    public void resetWorkingState()
     {
         this.currentRowIndex = 0;
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);

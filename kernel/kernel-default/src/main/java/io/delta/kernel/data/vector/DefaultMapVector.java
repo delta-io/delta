@@ -70,6 +70,9 @@ public class DefaultMapVector
     @Override
     public <K, V> Map<K, V> getMap(int rowId)
     {
+        if (isNullAt(rowId)) {
+            return null;
+        }
         checkValidRowId(rowId);
         int start = offsets[rowId];
         int end = offsets[rowId + 1];

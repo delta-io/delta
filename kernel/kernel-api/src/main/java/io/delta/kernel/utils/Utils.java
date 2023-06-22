@@ -28,30 +28,36 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-public class Utils {
+public class Utils
+{
     /**
      * Utility method to create a singleton {@link CloseableIterator}.
      *
      * @param elem Element to create iterator with.
-     * @param <T>  Element type.
+     * @param <T> Element type.
      * @return A {@link CloseableIterator} with just one element.
      */
-    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
-        return new CloseableIterator<T>() {
+    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem)
+    {
+        return new CloseableIterator<T>()
+        {
             private boolean accessed;
 
             @Override
-            public void close() throws IOException {
+            public void close() throws IOException
+            {
                 // nothing to close
             }
 
             @Override
-            public boolean hasNext() {
+            public boolean hasNext()
+            {
                 return !accessed;
             }
 
             @Override
-            public T next() {
+            public T next()
+            {
                 accessed = true;
                 return elem;
             }
@@ -61,14 +67,17 @@ public class Utils {
     /**
      * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
      * for arguments that require {@link CloseableIterator} type.
+     *
      * @param iter {@link Iterator} instance
      * @param <T> Element type
      * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
      */
-    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
-        return new CloseableIterator<T>() {
+    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter)
+    {
+        return new CloseableIterator<T>()
+        {
             @Override
-            public void close() { }
+            public void close() {}
 
             @Override
             public boolean hasNext()
@@ -91,8 +100,10 @@ public class Utils {
      * @return A {@link ColumnVector} with a single element {@code value}
      */
     // TODO: add String to method name or make generic?
-    public static ColumnVector singletonColumnVector(String value) {
-        return new ColumnVector() {
+    public static ColumnVector singletonColumnVector(String value)
+    {
+        return new ColumnVector()
+        {
             @Override
             public DataType getDataType()
             {
@@ -100,21 +111,25 @@ public class Utils {
             }
 
             @Override
-            public int getSize() {
+            public int getSize()
+            {
                 return 1;
             }
 
             @Override
-            public void close() {
+            public void close()
+            {
             }
 
             @Override
-            public boolean isNullAt(int rowId) {
+            public boolean isNullAt(int rowId)
+            {
                 return value == null;
             }
 
             @Override
-            public String getString(int rowId) {
+            public String getString(int rowId)
+            {
                 if (rowId != 0) {
                     throw new IllegalArgumentException("Invalid row id: " + rowId);
                 }
@@ -130,7 +145,8 @@ public class Utils {
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(Row scanState) {
+    public static StructType getPhysicalSchema(Row scanState)
+    {
         // TODO needs io.delta.kernel.internal.data.ScanStateRow
         throw new UnsupportedOperationException("not implemented yet");
     }
@@ -142,7 +158,8 @@ public class Utils {
      * @param scanFileInfo {@link Row} representing one scan file.
      * @return a {@link FileStatus} object created from the given scan file row.
      */
-    public static FileStatus getFileStatus(Row scanFileInfo) {
+    public static FileStatus getFileStatus(Row scanFileInfo)
+    {
         String path = scanFileInfo.getString(0);
         Long size = scanFileInfo.getLong(2);
 
@@ -151,13 +168,48 @@ public class Utils {
 
     /**
      * Close the iterator.
+     *
      * @param i1
      */
-    public static void safeClose(CloseableIterator i1) {
+    public static void safeClose(CloseableIterator i1)
+    {
         try {
             i1.close();
-        } catch (IOException ioe) {
+        }
+        catch (IOException ioe) {
             throw new RuntimeException(ioe);
+        }
+    }
+
+    /**
+     * Close the given one or more {@link CloseableIterator}s. {@link CloseableIterator#close()}
+     * will be called on all given non-null iterators. Will throw unchecked {@link RuntimeException}
+     * if an error occurs while closing. If multiple iterators causes exceptions in closing, the
+     * exceptions will be added as suppressed to the main exception that is thrown.
+     *
+     * @param iters
+     */
+    public static void closeIterators(CloseableIterator<? extends Object>... iters)
+    {
+        RuntimeException exception = null;
+        for (CloseableIterator<? extends Object> iter : iters) {
+            if (iter == null) {
+                continue;
+            }
+            try {
+                iter.close();
+            }
+            catch (Exception ex) {
+                if (exception == null) {
+                    exception = new RuntimeException(ex);
+                }
+                else {
+                    exception.addSuppressed(ex);
+                }
+            }
+        }
+        if (exception != null) {
+            throw exception;
         }
     }
 }

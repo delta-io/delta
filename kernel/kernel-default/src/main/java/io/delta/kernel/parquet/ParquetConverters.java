@@ -53,53 +53,53 @@ import io.delta.kernel.types.StructType;
 class ParquetConverters
 {
     public static Converter createConverter(
-        int maxBatchSize,
+        int initialBatchSize,
         DataType typeFromClient,
         Type typeFromFile
     )
     {
         if (typeFromClient instanceof StructType) {
             return new RowConverter(
-                maxBatchSize,
+                initialBatchSize,
                 (StructType) typeFromClient,
                 (GroupType) typeFromFile);
         }
         else if (typeFromClient instanceof ArrayType) {
             return new ArrayConverter(
-                maxBatchSize,
+                initialBatchSize,
                 (ArrayType) typeFromClient,
                 (GroupType) typeFromFile
             );
         }
         else if (typeFromClient instanceof MapType) {
             return new MapConverter(
-                maxBatchSize,
+                initialBatchSize,
                 (MapType) typeFromClient,
                 (GroupType) typeFromFile);
         }
         else if (typeFromClient instanceof StringType || typeFromClient instanceof BinaryType) {
-            return new BinaryColumnConverter(typeFromClient, maxBatchSize);
+            return new BinaryColumnConverter(typeFromClient, initialBatchSize);
         }
         else if (typeFromClient instanceof BooleanType) {
-            return new BooleanColumnConverter(maxBatchSize);
+            return new BooleanColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof IntegerType || typeFromClient instanceof DateType) {
-            return new IntColumnConverter(typeFromClient, maxBatchSize);
+            return new IntColumnConverter(typeFromClient, initialBatchSize);
         }
         else if (typeFromClient instanceof ByteType) {
-            return new ByteColumnConverter(maxBatchSize);
+            return new ByteColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof ShortType) {
-            return new ShortColumnConverter(maxBatchSize);
+            return new ShortColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof LongType) {
-            return new LongColumnConverter(maxBatchSize);
+            return new LongColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof FloatType) {
-            return new FloatColumnConverter(maxBatchSize);
+            return new FloatColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof DoubleType) {
-            return new DoubleColumnConverter(maxBatchSize);
+            return new DoubleColumnConverter(initialBatchSize);
         }
 //        else if (typeFromClient instanceof DecimalType) {
 //
@@ -122,7 +122,9 @@ class ParquetConverters
          */
         boolean moveToNextRow();
 
-        void resizeIfNeeded();
+        default void resizeIfNeeded() {}
+
+        default void resetWorkingState() {}
     }
 
     public static class NonExistentColumnConverter
@@ -147,12 +149,6 @@ class ParquetConverters
         {
             return true;
         }
-
-        @Override
-        public void resizeIfNeeded()
-        {
-            // nothing to resize
-        }
     }
 
     public abstract static class BasePrimitiveColumnConverter
@@ -163,12 +159,12 @@ class ParquetConverters
         protected int currentRowIndex;
         protected boolean[] nullability;
 
-        BasePrimitiveColumnConverter(int maxBatchSize)
+        BasePrimitiveColumnConverter(int initialBatchSize)
         {
-            checkArgument(maxBatchSize >= 0, "invalid maxBatchSize: %s", maxBatchSize);
+            checkArgument(initialBatchSize >= 0, "invalid initialBatchSize: %s", initialBatchSize);
 
             // Initialize the working state
-            this.nullability = initNullabilityVector(maxBatchSize);
+            this.nullability = initNullabilityVector(initialBatchSize);
         }
 
         @Override
@@ -186,10 +182,10 @@ class ParquetConverters
         // working state
         private boolean[] values;
 
-        BooleanColumnConverter(int maxBatchSize)
+        BooleanColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new boolean[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new boolean[initialBatchSize];
         }
 
         @Override
@@ -230,10 +226,10 @@ class ParquetConverters
         // working state
         private byte[] values;
 
-        ByteColumnConverter(int maxBatchSize)
+        ByteColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new byte[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new byte[initialBatchSize];
         }
 
         @Override
@@ -274,10 +270,10 @@ class ParquetConverters
         // working state
         private short[] values;
 
-        ShortColumnConverter(int maxBatchSize)
+        ShortColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new short[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new short[initialBatchSize];
         }
 
         @Override
@@ -318,12 +314,12 @@ class ParquetConverters
         // working state
         private int[] values;
 
-        IntColumnConverter(DataType dataType, int maxBatchSize)
+        IntColumnConverter(DataType dataType, int initialBatchSize)
         {
-            super(maxBatchSize);
+            super(initialBatchSize);
             checkArgument(dataType instanceof IntegerType || dataType instanceof DataType);
             this.dataType = dataType;
-            this.values = new int[maxBatchSize];
+            this.values = new int[initialBatchSize];
         }
 
         @Override
@@ -364,10 +360,10 @@ class ParquetConverters
         // working state
         private long[] values;
 
-        LongColumnConverter(int maxBatchSize)
+        LongColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new long[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new long[initialBatchSize];
         }
 
         @Override
@@ -407,10 +403,10 @@ class ParquetConverters
         // working state
         private float[] values;
 
-        FloatColumnConverter(int maxBatchSize)
+        FloatColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new float[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new float[initialBatchSize];
         }
 
         @Override
@@ -451,10 +447,10 @@ class ParquetConverters
         // working state
         private double[] values;
 
-        DoubleColumnConverter(int maxBatchSize)
+        DoubleColumnConverter(int initialBatchSize)
         {
-            super(maxBatchSize);
-            this.values = new double[maxBatchSize];
+            super(initialBatchSize);
+            this.values = new double[initialBatchSize];
         }
 
         @Override
@@ -497,11 +493,11 @@ class ParquetConverters
         // working state
         private byte[][] values;
 
-        BinaryColumnConverter(DataType dataType, int maxBatchSize)
+        BinaryColumnConverter(DataType dataType, int initialBatchSize)
         {
-            super(maxBatchSize);
+            super(initialBatchSize);
             this.dataType = dataType;
-            this.values = new byte[maxBatchSize][];
+            this.values = new byte[initialBatchSize][];
         }
 
         @Override

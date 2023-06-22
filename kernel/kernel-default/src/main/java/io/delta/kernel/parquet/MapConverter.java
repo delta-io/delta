@@ -42,21 +42,21 @@ class MapConverter
     private int collectorIndexAtStart;
 
     public MapConverter(
-        int maxBatchSize,
+        int initialBatchSize,
         MapType typeFromClient,
         GroupType typeFromFile)
     {
         this.typeFromClient = typeFromClient;
         final GroupType innerMapType = (GroupType) typeFromFile.getType("key_value");
         this.converter = new MapCollector(
-            maxBatchSize,
+            initialBatchSize,
             typeFromClient,
             innerMapType
         );
 
         // initialize working state
-        this.nullability = initNullabilityVector(maxBatchSize);
-        this.offsets = new int[maxBatchSize + 1];
+        this.nullability = initNullabilityVector(initialBatchSize);
+        this.offsets = new int[initialBatchSize + 1];
     }
 
     @Override
@@ -96,10 +96,7 @@ class MapConverter
             converter.getKeyVector(),
             converter.getValueVector()
         );
-        this.currentRowIndex = 0;
-        this.converter.currentEntryIndex = 0;
-        this.nullability = initNullabilityVector(nullability.length);
-        this.offsets = new int[offsets.length];
+        resetWorkingState();
 
         return vector;
     }
@@ -122,6 +119,15 @@ class MapConverter
             setNullabilityToTrue(this.nullability, newSize / 2, newSize);
             this.offsets = Arrays.copyOf(this.offsets, newSize + 1);
         }
+    }
+
+    @Override
+    public void resetWorkingState()
+    {
+        this.currentRowIndex = 0;
+        this.converter.currentEntryIndex = 0;
+        this.nullability = initNullabilityVector(nullability.length);
+        this.offsets = new int[offsets.length];
     }
 
     public static class MapCollector

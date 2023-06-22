@@ -17,6 +17,8 @@ package io.delta.kernel;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.Type;
@@ -38,33 +40,41 @@ public class DefaultKernelUtils
      * @return
      */
     public static final MessageType pruneSchema(
-        MessageType fileSchema, // parquet
+        GroupType fileSchema, // parquet
         StructType deltaType) // delta-core
     {
         return deltaType.fields().stream()
             .map(column -> {
-                Type type = findStructField(fileSchema, column);
+                Type type = findSubFieldType(fileSchema, column);
                 if (type == null) {
                     return null;
                 }
                 Type prunedSubfields = pruneSubfields(type, column.getDataType());
                 return new MessageType(column.getName(), prunedSubfields);
             })
-            .filter(type -> type != null)
+            .filter(Objects::nonNull)
             .reduce(MessageType::union)
             .get();
     }
 
-    private static Type findStructField(MessageType fileSchema, StructField column)
+    /**
+     * Search for the Parquet type in {@code groupType} of subfield which is equivalent to
+     * given {@code field}.
+     *
+     * @param groupType Parquet group type coming from the file schema.
+     * @param field Sub field given as Delta Kernel's {@link StructField}
+     * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
+     */
+    public static Type findSubFieldType(GroupType groupType, StructField field)
     {
         // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
-        final String columnName = column.getName();
-        if (fileSchema.containsField(columnName)) {
-            return fileSchema.getType(columnName);
+        final String columnName = field.getName();
+        if (groupType.containsField(columnName)) {
+            return groupType.getType(columnName);
         }
-        // Parquet is case-sensitive, but hive is not. all hive columns get converted to lowercase
-        // check for direct match above but if no match found, try case-insensitive match
-        for (org.apache.parquet.schema.Type type : fileSchema.getFields()) {
+        // Parquet is case-sensitive, but the engine that generated the parquet file may not be.
+        // Check for direct match above but if no match found, try case-insensitive match.
+        for (org.apache.parquet.schema.Type type : groupType.getFields()) {
             if (type.getName().equalsIgnoreCase(columnName)) {
                 return type;
             }
@@ -81,20 +91,12 @@ public class DefaultKernelUtils
         }
 
         GroupType groupType = (GroupType) type;
-        StructType deltaStructType = (StructType) deltaDatatype;
-        List<Type> newParquetSubFields = new ArrayList<>();
-        for (StructField subField : deltaStructType.fields()) {
-            String subFieldName = subField.getName();
-            Type parquetSubFieldType = groupType.getType(subFieldName);
-            if (parquetSubFieldType == null) {
-                for (org.apache.parquet.schema.Type typeTemp : groupType.getFields()) {
-                    if (typeTemp.getName().equalsIgnoreCase(subFieldName)) {
-                        parquetSubFieldType = type;
-                    }
-                }
-            }
-            newParquetSubFields.add(parquetSubFieldType);
-        }
+        List<Type> newParquetSubFields =
+            ((StructType) deltaDatatype).fields().stream()
+                .map(structField -> findSubFieldType(groupType, structField))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
         return groupType.withNewFields(newParquetSubFields);
     }
 
@@ -157,31 +159,5 @@ public class DefaultKernelUtils
         if (!isValid) {
             throw new IllegalStateException(message);
         }
-    }
-
-    /**
-     * Search for the Parquet type for in the {@code groupType} for the field equilant to
-     * {@code field}.
-     *
-     * @param groupType Parquet group type coming from the file schema.
-     * @param field Sub field given as Delta Kernel's {@link StructField}
-     * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
-     */
-    public static Type findFieldType(GroupType groupType, StructField field)
-    {
-        // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
-        final String columnName = field.getName();
-        if (groupType.containsField(columnName)) {
-            return groupType.getType(columnName);
-        }
-        // Parquet is case-sensitive, but hive is not. all hive columns get converted to lowercase
-        // check for direct match above but if no match found, try case-insensitive match
-        for (org.apache.parquet.schema.Type type : groupType.getFields()) {
-            if (type.getName().equalsIgnoreCase(columnName)) {
-                return type;
-            }
-        }
-
-        return null;
     }
 }

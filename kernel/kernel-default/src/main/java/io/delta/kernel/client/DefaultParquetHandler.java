@@ -61,7 +61,8 @@ public class DefaultParquetHandler
             @Override
             public FileReadContext next()
             {
-                return () -> fileIter.next();
+                Row row = fileIter.next();
+                return () -> row;
             }
         };
     }
@@ -73,6 +74,7 @@ public class DefaultParquetHandler
     {
         return new CloseableIterator<FileDataReadResult>()
         {
+            private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
             private FileReadContext currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
@@ -80,12 +82,7 @@ public class DefaultParquetHandler
             public void close()
                 throws IOException
             {
-                if (currentFileReader != null) {
-                    currentFileReader.close();
-                }
-
-                fileIter.close();
-                // TODO: implement safe close of multiple closeables.
+                Utils.closeIterators(currentFileReader, fileIter);
             }
 
             @Override
@@ -95,10 +92,10 @@ public class DefaultParquetHandler
                 // initialize the next file reader or return false if there are no more files to
                 // read.
                 if (currentFileReader == null || !currentFileReader.hasNext()) {
+                    Utils.closeIterators(currentFileReader);
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
                         FileStatus fileStatus = Utils.getFileStatus(currentFile.getScanFileRow());
-                        ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
                     }
                     else {
