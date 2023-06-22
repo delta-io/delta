@@ -84,7 +84,7 @@ public interface Scan {
             CloseableIterator<Row> scanFileRowIter,
             Optional<Expression> filter) throws IOException {
 
-        StructType readSchema = Utils.getPhysicalSchema(scanState);
+        StructType readSchema = Utils.getPhysicalSchema(tableClient, scanState);
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 

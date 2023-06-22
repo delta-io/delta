@@ -13,15 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.util;
 
-/**
- * The data type representing {@code string} type values.
- */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+import java.util.function.Supplier;
 
-    public StringType() {
-        super("string");
+public interface Logging {
+
+    default void logInfo(String msg) {
+        System.out.println(this.getClass() + " :: " + msg);
+    }
+
+    default void logInfo(Supplier<String> msg) {
+        System.out.println(this.getClass() + " :: " + msg.get());
+    }
+
+    default void logDebug(String msg) {
+        System.out.println(this.getClass() + " :: " + msg);
+    }
+    default void logDebug(Supplier<String> msg) {
+        System.out.println(this.getClass() + " :: " + msg.get());
     }
 }

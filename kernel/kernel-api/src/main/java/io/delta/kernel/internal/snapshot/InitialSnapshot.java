@@ -13,15 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
 
-/**
- * The data type representing {@code string} type values.
- */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+package io.delta.kernel.internal.snapshot;
 
-    public StringType() {
-        super("string");
+import io.delta.kernel.client.TableClient;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.SnapshotImpl;
+
+public class InitialSnapshot
+        extends SnapshotImpl
+{
+    public InitialSnapshot(Path logPath, Path dataPath, TableClient tableClient)
+    {
+        super(
+                logPath,
+                dataPath,
+                -1 /* version */,
+                LogSegment.empty(logPath),
+                tableClient,
+                -1 /* timestamp */);
     }
 }

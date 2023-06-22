@@ -13,15 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.lang;
 
-/**
- * The data type representing {@code string} type values.
- */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+import java.util.Optional;
+import java.util.function.Supplier;
 
-    public StringType() {
-        super("string");
+public class Lazy<T> {
+    private final Supplier<T> supplier;
+    private Optional<T> instance = Optional.empty();
+
+    public Lazy(Supplier<T> supplier) {
+        this.supplier = supplier;
+    }
+
+    public T get() {
+        if (!instance.isPresent()) {
+            instance = Optional.of(supplier.get());
+        }
+
+        return instance.get();
     }
 }

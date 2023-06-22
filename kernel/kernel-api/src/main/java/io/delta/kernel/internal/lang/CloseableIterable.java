@@ -13,15 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
 
-/**
- * The data type representing {@code string} type values.
- */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+package io.delta.kernel.internal.lang;
 
-    public StringType() {
-        super("string");
-    }
+import io.delta.kernel.utils.CloseableIterator;
+
+public interface CloseableIterable<T> {
+    CloseableIterator<T> iterator();
 }

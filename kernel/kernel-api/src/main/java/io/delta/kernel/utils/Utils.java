@@ -29,6 +29,9 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.internal.types.TableSchemaSerDe;
+
 public class Utils
 {
     /**
@@ -143,13 +146,15 @@ public class Utils
      * Utility method to get the physical schema from the scan state {@link Row} returned by
      * {@link Scan#getScanState(TableClient)}.
      *
+     * @param tableClient instance of {@link TableClient} to use.
      * @param scanState Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(Row scanState)
+    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState)
     {
-        // TODO needs io.delta.kernel.internal.data.ScanStateRow
-        throw new UnsupportedOperationException("not implemented yet");
+        int schemaStringOrdinal = ScanStateRow.getSchemaStringColOrdinal();
+        String serializedSchema = scanState.getString(schemaStringOrdinal);
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
     }
 
     /**

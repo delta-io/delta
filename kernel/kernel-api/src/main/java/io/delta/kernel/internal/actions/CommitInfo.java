@@ -13,15 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.actions;
 
-/**
- * The data type representing {@code string} type values.
- */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.StructType;
 
-    public StringType() {
-        super("string");
+public class CommitInfo implements Action
+{
+    public static CommitInfo fromRow(Row row)
+    {
+        if (row == null) {
+            return null;
+        }
+
+        return new CommitInfo();
     }
+
+    // TODO: This is a concern, we expect the data to be in certain format, but
+    // CommitInfo has no schema specification.
+    public static final StructType READ_SCHEMA = new StructType();
 }

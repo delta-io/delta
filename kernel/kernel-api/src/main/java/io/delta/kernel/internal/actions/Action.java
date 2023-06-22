@@ -13,15 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.actions;
 
 /**
- * The data type representing {@code string} type values.
+ * Base interface for all Delta log actions.
  */
-public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
-
-    public StringType() {
-        super("string");
-    }
+public interface Action
+{
 }

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.fs;
+package io.delta.kernel.internal.fs;
 
 import java.io.InvalidObjectException;
 import java.io.ObjectInputValidation;
@@ -551,5 +551,9 @@ public class Path
             throw new InvalidObjectException("No URI in deserialized Path");
         }
 
+    }
+
+    public static String getName(String pathString) {
+        return new Path(pathString).getName();
     }
 }

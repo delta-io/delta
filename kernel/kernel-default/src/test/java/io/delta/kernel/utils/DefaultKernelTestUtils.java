@@ -22,4 +22,8 @@ public class DefaultKernelTestUtils
     public static String getTestResourceFilePath(String resourcePath) {
         return DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
     }
+
+    public static String getConnectorResourceFilePath(String resourcePath) {
+        return DefaultKernelTestUtils.class.getResource("").getFile();
+    }
 }

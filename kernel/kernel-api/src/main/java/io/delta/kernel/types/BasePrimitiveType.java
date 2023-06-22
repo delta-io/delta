@@ -65,7 +65,7 @@ public abstract class BasePrimitiveType extends DataType
         nameToPrimitiveTypeMap.put("date", DateType.INSTANCE);
         nameToPrimitiveTypeMap.put("timestamp", TimestampType.INSTANCE);
         nameToPrimitiveTypeMap.put("binary", BinaryType.INSTANCE);
-        nameToPrimitiveTypeMap.put("string", StringType.INSTANCE);
+        nameToPrimitiveTypeMap.put("string", new StringType());
     }
 
     private final String primitiveTypeName;
