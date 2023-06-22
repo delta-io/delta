@@ -358,6 +358,7 @@ object DeltaTableUtils extends PredicateHelper
     var hasChar = false
     var newTarget = target transformDown {
       case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        // Prune columns from the scan.
         val finalOutput = actualNewOutput.getOrElse(l.output).filterNot { col =>
           columnsToDrop.exists(resolver(_, col.name))
         }
@@ -372,6 +373,9 @@ object DeltaTableUtils extends PredicateHelper
         l.copy(relation = newBaseRelation, output = finalOutput)
 
       case p @ Project(projectList, _) =>
+        // Spark does char type read-side padding via an additional Project over the scan node.
+        // `newOutput` references the Project attributes, we need to translate their expression IDs
+        // so that `newOutput` references attributes from the LogicalRelation instead.
         def hasCharPadding(e: Expression): Boolean = e.exists {
           case s: StaticInvoke => s.staticObject == classOf[CharVarcharCodegenUtils] &&
             s.functionName == "readSidePadding"
@@ -392,12 +396,11 @@ object DeltaTableUtils extends PredicateHelper
     }
 
     if (hasChar) {
+      // When char type read-side padding is applied, we need to apply column pruning for the
+      // Project as well, otherwise the Project will contain missing attributes.
       newTarget = newTarget.transformUp {
         case p @ Project(projectList, child) =>
           val newProjectList = projectList.filter { e =>
-            // Spark does char type read-side padding via an additional Project over the scan node,
-            // and we need to apply column pruning for the Project as well, otherwise the Project
-            // will contain missing attributes.
             e.references.subsetOf(child.outputSet)
           }
           p.copy(projectList = newProjectList)
