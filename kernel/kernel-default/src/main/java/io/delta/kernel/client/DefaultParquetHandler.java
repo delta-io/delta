@@ -43,28 +43,12 @@ public class DefaultParquetHandler
         CloseableIterator<Row> fileIter,
         Expression predicate)
     {
-        return new CloseableIterator<FileReadContext>()
-        {
-            @Override
-            public void close()
-                throws IOException
-            {
-                fileIter.close();
-            }
-
-            @Override
-            public boolean hasNext()
-            {
-                return fileIter.hasNext();
-            }
-
-            @Override
-            public FileReadContext next()
-            {
+        return fileIter.map(
+            scanFileRow -> {
                 Row row = fileIter.next();
                 return () -> row;
             }
-        };
+        );
     }
 
     @Override
