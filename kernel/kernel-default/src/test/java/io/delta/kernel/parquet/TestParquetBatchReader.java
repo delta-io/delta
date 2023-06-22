@@ -218,6 +218,8 @@ public class TestParquetBatchReader
                     break;
                 }
                 case "datetype": {
+                    // Set `-Duser.timezone="UTC"` as JVM arg to pass this test in computers
+                    // whose local timezone is non-UTC zone.
                     LocalDate expValue = (rowId % 61 != 0) ?
                         new Date(rowId * 20000000L).toLocalDate() : null;
                     if (expValue == null) {
