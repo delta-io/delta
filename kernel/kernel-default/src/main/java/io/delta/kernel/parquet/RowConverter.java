@@ -108,12 +108,21 @@ class RowConverter
         return batch;
     }
 
-    @Override
+    /**
+     * @param fileRowIndex the file row index of the row processed
+     */
     public boolean moveToNextRow(long fileRowIndex) {
         resizeIfNeeded();
         long memberNullCount = Arrays.stream(converters)
                 .map(converter -> (ParquetConverters.BaseConverter) converter)
-                .map(converters -> converters.moveToNextRow(fileRowIndex))
+                .map(converter -> {
+                    if (converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
+                        return ((ParquetConverters.FileRowIndexColumnConverter) converter)
+                                .moveToNextRow(fileRowIndex);
+                    } else {
+                        return converter.moveToNextRow();
+                    }
+                })
                 .filter(result -> result)
                 .count();
 
