@@ -91,7 +91,7 @@ public class TestParquetBatchReader
             new StructType().add("ab", LongType.INSTANCE),
             true));
 
-    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+    private static final LocalDate EPOCH = new Date(0).toLocalDate().ofEpochDay(0);
 
     @Test
     public void readAllTypesOfData()
