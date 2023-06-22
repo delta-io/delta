@@ -83,6 +83,7 @@ public class DefaultKernelUtils
         return null;
     }
 
+    // Note this only prunes top-level fields
     private static Type pruneSubfields(Type type, DataType deltaDatatype)
     {
         if (!(deltaDatatype instanceof StructType)) {
