@@ -18,26 +18,30 @@ package org.apache.spark.sql.delta.commands
 
 import java.util.concurrent.TimeUnit
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.actions.FileAction
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeIntoMatchedClause, DeltaMergeIntoNotMatchedBySourceClause, DeltaMergeIntoNotMatchedClause, LogicalPlan}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
 abstract class MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
+  with PredicateHelper
   with MergeIntoMaterializeSource {
 
   @transient val source: LogicalPlan
@@ -52,6 +56,29 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
 
   @transient protected lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient protected lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
+
+  /**
+   * Map to get target output attributes by name.
+   * The case sensitivity of the map is set accordingly to Spark configuration.
+   */
+  @transient private lazy val targetOutputAttributesMap: Map[String, Attribute] = {
+    val attrMap: Map[String, Attribute] = target
+      .outputSet.view
+      .map(attr => attr.name -> attr).toMap
+    if (conf.caseSensitiveAnalysis) {
+      attrMap
+    } else {
+      CaseInsensitiveMap(attrMap)
+    }
+  }
+
+  /** Whether this merge statement has only MATCHED clauses. */
+  protected def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
+    notMatchedBySourceClauses.isEmpty
+
+  /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
+  protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
+    notMatchedBySourceClauses.isEmpty
 
   import SQLMetrics._
 
@@ -147,9 +174,151 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
   }
+
+  protected def shouldOptimizeMatchedOnlyMerge(spark: SparkSession): Boolean = {
+    isMatchedOnly && spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED)
+  }
+  /**
+   * Write the output data to files, repartitioning the output DataFrame by the partition columns
+   * if table is partitioned and `merge.repartitionBeforeWrite.enabled` is set to true.
+   */
+  protected def writeFiles(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      outputDF: DataFrame): Seq[FileAction] = {
+    val partitionColumns = txn.metadata.partitionColumns
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+      txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
+    } else {
+      txn.writeFiles(outputDF)
+    }
+  }
+
+  /**
+   * Build a new logical plan to read the given `files` instead of the whole target table.
+   * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
+   * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
+   * columns may be dropped.
+   */
+  protected def buildTargetPlanWithFiles(
+      spark: SparkSession,
+      deltaTxn: OptimisticTransaction,
+      files: Seq[AddFile],
+      columnsToDrop: Seq[String]): LogicalPlan = {
+    // Action type "batch" is a historical artifact; the original implementation used it.
+    val fileIndex = new TahoeBatchFileIndex(
+      spark,
+      actionType = "batch",
+      files,
+      deltaTxn.deltaLog,
+      targetFileIndex.path,
+      deltaTxn.snapshot)
+
+    buildTargetPlanWithIndex(
+      spark,
+      deltaTxn,
+      fileIndex,
+      columnsToDrop
+    )
+  }
+
+  /**
+   * Build a new logical plan to read the target table using the given `fileIndex`.
+   * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
+   * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
+   * columns may be dropped.
+   */
+  protected def buildTargetPlanWithIndex(
+    spark: SparkSession,
+    deltaTxn: OptimisticTransaction,
+    fileIndex: TahoeFileIndex,
+    columnsToDrop: Seq[String]): LogicalPlan = {
+
+    val targetOutputCols = getTargetOutputCols(deltaTxn)
+
+    val plan = {
+
+      // In case of schema evolution & column mapping, we need to rebuild the file format
+      // because under column mapping, the reference schema within DeltaParquetFileFormat
+      // that is used to populate metadata needs to be updated.
+      //
+      // WARNING: We must do this before replacing the file index, or we risk invalidating the
+      // metadata column expression ids that replaceFileIndex might inject into the plan.
+      val planWithReplacedFileFormat = if (deltaTxn.metadata.columnMappingMode != NoMapping) {
+        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.protocol, deltaTxn.metadata)
+        DeltaTableUtils.replaceFileFormat(target, updatedFileFormat)
+      } else {
+        target
+      }
+
+      // We have to do surgery to use the attributes from `targetOutputCols` to scan the table.
+      // In cases of schema evolution, they may not be the same type as the original attributes.
+      // We can ignore the new columns which aren't yet AttributeReferences.
+      val newReadCols = targetOutputCols.collect { case a: AttributeReference => a }
+      DeltaTableUtils.replaceFileIndex(
+        spark,
+        planWithReplacedFileFormat,
+        fileIndex,
+        columnsToDrop,
+        newOutput = Some(newReadCols))
+    }
+
+    // Add back the null expression aliases for columns that are new to the target schema
+    // and don't exist in the input snapshot.
+    // These have been added in `getTargetOutputCols` but have been removed in `newReadCols` above
+    // and are thus not in `plan.output`.
+    val newColumnsWithNulls = targetOutputCols.filter(_.isInstanceOf[Alias])
+    Project(plan.output ++ newColumnsWithNulls, plan)
+  }
+
+  /**
+   * Get the expression references for the output columns of the target table relative to
+   * the transaction. Due to schema evolution, there are two kinds of expressions here:
+   *  * References to columns in the target dataframe. Note that these references may have a
+   *    different data type than they originally did due to schema evolution, but the exprId
+   *    will be the same. These references will be marked as nullable if `makeNullable` is set
+   *    to true.
+   *  * Literal nulls, for new columns which are being added to the target table as part of
+   *    this transaction, since new columns will have a value of null for all existing rows.
+   */
+  protected def getTargetOutputCols(
+      txn: OptimisticTransaction, makeNullable: Boolean = false): Seq[NamedExpression] = {
+    txn.metadata.schema.map { col =>
+      targetOutputAttributesMap
+        .get(col.name)
+        .map { a =>
+          AttributeReference(col.name, col.dataType, makeNullable || col.nullable)(a.exprId)
+        }
+        .getOrElse(Alias(Literal(null), col.name)())
+    }
+  }
+
   /** Expressions to increment SQL metrics */
   protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
     IncrementMetric(Literal(valueToReturn), metrics(name))
+
+  protected def getTargetOnlyPredicates(spark: SparkSession): Seq[Expression] = {
+    val targetOnlyPredicatesOnCondition =
+      splitConjunctivePredicates(condition).filter(_.references.subsetOf(target.outputSet))
+
+    if (!isMatchedOnly) {
+      targetOnlyPredicatesOnCondition
+    } else {
+      val targetOnlyMatchedPredicate = matchedClauses
+        .map(clause => clause.condition.getOrElse(Literal(true)))
+        .map { condition =>
+          splitConjunctivePredicates(condition)
+            .filter(_.references.subsetOf(target.outputSet))
+            .reduceOption(And)
+            .getOrElse(Literal(true))
+        }
+        .reduceOption(Or)
+      targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
+    }
+  }
+
+  protected def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
+
   /**
    * Execute the given `thunk` and return its result while recording the time taken to do it
    * and setting additional local properties for better UI visibility.
@@ -204,3 +373,22 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 }
 
+object MergeIntoCommandBase {
+  val ROW_DROPPED_COL = "_row_dropped_"
+  val PRECOMPUTED_CONDITION_COL = "_condition_"
+
+  /** Count the number of distinct partition values among the AddFiles in the given set. */
+  def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
+    val distinctValues = new mutable.HashSet[Map[String, String]]()
+    var bytes = 0L
+    files.collect { case file: AddFile =>
+      distinctValues += file.partitionValues
+      bytes += file.size
+    }.toList
+    // If the only distinct value map is an empty map, then it must be an unpartitioned table.
+    // Return 0 in that case.
+    val numDistinctValues =
+      if (distinctValues.size == 1 && distinctValues.head.isEmpty) 0 else distinctValues.size
+    (bytes, numDistinctValues)
+  }
+}

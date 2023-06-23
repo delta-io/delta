@@ -29,8 +29,10 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -325,6 +327,87 @@ object DeltaTableUtils extends PredicateHelper
     }
   }
 
+  /**
+   * Replace the file index in a logical plan and return the updated plan.
+   * It's a common pattern that, in Delta commands, we use data skipping to determine a subset of
+   * files that can be affected by the command, so we replace the whole-table file index in the
+   * original logical plan with a new index of potentially affected files, while everything else in
+   * the original plan, e.g., resolved references, remain unchanged.
+   *
+   * Many Delta meta-queries involve nondeterminstic functions, which interfere with automatic
+   * column pruning, so columns can be manually pruned from the new scan. Note that partition
+   * columns can never be dropped even if they're not referenced in the rest of the query.
+   *
+   * @param spark the spark session to use
+   * @param target the logical plan in which we replace the file index
+   * @param fileIndex the new file index
+   * @param columnsToDrop columns to drop from the scan
+   * @param newOutput If specified, new logical output to replace the current LogicalRelation.
+   *                  Used for schema evolution to produce the new schema-evolved types from
+   *                  old files, because `target` will have the old types.
+   */
+  def replaceFileIndex(
+      spark: SparkSession,
+      target: LogicalPlan,
+      fileIndex: FileIndex,
+      columnsToDrop: Seq[String],
+      newOutput: Option[Seq[AttributeReference]]): LogicalPlan = {
+    val resolver = spark.sessionState.analyzer.resolver
+
+    var actualNewOutput = newOutput
+    var hasChar = false
+    var newTarget = target transformDown {
+      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        // Prune columns from the scan.
+        val finalOutput = actualNewOutput.getOrElse(l.output).filterNot { col =>
+          columnsToDrop.exists(resolver(_, col.name))
+        }
+
+        // If the output columns were changed e.g. by schema evolution, we need to update
+        // the relation to expose all the columns that are expected after schema evolution.
+        val newDataSchema = StructType(finalOutput.map(attr =>
+          StructField(attr.name, attr.dataType, attr.nullable, attr.metadata)))
+        val newBaseRelation = hfsr.copy(
+          location = fileIndex, dataSchema = newDataSchema)(
+          hfsr.sparkSession)
+        l.copy(relation = newBaseRelation, output = finalOutput)
+
+      case p @ Project(projectList, _) =>
+        // Spark does char type read-side padding via an additional Project over the scan node.
+        // `newOutput` references the Project attributes, we need to translate their expression IDs
+        // so that `newOutput` references attributes from the LogicalRelation instead.
+        def hasCharPadding(e: Expression): Boolean = e.exists {
+          case s: StaticInvoke => s.staticObject == classOf[CharVarcharCodegenUtils] &&
+            s.functionName == "readSidePadding"
+          case _ => false
+        }
+        val charColMapping = AttributeMap(projectList.collect {
+          case a: Alias if hasCharPadding(a.child) && a.references.size == 1 =>
+            hasChar = true
+            val tableCol = a.references.head.asInstanceOf[AttributeReference]
+            a.toAttribute -> tableCol
+        })
+        actualNewOutput = newOutput.map(_.map { attr =>
+          charColMapping.get(attr).map { tableCol =>
+            attr.withExprId(tableCol.exprId)
+          }.getOrElse(attr)
+        })
+        p
+    }
+
+    if (hasChar) {
+      // When char type read-side padding is applied, we need to apply column pruning for the
+      // Project as well, otherwise the Project will contain missing attributes.
+      newTarget = newTarget.transformUp {
+        case p @ Project(projectList, child) =>
+          val newProjectList = projectList.filter { e =>
+            e.references.subsetOf(child.outputSet)
+          }
+          p.copy(projectList = newProjectList)
+      }
+    }
+    newTarget
+  }
 
   /**
    * Update FileFormat for a plan and return the updated plan
