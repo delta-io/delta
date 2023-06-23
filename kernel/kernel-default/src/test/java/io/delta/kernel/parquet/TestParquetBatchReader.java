@@ -452,5 +452,20 @@ public class TestParquetBatchReader
                 }
             }
         }
+
+        // File with multiple row-groups [0, 20000) where rowIndex = id
+        String filePath = DefaultKernelTestUtils.getTestResourceFilePath(
+                "parquet/row_index_multiple_row_groups.parquet");
+        reader = new ParquetBatchReader(new Configuration());
+        try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
+            while (iter.hasNext()) {
+                ColumnarBatch batch = iter.next();
+                for (int i = 0; i < batch.getSize(); i ++) {
+                    long id = batch.getColumnVector(0).getLong(i);
+                    long rowIndex = batch.getColumnVector(1).getLong(i);
+                    assertEquals(id, rowIndex);
+                }
+            }
+        }
     }
 }
