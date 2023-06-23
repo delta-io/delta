@@ -31,6 +31,8 @@ import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
@@ -95,11 +97,16 @@ public interface Scan
         List<String> partitionColumns = Utils.getPartitionColumns(scanState);
         Set<String> partitionColumnsSet = new HashSet<>(partitionColumns);
 
+<<<<<<< HEAD
         StructType readSchemaWithoutPartitionColumns =
             PartitionUtils.physicalSchemaWithoutPartitionColumns(
                 logicalSchema,
                 physicalSchema,
                 partitionColumnsSet);
+=======
+        StructType readSchema = Utils.getPhysicalSchema(tableClient, scanState)
+                .add(StructField.ROW_INDEX_COLUMN); // request the row_index column for DV filtering
+>>>>>>> 56b9874b (Initial impl plus some scala tests)
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 
@@ -112,6 +119,7 @@ public interface Scan
             filesReadContextsIter,
             readSchemaWithoutPartitionColumns);
 
+<<<<<<< HEAD
         // TODO: Attach the selection vector associated with the file
         return data.map(fileDataReadResult -> {
                 ColumnarBatch updatedBatch =
@@ -138,5 +146,8 @@ public interface Scan
                 return new DataReadResult(updatedBatch, Optional.empty());
             }
         );
+=======
+        return DeletionVectorUtils.attachSelectionVectors(tableClient, scanState, data);
+>>>>>>> 56b9874b (Initial impl plus some scala tests)
     }
 }

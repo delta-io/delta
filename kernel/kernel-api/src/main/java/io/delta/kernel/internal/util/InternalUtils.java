@@ -38,7 +38,8 @@ public class InternalUtils
             Collections.emptyMap(),
             fileStatus.getSize(),
             fileStatus.getModificationTime(),
-            false /* dataChange */
+            false /* dataChange */,
+            null // deletionVector
         );
 
         return new AddFileColumnarBatch(Collections.singletonList(addFile))

@@ -41,7 +41,7 @@ public class AddFileColumnarBatch
         ordinalToAccessor.put(2, (a) -> a.getSize());
         ordinalToAccessor.put(3, (a) -> a.getModificationTime());
         ordinalToAccessor.put(4, (a) -> a.isDataChange());
-        ordinalToAccessor.put(5, (a) -> a.getDeletionVectorUniqueId().orElse(null));
+        ordinalToAccessor.put(5, (a) -> a.getDeletionVectorAsRow());
 
         ordinalToColName.put(0, "path");
         ordinalToColName.put(1, "partitionValues");

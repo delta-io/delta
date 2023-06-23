@@ -17,9 +17,12 @@
 package io.delta.kernel.client;
 
 import java.io.FileNotFoundException;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.Tuple2;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client
@@ -40,4 +43,11 @@ public interface FileSystemClient
      */
     CloseableIterator<FileStatus> listFrom(String filePath)
             throws FileNotFoundException;
+
+    /**
+     * TODO: solidify input type; need some combination of path, offset, size
+     */
+    CloseableIterator<ByteArrayInputStream> readFiles(
+            CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)
+            throws IOException;
 }
