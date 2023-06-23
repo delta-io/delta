@@ -22,13 +22,17 @@ import java.util.Locale
 
 import scala.language.implicitConversions
 
-import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.ScanReportHelper
+import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.util.FailFastMode
@@ -43,6 +47,7 @@ abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
     with BeforeAndAfterEach    with SQLTestUtils
+    with ScanReportHelper
     with DeltaTestUtilsForTempViews
     with MergeHelpers {
 
@@ -249,6 +254,47 @@ abstract class MergeIntoSuiteBase
       checkAnswer(readDeltaTable(tempPath),
         Row(2, 2) :: // No change
           Row(1, 7) :: // Update
+          Row(-10, 13) :: // Insert
+          Nil)
+    }
+  }
+
+  test("basic case - multiple inserts") {
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3), (3, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` as trgNew",
+        src = "source src",
+        cond = "src.key1 = key2",
+        insert(condition = "key1 = 0", values = "(key2, value) VALUES (src.key1, src.value + 3)"),
+        insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
+          Row(0, 6) :: // Insert
+          Row(-7, 15) :: // Insert
+          Nil)
+    }
+  }
+
+  test("basic case - upsert with only rows inserted") {
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` as trgNew",
+        src = "source src",
+        cond = "src.key1 = key2",
+        update(condition = "key2 = 5", set = "value = src.value + 3"),
+        insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
           Row(-10, 13) :: // Insert
           Nil)
     }
@@ -2453,6 +2499,210 @@ abstract class MergeIntoSuiteBase
       (1, 10) // update
     )
   )
+
+  test("data skipping - target-only condition") {
+    withKeyValueData(
+      source = (1, 10) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+
+      val report = getScanReport {
+        executeMerge(
+          target = s"$targetName t",
+          source = s"$sourceName s",
+          condition = "s.key = t.key AND t.key <= 1",
+          update = "t.key = s.key, t.value = s.value",
+          insert = "(key, value) VALUES (s.key, s.value)")
+      }.head
+
+      checkAnswer(sql(getDeltaFileStmt(tempPath)),
+        Row(1, 10) ::  // Updated
+        Row(2, 2) ::   // File should be skipped
+        Nil)
+
+      assert(report.size("scanned").bytesCompressed != report.size("total").bytesCompressed)
+    }
+  }
+
+  test("insert only merge - target data skipping") {
+    val tblName = "merge_target"
+    withTable(tblName) {
+      spark.range(10).withColumn("part", 'id % 5).withColumn("value", 'id + 'id)
+        .write.format("delta").partitionBy("part").mode("append").saveAsTable(tblName)
+
+      val source = "source"
+      withTable(source) {
+        spark.range(20).withColumn("part", functions.lit(1)).withColumn("value", 'id + 'id)
+          .write.format("delta").saveAsTable(source)
+
+        val scans = getScanReport {
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            executeMerge(
+              s"$tblName t",
+              s"$source s",
+              "s.id = t.id AND t.part = 1",
+              insert(condition = "s.id % 5 = s.part", values = "*"))
+          }
+        }
+        checkAnswer(
+          spark.table(tblName).where("part = 1"),
+          Row(1, 1, 2) :: Row(6, 1, 12) :: Row(11, 1, 22) :: Row(16, 1, 32) :: Nil
+        )
+
+        assert(scans.length === 2, "We should scan the source and target " +
+          "data once in an insert only optimization")
+
+        // check if the source and target tables are scanned just once
+        val sourceRoot = DeltaTableUtils.findDeltaTableRoot(
+          spark, new Path(spark.table(source).inputFiles.head)).get.toString
+        val targetRoot = DeltaTableUtils.findDeltaTableRoot(
+          spark, new Path(spark.table(tblName).inputFiles.head)).get.toString
+        assert(scans.map(_.path).toSet == Set(sourceRoot, targetRoot))
+
+        // check scanned files
+        val targetScans = scans.find(_.path == targetRoot)
+        val deltaLog = DeltaLog.forTable(spark, targetScans.get.path)
+        val numTargetFiles = deltaLog.snapshot.numOfFiles
+        assert(targetScans.get.metrics("numFiles") < numTargetFiles)
+        // check scanned sizes
+        val scanSizes = targetScans.head.size
+        assert(scanSizes("total").bytesCompressed.get > scanSizes("scanned").bytesCompressed.get,
+          "Should have partition pruned target table")
+      }
+    }
+  }
+
+  /**
+   * Test whether data skipping on matched predicates of a merge command is performed.
+   * @param name The name of the test case.
+   * @param source The source for merge.
+   * @param target The target for merge.
+   * @param dataSkippingOnTargetOnly The boolean variable indicates whether
+   *                                 when matched clauses are on target fields only.
+   *                                 Data Skipping should be performed before inner join if
+   *                                 this variable is true.
+   * @param isMatchedOnly The boolean variable indicates whether the merge command only
+   *                      contains when matched clauses.
+   * @param mergeClauses Merge Clauses.
+   */
+  protected def testMergeDataSkippingOnMatchPredicates(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      dataSkippingOnTargetOnly: Boolean,
+      isMatchedOnly: Boolean,
+      mergeClauses: MergeClause*)(
+      result: Seq[(Int, Int)]): Unit = {
+    test(s"data skipping with matched predicates - $name") {
+      withKeyValueData(source, target) { case (sourceName, targetName) =>
+        val stats = performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
+          sourceName,
+          targetName,
+          result,
+          mergeClauses)
+        // Data skipping on match predicates should only be performed when it's a
+        // matched only merge.
+        if (isMatchedOnly) {
+          // The number of files removed/added should be 0 because of the additional predicates.
+          assert(stats.targetFilesRemoved == 0)
+          assert(stats.targetFilesAdded == 0)
+          // Verify that the additional predicates on data skipping
+          // before inner join filters file out for match predicates only
+          // on target.
+          if (dataSkippingOnTargetOnly) {
+            assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
+          }
+        } else {
+          assert(stats.targetFilesRemoved > 0)
+          // If there is no insert clause and the flag is enabled, data skipping should be
+          // performed on targetOnly predicates.
+          // However, with insert clauses, it's expected that no additional data skipping
+          // is performed on matched clauses.
+          assert(stats.targetBeforeSkipping.files.get == stats.targetAfterSkipping.files.get)
+          assert(stats.targetRowsUpdated == 0)
+        }
+      }
+    }
+  }
+
+  protected def performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
+      sourceName: String,
+      targetName: String,
+      result: Seq[(Int, Int)],
+      mergeClauses: Seq[MergeClause]): MergeStats = {
+    var events: Seq[UsageRecord] = Seq.empty
+    // Perform merge on merge condition with matched clauses.
+    events = Log4jUsageLogger.track {
+      executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", mergeClauses: _*)
+    }
+    val deltaPath = if (targetName.startsWith("delta.`")) {
+      targetName.stripPrefix("delta.`").stripSuffix("`")
+    } else targetName
+
+    checkAnswer(
+      readDeltaTable(deltaPath),
+      result.map { case (k, v) => Row(k, v) })
+
+    // Verify merge stats from usage events
+    val mergeStats = events.filter { e =>
+      e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.dml.merge.stats")
+    }
+
+    assert(mergeStats.size == 1)
+
+    JsonUtils.fromJson[MergeStats](mergeStats.head.blob)
+  }
+
+  testMergeDataSkippingOnMatchPredicates("match conditions on target fields only")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    dataSkippingOnTargetOnly = true,
+    isMatchedOnly = true,
+    update(condition = "t.key == 10", set = "*"),
+    update(condition = "t.value == 100", set = "*"))(
+    result = Seq((1, 10), (2, 20), (3, 30))
+  )
+
+  testMergeDataSkippingOnMatchPredicates("match conditions on source fields only")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    dataSkippingOnTargetOnly = false,
+    isMatchedOnly = true,
+    update(condition = "s.key == 10", set = "*"),
+    update(condition = "s.value == 10", set = "*"))(
+    result = Seq((1, 10), (2, 20), (3, 30))
+  )
+
+  testMergeDataSkippingOnMatchPredicates("match on source and target fields")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    dataSkippingOnTargetOnly = false,
+    isMatchedOnly = true,
+    update(condition = "s.key == 10", set = "*"),
+    update(condition = "s.value == 10", set = "*"),
+    delete(condition = "t.key == 4"))(
+    result = Seq((1, 10), (2, 20), (3, 30))
+  )
+
+  testMergeDataSkippingOnMatchPredicates("with insert clause")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    dataSkippingOnTargetOnly = false,
+    isMatchedOnly = false,
+    update(condition = "t.key == 10", set = "*"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq((1, 10), (2, 20), (3, 30), (5, 500))
+  )
+
+  testMergeDataSkippingOnMatchPredicates("when matched and conjunction")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    dataSkippingOnTargetOnly = true,
+    isMatchedOnly = true,
+    update(condition = "t.key == 1 AND t.value == 5", set = "*"))(
+    result = Seq((1, 10), (2, 20), (3, 30)))
+
 
   /**
    * Parse the input JSON data into a dataframe, one row per input element.
@@ -5202,34 +5452,16 @@ abstract class MergeIntoSuiteBase
       "The schema of your Delta table has changed in an incompatible way"
   )
 
-
-  private def testComplexTempViewOnMerge(name: String)(text: String, expectedResult: Seq[Row]) = {
-    testOssOnlyWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          executeMerge(
-            target = "v",
-            source = "src",
-            condition = "src.a = v.key AND src.b = v.value",
-            update = "v.value = src.b + 1",
-            insert = "(v.key, v.value) VALUES (src.a, src.b)")
-          checkAnswer(spark.table("v"), expectedResult)
-        }
-      }
-    }
-  }
-
-  testComplexTempViewOnMerge("nontrivial projection")(
-    "SELECT value as key, key as value FROM tab",
-    Seq(Row(3, 0), Row(3, 1), Row(4, 3))
+  testInvalidTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
+    expectedErrorMsgForDataSetTempView = "Attribute(s) with the same name appear"
   )
 
-  testComplexTempViewOnMerge("view with too many internal aliases")(
-    "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    Seq(Row(0, 3), Row(1, 3), Row(3, 4))
+  testInvalidTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
+    expectedErrorMsgForDataSetTempView = null
   )
 
   test("UDT Data Types - simple and nested") {
@@ -5348,6 +5580,43 @@ abstract class MergeIntoSuiteBase
     assert(opTypes == Set(
       "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
+
+  test("recorded operations - write inserts only") {
+    var events: Seq[UsageRecord] = Seq.empty
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+      target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+
+      events = Log4jUsageLogger.track {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key AND s.key > 5",
+          update(condition = "s.key > 10", set = "key = s.key, value = s.value"),
+          insert(condition = "s.key < 1", values = "(key, value) VALUES (s.key, s.value)"))
+      }
+
+      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+        Row(0, 0),   // inserted
+        Row(1, 1),   // existed previously
+        Row(2, 2),   // existed previously
+        Row(3, 3)    // existed previously
+      ))
+    }
+
+    // Get recorded operations from usage events
+    val opTypes = events.filter { e =>
+      e.metric == "sparkOperationDuration" && e.opType.get.typeName.contains("delta.dml.merge")
+    }.map(_.opType.get.typeName).toSet
+
+    assert(opTypes == expectedOpTypesInsertOnly)
+  }
+
+  protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
+    "delta.dml.merge")
 }
 
 
