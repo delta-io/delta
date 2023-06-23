@@ -71,7 +71,10 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
     "spark.sql.crossJoin.enabled" -> "true"
   )
 
-  def runInternal(): Unit = {
+  /**
+   * Runs every merge test case multiple times and records the duration.
+   */
+  override def runInternal(): Unit = {
     for ((k, v) <- extraConfs) spark.conf.set(k, v)
     spark.sparkContext.setLogLevel("WARN")
     log("All configs:\n\t" + spark.conf.getAll.toSeq.sortBy(_._1).mkString("\n\t"))
@@ -95,6 +98,10 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
     }
   }
 
+  /**
+   * Merge test runner: clone a fresh target table, run the merge test case, checks invariants then
+   * drops the cloned table.
+   */
   protected def runMerge(
       testCase: MergeTestCase,
       targetRowCount: Long,
@@ -113,6 +120,10 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
     }
   }
 
+  /**
+   * Clones the target table before each test case to use a fresh target table and drops the clone
+   * afterwards.
+   */
   protected def withCloneTargetTable[T](testCaseName: String)(f: String => T): T = {
     val target = s"`${conf.dbName}`.`target_${conf.tableName}`"
     val clonedTableName = s"`${conf.dbName}`.`${conf.tableName}_${generateUUID()}`"

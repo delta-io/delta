@@ -102,6 +102,9 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
     s"s3://devrel-delta-datasets/tpcds-2.13/tpcds_sf${conf.scaleInGB}_parquet/${conf.tableName}/"
   }
 
+  /**
+   * Creates the target table and all source table configuration used in merge test cases.
+   */
   def runInternal(): Unit = {
     val dbName = conf.dbName
     val dbLocation = conf.dbLocation(dbName, suffix = benchmarkId.replace("-", "_"))
@@ -124,6 +127,9 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
     runQuery("SHOW TABLES", printRows = true)
   }
 
+  /**
+   * Creates the target Delta table and performs sanity checks.
+   */
   protected def loadTargetTable(): Unit = {
     val dbLocation = conf.dbLocation(conf.dbName, suffix = benchmarkId.replace("-", "_"))
     val location = s"${dbLocation}/${conf.tableName}/"
@@ -151,6 +157,9 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
       s"target $targetTableFullName = $targetRowCount")
   }
 
+  /**
+   * Creates a source table for the given source table configuration by sampling the target table.
+   */
   protected def loadSourceTable(sourceTable: MergeSourceTable): Unit = {
     val fullTableName = s"`${conf.dbName}`.`${sourceTable.name}`"
     val dbLocation = conf.dbLocation(conf.dbName, suffix = benchmarkId.replace("-", "_"))

@@ -19,12 +19,33 @@ package benchmark
 import org.apache.spark.sql.Row
 
 trait MergeTestCase {
+  /**
+   * Name of the test case used e.p. in the test results.
+   */
   def name: String
+
+  /**
+   * The source table configuration to use for the test case. When a test case is defined,
+   * [[MergeDataLoad]] will collect all source table configuration and create the source tables
+   * required by all tests.
+   */
   def sourceTable: MergeSourceTable
+
+  /**
+   * The merge command to execute as a SQL string.
+   */
   def sqlCmd(targetTable: String): String
+
+  /**
+   * Each test case can define invariants to check after the merge command runs to ensure that the
+   * benchmark results are valid.
+   */
   def validate(mergeStats: Seq[Row], targetRowCount: Long): Unit
 }
 
+/**
+ * Trait shared by all insert-only merge test cases.
+ */
 trait InsertOnlyTestCase extends MergeTestCase {
     val fileMatchedFraction: Double
     val rowNotMatchedFraction: Double
@@ -41,6 +62,9 @@ trait InsertOnlyTestCase extends MergeTestCase {
   }
 }
 
+/**
+ * A merge test case with a single WHEN NOT MATCHED THEN INSERT * clause.
+ */
 case class SingleInsertOnlyTestCase(
     fileMatchedFraction: Double,
     rowNotMatchedFraction: Double) extends InsertOnlyTestCase {
@@ -58,6 +82,9 @@ case class SingleInsertOnlyTestCase(
    }
 }
 
+/**
+ * A merge test case with two WHEN NOT MATCHED (AND condition) THEN INSERT * clauses.
+ */
 case class MultipleInsertOnlyTestCase(
     fileMatchedFraction: Double,
     rowNotMatchedFraction: Double) extends InsertOnlyTestCase {
@@ -75,6 +102,9 @@ case class MultipleInsertOnlyTestCase(
    }
 }
 
+/**
+ * A merge test case with a single WHEN MATCHED THEN DELETED clause.
+ */
 case class DeleteOnlyTestCase(
     fileMatchedFraction: Double,
     rowMatchedFraction: Double) extends MergeTestCase {
@@ -102,6 +132,9 @@ case class DeleteOnlyTestCase(
   }
 }
 
+/**
+ * A merge test case with a MATCHED UPDATE and a NOT MATCHED INSERT clause.
+ */
 case class UpsertTestCase(
     fileMatchedFraction: Double,
     rowMatchedFraction: Double,
@@ -139,55 +172,36 @@ object MergeTestCases {
 
   def insertOnlyTestCases: Seq[MergeTestCase] = Seq(
     SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
-      rowNotMatchedFraction = 0.005),
-    SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.05),
     SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.5),
     SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 1.0),
-    SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.1,
-      rowNotMatchedFraction = 0.005),
 
     MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
-      rowNotMatchedFraction = 0.005),
-    MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.05),
     MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.5),
     MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.005,
+      fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 1.0),
-    MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.1,
-      rowNotMatchedFraction = 0.005))
+  )
 
   def deleteOnlyTestCases: Seq[MergeTestCase] = Seq(
     DeleteOnlyTestCase(
-      fileMatchedFraction = 0.005,
-      rowMatchedFraction = 0.005))
+      fileMatchedFraction = 0.05,
+      rowMatchedFraction = 0.05),
+  )
 
   def upsertTestCases: Seq[MergeTestCase] = Seq(
-    UpsertTestCase(
-      fileMatchedFraction = 0.005,
-      rowMatchedFraction = 0.005,
-      rowNotMatchedFraction = 0.005),
 
     UpsertTestCase(
       fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.1,
-      rowNotMatchedFraction = 0.01),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.01,
       rowMatchedFraction = 0.1,
       rowNotMatchedFraction = 0.01),
 
@@ -214,11 +228,6 @@ object MergeTestCases {
     UpsertTestCase(
       fileMatchedFraction = 1.0,
       rowMatchedFraction = 0.01,
-      rowNotMatchedFraction = 0.001),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.01,
-      rowMatchedFraction = 0.5,
       rowNotMatchedFraction = 0.001),
 
     UpsertTestCase(
