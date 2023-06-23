@@ -1234,73 +1234,84 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("startingVersion should be ignored when restarting from a checkpoint") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val start = 1594795800000L
-      generateCommits(inputDir.getCanonicalPath, start, start + 20.minutes)
-
-      def testStartingVersion(
-          startingVersion: Long,
-          checkpointLocation: String = checkpointDir.getCanonicalPath): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", startingVersion)
-          .load(inputDir.getCanonicalPath)
-          .writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointLocation)
-          .start(outputDir.getCanonicalPath)
-        try {
-          q.processAllAvailable()
-        } finally {
-          q.stop()
+  // Row tracking forces actions to appear after AddFiles within commits. This will verify that
+  // we correctly skip processed commits, even when an AddFile is not the last action within a
+  // commit.
+  Seq(true, false).foreach { withRowTracking =>
+    testQuietly(s"startingVersion should be ignored when restarting from a checkpoint, " +
+      s"withRowTracking = $withRowTracking") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        val start = 1594795800000L
+        withSQLConf(
+          DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> withRowTracking.toString) {
+          generateCommits(inputDir.getCanonicalPath, start, start + 20.minutes)
         }
-      }
 
-      testStartingVersion(1L)
-      checkAnswer(
-        spark.read.format("delta").load(outputDir.getCanonicalPath),
-        (10 until 20).map(_.toLong).toDF())
+        def testStartingVersion(
+            startingVersion: Long,
+            checkpointLocation: String = checkpointDir.getCanonicalPath): Unit = {
+          val q = spark.readStream
+            .format("delta")
+            .option("startingVersion", startingVersion)
+            .load(inputDir.getCanonicalPath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointLocation)
+            .start(outputDir.getCanonicalPath)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+        }
 
-      // Add two new commits
-      generateCommits(inputDir.getCanonicalPath, start + 40.minutes)
-      disableLogCleanup(inputDir.getCanonicalPath)
-      val deltaLog = DeltaLog.forTable(spark, inputDir.getCanonicalPath)
-      assert(deltaLog.update().version == 3)
-      deltaLog.checkpoint()
-
-      // Make the streaming query move forward. When we restart here, we still need to touch
-      // `DeltaSource.getStartingVersion` because the engine will call `getBatch` that was committed
-      // (start is None) during the restart.
-      testStartingVersion(1L)
-      checkAnswer(
-        spark.read.format("delta").load(outputDir.getCanonicalPath),
-        (10 until 30).map(_.toLong).toDF())
-
-      // Add one commit and delete version 0 and version 1
-      generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
-      (0 to 1).foreach { v =>
-        new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
-      }
-
-      // Although version 1 has been deleted, restarting the query should still work as we have
-      // processed files in version 1. In other words, query restart should ignore "startingVersion"
-      // TODO: currently we would error out if we couldn't construct the snapshot to check column
-      //  mapping enable tables. Unblock this once we roll out the proper semantics.
-      withStreamingReadOnColumnMappingTableEnabled {
         testStartingVersion(1L)
         checkAnswer(
           spark.read.format("delta").load(outputDir.getCanonicalPath),
-          ((10 until 30) ++ (40 until 50)).map(_.toLong).toDF()) // the gap caused by "alter table"
+          (10 until 20).map(_.toLong).toDF())
 
-        // But if we start a new query, it should fail.
-        val newCheckpointDir = Utils.createTempDir()
-        try {
-          assert(intercept[StreamingQueryException] {
-            testStartingVersion(1L, newCheckpointDir.getCanonicalPath)
-          }.getMessage.contains("[2, 4]"))
-        } finally {
-          Utils.deleteRecursively(newCheckpointDir)
+        // Add two new commits
+        generateCommits(inputDir.getCanonicalPath, start + 40.minutes)
+        disableLogCleanup(inputDir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, inputDir.getCanonicalPath)
+        assert(deltaLog.update().version == 3)
+        deltaLog.checkpoint()
+
+        // Make the streaming query move forward. When we restart here, we still need to touch
+        // `DeltaSource.getStartingVersion` because the engine will call `getBatch`
+        // that was committed (start is None) during the restart.
+        testStartingVersion(1L)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (10 until 30).map(_.toLong).toDF())
+
+        // Add one commit and delete version 0 and version 1
+        generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
+        (0 to 1).foreach { v =>
+          new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
+        }
+
+        // Although version 1 has been deleted, restarting the query should still work as we have
+        // processed files in version 1.
+        // In other words, query restart should ignore "startingVersion"
+        // TODO: currently we would error out if we couldn't construct the snapshot to check column
+        //  mapping enable tables. Unblock this once we roll out the proper semantics.
+        withStreamingReadOnColumnMappingTableEnabled {
+          testStartingVersion(1L)
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            // the gap caused by "alter table"
+            ((10 until 30) ++ (40 until 50)).map(_.toLong).toDF())
+
+          // But if we start a new query, it should fail.
+          val newCheckpointDir = Utils.createTempDir()
+          try {
+            assert(intercept[StreamingQueryException] {
+              testStartingVersion(1L, newCheckpointDir.getCanonicalPath)
+            }.getMessage.contains("[2, 4]"))
+          } finally {
+            Utils.deleteRecursively(newCheckpointDir)
+          }
         }
       }
     }
