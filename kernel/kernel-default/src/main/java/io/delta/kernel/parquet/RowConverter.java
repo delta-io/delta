@@ -56,7 +56,8 @@ class RowConverter
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
-            final Type typeFromFile = findSubFieldType(fileSchema, field);
+            final Type typeFromFile = field.isDataColumn() ?
+                    findSubFieldType(fileSchema, field) : null;
             if (typeFromFile == null) {
                 if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
                         field.isMetadataColumn()) {

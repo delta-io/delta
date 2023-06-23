@@ -105,6 +105,10 @@ public class StructField
                 Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
     }
 
+    public boolean isDataColumn() {
+        return !isMetadataColumn();
+    }
+
     @Override
     public String toString()
     {
