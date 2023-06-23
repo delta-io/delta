@@ -1022,7 +1022,7 @@ object SchemaUtils extends DeltaLogging {
   }
 
   def fieldToColumn(field: StructField): Column = {
-    col(UnresolvedAttribute.quoted(field.name).name)
+    new Column(UnresolvedAttribute.quoted(field.name))
   }
 
   /**  converting field name to column type with quoted back-ticks */

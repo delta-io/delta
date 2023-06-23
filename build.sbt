@@ -202,6 +202,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     scalaStyleSettings,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
+      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

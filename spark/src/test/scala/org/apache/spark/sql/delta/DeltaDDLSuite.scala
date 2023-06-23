@@ -72,6 +72,16 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with Delta
       assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
     }
   }
+
+  test("append table when column name with special chars") {
+    withTable("t") {
+      val schema = new StructType().add("a`b", "int")
+      val df = spark.createDataFrame(sparkContext.emptyRDD[Row], schema)
+      df.write.format("delta").saveAsTable("t")
+      df.write.format("delta").mode("append").saveAsTable("t")
+      assert(spark.table("t").collect().isEmpty)
+    }
+  }
 }
 
 

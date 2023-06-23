@@ -300,17 +300,6 @@ trait DeltaTestUtilsForTempViews
     }
   }
 
-  def testOssOnlyWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
-    Seq(true, false).foreach { isSQLTempView =>
-      val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
-      test(s"$testName - $tempViewUsed") {
-        withTempView("v") {
-          testFun(isSQLTempView)
-        }
-      }
-    }
-  }
-
   def testQuietlyWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
     Seq(true, false).foreach { isSQLTempView =>
       val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
