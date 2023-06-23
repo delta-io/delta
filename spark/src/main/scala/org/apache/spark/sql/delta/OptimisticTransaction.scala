@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, DoAutoCompaction, GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -1044,6 +1044,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata) && hasFileActions) {
         registerPostCommitHook(GenerateSymlinkManifest)
+      }
+
+      // For autoCompact, session config is prior to table property.
+      lazy val autoCompactEnabled =
+        spark.sessionState.conf
+          .getConf(DeltaSQLConf.AUTO_COMPACT_ENABLED)
+          .getOrElse {
+            DeltaConfigs.AUTO_COMPACT.fromMetaData(metadata)}
+      if (!op.isInstanceOf[DeltaOperations.Optimize] && autoCompactEnabled && hasFileActions) {
+        registerPostCommitHook(DoAutoCompaction)
       }
 
       commitAttemptStartTime = clock.getTimeMillis()

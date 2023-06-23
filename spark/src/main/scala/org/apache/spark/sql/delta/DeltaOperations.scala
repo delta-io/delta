@@ -441,14 +441,18 @@ object DeltaOperations {
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
   /** parameter key to indicate which columns to z-order by */
   val ZORDER_PARAMETER_KEY = "zOrderBy"
+  /** operation name for Auto Compaction */
+  val AUTOCOMPACTION_OPERATION_NAME = "auto"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[Expression],
-      zOrderBy: Seq[String] = Seq.empty
+      zOrderBy: Seq[String] = Seq.empty,
+      auto: Boolean
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
-      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy)
+      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy),
+      AUTOCOMPACTION_OPERATION_NAME -> auto
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE

@@ -144,11 +144,11 @@ case class OptimizeTableCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = getDeltaTable(child, "OPTIMIZE").deltaLog
 
-    val txn = deltaLog.startTransaction()
-    if (txn.readVersion == -1) {
+    if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException(deltaLog.dataPath.toString)
     }
 
+    val txn = deltaLog.startTransaction()
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
@@ -188,7 +188,8 @@ case class OptimizeTableCommand(
 case class DeltaOptimizeContext(
     isPurge: Boolean = false,
     minFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    isAuto: Boolean = false) {
   if (isPurge) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
@@ -217,16 +218,53 @@ class OptimizeExecutor(
 
   private val isMultiDimClustering = zOrderByColumns.nonEmpty
 
+  def autoCompact(prevCommitAddFiles: Seq[AddFile]): Unit = {
+    val minFileSize = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.AUTO_COMPACT_MAX_FILE_SIZE)
+    val maxFileSize = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.AUTO_COMPACT_MAX_FILE_SIZE)
+    require(minFileSize > 0, "minFileSize must be > 0")
+    require(maxFileSize > 0, "maxFileSize must be > 0")
+
+    val autoCompactTarget =
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.AUTO_COMPACT_TARGET)
+
+    // Filter the candidate files according to autoCompact.target config.
+    lazy val addedFiles = prevCommitAddFiles.collect { case a: AddFile => a }
+    val candidateFiles = autoCompactTarget match {
+      case "table" =>
+        txn.filterFiles()
+      case "commit" =>
+        addedFiles
+      case "partition" =>
+        val eligiblePartitions = addedFiles.map(_.partitionValues).toSet
+        txn.filterFiles().filter(f => eligiblePartitions.contains(f.partitionValues))
+      case _ =>
+        logError(s"Invalid config for autoCompact.target: $autoCompactTarget. " +
+          s"Falling back to the default value 'table'.")
+        txn.filterFiles()
+    }
+
+    optimizeImpl(minFileSize, maxFileSize, candidateFiles)
+  }
+
   def optimize(): Seq[Row] = {
+    val minFileSize = optimizeContext.minFileSize.getOrElse(
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
+    val maxFileSize =
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+
+    val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
+    optimizeImpl(minFileSize, maxFileSize, candidateFiles)
+  }
+
+  private def optimizeImpl(
+      minFileSize: Long,
+      maxFileSize: Long,
+      candidateFiles: Seq[AddFile]): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
-      val minFileSize = optimizeContext.minFileSize.getOrElse(
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
-      val maxFileSize =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
       val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
-
-      val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
       val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
@@ -363,11 +401,34 @@ class OptimizeExecutor(
           bins += currentBin.toVector
         }
 
-        bins.filter { bin =>
-          bin.size > 1 || // bin has more than one file or
-          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
-          isMultiDimClustering // multi-clustering
-        }.map(b => (partition, b))
+        if (!optimizeContext.isAuto) {
+          bins.filter { bin =>
+            bin.size > 1 || // bin has more than one file or
+            (bin.size == 1 && bin(0).deletionVector != null) || // bin has single file with a DV or
+            isMultiDimClustering // multi-clustering
+          }.map(b => (partition, b))
+        } else {
+          // for AutoCompaction
+          val autoCompactMinNumFiles = sparkSession.sessionState.conf.getConf(
+            DeltaSQLConf.AUTO_COMPACT_MIN_NUM_FILES)
+          val filteredByBinSize = bins.filter { bin =>
+            // bin size is equal to or greater than autoCompactMinNumFiles files
+            bin.size >= autoCompactMinNumFiles ||
+            // or bin size + number of deletion vectors >= autoCompactMinNumFiles files
+            bin.count(_.deletionVector != null) + bin.size >= autoCompactMinNumFiles
+          }.map(b => (partition, b))
+
+          var acc = 0L
+          val maxCompactBytes =
+            sparkSession.sessionState.conf.getConf(DeltaSQLConf.AUTO_COMPACT_MAX_COMPACT_BYTES)
+          // bins with more files are prior to less files.
+          filteredByBinSize
+            .sortBy { case (_, filesInBin) => -filesInBin.length }
+            .takeWhile { case (_, filesInBin) =>
+              acc += filesInBin.map(_.size).sum
+              acc <= maxCompactBytes
+            }
+        }
     }
   }
 
@@ -459,7 +520,7 @@ class OptimizeExecutor(
     if (optimizeContext.isPurge) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
+      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns, optimizeContext.isAuto)
     }
   }
 

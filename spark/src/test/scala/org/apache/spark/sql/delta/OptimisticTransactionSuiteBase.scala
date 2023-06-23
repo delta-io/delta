@@ -176,7 +176,7 @@ trait OptimisticTransactionSuiteBase
       actions: Seq[FileAction],
       deltaLog: DeltaLog)(
       checkErrorFun: DeltaRuntimeException => Unit): Unit = {
-    val operation = DeltaOperations.Optimize(Seq.empty, zOrderBy = Seq.empty)
+    val operation = DeltaOperations.Optimize(Seq.empty, zOrderBy = Seq.empty, auto = false)
     val txn = deltaLog.startTransaction()
     val e = intercept[DeltaRuntimeException] {
       withSQLConf(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED.key -> "true") {

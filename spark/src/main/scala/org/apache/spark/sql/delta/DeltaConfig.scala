@@ -472,6 +472,16 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
+   * Enable auto compaction.
+   */
+  val AUTO_COMPACT = buildConfig[Boolean](
+    "autoOptimize.autoCompact",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
+
+  /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
    * stats for all columns. Updating this conf does not trigger stats re-collection, but redefines
    * the stats schema of table, i.e., it will change the behavior of future stats collection

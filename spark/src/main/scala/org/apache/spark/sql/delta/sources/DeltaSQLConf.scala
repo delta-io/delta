@@ -859,6 +859,52 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val AUTO_COMPACT_ENABLED =
+    buildConf("autoCompact.enabled")
+      .internal()
+      .doc("Enables auto compaction after table update.")
+      .booleanConf
+      .createOptional
+
+  val AUTO_COMPACT_MAX_FILE_SIZE =
+    buildConf("autoCompact.maxFileSize")
+      .internal()
+      .doc("Maximum file size for auto compaction.")
+      .longConf
+      .createWithDefault(128 * 1024 * 1024)
+
+  val AUTO_COMPACT_MIN_NUM_FILES =
+    buildConf("autoCompact.minNumFiles")
+      .internal()
+      .doc("Minimum number of files in a directory to trigger auto compaction.")
+      .longConf
+      .createWithDefault(50)
+
+  val AUTO_COMPACT_MAX_COMPACT_BYTES =
+    buildConf("autoCompact.maxCompactBytes")
+      .internal()
+      .doc("Maximum amount of data for auto compaction.")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefaultString("20GB")
+
+  val AUTO_COMPACT_TARGET =
+    buildConf("autoCompact.target")
+      .internal()
+      .doc(
+        """
+          |Target files for auto compaction.
+          | "table", "commit", "partition" options are available. (default: partition)
+          | If "table", all files in table are eligible for auto compaction.
+          | If "commit", added/updated files by the commit are eligible.
+          | If "partition", all files in partitions containing any added/updated files
+          |  by the commit are eligible.
+          |""".stripMargin
+      )
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(Set("table", "commit", "partition"))
+      .createWithDefault("partition")
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()
