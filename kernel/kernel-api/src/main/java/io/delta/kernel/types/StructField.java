@@ -16,12 +16,41 @@
 
 package io.delta.kernel.types;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 public class StructField
 {
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Static Fields / Methods
+    ////////////////////////////////////////////////////////////////////////////////
+
+    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
+    /**
+     * Indicates a metadata column when present in the field metadata and the value is true
+     */
+    private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+
+    /**
+     * The name of a row index metadata column. When present this column must be populated with
+     * row index of each row when reading from parquet.
+     */
+    public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+    public static StructField ROW_INDEX_COLUMN = new StructField(
+            ROW_INDEX_COLUMN_NAME,
+            LongType.INSTANCE,
+            false,
+            Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
+
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Instance Fields / Methods
+    ////////////////////////////////////////////////////////////////////////////////
+
     private final String name;
     private final DataType dataType;
     private final boolean nullable;
@@ -69,6 +98,15 @@ public class StructField
     public boolean isNullable()
     {
         return nullable;
+    }
+
+    public boolean isMetadataColumn() {
+        return metadata.containsKey(IS_METADATA_COLUMN_KEY) &&
+                Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
+    }
+
+    public boolean isDataColumn() {
+        return !isMetadataColumn();
     }
 
     @Override

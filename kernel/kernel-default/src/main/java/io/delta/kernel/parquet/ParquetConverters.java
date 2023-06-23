@@ -530,6 +530,29 @@ class ParquetConverters
         }
     }
 
+    public static class FileRowIndexColumnConverter
+            extends LongColumnConverter {
+
+        public FileRowIndexColumnConverter(int initialBatchSize) {
+            super(initialBatchSize);
+        }
+
+        @Override
+        public void addLong(long value) {
+            throw new UnsupportedOperationException("cannot add long to metadata column");
+        }
+
+        /**
+         * @param fileRowIndex the file row index of the row processed
+         */
+        // If moveToNextRow() is called instead the value will be null
+        public boolean moveToNextRow(long fileRowIndex) {
+            super.values[currentRowIndex] = fileRowIndex;
+            this.nullability[currentRowIndex] = false;
+            return moveToNextRow();
+        }
+    }
+
     static boolean[] initNullabilityVector(int size)
     {
         boolean[] nullability = new boolean[size];

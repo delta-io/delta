@@ -20,6 +20,7 @@ import java.io.IOException;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -34,6 +35,10 @@ public interface ParquetHandler
     /**
      * Read the Parquet format files at the given locations and return the data as a
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
+     *
+     * If {@code physicalSchema} has a {@link StructField} with column name
+     * {@link StructField#ROW_INDEX_COLUMN_NAME} and the field is a metadata column
+     * {@link StructField#isMetadataColumn()} the column must be populated with the file row index.
      *
      * @param fileIter Iterator of {@link FileReadContext} objects to read data from.
      * @param physicalSchema Select list of columns to read from the Parquet file.

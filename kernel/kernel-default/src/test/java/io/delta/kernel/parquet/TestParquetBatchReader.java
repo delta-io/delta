@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.parquet;
 
+import java.io.File;
+import java.io.IOException;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
+
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -421,5 +420,52 @@ public class TestParquetBatchReader
         }
 
         throw new IllegalArgumentException("row id is not found: " + rowId);
+    }
+
+    @Test
+    public void requestRowIndices() throws IOException {
+        String path = DefaultKernelTestUtils.getTestResourceFilePath("parquet-basic-row-indexes");
+        File dir = new File(path);
+        List<String> parquetFiles = Arrays.stream(Objects.requireNonNull(dir.listFiles()))
+                .filter(file -> file.getName().endsWith(".parquet"))
+                .map(File::getAbsolutePath)
+                .collect(Collectors.toList());
+
+        StructType readSchema = new StructType()
+                .add("id", LongType.INSTANCE)
+                .add(StructField.ROW_INDEX_COLUMN);
+
+        Configuration conf = new Configuration();
+        // Set the batch size small enough so there will be multiple batches
+        conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2);
+        ParquetBatchReader reader = new ParquetBatchReader(conf);
+
+        for (String filePath : parquetFiles) {
+            try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
+                while (iter.hasNext()) {
+                    ColumnarBatch batch = iter.next();
+                    for (int i = 0; i < batch.getSize(); i ++) {
+                        long id = batch.getColumnVector(0).getLong(i);
+                        long rowIndex = batch.getColumnVector(1).getLong(i);
+                        assertEquals(id % 10, rowIndex);
+                    }
+                }
+            }
+        }
+
+        // File with multiple row-groups [0, 20000) where rowIndex = id
+        String filePath = DefaultKernelTestUtils.getTestResourceFilePath(
+                "parquet/row_index_multiple_row_groups.parquet");
+        reader = new ParquetBatchReader(new Configuration());
+        try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
+            while (iter.hasNext()) {
+                ColumnarBatch batch = iter.next();
+                for (int i = 0; i < batch.getSize(); i ++) {
+                    long id = batch.getColumnVector(0).getLong(i);
+                    long rowIndex = batch.getColumnVector(1).getLong(i);
+                    assertEquals(id, rowIndex);
+                }
+            }
+        }
     }
 }
