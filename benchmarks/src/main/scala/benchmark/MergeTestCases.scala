@@ -174,9 +174,11 @@ object MergeTestCases {
     SingleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.05),
+
     SingleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.5),
+
     SingleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 1.0),
@@ -184,9 +186,11 @@ object MergeTestCases {
     MultipleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.05),
+
     MultipleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 0.5),
+
     MultipleInsertOnlyTestCase(
       fileMatchedFraction = 0.05,
       rowNotMatchedFraction = 1.0),
