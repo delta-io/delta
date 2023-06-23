@@ -111,21 +111,20 @@ class RowConverter
      * @return true if all members were null
      */
     private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
-        long memberNonNullCount = Arrays.stream(converters)
+        long memberNullCount = Arrays.stream(converters)
                 .map(converter -> (ParquetConverters.BaseConverter) converter)
                 .map(converter -> {
                     if (fileRowIndex.isPresent() &&
                             converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                        ((ParquetConverters.FileRowIndexColumnConverter) converter)
+                        return ((ParquetConverters.FileRowIndexColumnConverter) converter)
                                 .moveToNextRow(fileRowIndex.get());
-                        return false; // We don't count row_index toward non-null columns
                     } else {
-                        return !converter.moveToNextRow();
+                        return converter.moveToNextRow();
                     }
                 })
                 .filter(result -> result)
                 .count();
-        return memberNonNullCount > 0;
+        return memberNullCount == converters.length;
     }
 
     /**
