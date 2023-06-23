@@ -16,6 +16,7 @@
 package io.delta.kernel.parquet;
 
 import java.io.File;
+import java.io.IOException;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -422,7 +423,7 @@ public class TestParquetBatchReader
     }
 
     @Test
-    public void requestRowIndices() {
+    public void requestRowIndices() throws IOException {
         String path = DefaultKernelTestUtils.getTestResourceFilePath("parquet-basic-row-indexes");
         File dir = new File(path);
         List<String> parquetFiles = Arrays.stream(Objects.requireNonNull(dir.listFiles()))
@@ -440,13 +441,14 @@ public class TestParquetBatchReader
         ParquetBatchReader reader = new ParquetBatchReader(conf);
 
         for (String filePath : parquetFiles) {
-            CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema);
-            while (iter.hasNext()) {
-                ColumnarBatch batch = iter.next();
-                for (int i = 0; i < batch.getSize(); i ++) {
-                    long id = batch.getColumnVector(0).getLong(i);
-                    long rowIndex = batch.getColumnVector(1).getLong(i);
-                    assertEquals(id % 10, rowIndex);
+            try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
+                while (iter.hasNext()) {
+                    ColumnarBatch batch = iter.next();
+                    for (int i = 0; i < batch.getSize(); i ++) {
+                        long id = batch.getColumnVector(0).getLong(i);
+                        long rowIndex = batch.getColumnVector(1).getLong(i);
+                        assertEquals(id % 10, rowIndex);
+                    }
                 }
             }
         }
