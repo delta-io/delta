@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
+import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent, SparkListenerNodeExcluded, SparkListenerTaskEnd}
@@ -71,7 +71,7 @@ class MergeIntoAccumulatorSuite
         task.accumulatorUpdates.map(_.name)
       }.toSet
       // Verify accumulators used by MergeIntoCommand are not tracked.
-      assert(!accumNames.contains(MergeIntoCommand.TOUCHED_FILES_ACCUM_NAME))
+      assert(!accumNames.contains(MergeIntoCommandBase.TOUCHED_FILES_ACCUM_NAME))
     } finally {
       iter.close()
     }

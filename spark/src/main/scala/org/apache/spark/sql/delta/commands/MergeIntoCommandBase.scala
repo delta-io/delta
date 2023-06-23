@@ -26,10 +26,11 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -42,6 +43,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
   with PredicateHelper
+  with ImplicitMetadataOperation
   with MergeIntoMaterializeSource {
 
   @transient val source: LogicalPlan
@@ -53,6 +55,13 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
 
+  override val (canMergeSchema, canOverwriteSchema) = {
+    // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
+    // The methods in options check if the auto migration flag is on, in which case schema evolution
+    // will be allowed.
+    val options = new DeltaOptions(Map.empty[String, String], conf)
+    (options.canMergeSchema, options.canOverwriteSchema)
+  }
 
   @transient protected lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient protected lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
@@ -79,6 +88,43 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
   protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
+
+  /** Whether this merge statement includes inserts statements. */
+  protected def includesInserts: Boolean = notMatchedClauses.nonEmpty
+
+  protected def isCdcEnabled(deltaTxn: OptimisticTransaction): Boolean =
+    DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
+
+  protected def runMerge(spark: SparkSession): Seq[Row]
+
+  override def run(spark: SparkSession): Seq[Row] = {
+    metrics("executionTimeMs").set(0)
+    metrics("scanTimeMs").set(0)
+    metrics("rewriteTimeMs").set(0)
+    if (migratedSchema.isDefined) {
+      // Block writes of void columns in the Delta log. Currently void columns are not properly
+      // supported and are dropped on read, but this is not enough for merge command that is also
+      // reading the schema from the Delta log. Until proper support we prefer to fail merge
+      // queries that add void columns.
+      val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
+      if (newNullColumn.isDefined) {
+        throw new AnalysisException(
+          s"""Cannot add column '${newNullColumn.get}' with type 'void'. Please explicitly specify a
+              |non-void type.""".stripMargin.replaceAll("\n", " ")
+        )
+      }
+    }
+
+    val (materializeSource, _) = shouldMaterializeSource(spark, source, isInsertOnly)
+    if (!materializeSource) {
+      runMerge(spark)
+    } else {
+      // If it is determined that source should be materialized, wrap the execution with retries,
+      // in case the data of the materialized source is lost.
+      runWithMaterializedSourceLostRetries(
+        spark, targetFileIndex.deltaLog, metrics, runMerge)
+    }
+  }
 
   import SQLMetrics._
 
@@ -178,6 +224,25 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   protected def shouldOptimizeMatchedOnlyMerge(spark: SparkSession): Boolean = {
     isMatchedOnly && spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED)
   }
+
+  // There is only one when matched clause and it's a Delete and it does not have a condition.
+  protected val isOnlyOneUnconditionalDelete: Boolean =
+    matchedClauses == Seq(DeltaMergeIntoMatchedDeleteClause(None))
+
+  // We over-count numTargetRowsDeleted when there are multiple matches;
+  // this is the amount of the overcount, so we can subtract it to get a correct final metric.
+  protected var multipleMatchDeleteOnlyOvercount: Option[Long] = None
+
+  // Throw error if multiple matches are ambiguous or cannot be computed correctly.
+  protected def throwErrorOnMultipleMatches(
+      hasMultipleMatches: Boolean, spark: SparkSession): Unit = {
+    // Multiple matches are not ambiguous when there is only one unconditional delete as
+    // all the matched row pairs in the 2nd join in `writeAllChanges` will get deleted.
+    if (hasMultipleMatches && !isOnlyOneUnconditionalDelete) {
+      throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+    }
+  }
+
   /**
    * Write the output data to files, repartitioning the output DataFrame by the partition columns
    * if table is partitioned and `merge.repartitionBeforeWrite.enabled` is set to true.
@@ -374,8 +439,23 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
 }
 
 object MergeIntoCommandBase {
+  val ROW_ID_COL = "_row_id_"
+  val FILE_NAME_COL = "_file_name_"
+  val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
+  val TARGET_ROW_PRESENT_COL = "_target_row_present_"
   val ROW_DROPPED_COL = "_row_dropped_"
   val PRECOMPUTED_CONDITION_COL = "_condition_"
+
+  /**
+   * Spark UI will track all normal accumulators along with Spark tasks to show them on Web UI.
+   * However, the accumulator used by `MergeIntoCommand` can store a very large value since it
+   * tracks all files that need to be rewritten. We should ask Spark UI to not remember it,
+   * otherwise, the UI data may consume lots of memory. Hence, we use the prefix `internal.metrics.`
+   * to make this accumulator become an internal accumulator, so that it will not be tracked by
+   * Spark UI.
+   */
+  val TOUCHED_FILES_ACCUM_NAME = "internal.metrics.MergeIntoDelta.touchedFiles"
+
 
   /** Count the number of distinct partition values among the AddFiles in the given set. */
   def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
