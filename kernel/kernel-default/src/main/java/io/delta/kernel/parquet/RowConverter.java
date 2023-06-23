@@ -1,5 +1,6 @@
 package io.delta.kernel.parquet;
 
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -7,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+
+import io.delta.kernel.types.LongType;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
@@ -53,9 +56,18 @@ class RowConverter
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
-            final Type typeFromFile = findSubFieldType(fileSchema, field);
+            final Type typeFromFile = field.isDataColumn() ?
+                    findSubFieldType(fileSchema, field) : null;
             if (typeFromFile == null) {
-                converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
+                if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
+                        field.isMetadataColumn()) {
+                    checkArgument(field.getDataType() instanceof LongType,
+                            "row index metadata column must be type long");
+                    converters[i] =
+                            new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
+                } else {
+                    converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
+                }
             }
             else {
                 converters[i] = ParquetConverters.createConverter(
@@ -96,17 +108,46 @@ class RowConverter
         return batch;
     }
 
+    /**
+     * @return true if all members were null
+     */
+    private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
+        long memberNullCount = Arrays.stream(converters)
+                .map(converter -> (ParquetConverters.BaseConverter) converter)
+                .map(converter -> {
+                    if (fileRowIndex.isPresent() &&
+                            converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
+                        return ((ParquetConverters.FileRowIndexColumnConverter) converter)
+                                .moveToNextRow(fileRowIndex.get());
+                    } else {
+                        return converter.moveToNextRow();
+                    }
+                })
+                .filter(result -> result)
+                .count();
+        return memberNullCount == converters.length;
+    }
+
+    /**
+     * @param fileRowIndex the file row index of the row processed
+     */
+    public boolean moveToNextRow(long fileRowIndex) {
+        resizeIfNeeded();
+
+        boolean isNull = moveConvertersToNextRow(Optional.of(fileRowIndex));
+        nullability[currentRowIndex] = isNull;
+
+        currentRowIndex++;
+
+        return isNull;
+    }
+
     @Override
     public boolean moveToNextRow()
     {
         resizeIfNeeded();
-        long memberNullCount = Arrays.stream(converters)
-            .map(converter -> (ParquetConverters.BaseConverter) converter)
-            .map(converters -> converters.moveToNextRow())
-            .filter(result -> result)
-            .count();
 
-        boolean isNull = memberNullCount == converters.length;
+        boolean isNull = moveConvertersToNextRow(Optional.empty());
         nullability[currentRowIndex] = isNull;
 
         currentRowIndex++;
