@@ -221,6 +221,7 @@ object TableFeature {
       InvariantsTableFeature,
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
+      IcebergCompatV1TableFeature,
       DeletionVectorsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
@@ -349,6 +350,18 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
 }
 
 object DomainMetadataTableFeature extends WriterFeature(name = "domainMetadata")
+
+object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV1.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
 
 
 /**

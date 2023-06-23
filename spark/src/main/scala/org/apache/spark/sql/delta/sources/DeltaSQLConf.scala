@@ -1205,6 +1205,24 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val ICEBERG_MAX_COMMITS_TO_CONVERT = buildConf("iceberg.maxPendingCommits")
+    .doc("""
+        |The maximum number of pending Delta commits to convert to Iceberg incrementally.
+        |If the table hasn't been converted to Iceberg in longer than this number of commits,
+        |we start from scratch, replacing the previously converted Iceberg table contents.
+        |""".stripMargin)
+    .intConf
+    .createWithDefault(100)
+
+  val ICEBERG_MAX_ACTIONS_TO_CONVERT = buildConf("iceberg.maxPendingActions")
+    .doc("""
+        |The maximum number of pending Delta actions to convert to Iceberg incrementally.
+        |If there are more than this number of outstanding actions, chunk them into separate
+        |Iceberg commits.
+        |""".stripMargin)
+    .intConf
+    .createWithDefault(100 * 1000)
+
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
