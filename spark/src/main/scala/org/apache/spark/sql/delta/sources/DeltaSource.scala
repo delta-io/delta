@@ -831,20 +831,35 @@ case class DeltaSource(
       version: Long,
       shouldSkipCommit: Boolean,
       metadataOpt: Option[Metadata]): Iterator[IndexedFile] = {
+    // Used to identify whether we reached the end of the iterator. We cannot just call hasNext to
+    // identify whether the given AddFile is the last in the iterator as it is unsafe to reuse
+    // the iterator.
+    val sentinelFile = AddFile(
+      path = "sentinel",
+      partitionValues = Map.empty,
+      size = 0L,
+      modificationTime = 0L,
+      dataChange = false)
     val filteredIterator =
       if (shouldSkipCommit) {
         Iterator.empty.toClosable
       } else iterator.filter {
         case a: AddFile if a.dataChange => true
         case _ => false
-      }
+      } ++ Iterator.single(sentinelFile)
+
     Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
-      getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
-      filteredIterator
-        .map(_.asInstanceOf[AddFile])
-        .zipWithIndex.map { case (action, index) =>
-        IndexedFile(version, index.toLong, action, isLast = !iterator.hasNext)
-    }
+    getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
+    filteredIterator
+      .map(_.asInstanceOf[AddFile])
+      .zipWithIndex
+      .sliding(size = 2)
+      .flatMap {
+        case Seq((action, index), (secondAction, _)) =>
+          Some(IndexedFile(version, index.toLong, action, isLast = secondAction.eq(sentinelFile)))
+        // Only sentinel left in iterator, do not return it.
+        case Seq(_) => None
+      }
   }
 
   /**
