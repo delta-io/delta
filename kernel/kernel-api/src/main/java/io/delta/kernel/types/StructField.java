@@ -16,6 +16,7 @@
 
 package io.delta.kernel.types;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -28,6 +29,12 @@ public class StructField
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
+    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
+    /**
+     * Indicates a metadata column when present in the field metadata and the value is true
+     */
+    private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+
     /**
      * The name of a row index metadata column. When present this column must be populated with
      * row index of each row when reading from parquet.
@@ -37,28 +44,17 @@ public class StructField
             ROW_INDEX_COLUMN_NAME,
             LongType.INSTANCE,
             false,
-            new HashMap<String, String>(),
-            ColumnType.METADATA);
+            Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
+
 
     ////////////////////////////////////////////////////////////////////////////////
     // Instance Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce column type as an enum. Revisit this decision and finalize API.
-    /**
-     * Supported column types. Columns are either data or metadata columns. Metadata columns need
-     * to be populated by the file reader.
-     */
-    public enum ColumnType {
-        DATA,
-        METADATA
-    }
-
     private final String name;
     private final DataType dataType;
     private final boolean nullable;
     private final Map<String, String> metadata;
-    private final ColumnType columnType;
 
     public StructField(
         String name,
@@ -70,20 +66,6 @@ public class StructField
         this.dataType = dataType;
         this.nullable = nullable;
         this.metadata = metadata;
-        this.columnType = ColumnType.DATA;
-    }
-
-    public StructField(
-            String name,
-            DataType dataType,
-            boolean nullable,
-            Map<String, String> metadata,
-            ColumnType columnType) {
-        this.name = name;
-        this.dataType = dataType;
-        this.nullable = nullable;
-        this.metadata = metadata;
-        this.columnType = columnType;
     }
 
     /**
@@ -118,22 +100,18 @@ public class StructField
         return nullable;
     }
 
-    public boolean isDataColumn() {
-        return columnType == ColumnType.DATA;
-    }
-
     public boolean isMetadataColumn() {
-        return columnType == ColumnType.METADATA;
+        return metadata.containsKey(IS_METADATA_COLUMN_KEY) &&
+                Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
     }
 
     @Override
     public String toString()
     {
         return String.format("StructField(name=%s,type=%s,nullable=%s,metadata=%s,columnType=%s)",
-                name, dataType, nullable, "empty(fix - this)", columnType.name());
+                name, dataType, nullable, "empty(fix - this)");
     }
 
-    // TODO: what about column type?
     public String toJson()
     {
         String metadataAsJson = metadata.entrySet().stream()
@@ -161,13 +139,12 @@ public class StructField
         StructField that = (StructField) o;
         return nullable == that.nullable && name.equals(that.name) &&
             dataType.equals(that.dataType) &&
-            metadata.equals(that.metadata) &&
-            columnType.equals(that.columnType);
+            metadata.equals(that.metadata);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(name, dataType, nullable, metadata, columnType);
+        return Objects.hash(name, dataType, nullable, metadata);
     }
 }
