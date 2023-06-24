@@ -9,6 +9,7 @@ import java.util.function.Function;
 
 import static java.util.Objects.requireNonNull;
 
+// TODO: check for unsafe access
 /**
  * Exposes a POJO object as a {@link Row}
  */
@@ -46,12 +47,12 @@ public class PojoRow<POJO_TYPE> implements Row {
 
     @Override
     public byte getByte(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (byte) getValue(ordinal);
     }
 
     @Override
     public short getShort(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (short) getValue(ordinal);
     }
 
     @Override
@@ -68,12 +69,12 @@ public class PojoRow<POJO_TYPE> implements Row {
 
     @Override
     public float getFloat(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (float) getValue(ordinal);
     }
 
     @Override
     public double getDouble(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (double) getValue(ordinal);
     }
 
     @Override
@@ -84,7 +85,7 @@ public class PojoRow<POJO_TYPE> implements Row {
 
     @Override
     public byte[] getBinary(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (byte[]) getValue(ordinal);
     }
 
     @Override

@@ -63,7 +63,7 @@ public class AddFile extends FileAction
         .add("size", LongType.INSTANCE, false /* nullable*/)
         .add("modificationTime", LongType.INSTANCE, false /* nullable*/)
         .add("dataChange", BooleanType.INSTANCE, false /* nullable*/)
-        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA);
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
 
     private final Map<String, String> partitionValues;
     private final long size;
@@ -136,18 +136,14 @@ public class AddFile extends FileAction
     public DeletionVectorDescriptor getDeletionVector() { return deletionVector; }
 
     public Optional<String> getDeletionVectorUniqueId() {
-        if (deletionVector == null) {
-            return Optional.empty();
-        } else {
-            return Optional.of(deletionVector.getUniqueId());
-        }
+        return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
     public Row getDeletionVectorAsRow() {
         if (deletionVector == null) {
             return null;
         } else {
-            return deletionVector.asRow();
+            return deletionVector.toRow();
         }
     }
 

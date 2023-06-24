@@ -71,4 +71,55 @@ public class InternalUtils
         }
         return Optional.ofNullable(row);
     }
+
+    /**
+     * Utility method to read at most one element from a {@link CloseableIterator}.
+     * If there is more than element row, an exception will be thrown.
+     */
+    public static <T> Optional<T> getSingularElement(CloseableIterator<T> iter)
+        throws IOException
+    {
+        try {
+            T result = null;
+            while (iter.hasNext()) {
+                if (result != null) {
+                    throw new IllegalArgumentException(
+                            "Iterator contains more than one element");
+                }
+                result = iter.next();
+            }
+            return Optional.ofNullable(result);
+        } finally {
+            iter.close();
+        }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid)
+            throws IllegalArgumentException
+    {
+        if (!isValid) {
+            throw new IllegalArgumentException();
+        }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid, String message)
+            throws IllegalArgumentException
+    {
+        if (!isValid) {
+            throw new IllegalArgumentException(message);
+        }
+    }
 }

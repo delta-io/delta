@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
@@ -41,6 +42,7 @@ import io.delta.kernel.internal.actions.Protocol;
 /**
  * Expose the common scan state for all scan files.
  */
+// TODO: combine with PojoRow?
 public class ScanStateRow
     implements Row
 {
@@ -74,6 +76,11 @@ public class ScanStateRow
         ordinalToColName.put(6, "tablePath");
     }
 
+    private static final Map<String, Integer> colNameToOrdinal = ordinalToColName
+            .entrySet()
+            .stream()
+            .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+
     public static int getLogicalSchemaStringColOrdinal()
     {
         return getOrdinal("logicalSchemaString");
@@ -89,9 +96,13 @@ public class ScanStateRow
         return getOrdinal("partitionColumns");
     }
 
-    public static int getConfigurationColOrdinal()
-    {
+    public static int getConfigurationColOrdinal() {
         return getOrdinal("configuration");
+    }
+
+
+    public static String getTablePath(Row row) {
+        return row.getString(colNameToOrdinal.get("tablePath"));
     }
 
     private final Map<String, String> configuration;
@@ -281,11 +292,6 @@ public class ScanStateRow
 
     private static int getOrdinal(String columnName)
     {
-        return ordinalToColName
-            .entrySet()
-            .stream()
-            .filter(entry -> columnName.equals(entry.getValue()))
-            .map(Map.Entry::getKey)
-            .findFirst().get();
+        return colNameToOrdinal.get(columnName);
     }
 }

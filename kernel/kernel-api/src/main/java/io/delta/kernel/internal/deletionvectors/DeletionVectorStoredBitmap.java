@@ -8,9 +8,11 @@ import java.util.zip.CRC32;
 
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * Bitmap for a Deletion Vector, implemented as a thin wrapper around a Deletion Vector
@@ -26,10 +28,8 @@ public class DeletionVectorStoredBitmap {
     public DeletionVectorStoredBitmap(
             DeletionVectorDescriptor dvDescriptor,
             Optional<String> tableDataPath) {
-        if (!(tableDataPath.isPresent() || !dvDescriptor.isOnDisk())) {
-            throw new IllegalArgumentException(
-                    "Table path is required for on-disk deletion vectors");
-        }
+        checkArgument(tableDataPath.isPresent() || !dvDescriptor.isOnDisk(),
+                "Table path is required for on-disk deletion vectors");
         this.dvDescriptor = dvDescriptor;
         this.tableDataPath = tableDataPath;
     }
@@ -48,7 +48,7 @@ public class DeletionVectorStoredBitmap {
                     new Tuple2(
                             onDiskPath, // filePath
                             new Tuple2(
-                                    Optional.of(dvDescriptor.getOffset()).orElse(0), // offset
+                                    dvDescriptor.getOffset().orElse(0), // offset
                                     // we pad 4 bytes in the front for the size
                                     // and 4 bytes at the end for CRC-32 checksum
                                     dvDescriptor.getSizeInBytes() + 8 // size
@@ -57,14 +57,10 @@ public class DeletionVectorStoredBitmap {
 
             CloseableIterator<ByteArrayInputStream> streamIter = fileSystemClient.readFiles(
                     Utils.singletonCloseableIterator(dvToRead));
-            if (streamIter.hasNext()) {
-                ByteArrayInputStream stream = streamIter.next();
-                streamIter.close();
-                return loadFromStream(stream);
-            } else {
-                // should not happen
-                throw new IllegalStateException("readFiles returned an empty iterator");
-            }
+            ByteArrayInputStream stream = InternalUtils.getSingularElement(streamIter).orElseThrow(
+                    () -> new IllegalStateException("Iterator should not be empty")
+            );
+            return loadFromStream(stream);
         }
     }
 

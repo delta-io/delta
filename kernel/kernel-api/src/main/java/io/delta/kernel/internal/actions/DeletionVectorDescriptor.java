@@ -5,6 +5,7 @@ import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -16,6 +17,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /** Information about a deletion vector attached to a file action. */
 public class DeletionVectorDescriptor {
@@ -28,8 +30,8 @@ public class DeletionVectorDescriptor {
 
         final String storageType = row.getString(0);
         final String pathOrInlineDv = row.getString(1);
-        // TODO this could be null investigate; should offset be an option?
-        final int offset = row.getInt(2);
+        final Optional<Integer> offset = Optional.ofNullable(
+                row.isNullAt(2) ? null : row.getInt(2));
         final int sizeInBytes = row.getInt(3);
         final long cardinality = row.getLong(4);
 
@@ -46,11 +48,11 @@ public class DeletionVectorDescriptor {
     static final String DELETION_VECTOR_FILE_NAME_CORE = "deletion_vector";
 
     public static final StructType READ_SCHEMA = new StructType()
-            .add("storageType", StringType.INSTANCE)
-            .add("pathOrInlineDv", StringType.INSTANCE)
-            .add("offset", IntegerType.INSTANCE)
-            .add("sizeInBytes", IntegerType.INSTANCE)
-            .add("cardinality", LongType.INSTANCE);
+            .add("storageType", StringType.INSTANCE, false /* nullable*/)
+            .add("pathOrInlineDv", StringType.INSTANCE, false /* nullable*/)
+            .add("offset", IntegerType.INSTANCE, true /* nullable*/)
+            .add("sizeInBytes", IntegerType.INSTANCE, false /* nullable*/)
+            .add("cardinality", LongType.INSTANCE, false /* nullable*/);
 
     ////////////////////////////////////////////////////////////////////////////////
     // Instance Fields / Methods
@@ -86,7 +88,7 @@ public class DeletionVectorDescriptor {
      *
      * Always None when storageType = "i".
      */
-    private final int offset;
+    private final Optional<Integer> offset;
 
     /** Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding). */
     private final int sizeInBytes;
@@ -97,7 +99,7 @@ public class DeletionVectorDescriptor {
     public DeletionVectorDescriptor(
             String storageType,
             String pathOrInlineDv,
-            int offset,
+            Optional<Integer> offset,
             int sizeInBytes,
             long cardinality) {
         this.storageType = storageType;
@@ -111,7 +113,7 @@ public class DeletionVectorDescriptor {
 
     public String getPathOrInlineDv() { return pathOrInlineDv; }
 
-    public int getOffset() { return offset; }
+    public Optional<Integer> getOffset() { return offset; }
 
     public int getSizeInBytes() { return sizeInBytes; }
 
@@ -119,8 +121,11 @@ public class DeletionVectorDescriptor {
 
     public String getUniqueId() {
         String uniqueFileId = storageType + pathOrInlineDv;
-        // TODO: if offset == None --> uniqueFileId (update impl)
-        return uniqueFileId + "@" + offset;
+        if (offset.isPresent()) {
+            return uniqueFileId + "@" + offset;
+        } else {
+            return uniqueFileId;
+        }
     }
 
     public boolean isInline() {
@@ -132,17 +137,13 @@ public class DeletionVectorDescriptor {
     }
 
     public byte[] inlineData() {
-        if (!isInline()) {
-            throw new IllegalArgumentException("Can't get data for an on-disk DV from the log.");
-        }
+        checkArgument(isInline(), "Can't get data for an on-disk DV from the log.");
         // The sizeInBytes is used to remove any padding that might have been added during encoding.
         return Base85Codec.decodeBytes(pathOrInlineDv, sizeInBytes);
     }
 
     public String getAbsolutePath(String tableLocation) {
-        if (!isOnDisk()) {
-            throw new IllegalArgumentException("Can't get a path for an inline deletion vector");
-        }
+        checkArgument(isOnDisk(), "Can't get a path for an inline deletion vector");
         if (storageType.equals(UUID_DV_MARKER)) {
             // If the file was written with a random prefix, we have to extract that,
             // before decoding the UUID.
@@ -156,7 +157,8 @@ public class DeletionVectorDescriptor {
             // relative DVs should *always* use the UUID variant.
             try {
                 URI parsedUri = new URI(pathOrInlineDv);
-                assert parsedUri.isAbsolute(): "Relative URIs are not supported for DVs";
+                checkArgument(parsedUri.isAbsolute(),
+                        "Relative URIs are not supported for DVs");
                 return new Path(parsedUri).toString();
             } catch (URISyntaxException e){
                 throw new RuntimeException("Couldn't parse uri:\n" + e);
@@ -199,13 +201,18 @@ public class DeletionVectorDescriptor {
         DeletionVectorDescriptor dv = (DeletionVectorDescriptor) o;
         return Objects.equals(storageType, dv.storageType) &&
                 Objects.equals(pathOrInlineDv, dv.pathOrInlineDv) &&
-                this.offset == dv.offset &&
+                Objects.equals(offset, dv.offset) &&
                 this.sizeInBytes == dv.sizeInBytes &&
                 this.cardinality == dv.cardinality;
     }
 
-    public Row asRow() {
-        return new PojoRow(
+    @Override
+    public int hashCode() {
+        return Objects.hash(storageType, pathOrInlineDv, offset, sizeInBytes, cardinality);
+    }
+
+    public Row toRow() {
+        return new PojoRow<>(
                 this,
                 READ_SCHEMA,
                 ordinalToAccessor);
@@ -220,7 +227,7 @@ public class DeletionVectorDescriptor {
     static {
         ordinalToAccessor.put(0, (a) -> a.getStorageType());
         ordinalToAccessor.put(1, (a) -> a.getPathOrInlineDv());
-        ordinalToAccessor.put(2, (a) -> a.getOffset());
+        ordinalToAccessor.put(2, (a) -> a.getOffset().orElse(null));
         ordinalToAccessor.put(3, (a) -> a.getSizeInBytes());
         ordinalToAccessor.put(4, (a) -> a.getCardinality());
     }

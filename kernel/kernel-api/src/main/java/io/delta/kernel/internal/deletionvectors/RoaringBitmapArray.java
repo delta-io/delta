@@ -7,6 +7,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+
 // TODO: add test suite
 // If we implement additional methods (i.e. serialize) we can copy the test suite from delta-spark
 /**
@@ -95,10 +97,9 @@ final public class RoaringBitmapArray {
      * - The actual data as specified by the format.
      */
     void deserialize(ByteBuffer buffer) throws IOException {
-        if (ByteOrder.LITTLE_ENDIAN != buffer.order()) {
-            throw new IllegalArgumentException(
-                    "RoaringBitmapArray has to be deserialized using a little endian buffer");
-        }
+        checkArgument(ByteOrder.LITTLE_ENDIAN == buffer.order(),
+                "RoaringBitmapArray has to be deserialized using a little endian buffer");
+
         int magicNumber = buffer.getInt();
         if (magicNumber == NativeRoaringBitmapArraySerializationFormat.MAGIC_NUMBER) {
             bitmaps = NativeRoaringBitmapArraySerializationFormat.deserialize(buffer);
@@ -114,10 +115,7 @@ final public class RoaringBitmapArray {
      * which is equivalent to checking if the corresponding bit is set.
      */
     public boolean contains(long value) {
-        if (value < 0 || value > MAX_REPRESENTABLE_VALUE)  {
-            throw new IllegalArgumentException(
-                    "Requirement violated: value < 0 || value > MAX_REPRESENTABLE_VALUE ");
-        }
+        checkArgument(value >= 0 && value <= MAX_REPRESENTABLE_VALUE);
         int high = highBytes(value);
         if (high >= bitmaps.length) {
             return false;

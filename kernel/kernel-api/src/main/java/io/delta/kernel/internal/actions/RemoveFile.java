@@ -63,7 +63,7 @@ public class RemoveFile extends FileAction
         .add("partitionValues", new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
         .add("size", LongType.INSTANCE)
         .add("dataChange", BooleanType.INSTANCE, false /* nullable */)
-        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA);
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
 
     private final long deletionTimestamp;
     private final Map<String, String> partitionValues;
@@ -103,11 +103,7 @@ public class RemoveFile extends FileAction
     }
 
     public Optional<String> getDeletionVectorUniqueId() {
-        if (deletionVector == null) {
-            return Optional.empty();
-        } else {
-            return Optional.of(deletionVector.getUniqueId());
-        }
+        return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
     public RemoveFile withAbsolutePath(Path dataPath)

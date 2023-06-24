@@ -78,9 +78,7 @@ public class DefaultFileSystemClient
         Path path = new Path(filePath);
         try {
             FileSystem fs = path.getFileSystem(hadoopConf);
-            DataInputStream stream = null;
-            try {
-                stream = fs.open(path);
+            try (DataInputStream stream = fs.open(path)) {
                 stream.skipBytes(offset);
                 byte[] buff = new byte[size];
                 stream.readFully(buff);
@@ -89,10 +87,6 @@ public class DefaultFileSystemClient
                 throw new RuntimeException(String.format(
                         "IOException reading from file %s at offset %s size %s",
                         filePath, offset, size), ex);
-            } finally {
-                if (stream != null) {
-                    stream.close();
-                }
             }
         } catch (IOException ex) {
             throw new RuntimeException(String.format(

@@ -1,7 +1,10 @@
 package io.delta.kernel.internal.deletionvectors;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.UUID;
+
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.
@@ -46,16 +49,11 @@ public final class Base85Codec {
     }
 
     private static byte[] getDecodeMap() {
-        if (ENCODE_MAP.length - 1 > Byte.MAX_VALUE) {
-            throw new IllegalArgumentException(
-                    "Requirement not satisfied: ENCODE_MAP.length - 1 <= Byte.MAX_VALUE");
-        }
+        checkArgument(ENCODE_MAP.length - 1 <= Byte.MAX_VALUE);
         // The bitmask is the same as largest possible value, so the length of the array must
         // be one greater.
         byte[] map = new byte[ASCII_BITMASK + 1];
-        for (int i = 0; i < ASCII_BITMASK + 1; i++) {
-            map[i] = -1;
-        }
+        Arrays.fill(map, (byte) -1);
         for (int i = 0; i < ENCODE_MAP.length; i ++) {
             byte b = ENCODE_MAP[i];
             map[b] = (byte) i;
@@ -111,9 +109,7 @@ public final class Base85Codec {
      */
     private static ByteBuffer decodeBlocks(String encoded) {
         char[] input = encoded.toCharArray();
-        if (input.length % 5 != 0) {
-            throw new IllegalArgumentException("input should be 5 character aligned");
-        }
+        checkArgument(input.length % 5 == 0, "input should be 5 character aligned");
         ByteBuffer buffer = ByteBuffer.allocate(input.length / 5 * 4);
 
         // A mechanism to detect invalid characters in the input while decoding, that only has a
@@ -142,15 +138,14 @@ public final class Base85Codec {
             buffer.putInt((int) sum);
             inputIndex += 5;
         }
-        if ((inputCharDecoder.canary & ~ASCII_BITMASK) != 0) {
-            throw new IllegalArgumentException("Input is not valid Z85: " + encoded);
-        }
+        checkArgument((inputCharDecoder.canary & ~ASCII_BITMASK)  == 0,
+                "Input is not valid Z85: " + encoded);
         buffer.rewind();
         return buffer;
     }
 
     private static UUID uuidFromByteBuffer(ByteBuffer buffer) {
-        assert buffer.remaining() >= 16;
+        checkArgument(buffer.remaining() >= 16);
         long highBits = buffer.getLong();
         long lowBits = buffer.getLong();
         return new UUID(highBits, lowBits);

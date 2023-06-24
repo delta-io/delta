@@ -6,6 +6,8 @@ import java.util.Optional;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.data.AddFileColumnarBatch;
+import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.utils.CloseableIterator;
@@ -13,18 +15,18 @@ import io.delta.kernel.utils.CloseableIterator;
 /**
  * Utility methods regarding deletion vectors.
  */
-// TODO For now adding methods here, revisit where to put this code later
 public class DeletionVectorUtils {
 
     /**
-     * TODO
+     * For each FileDataReadResult attach its selection vector if its corresponding scan file has
+     * a deletion vector.
      */
     public static CloseableIterator<DataReadResult> attachSelectionVectors(
             TableClient tableClient,
             Row scanState,
-            CloseableIterator<FileDataReadResult> data
-    ) {
-        String tablePath = scanState.getString(6);
+            CloseableIterator<FileDataReadResult> data)
+    {
+        String tablePath = ScanStateRow.getTablePath(scanState);
 
         return new CloseableIterator<DataReadResult>() {
 
@@ -41,26 +43,30 @@ public class DeletionVectorUtils {
                 FileDataReadResult next = data.next();
                 Row scanFileRow = next.getScanFileRow();
                 DeletionVectorDescriptor dv = DeletionVectorDescriptor.fromRow(
-                        scanFileRow.getStruct(5));
-                if (dv == null) {
+                        scanFileRow.getStruct(AddFileColumnarBatch.getDeletionVectorColOrdinal()));
+
+                if (dv == null) { // No deletion vector
+                    // TODO: remove row_index column
                     return new DataReadResult(next.getData(), Optional.empty());
                 }
-                if (dv == currDV) {
-                    return attachSelectionVector(next.getData(), currBitmap);
-                } else {
-                    DeletionVectorStoredBitmap storedBitmap = new DeletionVectorStoredBitmap(
-                            dv,
-                            Optional.of(tablePath));
-                    RoaringBitmapArray bitmap = null;
-                    try {
-                        bitmap = storedBitmap
-                                .load(tableClient.getFileSystemClient());
-                    } catch (IOException e) {
-                        throw new RuntimeException("Couldn't load dv", e);
-                    }
+
+                if (!dv.equals(currDV)) {
+                    loadNewDvAndBitmap(dv);
+                }
+                return withSelectionVector(next.getData(), currBitmap);
+            }
+
+            private void loadNewDvAndBitmap(DeletionVectorDescriptor dv) {
+                DeletionVectorStoredBitmap storedBitmap = new DeletionVectorStoredBitmap(
+                        dv,
+                        Optional.of(tablePath));
+                try {
+                    RoaringBitmapArray bitmap = storedBitmap
+                            .load(tableClient.getFileSystemClient());
                     currBitmap = bitmap;
                     currDV = dv;
-                    return attachSelectionVector(next.getData(), bitmap);
+                } catch (IOException e) {
+                    throw new RuntimeException("Couldn't load dv", e);
                 }
             }
 
@@ -71,7 +77,7 @@ public class DeletionVectorUtils {
         };
     }
 
-    static DataReadResult attachSelectionVector(ColumnarBatch data, RoaringBitmapArray bitmap)
+    static DataReadResult withSelectionVector(ColumnarBatch data, RoaringBitmapArray bitmap)
     {
         // we can either have SelectionColumnVector(bitmap, row_index_vector)
         // or materialize into a boolean array

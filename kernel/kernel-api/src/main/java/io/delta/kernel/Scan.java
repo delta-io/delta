@@ -105,6 +105,7 @@ public interface Scan
                 partitionColumnsSet);
 =======
         StructType readSchema = Utils.getPhysicalSchema(tableClient, scanState)
+                // TODO: do we only want to request row_index_col when there is at least 1 DV?
                 .add(StructField.ROW_INDEX_COLUMN); // request the row_index column for DV filtering
 >>>>>>> 56b9874b (Initial impl plus some scala tests)
 
