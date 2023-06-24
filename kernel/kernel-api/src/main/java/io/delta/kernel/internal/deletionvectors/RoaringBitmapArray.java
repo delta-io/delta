@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.deletionvectors;
 
+import io.delta.kernel.utils.Tuple2;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
@@ -232,4 +233,50 @@ final public class RoaringBitmapArray {
             return bitmaps.toArray(new RoaringBitmap[0]);
         }
     }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Methods implemented for testing only
+    ////////////////////////////////////////////////////////////////////////////////
+
+    static Tuple2<Integer, Integer> decomposeHighLowBytes(long value) {
+        return new Tuple2(highBytes(value), lowBytes(value));
+    }
+
+    public void add(long value) {
+        checkArgument(value >= 0 && value <= MAX_REPRESENTABLE_VALUE);
+        Tuple2<Integer, Integer> tup = decomposeHighLowBytes(value); // (high, low)
+        if (tup._1 >= bitmaps.length) {
+            extendBitmaps(tup._1 + 1);
+        }
+        RoaringBitmap highBitmap = bitmaps[tup._1];
+        highBitmap.add(tup._2);
+    }
+
+    private void extendBitmaps(int  newLength) {
+        if (bitmaps.length == 0 && newLength == 1) {
+            bitmaps = new RoaringBitmap[]{new RoaringBitmap()};
+            return;
+        }
+        RoaringBitmap[] newBitmaps = new RoaringBitmap[newLength];
+        System.arraycopy(
+                bitmaps, // source
+                0, // source start pos
+                newBitmaps, // dest
+                0, // dest start pos
+                bitmaps.length); // number of entries to copy
+        for (int i = 0; i < bitmaps.length; i++) {
+            newBitmaps[i] = new RoaringBitmap();
+        }
+        bitmaps = newBitmaps;
+    }
+
+    public static RoaringBitmapArray create(long... values) {
+        RoaringBitmapArray bitmap = new RoaringBitmapArray();
+        for (long value : values) {
+            bitmap.add(value);
+        }
+        return bitmap;
+    }
+
+
 }

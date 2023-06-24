@@ -56,9 +56,7 @@ public final class Base85Codec {
             map[i] = (byte) c;
             i ++;
         }
-        String chars = ".-:+=^!/*?&<>()[]{}@%$#";
-        for (int i2 = 0; i2 < chars.length(); i2 ++) {
-            char c = chars.charAt(i2);
+        for (char c: ".-:+=^!/*?&<>()[]{}@%$#".toCharArray()) {
             map[i] = (byte) c;
             i ++;
         }
@@ -171,6 +169,7 @@ public final class Base85Codec {
     ////////////////////////////////////////////////////////////////////////////////
     // Methods implemented for testing only
     ////////////////////////////////////////////////////////////////////////////////
+
     /** Encode a 16 byte UUID. */
     public static String encodeUUID(UUID id) {
         ByteBuffer buffer = uuidToByteBuffer(id);
