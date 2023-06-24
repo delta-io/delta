@@ -21,6 +21,7 @@ import java.util.Arrays;
 import java.util.UUID;
 
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.
@@ -165,5 +166,71 @@ public final class Base85Codec {
         long highBits = buffer.getLong();
         long lowBits = buffer.getLong();
         return new UUID(highBits, lowBits);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Methods implemented for testing only
+    ////////////////////////////////////////////////////////////////////////////////
+    /** Encode a 16 byte UUID. */
+    public static String encodeUUID(UUID id) {
+        ByteBuffer buffer = uuidToByteBuffer(id);
+        return encodeBlocks(buffer);
+    }
+
+    private static ByteBuffer uuidToByteBuffer(UUID id) {
+        ByteBuffer buffer = ByteBuffer.allocate(16);
+        buffer.putLong(id.getMostSignificantBits());
+        buffer.putLong(id.getLeastSignificantBits());
+        buffer.rewind();
+        return buffer;
+    }
+
+    /**
+     * Encode an arbitrary byte array using 4 byte blocks.
+     *
+     * Expects the input to be 4 byte aligned.
+     */
+    private static String encodeBlocks(ByteBuffer buffer) {
+        checkArgument(buffer.remaining() % 4 == 0);
+        int numBlocks = buffer.remaining() / 4;
+        // Every 4 byte block gets encoded into 5 bytes/chars
+        int outputLength = numBlocks * 5;
+        byte[] output = new byte[outputLength];
+        int outputIndex = 0;
+
+        while (buffer.hasRemaining()) {
+            long sum = buffer.getInt() & 0x00000000ffffffffL;
+            output[outputIndex] = ENCODE_MAP[(int) (sum / BASE_4TH_POWER)];
+            sum %= BASE_4TH_POWER;
+            output[outputIndex + 1] = ENCODE_MAP[(int) (sum / BASE_3RD_POWER)];
+            sum %= BASE_3RD_POWER;
+            output[outputIndex + 2] = ENCODE_MAP[(int) (sum / BASE_2ND_POWER)];
+            sum %= BASE_2ND_POWER;
+            output[outputIndex + 3] = ENCODE_MAP[(int) (sum / BASE)];
+            output[outputIndex + 4] = ENCODE_MAP[(int) (sum % BASE)];
+            outputIndex += 5;
+        }
+
+        return new String(output, US_ASCII);
+    }
+
+    /**
+     * Encode an arbitrary byte array.
+     *
+     * Unaligned input will be padded to a multiple of 4 bytes.
+     */
+    public static String encodeBytes(byte[] input) {
+        if (input.length % 4 == 0) {
+            return encodeBlocks(ByteBuffer.wrap(input));
+        } else {
+            int alignedLength = ((input.length + 4) / 4) * 4;
+            ByteBuffer buffer = ByteBuffer.allocate(alignedLength);
+            buffer.put(input);
+            while (buffer.hasRemaining()) {
+                buffer.put((byte) 0);
+            }
+            buffer.rewind();
+            return encodeBlocks(buffer);
+        }
     }
 }

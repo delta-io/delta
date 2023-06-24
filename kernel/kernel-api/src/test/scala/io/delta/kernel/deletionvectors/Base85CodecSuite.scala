@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel
+package io.delta.kernel.deletionvectors
 
 import java.nio.charset.StandardCharsets.US_ASCII
 import java.util.UUID
+
+import scala.util.Random
 
 import io.delta.kernel.internal.deletionvectors.Base85Codec
 import org.scalatest.funsuite.AnyFunSuite
@@ -47,8 +49,17 @@ class Base85CodecSuite extends AnyFunSuite {
     val inputBytes: Array[Byte] =
       Array(0x86, 0x4F, 0xD2, 0x6F, 0xB5, 0x59, 0xF7, 0x5B).map(_.toByte)
     val expectedEncodedString = "HelloWorld"
+    val actualEncodedString = Base85Codec.encodeBytes(inputBytes)
+    assert(actualEncodedString === expectedEncodedString)
     val outputBytes = Base85Codec.decodeAlignedBytes(expectedEncodedString)
     assert(outputBytes sameElements inputBytes)
+  }
+
+  test("Z85 reference implementation values") {
+    for ((id, expectedEncodedString) <- testUuids) {
+      val actualEncodedString = Base85Codec.encodeUUID(id)
+      assert(actualEncodedString === expectedEncodedString)
+    }
   }
 
   test("Z85 spec character map") {
@@ -63,7 +74,9 @@ class Base85CodecSuite extends AnyFunSuite {
       0xec, 0x2b, 0xa5, 0x91, 0xfb, 0xe9, 0xa6, 0x72)
       .map(_.toByte).toArray
     val referenceString = new String(Base85Codec.ENCODE_MAP, US_ASCII)
-    val decodedBytes = Base85Codec.decodeAlignedBytes(referenceString)
+    val encodedString = Base85Codec.encodeBytes(referenceBytes)
+    assert(encodedString === referenceString)
+    val decodedBytes = Base85Codec.decodeAlignedBytes(encodedString)
     assert(decodedBytes sameElements referenceBytes)
   }
 
@@ -90,15 +103,36 @@ class Base85CodecSuite extends AnyFunSuite {
   }
   // scalastyle:on nonascii
 
-  // TODO: if we impl encode we can add roundtrip tests
+  test("base85 codec uuid roundtrips") {
+    for ((id, _) <- testUuids) {
+      val encodedString = Base85Codec.encodeUUID(id)
+      // 16 bytes always get encoded into 20 bytes with Base85.
+      assert(encodedString.length === Base85Codec.ENCODED_UUID_LENGTH)
+      val decodedId = Base85Codec.decodeUUID(encodedString)
+      assert(id === decodedId, s"encodedString = $encodedString")
+    }
+  }
 
   test("base85 codec empty byte array") {
     val empty = Array.empty[Byte]
-    val decodedArray = Base85Codec.decodeAlignedBytes("")
+    val encodedString = Base85Codec.encodeBytes(empty)
+    assert(encodedString === "")
+    val decodedArray = Base85Codec.decodeAlignedBytes(encodedString)
     assert(decodedArray.isEmpty)
-    val decodedArray2 = Base85Codec.decodeBytes("", 0)
+    val decodedArray2 = Base85Codec.decodeBytes(encodedString, 0)
     assert(decodedArray2.isEmpty)
   }
 
-  // TODO: add json safe test
+  test("base85 codec byte array random roundtrips") {
+    val rand = new Random(1L) // Fixed seed for determinism
+    val arrayLengths = (1 to 20) ++ Seq(32, 56, 64, 128, 1022, 11 * 1024 * 1024)
+
+    for (len <- arrayLengths) {
+      val inputArray: Array[Byte] = Array.ofDim(len)
+      rand.nextBytes(inputArray)
+      val encodedString = Base85Codec.encodeBytes(inputArray)
+      val decodedArray = Base85Codec.decodeBytes(encodedString, len)
+      assert(decodedArray === inputArray, s"encodedString = $encodedString")
+    }
+  }
 }
