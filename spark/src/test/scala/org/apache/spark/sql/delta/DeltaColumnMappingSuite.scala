@@ -1792,8 +1792,10 @@ class DeltaColumnMappingSuite extends QueryTest
         oldDf: DataFrame,
         expected: DataFrame,
         overwrite: () => Unit,
+        // Whether the new data files are readable after applying the fix.
         readableWithFix: Boolean = true,
-        nativelyReadable: Boolean = false): Unit = {
+        // Whether the method can read the new data files out of box, regardless of the fix.
+        readableOutOfBox: Boolean = false): Unit = {
       // Overwrite
       overwrite()
       if (readableWithFix) {
@@ -1803,7 +1805,7 @@ class DeltaColumnMappingSuite extends QueryTest
         withSQLConf(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE.key -> "false") {
           // Overwrite again
           overwrite()
-          if (nativelyReadable) {
+          if (readableOutOfBox) {
             checkAnswer(oldDf.select("value"), expected.select("value").collect())
           } else {
             // Without the fix, will fail
@@ -1882,7 +1884,7 @@ class DeltaColumnMappingSuite extends QueryTest
       overwriteData2.createOrReplaceTempView("overwrite_data2")
       checkReadability(df, overwriteData2, () => {
         spark.sql(s"INSERT OVERWRITE $tableName SELECT * FROM overwrite_data2")
-      }, nativelyReadable = true)
+      }, readableOutOfBox = true)
     }
   }
 

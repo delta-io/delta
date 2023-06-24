@@ -355,7 +355,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
                 _.conf.get(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE)) &&
               existingFieldOpt.exists { existingField =>
                 // Ensure data type & nullability are compatible
-                DataType.equalsIgnoreCompatibleNullability(existingField.dataType, field.dataType)
+                DataType.equalsIgnoreCompatibleNullability(
+                  from = existingField.dataType,
+                  to = field.dataType
+                )
               }
           if (canReuse) {
             require(!isChangingModeOnExistingTable,
