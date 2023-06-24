@@ -960,8 +960,6 @@ class DeltaSuite extends QueryTest
     // a replaceWhere expression is provided, we throw an error
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
-        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
         Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "part2")
           .withColumn("part1", $"value" % 2)
           .write
@@ -1168,7 +1166,6 @@ class DeltaSuite extends QueryTest
       if (tempDir.exists()) {
         assert(tempDir.delete())
       }
-      val log = DeltaLog.forTable(spark, tempDir)
 
       // Creating an empty log should not create the directory
       assert(!tempDir.exists())
