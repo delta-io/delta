@@ -15,30 +15,61 @@
  */
 package io.delta.kernel.integration;
 
+import static io.delta.kernel.utils.DefaultKernelTestUtils.goldenTablePath;
+import java.util.List;
 import org.junit.Test;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.DefaultTableClient;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.utils.DefaultKernelTestUtils;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.integration.DataBuilderUtils.TestColumnBatchBuilder;
+import io.delta.kernel.types.StructType;
 
 /**
  * Test reading Delta lake tables end to end using the Kernel APIs and default {@link TableClient}
  * implementation ({@link DefaultTableClient})
  */
 public class TestDeltaTableReads
+    extends BaseIntegration
 {
     @Test
-    public void tableWithoutCheckpoint()
+    public void tablePrimitives()
         throws Exception
     {
+        String tablePath = goldenTablePath("data-reader-primitives");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
 
+        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
+
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema)
+            .addAllNullsRow();
+
+        for (int i = 0; i < 10; i++) {
+            builder.addRow(
+                i,
+                (long) i,
+                (byte) i,
+                (short) i,
+                i % 2 == 0,
+                (float) i,
+                (double) i,
+                String.valueOf(i),
+                new byte[] {(byte) i, (byte) i}
+            );
+        }
+
+        ColumnarBatch expData = builder.build();
+
+        compareEqualUnorderd(expData, actualData);
     }
 
     @Test
     public void partitionedTableWithoutCheckpoint()
         throws Exception
     {
-        DefaultKernelTestUtils.getConnectorResourceFilePath("");
+
     }
 
     @Test

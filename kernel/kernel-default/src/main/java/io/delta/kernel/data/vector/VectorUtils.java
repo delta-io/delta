@@ -2,6 +2,7 @@ package io.delta.kernel.data.vector;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
 import io.delta.kernel.types.DataType;
@@ -56,6 +57,8 @@ public class VectorUtils
             return vector.getDouble(rowId);
         } else if (dataType instanceof StringType) {
             return vector.getString(rowId);
+        } else if (dataType instanceof BinaryType) {
+            return vector.getBinary(rowId);
         } else if (dataType instanceof StructType) {
             return vector.getStruct(rowId);
         } else if (dataType instanceof MapType) {
