@@ -15,7 +15,11 @@
  */
 package io.delta.kernel.integration;
 
+import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
+import static io.delta.kernel.integration.DataBuilderUtils.row;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.goldenTablePath;
+import java.sql.Date;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.Test;
 
@@ -24,11 +28,15 @@ import io.delta.kernel.client.DefaultTableClient;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.integration.DataBuilderUtils.TestColumnBatchBuilder;
+import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.StructType;
 
 /**
  * Test reading Delta lake tables end to end using the Kernel APIs and default {@link TableClient}
  * implementation ({@link DefaultTableClient})
+ * <p>
+ * It uses golden tables generated using the source code here:
+ * https://github.com/delta-io/delta/blob/master/connectors/golden-tables/src/test/scala/io/delta/golden/GoldenTables.scala
  */
 public class TestDeltaTableReads
     extends BaseIntegration
@@ -66,10 +74,86 @@ public class TestDeltaTableReads
     }
 
     @Test
-    public void partitionedTableWithoutCheckpoint()
+    public void partitionedTable()
         throws Exception
     {
+        String tablePath = goldenTablePath("data-reader-partition-values");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
 
+        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
+
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
+
+        for (int i = 0; i < 2; i++) {
+            builder.addRow(
+                i,
+                (long) i,
+                (byte) i,
+                (short) i,
+                i % 2 == 0,
+                (float) i,
+                (double) i,
+                String.valueOf(i),
+                "null",
+                daysSinceEpoch(Date.valueOf("2021-09-08")),
+                Arrays.asList(
+                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
+                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
+                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i)
+                ),
+                row(
+                    structTypeOf(readSchema, "as_nested_struct"),
+                    String.valueOf(i),
+                    String.valueOf(i),
+                    row(
+                        structTypeOf(
+                            structTypeOf(readSchema, "as_nested_struct"),
+                            "ac"
+                        ),
+                        i,
+                        (long) i
+                    )
+                ),
+                String.valueOf(i)
+            );
+        }
+
+        builder.addRow(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Arrays.asList(
+                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2),
+                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2),
+                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2)
+                ),
+            row(
+                structTypeOf(readSchema, "as_nested_struct"),
+                "2",
+                "2",
+                row(
+                    structTypeOf(
+                        structTypeOf(readSchema, "as_nested_struct"),
+                        "ac"
+                    ),
+                    2,
+                    2L
+                )
+            ),
+            "2"
+        );
+
+        ColumnarBatch expData = builder.build();
+
+        compareEqualUnorderd(expData, actualData);
     }
 
     @Test
@@ -98,5 +182,15 @@ public class TestDeltaTableReads
         throws Exception
     {
 
+    }
+
+    private StructType structTypeOf(StructType structType, String colName)
+    {
+        return (StructType) structType.get(colName).getDataType();
+    }
+
+    private StructType arrayElemStructTypeOf(StructType structType, String colName)
+    {
+        return (StructType) ((ArrayType) structType.get(colName).getDataType()).getElementType();
     }
 }

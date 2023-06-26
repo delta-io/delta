@@ -22,11 +22,15 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.DataReadResult;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.vector.VectorUtils;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.DefaultKernelTestUtils;
 
 /**
  * Base class containing utility method to write integration tests that read data from
@@ -147,17 +151,59 @@ public abstract class BaseIntegration
         StructType readSchema = expDataBatch.getSchema();
 
         for (int fieldId = 0; fieldId < readSchema.length(); fieldId++) {
+            DataType fieldDataType = readSchema.at(fieldId).getDataType();
+
             ColumnVector expDataVector = expDataBatch.getColumnVector(fieldId);
             ColumnVector actDataVector = actDataBatch.getColumnVector(fieldId);
 
-            Object expObject = getValueAsObject(expDataVector, expRowId);
-            Object actObject = getValueAsObject(actDataVector, actRowId);
-            boolean matched = Objects.deepEquals(expObject, actObject);
+            Object expObject = VectorUtils.getValueAsObject(expDataVector, expRowId);
+            Object actObject = VectorUtils.getValueAsObject(actDataVector, actRowId);
+            boolean matched = compareObjects(fieldDataType, expObject, actObject);
             if (!matched) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    protected boolean compareRows(Row exp, Row act)
+    {
+        assertEquals(exp.getSchema(), act.getSchema());
+        for (int fieldId = 0; fieldId < exp.getSchema().length(); fieldId++) {
+            DataType fileDataType = exp.getSchema().at(fieldId).getDataType();
+
+            Object expObject = DefaultKernelTestUtils.getValueAsObject(exp, fieldId);
+            Object actObject = DefaultKernelTestUtils.getValueAsObject(act, fieldId);
+            boolean matched = compareObjects(fileDataType, expObject, actObject);
+            if (!matched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    protected <T> boolean compareArrays(ArrayType dataType, List<T> exp, List<T> act)
+    {
+        assertEquals(exp.size(), act.size());
+        for (int i = 0; i < exp.size(); i++) {
+            boolean matched = compareObjects(dataType.getElementType(), exp.get(i), act.get(i));
+            if (!matched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    protected boolean compareObjects(DataType dataType, Object exp, Object act)
+    {
+        boolean matched = Objects.deepEquals(exp, act);
+        if (dataType instanceof StructType) {
+            matched = compareRows((Row) exp, (Row) act);
+        }
+        else if (dataType instanceof ArrayType) {
+            matched = compareArrays((ArrayType) dataType, (List) exp, (List) act);
+        }
+        return matched;
     }
 }

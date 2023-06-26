@@ -17,6 +17,24 @@ package io.delta.kernel.utils;
 
 import java.io.File;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BinaryType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.ByteType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
+import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.ShortType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.TimestampType;
+
 public class DefaultKernelTestUtils
 {
     private DefaultKernelTestUtils() {}
@@ -46,5 +64,49 @@ public class DefaultKernelTestUtils
             new File(repoRoot, "connectors/golden-tables/src/test/resources/golden");
 
         return new File(goldenTablesRoot, goldenTable).toString();
+    }
+
+    /**
+     *
+     * @param row
+     * @param columnOrdinal
+     * @return
+     */
+    public static Object getValueAsObject(Row row, int columnOrdinal) {
+        // TODO: may be it is better to just provide a `getObject` on the `ColumnVector` to
+        // avoid the nested if-else statements.
+        final DataType dataType = row.getSchema().at(columnOrdinal).getDataType();
+
+        if (row.isNullAt(columnOrdinal)) {
+            return null;
+        }
+
+        if (dataType instanceof BooleanType) {
+            return row.getBoolean(columnOrdinal);
+        } else if (dataType instanceof ByteType) {
+            return row.getByte(columnOrdinal);
+        } else if (dataType instanceof ShortType) {
+            return row.getShort(columnOrdinal);
+        } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
+            return row.getInt(columnOrdinal);
+        } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+            return row.getLong(columnOrdinal);
+        } else if (dataType instanceof FloatType) {
+            return row.getFloat(columnOrdinal);
+        } else if (dataType instanceof DoubleType) {
+            return row.getDouble(columnOrdinal);
+        } else if (dataType instanceof StringType) {
+            return row.getString(columnOrdinal);
+        } else if (dataType instanceof BinaryType) {
+            return row.getBinary(columnOrdinal);
+        } else if (dataType instanceof StructType) {
+            return row.getStruct(columnOrdinal);
+        } else if (dataType instanceof MapType) {
+            return row.getMap(columnOrdinal);
+        } else if (dataType instanceof ArrayType) {
+            return row.getArray(columnOrdinal);
+        }
+
+        throw new UnsupportedOperationException(dataType + " is not supported yet");
     }
 }

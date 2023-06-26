@@ -17,7 +17,10 @@
 package io.delta.kernel;
 
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
@@ -32,16 +35,19 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+import io.delta.kernel.internal.util.PartitionUtils;
+
 /**
  * Represents a scan of a Delta table.
  */
-public interface Scan {
+public interface Scan
+{
     /**
      * Get an iterator of data files to scan.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return iterator of {@link ColumnarBatch}s where each row in each batch corresponds to one
-     *         scan file
+     * scan file
      */
     CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient);
 
@@ -68,40 +74,53 @@ public interface Scan {
      * @param tableClient Connector provided {@link TableClient} implementation.
      * @param scanState Scan state returned by {@link Scan#getScanState(TableClient)}
      * @param scanFileRowIter an iterator of {@link Row}s. Each {@link Row} represents one scan file
-     *                        from the {@link ColumnarBatch} returned by
-     *                        {@link Scan#getScanFiles(TableClient)}
+     * from the {@link ColumnarBatch} returned by
+     * {@link Scan#getScanFiles(TableClient)}
      * @param filter An optional filter that can be used for data skipping while reading the
-     *               scan files.
+     * scan files.
      * @return Data read from the input scan files as an iterator of {@link DataReadResult}s. Each
-     *         {@link DataReadResult} instance contains the data read and an optional selection
-     *         vector that indicates data rows as valid or invalid. It is the responsibility of the
-     *         caller to close this iterator.
+     * {@link DataReadResult} instance contains the data read and an optional selection
+     * vector that indicates data rows as valid or invalid. It is the responsibility of the
+     * caller to close this iterator.
      * @throws IOException when error occurs while reading the data.
      */
     static CloseableIterator<DataReadResult> readData(
-            TableClient tableClient,
-            Row scanState,
-            CloseableIterator<Row> scanFileRowIter,
-            Optional<Expression> filter) throws IOException {
+        TableClient tableClient,
+        Row scanState,
+        CloseableIterator<Row> scanFileRowIter,
+        Optional<Expression> filter) throws IOException
+    {
 
         StructType readSchema = Utils.getPhysicalSchema(tableClient, scanState);
+        List<String> partitionColumns = Utils.getPartitionColumns(scanState);
+        Set<String> partitionColumnsSet = new HashSet<>(partitionColumns);
+
+        StructType readSchemaWithoutPartitionColumns =
+            PartitionUtils.withColumnsRemoved(readSchema, partitionColumnsSet);
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 
         CloseableIterator<FileReadContext> filesReadContextsIter =
-                parquetHandler.contextualizeFileReads(
-                        scanFileRowIter,
-                        filter.orElse(Literal.TRUE));
+            parquetHandler.contextualizeFileReads(
+                scanFileRowIter,
+                filter.orElse(Literal.TRUE));
 
-        CloseableIterator<FileDataReadResult> data =
-                parquetHandler.readParquetFiles(filesReadContextsIter, readSchema);
+        CloseableIterator<FileDataReadResult> data = parquetHandler.readParquetFiles(
+            filesReadContextsIter,
+            readSchemaWithoutPartitionColumns);
 
         // TODO: Attach the selection vector associated with the file
         return data.map(fileDataReadResult ->
-                new DataReadResult(
-                        fileDataReadResult.getData(),
-                        Optional.empty()
-                )
+            new DataReadResult(
+                PartitionUtils.withPartitionColumns(
+                    tableClient.getExpressionHandler(),
+                    fileDataReadResult.getData(),
+                    readSchemaWithoutPartitionColumns,
+                    Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                    readSchema
+                ),
+                Optional.empty()
+            )
         );
     }
 }

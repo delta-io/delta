@@ -21,7 +21,19 @@ import java.util.Map;
 import java.util.function.Function;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.*;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BinaryType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.ByteType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.ShortType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -62,13 +74,14 @@ public class ScanStateRow
         ordinalToColName.put(6, "tablePath");
     }
 
-    public static int getSchemaStringColOrdinal() {
-        return ordinalToColName
-            .entrySet()
-            .stream()
-            .filter(entry -> "readSchemaString".equals(entry.getValue()))
-            .map(Map.Entry::getKey)
-            .findFirst().get();
+    public static int getSchemaStringColOrdinal()
+    {
+        return getOrdinal("readSchemaString");
+    }
+
+    public static int getPartitionColumnsColOrdinal()
+    {
+        return getOrdinal("partitionColumns");
     }
 
     private final Map<String, String> configuration;
@@ -232,7 +245,8 @@ public class ScanStateRow
         return ordinalToAccessor.get(ordinal).apply(this);
     }
 
-    private DataType dataType(int ordinal) {
+    private DataType dataType(int ordinal)
+    {
         if (schema.length() <= ordinal) {
             throw new IllegalArgumentException("invalid ordinal: " + ordinal);
         }
@@ -241,7 +255,8 @@ public class ScanStateRow
     }
 
     private void throwIfUnsafeAccess(
-        int ordinal, Class<? extends DataType> expDataType, String accessType) {
+        int ordinal, Class<? extends DataType> expDataType, String accessType)
+    {
 
         DataType actualDataType = dataType(ordinal);
         if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
@@ -251,5 +266,15 @@ public class ScanStateRow
                 actualDataType);
             throw new UnsupportedOperationException(msg);
         }
+    }
+
+    private static int getOrdinal(String columnName)
+    {
+        return ordinalToColName
+            .entrySet()
+            .stream()
+            .filter(entry -> columnName.equals(entry.getValue()))
+            .map(Map.Entry::getKey)
+            .findFirst().get();
     }
 }

@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.sql.Date;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -25,8 +26,25 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.delta.kernel.client.ExpressionHandler;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.ExpressionEvaluator;
+import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.types.BinaryType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.ByteType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
+import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.ShortType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.Tuple2;
 
@@ -34,7 +52,6 @@ import io.delta.kernel.internal.lang.ListUtils;
 
 public class PartitionUtils
 {
-
     private PartitionUtils() {}
 
     public static Map<String, Integer> getPartitionOrdinals(
@@ -108,5 +125,99 @@ public class PartitionUtils
             .stream()
             .map(s -> s.toLowerCase(Locale.ROOT))
             .allMatch(lowercasePartCols::contains);
+    }
+
+    /**
+     * Utility method to remove the given columns (as {@code columnsToRemove}) from the
+     * given {@code schema}.
+     *
+     * @param schema
+     * @param columnsToRemove
+     * @return
+     */
+    public static StructType withColumnsRemoved(StructType schema, Set<String> columnsToRemove)
+    {
+        if (columnsToRemove == null || columnsToRemove.size() == 0) {
+            return schema;
+        }
+
+        return new StructType(
+            schema.fields().stream()
+                .filter(field -> !columnsToRemove.contains(field.getName()))
+                .collect(Collectors.toList()));
+    }
+
+    public static ColumnarBatch withPartitionColumns(
+        ExpressionHandler expressionHandler,
+        ColumnarBatch dataBatch,
+        StructType dataBatchSchema,
+        Map<String, String> partitionValues,
+        StructType schemaWithPartitionCols)
+    {
+        if (partitionValues == null || partitionValues.size() == 0) {
+            // no partition column vectors to attach to.
+            return dataBatch;
+        }
+
+        for (int colIdx = 0; colIdx < schemaWithPartitionCols.length(); colIdx++) {
+            StructField structField = schemaWithPartitionCols.at(colIdx);
+
+            if (partitionValues.containsKey(structField.getName())) {
+                // Create a partition vector
+
+                ExpressionEvaluator evaluator = expressionHandler.getEvaluator(
+                    dataBatchSchema,
+                    literalForPartitionValue(
+                        structField.getDataType(),
+                        partitionValues.get(structField.getName())
+                    )
+                );
+
+                ColumnVector partitionVector = evaluator.eval(dataBatch);
+                dataBatch.insertVector(colIdx, structField, partitionVector);
+            }
+        }
+
+        return dataBatch;
+    }
+
+    private static Literal literalForPartitionValue(DataType dataType, String partitionValue)
+    {
+        if (partitionValue == null) {
+            return Literal.ofNull(dataType);
+        }
+
+        if (dataType instanceof BooleanType) {
+            return Literal.of(Boolean.parseBoolean(partitionValue));
+        }
+        if (dataType instanceof ByteType) {
+            return Literal.of(Byte.parseByte(partitionValue));
+        }
+        if (dataType instanceof ShortType) {
+            return Literal.of(Short.parseShort(partitionValue));
+        }
+        if (dataType instanceof IntegerType) {
+            return Literal.of(Integer.parseInt(partitionValue));
+        }
+        if (dataType instanceof LongType) {
+            return Literal.of(Long.parseLong(partitionValue));
+        }
+        if (dataType instanceof FloatType) {
+            return Literal.of(Float.parseFloat(partitionValue));
+        }
+        if (dataType instanceof DoubleType) {
+            return Literal.of(Double.parseDouble(partitionValue));
+        }
+        if (dataType instanceof StringType) {
+            return Literal.of(partitionValue);
+        }
+        if (dataType instanceof BinaryType) {
+            return Literal.of(partitionValue.getBytes());
+        }
+        if (dataType instanceof DateType) {
+            return Literal.of(Date.valueOf(partitionValue));
+        }
+
+        throw new UnsupportedOperationException("Unsupported partition column: " + dataType);
     }
 }

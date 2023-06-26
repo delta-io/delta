@@ -39,7 +39,6 @@ public class DataBuilderUtils
 
     public static class TestColumnBatchBuilder
     {
-
         private StructType schema;
         private List<Row> rows = new ArrayList<>();
 
@@ -53,23 +52,14 @@ public class DataBuilderUtils
             checkArgument(values.length == schema.length(), "Invalid columns length");
             // TODO: we could improve this further to check the type of the object based on the
             // column data type in the schema, but given this for test it should be fine.
-
-            List<Object> valuesList = Arrays.asList(values);
-            Map<Integer, Object> ordinalToValues = IntStream.range(0, values.length)
-                .boxed()
-                .collect(toMap(identity(), valuesList::get));
-
-            rows.add(new TestRow(schema, ordinalToValues));
+            rows.add(row(schema, values));
 
             return this;
         }
 
         public TestColumnBatchBuilder addAllNullsRow()
         {
-            Map<Integer, Object> values = new HashMap<>();
-            IntStream.range(0, schema.length()).forEach(idx -> values.put(idx, null));
-
-            rows.add(new TestRow(schema, values));
+            rows.add(row(schema));
             return this;
         }
 
@@ -79,13 +69,35 @@ public class DataBuilderUtils
         }
     }
 
+    public static Row row(StructType structType, Object... values)
+    {
+        return new TestRow(structType, values);
+    }
+
+    public static Row row(StructType structType)
+    {
+        return new TestRow(structType);
+    }
+
     private static class TestRow implements Row
     {
         private final StructType schema;
         private final Map<Integer, Object> values;
 
-        private TestRow(StructType schema, Map<Integer, Object> values)
+        private TestRow(StructType schema, Object... values)
         {
+            this.schema = schema;
+            this.values = new HashMap<>();
+            for (int i = 0; i < values.length; i++) {
+                // lamdas + streams don't work well with null values
+                this.values.put(i, values[i]);
+            }
+        }
+
+        private TestRow(StructType schema)
+        {
+            Map<Integer, Object> values = new HashMap<>();
+            IntStream.range(0, schema.length()).forEach(idx -> values.put(idx, null));
             this.schema = schema;
             this.values = values;
         }

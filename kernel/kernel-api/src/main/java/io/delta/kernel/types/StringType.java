@@ -21,7 +21,7 @@ package io.delta.kernel.types;
 public class StringType extends BasePrimitiveType {
     public static final StringType INSTANCE = new StringType();
 
-    public StringType() {
+    private StringType() {
         super("string");
     }
 }

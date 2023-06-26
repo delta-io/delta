@@ -19,6 +19,8 @@ package io.delta.kernel.utils;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
@@ -158,6 +160,19 @@ public class Utils
     }
 
     /**
+     * Get the list of partition column names from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param scanState Scan state {@link Row}
+     * @return List of partition column names according to the scan state.
+     */
+    public static List<String> getPartitionColumns(Row scanState)
+    {
+        int partitionColumnsOrdinal = ScanStateRow.getPartitionColumnsColOrdinal();
+        return scanState.getArray(partitionColumnsOrdinal);
+    }
+
+    /**
      * Get the {@link FileStatus} from given scan file {@link Row}. The {@link FileStatus} contains
      * file metadata about the scan file.
      *
@@ -173,18 +188,14 @@ public class Utils
     }
 
     /**
-     * Close the iterator.
+     * Get the partition columns and value belonging to the given scan file row.
      *
-     * @param i1
+     * @param scanFileInfo {@link Row} representing one scan file.
+     * @return Map of partition column name to partition column value.
      */
-    public static void safeClose(CloseableIterator i1)
+    public static Map<String, String> getPartitionValues(Row scanFileInfo)
     {
-        try {
-            i1.close();
-        }
-        catch (IOException ioe) {
-            throw new RuntimeException(ioe);
-        }
+        return scanFileInfo.getMap(1);
     }
 
     /**
@@ -222,12 +233,15 @@ public class Utils
 
     /**
      * Close the given list of {@link Closeable} objects. Any exception thrown is silently ignored.
+     *
      * @param closeables
      */
-    public static void closeCloseablesSilently(Closeable... closeables) {
+    public static void closeCloseablesSilently(Closeable... closeables)
+    {
         try {
             closeCloseables(closeables);
-        } catch (Throwable throwable) {
+        }
+        catch (Throwable throwable) {
             // ignore
         }
     }

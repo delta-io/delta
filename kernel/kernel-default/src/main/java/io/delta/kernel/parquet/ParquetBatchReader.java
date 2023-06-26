@@ -16,6 +16,7 @@
 package io.delta.kernel.parquet;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import static java.util.Objects.requireNonNull;
@@ -54,7 +55,7 @@ public class ParquetBatchReader
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
 
-        Path filePath = new Path(path);
+        Path filePath = new Path(URI.create(path));
         try {
             FileSystem fs = filePath.getFileSystem(configuration);
             FileStatus fileStatus = fs.getFileStatus(filePath);
