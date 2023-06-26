@@ -65,6 +65,16 @@ public interface ColumnarBatch
     }
 
     /**
+     * Update the schema of this {@link ColumnarBatch}. The data types of elements in
+     * the given new schema and existing schema should be the same. Rest of the details such as
+     * name of the column or column metadata could be different.
+     * @param newSchema
+     */
+    default void updateSchema(StructType newSchema) {
+        throw new UnsupportedOperationException("Not yet implemented");
+    }
+
+    /**
      * Return a slice of the current batch.
      *
      * @param start Starting record index to include in the returned columnar batch

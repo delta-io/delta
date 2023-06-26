@@ -35,7 +35,6 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
-import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
 
 /**
@@ -127,8 +126,7 @@ public interface Scan
                 String columnMappingMode = Utils.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
                     case "name":
-                        updatedBatch =
-                            InternalUtils.columnarBatchWithLogicalSchema(updatedBatch, logicalSchema);
+                        updatedBatch.updateSchema(logicalSchema);
                         break;
                     case "none":
                         break;

@@ -25,6 +25,17 @@ public abstract class DataType
      */
     public abstract String toJson();
 
+    /**
+     * Are the data types same? The metadata or column names could be different.
+     *
+     * @param dataType
+     * @return
+     */
+    public boolean equivalent(DataType dataType)
+    {
+        return equals(dataType);
+    }
+
     @Override
     public abstract int hashCode();
 

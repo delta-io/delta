@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.utils.Tuple2;
@@ -65,7 +66,8 @@ public final class StructType extends DataType
         return add(new StructField(name, dataType, true /* nullable */, new HashMap<>()));
     }
 
-    public StructType add(String name, DataType dataType, boolean nullable) {
+    public StructType add(String name, DataType dataType, boolean nullable)
+    {
         return add(new StructField(name, dataType, nullable, new HashMap<>()));
     }
 
@@ -136,6 +138,21 @@ public final class StructType extends DataType
         Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
         System.out.println("Created column " + fieldName + " with ordinal " + fieldAndOrdinal._2);
         return new Column(fieldAndOrdinal._2, fieldName, fieldAndOrdinal._1.getDataType());
+    }
+
+    @Override
+    public boolean equivalent(DataType dataType)
+    {
+        if (!(dataType instanceof StructType)) {
+            return false;
+        }
+
+        StructType otherType = ((StructType) dataType);
+        return otherType.length() == length() &&
+            IntStream.range(0, length())
+                .mapToObj(i ->
+                    otherType.at(i).getDataType().equivalent(at(i).getDataType()))
+                .allMatch(result -> result);
     }
 
     @Override

@@ -80,6 +80,17 @@ public class DefaultColumnarBatch
     }
 
     @Override
+    public void updateSchema(StructType newSchema)
+    {
+        if (!schema.equivalent(newSchema)) {
+            throw new IllegalArgumentException
+                ("Given new schema data type is not same as the existing schema");
+        }
+
+        this.schema = newSchema;
+    }
+
+    @Override
     public int getSize()
     {
         return size;
