@@ -23,8 +23,6 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.annotation.tailrec
-import scala.collection.mutable
-import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
@@ -45,7 +43,7 @@ import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.util.Utils
 
 object Action {

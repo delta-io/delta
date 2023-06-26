@@ -16,13 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LeafCommand, LogicalPlan, UnaryCommand}
-import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 
 case class DeltaReorgTable(target: LogicalPlan)(val predicates: Seq[String]) extends UnaryCommand {
 

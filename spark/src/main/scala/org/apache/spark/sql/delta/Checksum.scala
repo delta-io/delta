@@ -21,7 +21,6 @@ import java.nio.charset.StandardCharsets.UTF_8
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions._
