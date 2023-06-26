@@ -70,8 +70,8 @@ private[delta] trait DeltaEncoders {
   private lazy val _removeFileEncoder = new DeltaEncoder[RemoveFile]
   implicit def removeFileEncoder: Encoder[RemoveFile] = _removeFileEncoder.get
 
-  private lazy val _pmfEncoder = new DeltaEncoder[(Protocol, Metadata, String)]
-  implicit def pmfEncoder: Encoder[(Protocol, Metadata, String)] = _pmfEncoder.get
+  private lazy val _pmvEncoder = new DeltaEncoder[(Protocol, Metadata, Long)]
+  implicit def pmvEncoder: Encoder[(Protocol, Metadata, Long)] = _pmvEncoder.get
 
   private lazy val _serializableFileStatusEncoder = new DeltaEncoder[SerializableFileStatus]
   implicit def serializableFileStatusEncoder: Encoder[SerializableFileStatus] =
