@@ -85,6 +85,12 @@ public class Protocol implements Action
     @Override
     public String toString()
     {
-        return String.format("Protocol(%s,%s)", minReaderVersion, minWriterVersion);
+        final StringBuilder sb = new StringBuilder("Protocol{");
+        sb.append("minReaderVersion=").append(minReaderVersion);
+        sb.append(", minWriterVersion=").append(minWriterVersion);
+        sb.append(", readerFeatures=").append(readerFeatures);
+        sb.append(", writerFeatures=").append(writerFeatures);
+        sb.append('}');
+        return sb.toString();
     }
 }

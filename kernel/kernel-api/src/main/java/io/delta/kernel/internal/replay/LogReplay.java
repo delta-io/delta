@@ -17,11 +17,11 @@
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.stream.Stream;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.CloseableIterable;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -88,6 +89,7 @@ public class LogReplay
 
                     if (metadata != null) {
                         // Stop since we have found the latest Protocol and Metadata.
+                        validateSupportedTable(protocol, metadata);
                         return new Tuple2<>(protocol, metadata);
                     }
                 }
@@ -97,6 +99,7 @@ public class LogReplay
 
                     if (protocol != null) {
                         // Stop since we have found the latest Protocol and Metadata.
+                        validateSupportedTable(protocol, metadata);
                         return new Tuple2<>(protocol, metadata);
                     }
                 }
@@ -115,6 +118,45 @@ public class LogReplay
         throw new IllegalStateException(
             String.format("No metadata found at version %s", logSegment.version)
         );
+    }
+
+    private void validateSupportedTable(Protocol protocol, Metadata metadata)
+    {
+        switch (protocol.getMinReaderVersion()) {
+            case 1:
+                break;
+            case 2:
+                verifySupportedColumnMappingMode(metadata);
+                break;
+            case 3:
+                List<String> readerFeatures = protocol.getReaderFeatures();
+                for (String readerFeature : readerFeatures) {
+                    switch (readerFeature) {
+                        case "deletionVectors":
+                            break;
+                        case "columnMapping":
+                            verifySupportedColumnMappingMode(metadata);
+                            break;
+                        default:
+                            throw new UnsupportedOperationException(
+                                "Unsupported table feature: " + readerFeature);
+                    }
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException(
+                    "Unsupported protocol version: " + protocol.getMinReaderVersion());
+        }
+    }
+
+    private void verifySupportedColumnMappingMode(Metadata metadata) {
+        // Check if the mode is name. Id mode is not yet supported
+        String cmMode = metadata.getConfiguration().get("delta.columnMapping.mode");
+        if (!"none".equalsIgnoreCase(cmMode) &&
+            !"name".equalsIgnoreCase(cmMode)) {
+            throw new UnsupportedOperationException(
+                "Unsupported column mapping mode: " + cmMode);
+        }
     }
 
     /**
