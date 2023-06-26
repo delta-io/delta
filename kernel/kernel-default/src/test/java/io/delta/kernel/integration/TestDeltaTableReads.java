@@ -30,17 +30,7 @@ import io.delta.kernel.client.DefaultTableClient;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.integration.DataBuilderUtils.TestColumnBatchBuilder;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 /**
  * Test reading Delta lake tables end to end using the Kernel APIs and default {@link TableClient}

@@ -74,6 +74,7 @@ public class ScanImpl
     private final TableClient tableClient;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
+    private final Optional<Expression> filter;
     private final Optional<Expression> metadataFilterConjunction;
     private final Optional<Expression> dataFilterConjunction;
 
@@ -95,6 +96,7 @@ public class ScanImpl
         this.dataPath = dataPath;
         this.tableClient = tableClient;
 
+        this.filter = filter;
         if (filter.isPresent()) {
             final List<String> partitionColumns = snapshotPartitionSchema.fieldNames();
             final Tuple2<Optional<Expression>, Optional<Expression>> metadataAndDataConjunctions =
@@ -185,7 +187,7 @@ public class ScanImpl
     @Override
     public Expression getRemainingFilter()
     {
-        return dataFilterConjunction.orElse(Literal.TRUE);
+        return filter.orElse(Literal.TRUE);
     }
 
     /**

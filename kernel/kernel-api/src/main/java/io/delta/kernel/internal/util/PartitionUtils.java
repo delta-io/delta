@@ -34,19 +34,7 @@ import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.lang.ListUtils;
@@ -54,18 +42,6 @@ import io.delta.kernel.internal.lang.ListUtils;
 public class PartitionUtils
 {
     private PartitionUtils() {}
-
-    public static Map<String, Integer> getPartitionOrdinals(
-        StructType snapshotSchema,
-        StructType partitionSchema)
-    {
-        final Map<String, Integer> output = new HashMap<>();
-        partitionSchema
-            .fieldNames()
-            .forEach(fieldName -> output.put(fieldName, snapshotSchema.indexOf(fieldName)));
-
-        return output;
-    }
 
     /**
      * Partition the given condition into two optional conjunctive predicates M, D such that

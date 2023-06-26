@@ -17,23 +17,8 @@ package io.delta.kernel.utils;
 
 import java.io.File;
 
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.*;
 
 public class DefaultKernelTestUtils
 {
@@ -72,14 +57,8 @@ public class DefaultKernelTestUtils
         return new File(goldenTablesRoot, goldenTable).toString();
     }
 
-    /**
-     *
-     * @param row
-     * @param columnOrdinal
-     * @return
-     */
     public static Object getValueAsObject(Row row, int columnOrdinal) {
-        // TODO: may be it is better to just provide a `getObject` on the `ColumnVector` to
+        // TODO: may be it is better to just provide a `getObject` on the `Row` to
         // avoid the nested if-else statements.
         final DataType dataType = row.getSchema().at(columnOrdinal).getDataType();
 
