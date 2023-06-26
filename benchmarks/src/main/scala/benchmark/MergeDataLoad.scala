@@ -24,16 +24,16 @@ import org.apache.spark.sql.functions.{col, countDistinct, hash, isnull, max, ra
 case class MergeDataLoadConf(
     scaleInGB: Int = 0,
     userDefinedDbName: Option[String] = None,
-    sourcePath: Option[String] = None,
+    loadFromPath: Option[String] = None,
     benchmarkPath: Option[String] = None,
     excludeNulls: Boolean = true) extends MergeConf {
 }
 
 /**
- * Represents a source table configuration used in merge benchmarks. Each [[MergeTestCase]] has one
- * [[MergeSourceTable]] associated with it, the data loader will collect all source table
+ * Represents a table configuration used as a source in merge test cases. Each [[MergeTestCase]] has
+ * one [[MergeSourceTable]] associated with it, the data loader will collect all source table
  * configurations for all tests and create the required source tables.
- * @param fileMatchedFraction Fraction of files from the target table that will get sampled to
+ * @param fileMatchedFraction Fraction of files from the base table that will get sampled to
  *                            create the source table.
  * @param rowMatchedFraction Fraction of rows from the selected files that will get sampled to form
  *                           the part of the source table that matches the merge condition.
@@ -77,16 +77,16 @@ object MergeDataLoadConf {
         .valueName("<database name>")
         .action((x, c) => c.copy(userDefinedDbName = Some(x)))
         .text("Name of the target database to create with TPC-DS tables in necessary format"),
-      opt[String]("source-path")
+      opt[String]("load-from-path")
         .optional()
         .valueName("<path to the TPC-DS raw input data>")
-        .action((x, c) => c.copy(sourcePath = Some(x)))
+        .action((x, c) => c.copy(loadFromPath = Some(x)))
         .text("The location of the TPC-DS raw input data"),
       opt[String]("exclude-nulls")
         .optional()
         .valueName("true/false")
         .action((x, c) => c.copy(excludeNulls = x.toBoolean))
-        .text("Whether to remove null primary keys when loading data, default = false"),                                                                                                                                                          )
+        .text("Whether to remove null primary keys when loading data, default = false"))
   }
 
   def parse(args: Array[String]): Option[MergeDataLoadConf] = {
@@ -98,7 +98,7 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
 
   protected def targetTableFullName = s"`${conf.dbName}`.`target_${conf.tableName}`"
 
-  protected def dataSourceLocation: String = conf.sourcePath.getOrElse {
+  protected def dataLoadFromPath: String = conf.loadFromPath.getOrElse {
     s"s3://devrel-delta-datasets/tpcds-2.13/tpcds_sf${conf.scaleInGB}_parquet/${conf.tableName}/"
   }
 
@@ -110,17 +110,16 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
     val dbLocation = conf.dbLocation(dbName, suffix = benchmarkId.replace("-", "_"))
     val dbCatalog = "spark_catalog"
 
-    require(conf.scaleInGB > 0)
     require(Seq(1, 3000).contains(conf.scaleInGB), "")
 
     log(s"====== Creating database =======")
     runQuery(s"DROP DATABASE IF EXISTS ${dbName} CASCADE", s"drop-database")
     runQuery(s"CREATE DATABASE IF NOT EXISTS ${dbName}", s"create-database")
 
-    log(s"====== Creating target table =======")
-    loadTargetTable()
-    log(s"====== Creating source tables =======")
-    MergeTestCases.testCases.map(_.sourceTable).distinct.foreach(loadSourceTable)
+    log(s"====== Creating merge target table =======")
+    loadMergeTargetTable()
+    log(s"====== Creating merge source tables =======")
+    MergeTestCases.testCases.map(_.sourceTable).distinct.foreach(loadMergeSourceTable)
     log(s"====== Created all tables in database ${dbName} at '${dbLocation}' =======")
 
     runQuery(s"USE $dbCatalog.$dbName;")
@@ -128,12 +127,13 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
   }
 
   /**
-   * Creates the target Delta table and performs sanity checks.
+   * Creates the target Delta table and performs sanity checks. This table will be cloned before
+   * each merge test case and the clone serves as a single-use merge target table.
    */
-  protected def loadTargetTable(): Unit = {
+  protected def loadMergeTargetTable(): Unit = {
     val dbLocation = conf.dbLocation(conf.dbName, suffix = benchmarkId.replace("-", "_"))
     val location = s"${dbLocation}/${conf.tableName}/"
-    val sourceFormat = "parquet"
+    val format = "parquet"
 
     runQuery(s"DROP TABLE IF EXISTS $targetTableFullName", s"drop-table-$targetTableFullName")
 
@@ -141,11 +141,11 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
       s"""CREATE TABLE $targetTableFullName
                  USING DELTA
                  LOCATION '$location'
-                 SELECT * FROM `${sourceFormat}`.`$dataSourceLocation`
+                 SELECT * FROM `${format}`.`$dataLoadFromPath`
               """, s"create-table-$targetTableFullName", ignoreError = true)
 
     val sourceRowCount =
-      spark.sql(s"SELECT * FROM `${sourceFormat}`.`$dataSourceLocation`").count()
+      spark.sql(s"SELECT * FROM `${format}`.`$dataLoadFromPath`").count()
     val targetRowCount = spark.table(targetTableFullName).count()
     val targetFileCount =
       spark.table(targetTableFullName).select(countDistinct("_metadata.file_path"))
@@ -158,27 +158,38 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
   }
 
   /**
-   * Creates a source table for the given source table configuration by sampling the target table.
+   * Creates a table that will be used as a merge source table in the merge test cases. The table is
+   * created by sampling the merge target table created by [[loadMergeTargetTable]]. The merge test
+   * cases don't modify the source table and a single source table is reused across different test
+   * cases if the same source table configuration is used.
    */
-  protected def loadSourceTable(sourceTable: MergeSourceTable): Unit = {
-    val fullTableName = s"`${conf.dbName}`.`${sourceTable.name}`"
+  protected def loadMergeSourceTable(sourceTableConf: MergeSourceTable): Unit = {
+    val fullTableName = s"`${conf.dbName}`.`${sourceTableConf.name}`"
     val dbLocation = conf.dbLocation(conf.dbName, suffix = benchmarkId.replace("-", "_"))
 
-    runQuery(s"DROP TABLE IF EXISTS $fullTableName", s"drop-table-${sourceTable.name}")
+    runQuery(s"DROP TABLE IF EXISTS $fullTableName", s"drop-table-${sourceTableConf.name}")
 
-    val deltaDf = spark.read.format("delta")
+    val fullTableDF = spark.read.format("delta")
       .load(s"${dbLocation}/${conf.tableName}/")
-      // Sample files by hashing their paths.
-      .filter(hash(col("_metadata.file_path")) * 0.5 / Integer.MAX_VALUE + 0.5 < sourceTable.fileMatchedFraction)
-    log(s"Matching files row count: ${deltaDf.count}")
+    // Sample files based on their file path.
+    val sampledFilesDF = fullTableDF
+      .select("_metadata.file_path")
+      .distinct
+      .sample(sourceTableConf.fileMatchedFraction)
 
-    val numberOfNulls = deltaDf.filter(isnull(col("wr_order_number"))).count
+    // Read the data from the sampled files and sample two sets of rows for MATCHED clauses and
+    // NOT MATCHED clauses respectively.
+    val sampledDataDF = fullTableDF
+      .withColumn("file_path", col("_metadata.file_path"))
+      .join(sampledFilesDF, "file_path")
+    log(s"Matching files row count: ${sampledDataDF.count}")
+
+    val numberOfNulls = sampledDataDF.filter(isnull(col("wr_order_number"))).count
     log(s"wr_order_number contains $numberOfNulls null values")
-    val matchedData = deltaDf.sample(sourceTable.rowMatchedFraction)
-    val notMatchedData = deltaDf.sample(sourceTable.rowNotMatchedFraction)
+    val matchedData = sampledDataDF.sample(sourceTableConf.rowMatchedFraction)
+    val notMatchedData = sampledDataDF.sample(sourceTableConf.rowNotMatchedFraction)
       .withColumn("wr_order_number", rand())
       .withColumn("wr_item_sk", rand())
-
 
     val data = matchedData.union(notMatchedData)
 

@@ -170,82 +170,54 @@ object MergeTestCases {
     deleteOnlyTestCases ++
     upsertTestCases
 
-  def insertOnlyTestCases: Seq[MergeTestCase] = Seq(
-    SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 0.05),
+  def insertOnlyTestCases: Seq[MergeTestCase] =
+    Seq(0.05, 0.5, 1.0).flatMap { rowNotMatchedFraction =>
+      Seq(
+        SingleInsertOnlyTestCase(
+          fileMatchedFraction = 0.05,
+          rowNotMatchedFraction),
 
-    SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 0.5),
-
-    SingleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 1.0),
-
-    MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 0.05),
-
-    MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 0.5),
-
-    MultipleInsertOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowNotMatchedFraction = 1.0),
-  )
+        MultipleInsertOnlyTestCase(
+          fileMatchedFraction = 0.05,
+          rowNotMatchedFraction)
+      )
+    }
 
   def deleteOnlyTestCases: Seq[MergeTestCase] = Seq(
     DeleteOnlyTestCase(
       fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.05),
-  )
+      rowMatchedFraction = 0.05))
 
   def upsertTestCases: Seq[MergeTestCase] = Seq(
+    Seq(0.0, 0.01, 0.1).map { rowMatchedFraction =>
+      UpsertTestCase(
+        fileMatchedFraction = 0.05,
+        rowMatchedFraction,
+        rowNotMatchedFraction = 0.1)
+    },
 
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.1,
-      rowNotMatchedFraction = 0.01),
+    Seq(0.5, 0.99, 1.0).map { rowMatchedFraction =>
+      UpsertTestCase(
+        fileMatchedFraction = 0.05,
+        rowMatchedFraction,
+        rowNotMatchedFraction = 0.001)
+    },
 
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.0,
-      rowNotMatchedFraction = 0.1),
+    Seq(
+      UpsertTestCase(
+        fileMatchedFraction = 0.05,
+        rowMatchedFraction = 0.1,
+        rowNotMatchedFraction = 0.0),
 
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.01,
-      rowNotMatchedFraction = 0.1),
+      UpsertTestCase(
+        fileMatchedFraction = 0.5,
+        rowMatchedFraction = 0.01,
+        rowNotMatchedFraction = 0.001),
 
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.1,
-      rowNotMatchedFraction = 0.0),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.5,
-      rowMatchedFraction = 0.01,
-      rowNotMatchedFraction = 0.001),
-
-    UpsertTestCase(
-      fileMatchedFraction = 1.0,
-      rowMatchedFraction = 0.01,
-      rowNotMatchedFraction = 0.001),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.5,
-      rowNotMatchedFraction = 0.001),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.99,
-      rowNotMatchedFraction = 0.001),
-
-    UpsertTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 1.0,
-      rowNotMatchedFraction = 0.001))
+      UpsertTestCase(
+        fileMatchedFraction = 1.0,
+        rowMatchedFraction = 0.01,
+        rowNotMatchedFraction = 0.001)
+    )
+  ).flatten
 }

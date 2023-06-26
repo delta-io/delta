@@ -46,7 +46,7 @@ object MergeBenchmarkConf {
         .required()
         .valueName("<scale of benchmark in GBs>")
         .action((x, c) => c.copy(scaleInGB = x.toInt))
-        .text("Scale factor of the TPCDS benchmark"),
+        .text("Scale factor in GBs of the TPCDS benchmark"),
       opt[String]("benchmark-path")
         .required()
         .valueName("<cloud storage path>")
@@ -56,8 +56,7 @@ object MergeBenchmarkConf {
         .optional()
         .valueName("<number of iterations>")
         .action((x, c) => c.copy(iterations = x.toInt))
-        .text("Number of times to run the queries"),
-    )
+        .text("Number of times to run the queries"))
   }
 
   def parse(args: Array[String]): Option[MergeBenchmarkConf] = {
@@ -66,11 +65,6 @@ object MergeBenchmarkConf {
 }
 
 class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
-  val extraConfs: Map[String, String] = Map(
-    "spark.sql.broadcastTimeout" -> "7200",
-    "spark.sql.crossJoin.enabled" -> "true"
-  )
-
   /**
    * Runs every merge test case multiple times and records the duration.
    */
@@ -99,8 +93,11 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
   }
 
   /**
-   * Merge test runner: clone a fresh target table, run the merge test case, checks invariants then
-   * drops the cloned table.
+   * Merge test runner performing the following steps:
+   * - Clone a fresh target table.
+   * - Run the merge test case.
+   * - Check invariants.
+   * - Drop the cloned table.
    */
   protected def runMerge(
       testCase: MergeTestCase,
@@ -126,7 +123,7 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
    */
   protected def withCloneTargetTable[T](testCaseName: String)(f: String => T): T = {
     val target = s"`${conf.dbName}`.`target_${conf.tableName}`"
-    val clonedTableName = s"`${conf.dbName}`.`${conf.tableName}_${generateUUID()}`"
+    val clonedTableName = s"`${conf.dbName}`.`${conf.tableName}_${generateShortUUID()}`"
     runQuery(s"CREATE TABLE $clonedTableName SHALLOW CLONE $target", s"clone-target-$testCaseName")
     try {
       f(clonedTableName)
@@ -135,7 +132,7 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
     }
   }
 
-  protected def generateUUID(): String =
+  protected def generateShortUUID(): String =
     UUID.randomUUID.toString.replace("-", "_").take(8)
 }
 

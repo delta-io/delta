@@ -43,11 +43,11 @@ benchmarks = {
     "tpcds-1gb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=1),
     "tpcds-3tb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=3000),
 
-    # Merge data load
+    # Merge data load.
     "merge-1gb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=1),
     "merge-3tb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=3000),
 
-    # Merge benchmark
+    # Merge benchmark.
     "merge-1gb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=1),
     "merge-3tb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=3000),
 
