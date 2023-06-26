@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.parquet;
 
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Map;
@@ -48,6 +49,7 @@ public class ParquetBatchReader
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.maxBatchSize =
             configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
+        checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: " + maxBatchSize);
     }
 
     public CloseableIterator<ColumnarBatch> read(String path, StructType schema)

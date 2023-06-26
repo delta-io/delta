@@ -15,17 +15,17 @@
  */
 package io.delta.kernel.client;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.NoSuchElementException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -34,9 +34,9 @@ import org.apache.hadoop.fs.Path;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.DefaultJsonRow;
 import io.delta.kernel.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.data.DefaultJsonRow;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
@@ -57,6 +57,7 @@ public class DefaultJsonHandler
         this.hadoopConf = hadoopConf;
         this.maxBatchSize =
             hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
+        checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: " + maxBatchSize);
     }
 
     @Override
@@ -166,7 +167,8 @@ public class DefaultJsonHandler
                         stream = fs.open(filePath);
                         currentFileReader = new BufferedReader(
                             new InputStreamReader(stream, StandardCharsets.UTF_8));
-                    } catch (Exception e){
+                    }
+                    catch (Exception e) {
                         Utils.closeCloseablesSilently(stream); // close it avoid leaking resources
                         throw e;
                     }
