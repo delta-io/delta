@@ -39,6 +39,11 @@ public class DefaultKernelTestUtils
 {
     private DefaultKernelTestUtils() {}
 
+    /**
+     * Returns a URI encoded path of the resource.
+     * @param resourcePath
+     * @return
+     */
     public static String getTestResourceFilePath(String resourcePath) {
         return "file:" +
             DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
@@ -51,7 +56,7 @@ public class DefaultKernelTestUtils
 
         // Returns <repo-root>/kernel/kernel-default/target/test-classes/json-files
         String jsonFilesDirectory =
-            DefaultKernelTestUtils.class.getClassLoader().getResource("json-files").getFile();
+            "file:" + DefaultKernelTestUtils.class.getClassLoader().getResource("json-files").getFile();
 
         // Need to get to <repo-root>/connectors/golden-tables/src/test/resources/golden
 

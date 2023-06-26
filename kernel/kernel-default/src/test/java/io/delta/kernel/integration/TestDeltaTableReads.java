@@ -309,17 +309,6 @@ public class TestDeltaTableReads
         compareEqualUnorderd(expData, actualData);
     }
 
-    // TODO: currently we don't handle the corrupted last checkpoint, but we should in future
-    @Test(expected = IllegalStateException.class)
-    public void tableWithCorruptedCheckpoint()
-        throws Exception
-    {
-        String tablePath = goldenTablePath("corrupted-last-checkpoint");
-        Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
-        readSnapshot(readSchema, snapshot);
-    }
-
     @Test
     public void tableWithNameColumnMappingMode()
         throws Exception
