@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 

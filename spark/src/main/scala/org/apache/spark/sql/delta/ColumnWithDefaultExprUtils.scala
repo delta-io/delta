@@ -32,8 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims}
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**

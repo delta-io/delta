@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
+import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
 import org.apache.spark.sql.types.StructType
 
 /**

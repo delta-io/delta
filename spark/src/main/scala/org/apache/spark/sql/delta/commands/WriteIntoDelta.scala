@@ -40,7 +40,7 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Used to write a [[DataFrame]] into a delta table.

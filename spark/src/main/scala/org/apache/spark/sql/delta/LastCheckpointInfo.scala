@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.actions.{CheckpointMetadata, SidecarFile, Sing
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, numCheckpointParts}
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonPropertyOrder}
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonPropertyOrder}
 import com.fasterxml.jackson.databind.{DeserializationFeature, JsonNode}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.node.ObjectNode

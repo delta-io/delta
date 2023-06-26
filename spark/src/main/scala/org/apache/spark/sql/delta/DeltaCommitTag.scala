@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.CommitInfo
-
 /** Marker trait for a commit tag used by delta. */
 sealed trait DeltaCommitTag {
 

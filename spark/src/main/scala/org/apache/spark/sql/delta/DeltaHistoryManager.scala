@@ -22,7 +22,7 @@ import java.sql.Timestamp
 import java.util.concurrent.CompletableFuture
 
 import scala.collection.mutable
-import scala.concurrent.{ExecutionContext, ExecutionContextExecutorService, Future}
+import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
@@ -32,7 +32,6 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider, FileNames, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
