@@ -21,15 +21,17 @@ import java.lang.reflect.InvocationTargetException
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.Table
+import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
@@ -226,5 +228,62 @@ trait ConvertUtilsBase extends DeltaLogging {
     // Allow partition column name starting with underscore and dot
     DeltaFileOperations.defaultHiddenFileFilter(fileName) && !fileName.contains("=")
   }
+
+  /**
+   * Merges the schemas of the ConvertTargetFiles.
+   *
+   * @param spark: the SparkSession used for schema merging.
+   * @param partitionSchema: the partition schema to be merged with the data schema.
+   * @param convertTargetFiles: the Dataset of ConvertTargetFiles to be merged.
+   * @return the merged StructType representing the combined schema of the Parquet files.
+   * @throws DeltaErrors.failedInferSchema If no schemas are found for merging.
+   */
+  def mergeSchemasInParallel(
+      spark: SparkSession,
+      partitionSchema: StructType,
+      convertTargetFiles: Dataset[ConvertTargetFile]): StructType = {
+    import org.apache.spark.sql.delta.implicits._
+    val partiallyMergedSchemas = convertTargetFiles.mapPartitions { iterator =>
+      var dataSchema: StructType = StructType(Seq())
+      iterator.foreach { file =>
+        try {
+          dataSchema = SchemaMergingUtils.mergeSchemas(dataSchema,
+            StructType.fromDDL(file.parquetSchemaDDL.get).asNullable)
+        } catch {
+          case cause: AnalysisException =>
+            throw DeltaErrors.failedMergeSchemaFile(
+              file.fileStatus.path, StructType.fromDDL(file.parquetSchemaDDL.get).treeString, cause)
+        }
+      }
+      Iterator.single(dataSchema.toDDL)
+    }.collect().filter(_.nonEmpty)
+
+    if (partiallyMergedSchemas.isEmpty) {
+      throw DeltaErrors.failedInferSchema
+    }
+    var mergedSchema: StructType = StructType(Seq())
+    partiallyMergedSchemas.foreach { schema =>
+      mergedSchema = SchemaMergingUtils.mergeSchemas(mergedSchema, StructType.fromDDL(schema))
+    }
+    PartitioningUtils.mergeDataAndPartitionSchema(
+      mergedSchema,
+      StructType(partitionSchema.fields.toSeq),
+      spark.sessionState.conf.caseSensitiveAnalysis)._1
+  }
 }
+
+/**
+ * Configuration for fetching Parquet schema.
+ *
+ * @param assumeBinaryIsString: whether unannotated BINARY fields should be assumed to be Spark
+ *                              SQL [[StringType]] fields.
+ * @param assumeInt96IsTimestamp: whether unannotated INT96 fields should be assumed to be Spark
+ *                                SQL [[TimestampType]] fields.
+ * @param ignoreCorruptFiles: a boolean indicating whether corrupt files should be ignored during
+ *                            schema retrieval.
+ */
+case class ParquetSchemaFetchConfig(
+  assumeBinaryIsString: Boolean,
+  assumeInt96IsTimestamp: Boolean,
+  ignoreCorruptFiles: Boolean)
 

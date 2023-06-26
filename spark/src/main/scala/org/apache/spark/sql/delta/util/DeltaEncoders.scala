@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
 import org.apache.spark.sql.Encoder
+import org.apache.spark.sql.catalyst.catalog.CatalogTypes
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 
 private[delta] class DeltaEncoder[T: TypeTag] {
@@ -99,4 +100,10 @@ private[delta] trait DeltaEncoders {
   private lazy val _convertTargetFileEncoder = new DeltaEncoder[ConvertTargetFile]
   implicit def convertTargetFileEncoder: Encoder[ConvertTargetFile] =
     _convertTargetFileEncoder.get
+
+  private lazy val _fsPartitionSpecEncoder =
+    new DeltaEncoder[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)]
+  implicit def fsPartitionSpecEncoder
+    : Encoder[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)]
+      = _fsPartitionSpecEncoder.get
 }
