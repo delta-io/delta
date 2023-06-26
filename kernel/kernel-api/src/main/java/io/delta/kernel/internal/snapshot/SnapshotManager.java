@@ -472,9 +472,11 @@ public class SnapshotManager
                 .stream()
                 .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
                 .collect(Collectors.toList());
-            assert (newCheckpointFileList.size() == newCheckpointPaths.size()) :
-                String.format(
-                    "Failed in getting the file information for:\n%s\namong\n%s",
+
+            if (newCheckpointFileList.size() == newCheckpointPaths.size()) {
+                String msg = String.format(
+                    "Seems like the checkpoint is corrupted. Failed in getting the file " +
+                        "information for:\n%s\namong\n%s",
                     newCheckpointPaths.stream()
                         .map(Path::toString).collect(Collectors.toList()),
                     checkpoints
@@ -482,6 +484,8 @@ public class SnapshotManager
                         .map(FileStatus::getPath)
                         .collect(Collectors.joining("\n - "))
                 );
+                throw new IllegalStateException(msg);
+            }
             return newCheckpointFileList;
         }).orElse(Collections.emptyList());
 

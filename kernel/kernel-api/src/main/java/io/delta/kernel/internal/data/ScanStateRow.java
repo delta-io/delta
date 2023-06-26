@@ -49,34 +49,39 @@ public class ScanStateRow
     private static final Map<Integer, String> ordinalToColName = new HashMap<>();
     private static final StructType schema = new StructType()
         .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-        .add("schemaString", StringType.INSTANCE)
+        .add("logicalSchemaString", StringType.INSTANCE)
+        .add("physicalSchemaString", StringType.INSTANCE)
         .add("partitionColumns", new ArrayType(StringType.INSTANCE, false))
         .add("minReaderVersion", IntegerType.INSTANCE)
         .add("minWriterVersion", IntegerType.INSTANCE)
-        .add("readSchemaString", StringType.INSTANCE)
         .add("tablePath", StringType.INSTANCE);
 
     static {
         ordinalToAccessor.put(0, (a) -> a.getConfiguration());
-        ordinalToAccessor.put(1, (a) -> a.getSchemaString());
-        ordinalToAccessor.put(2, (a) -> a.getPartitionColumns());
-        ordinalToAccessor.put(3, (a) -> a.getMinReaderVersion());
-        ordinalToAccessor.put(4, (a) -> a.getMinWriterVersion());
-        ordinalToAccessor.put(5, (a) -> a.getReadSchemaJson());
+        ordinalToAccessor.put(1, (a) -> a.getReadSchemaLogicalJson());
+        ordinalToAccessor.put(2, (a) -> a.getReadSchemaPhysicalJson());
+        ordinalToAccessor.put(3, (a) -> a.getPartitionColumns());
+        ordinalToAccessor.put(4, (a) -> a.getMinReaderVersion());
+        ordinalToAccessor.put(5, (a) -> a.getMinWriterVersion());
         ordinalToAccessor.put(6, (a) -> a.getTablePath());
 
         ordinalToColName.put(0, "configuration");
-        ordinalToColName.put(1, "schemaString");
-        ordinalToColName.put(2, "partitionColumns");
-        ordinalToColName.put(3, "minReaderVersion");
-        ordinalToColName.put(4, "minWriterVersion");
-        ordinalToColName.put(5, "readSchemaString");
+        ordinalToColName.put(1, "logicalSchemaString");
+        ordinalToColName.put(2, "physicalSchemaString");
+        ordinalToColName.put(3, "partitionColumns");
+        ordinalToColName.put(4, "minReaderVersion");
+        ordinalToColName.put(5, "minWriterVersion");
         ordinalToColName.put(6, "tablePath");
     }
 
-    public static int getSchemaStringColOrdinal()
+    public static int getLogicalSchemaStringColOrdinal()
     {
-        return getOrdinal("readSchemaString");
+        return getOrdinal("logicalSchemaString");
+    }
+
+    public static int getPhysicalSchemaStringColOrdinal()
+    {
+        return getOrdinal("physicalSchemaString");
     }
 
     public static int getPartitionColumnsColOrdinal()
@@ -84,37 +89,38 @@ public class ScanStateRow
         return getOrdinal("partitionColumns");
     }
 
+    public static int getConfigurationColOrdinal()
+    {
+        return getOrdinal("configuration");
+    }
+
     private final Map<String, String> configuration;
-    private final String schemaString;
     private final List<String> partitionColumns;
     private final int minReaderVersion;
     private final int minWriterVersion;
-    private final String readSchemaJson;
+    private final String readSchemaLogicalJson;
+    private final String readSchemaPhysicalJson;
     private String tablePath;
 
     public ScanStateRow(
         Metadata metadata,
         Protocol protocol,
-        String readSchemaJson,
+        String readSchemaLogicalJson,
+        String readSchemaPhysicalJson,
         String tablePath)
     {
         this.configuration = metadata.getConfiguration();
-        this.schemaString = metadata.getSchemaString();
         this.partitionColumns = metadata.getPartitionColumns();
         this.minReaderVersion = protocol.getMinReaderVersion();
         this.minWriterVersion = protocol.getMinWriterVersion();
-        this.readSchemaJson = readSchemaJson;
+        this.readSchemaLogicalJson = readSchemaLogicalJson;
+        this.readSchemaPhysicalJson = readSchemaPhysicalJson;
         this.tablePath = tablePath;
     }
 
     public Map<String, String> getConfiguration()
     {
         return configuration;
-    }
-
-    public String getSchemaString()
-    {
-        return schemaString;
     }
 
     public List<String> getPartitionColumns()
@@ -132,9 +138,14 @@ public class ScanStateRow
         return minWriterVersion;
     }
 
-    public String getReadSchemaJson()
+    public String getReadSchemaPhysicalJson()
     {
-        return readSchemaJson;
+        return readSchemaPhysicalJson;
+    }
+
+    public String getReadSchemaLogicalJson()
+    {
+        return readSchemaLogicalJson;
     }
 
     public String getTablePath()

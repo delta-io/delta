@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -30,7 +29,10 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -40,6 +42,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
 import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.PartitionUtils;
@@ -69,12 +72,6 @@ public class ScanImpl
 
     private final CloseableIterator<AddFile> filesIter;
     private final TableClient tableClient;
-
-    /**
-     * Mapping from partitionColumnName to its ordinal in the `snapshotSchema`.
-     */
-    private final Map<String, Integer> partitionColumnOrdinals;
-
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
     private final Optional<Expression> metadataFilterConjunction;
@@ -95,8 +92,6 @@ public class ScanImpl
         this.snapshotPartitionSchema = snapshotPartitionSchema;
         this.protocolAndMetadata = protocolAndMetadata;
         this.filesIter = filesIter;
-        this.partitionColumnOrdinals =
-            PartitionUtils.getPartitionOrdinals(snapshotSchema, snapshotPartitionSchema);
         this.dataPath = dataPath;
         this.tableClient = tableClient;
 
@@ -183,6 +178,7 @@ public class ScanImpl
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
             TableSchemaSerDe.toJson(readSchema),
+            TableSchemaSerDe.toJson(convertToPhysicalSchema(readSchema, snapshotSchema)),
             dataPath.toUri().toString());
     }
 
@@ -190,5 +186,48 @@ public class ScanImpl
     public Expression getRemainingFilter()
     {
         return dataFilterConjunction.orElse(Literal.TRUE);
+    }
+
+    /**
+     * Helper method that converts the logical schema (requested by the connector) to physical
+     * schema of the data stored in data files.
+     */
+    private StructType convertToPhysicalSchema(StructType logicalSchema, StructType snapshotSchema)
+    {
+        String columnMappingMode = protocolAndMetadata.get()._2.getConfiguration()
+            .get("delta.columnMapping.mode");
+        if ("name".equalsIgnoreCase(columnMappingMode)) {
+            StructType newSchema = new StructType();
+            for (StructField field : logicalSchema.fields()) {
+                DataType oldType = field.getDataType();
+                StructField fieldFromMetadata = snapshotSchema.get(field.getName());
+                DataType newType;
+                if (oldType instanceof StructType) {
+                    newType = convertToPhysicalSchema(
+                        (StructType) field.getDataType(),
+                        (StructType) fieldFromMetadata.getDataType());
+                }
+                else if (oldType instanceof ArrayType) {
+                    throw new UnsupportedOperationException("NYI");
+                }
+                else if (oldType instanceof MapType) {
+                    throw new UnsupportedOperationException("NYI");
+                }
+                else {
+                    newType = oldType;
+                }
+                String physicalName = fieldFromMetadata
+                    .getMetadata()
+                    .get("delta.columnMapping.physicalName");
+                newSchema = newSchema.add(physicalName, newType);
+            }
+            return newSchema;
+        }
+        if ("id".equalsIgnoreCase(columnMappingMode)) {
+            throw new UnsupportedOperationException(
+                "Column mapping `id` mode is not yet supported");
+        }
+
+        return logicalSchema;
     }
 }

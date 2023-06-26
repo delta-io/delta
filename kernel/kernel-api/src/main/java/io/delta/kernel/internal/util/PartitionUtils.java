@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import io.delta.kernel.client.ExpressionHandler;
@@ -129,21 +130,33 @@ public class PartitionUtils
 
     /**
      * Utility method to remove the given columns (as {@code columnsToRemove}) from the
-     * given {@code schema}.
+     * given {@code physicalSchema}.
      *
-     * @param schema
+     * @param physicalSchema
+     * @param logicalSchema To create a logical name to physical name map. Partition column names
+     * are in logical space and we need to identify the equivalent physical column name.
      * @param columnsToRemove
      * @return
      */
-    public static StructType withColumnsRemoved(StructType schema, Set<String> columnsToRemove)
+    public static StructType physicalSchemaWithoutPartitionColumns(
+        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove)
     {
         if (columnsToRemove == null || columnsToRemove.size() == 0) {
-            return schema;
+            return physicalSchema;
         }
 
+        // Partition columns are top-level only
+        Map<String, String> physicalToLogical = new HashMap<String, String>()
+        {{
+            IntStream.range(0, logicalSchema.length())
+                .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
+                .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
+        }};
+
         return new StructType(
-            schema.fields().stream()
-                .filter(field -> !columnsToRemove.contains(field.getName()))
+            physicalSchema.fields().stream()
+                .filter(field ->
+                    !columnsToRemove.contains(physicalToLogical.get(field.getName())))
                 .collect(Collectors.toList()));
     }
 

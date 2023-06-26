@@ -35,6 +35,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
 
 /**
@@ -90,13 +91,16 @@ public interface Scan
         CloseableIterator<Row> scanFileRowIter,
         Optional<Expression> filter) throws IOException
     {
-
-        StructType readSchema = Utils.getPhysicalSchema(tableClient, scanState);
+        StructType physicalSchema = Utils.getPhysicalSchema(tableClient, scanState);
+        StructType logicalSchema = Utils.getLogicalSchema(tableClient, scanState);
         List<String> partitionColumns = Utils.getPartitionColumns(scanState);
         Set<String> partitionColumnsSet = new HashSet<>(partitionColumns);
 
         StructType readSchemaWithoutPartitionColumns =
-            PartitionUtils.withColumnsRemoved(readSchema, partitionColumnsSet);
+            PartitionUtils.physicalSchemaWithoutPartitionColumns(
+                logicalSchema,
+                physicalSchema,
+                partitionColumnsSet);
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 
@@ -110,17 +114,31 @@ public interface Scan
             readSchemaWithoutPartitionColumns);
 
         // TODO: Attach the selection vector associated with the file
-        return data.map(fileDataReadResult ->
-            new DataReadResult(
-                PartitionUtils.withPartitionColumns(
-                    tableClient.getExpressionHandler(),
-                    fileDataReadResult.getData(),
-                    readSchemaWithoutPartitionColumns,
-                    Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
-                    readSchema
-                ),
-                Optional.empty()
-            )
+        return data.map(fileDataReadResult -> {
+                ColumnarBatch updatedBatch =
+                    PartitionUtils.withPartitionColumns(
+                        tableClient.getExpressionHandler(),
+                        fileDataReadResult.getData(),
+                        readSchemaWithoutPartitionColumns,
+                        Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                        physicalSchema
+                    );
+
+                String columnMappingMode = Utils.getColumnMappingMode(scanState);
+                switch (columnMappingMode) {
+                    case "name":
+                        updatedBatch =
+                            InternalUtils.columnarBatchWithLogicalSchema(updatedBatch, logicalSchema);
+                        break;
+                    case "none":
+                        break;
+                    default:
+                        throw new UnsupportedOperationException(
+                            "Column mapping mode is not yet supported: " + columnMappingMode);
+                }
+
+                return new DataReadResult(updatedBatch, Optional.empty());
+            }
         );
     }
 }

@@ -145,6 +145,21 @@ public class Utils
     }
 
     /**
+     * Utility method to get the logical schema from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState Scan state {@link Row}
+     * @return Logical schema to read from the data files.
+     */
+    public static StructType getLogicalSchema(TableClient tableClient, Row scanState)
+    {
+        int schemaStringOrdinal = ScanStateRow.getLogicalSchemaStringColOrdinal();
+        String serializedSchema = scanState.getString(schemaStringOrdinal);
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+    }
+
+    /**
      * Utility method to get the physical schema from the scan state {@link Row} returned by
      * {@link Scan#getScanState(TableClient)}.
      *
@@ -154,7 +169,7 @@ public class Utils
      */
     public static StructType getPhysicalSchema(TableClient tableClient, Row scanState)
     {
-        int schemaStringOrdinal = ScanStateRow.getSchemaStringColOrdinal();
+        int schemaStringOrdinal = ScanStateRow.getPhysicalSchemaStringColOrdinal();
         String serializedSchema = scanState.getString(schemaStringOrdinal);
         return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
     }
@@ -170,6 +185,17 @@ public class Utils
     {
         int partitionColumnsOrdinal = ScanStateRow.getPartitionColumnsColOrdinal();
         return scanState.getArray(partitionColumnsOrdinal);
+    }
+
+    /**
+     * Get the column mapping mode from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     */
+    public static String getColumnMappingMode(Row scanState)
+    {
+        int configOrdinal = ScanStateRow.getConfigurationColOrdinal();
+        Map<String, String> configuration = scanState.getMap(configOrdinal);
+        return configuration.get("delta.columnMapping.mode");
     }
 
     /**

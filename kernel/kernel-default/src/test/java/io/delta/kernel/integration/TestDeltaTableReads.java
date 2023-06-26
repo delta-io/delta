@@ -17,6 +17,7 @@ package io.delta.kernel.integration;
 
 import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import static io.delta.kernel.integration.DataBuilderUtils.row;
+import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.goldenTablePath;
 import java.sql.Date;
 import java.util.Arrays;
@@ -38,6 +39,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.ShortType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -293,21 +295,91 @@ public class TestDeltaTableReads
     public void tableWithCheckpoint()
         throws Exception
     {
+        String tablePath = getTestResourceFilePath("basic-with-checkpoint");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = snapshot.getSchema(tableClient);
 
+        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
+
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema)
+            .addAllNullsRow();
+
+        for (int i = 0; i < 150; i++) {
+            builder = builder.addRow(i);
+        }
+
+        ColumnarBatch expData = builder.build();
+        compareEqualUnorderd(expData, actualData);
     }
 
-    @Test
-    public void partitionedTableWithCheckpoint()
+    // TODO: currently we don't handle the corrupted last checkpoint, but we should in future
+    @Test(expected = IllegalStateException.class)
+    public void tableWithCorruptedCheckpoint()
         throws Exception
     {
-
+        String tablePath = goldenTablePath("corrupted-last-checkpoint");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
+        readSnapshot(readSchema, snapshot);
     }
 
     @Test
     public void tableWithNameColumnMappingMode()
         throws Exception
     {
+        String tablePath = getTestResourceFilePath("data-reader-primitives-column-mapping-name");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
 
+        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
+
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema)
+            .addAllNullsRow();
+
+        for (int i = 0; i < 10; i++) {
+            builder = builder.addRow(
+                i,
+                (long) i,
+                (byte) i,
+                (short) i,
+                i % 2 == 0,
+                (float) i,
+                (double) i,
+                String.valueOf(i),
+                new byte[] {(byte) i, (byte) i}
+            );
+        }
+
+        ColumnarBatch expData = builder.build();
+        compareEqualUnorderd(expData, actualData);
+    }
+
+    @Test
+    public void partitionedTableWithColumnMapping()
+        throws Exception
+    {
+        String tablePath =
+            getTestResourceFilePath("data-reader-partition-values-column-mapping-name");
+        Snapshot snapshot = snapshot(tablePath);
+        StructType readSchema = new StructType()
+            // partition fields
+            .add("as_int", IntegerType.INSTANCE)
+            .add("as_double", DoubleType.INSTANCE)
+            // data fields
+            .add("value", StringType.INSTANCE);
+
+        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
+
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
+
+        for (int i = 0; i < 2; i++) {
+            builder = builder.addRow(i, (double) i, String.valueOf(i));
+        }
+
+        builder = builder.addRow(null, null, "2");
+
+        ColumnarBatch expData = builder.build();
+        compareEqualUnorderd(expData, actualData);
     }
 
     @Test
