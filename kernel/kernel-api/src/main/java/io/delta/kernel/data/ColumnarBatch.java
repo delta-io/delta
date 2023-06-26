@@ -55,7 +55,6 @@ public interface ColumnarBatch
      * @param ordinal
      * @param columnSchema Column name and schema details of the new column vector.
      * @param columnVector
-     * @return
      * @throws IllegalArgumentException If the ordinal is not valid (ie less than zero or
      * greater than the current number of vectors).
      */
