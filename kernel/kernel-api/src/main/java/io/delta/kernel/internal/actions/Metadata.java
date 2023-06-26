@@ -99,7 +99,7 @@ public class Metadata implements Action
         this.partitionColumns =
             partitionColumns == null ? Collections.emptyList() : partitionColumns;
         this.createdTime = createdTime;
-        this.configuration = configuration;
+        this.configuration = configuration == null ? Collections.emptyMap() : configuration;
     }
 
     public String getSchemaString()

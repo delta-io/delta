@@ -195,7 +195,8 @@ public class Utils
     {
         int configOrdinal = ScanStateRow.getConfigurationColOrdinal();
         Map<String, String> configuration = scanState.getMap(configOrdinal);
-        return configuration.get("delta.columnMapping.mode");
+        String cmMode = configuration.get("delta.columnMapping.mode");
+        return cmMode == null ? "none" : cmMode;
     }
 
     /**

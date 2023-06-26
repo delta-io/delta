@@ -300,12 +300,9 @@ public class TestDeltaTableReads
         StructType readSchema = snapshot.getSchema(tableClient);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
-
-        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema)
-            .addAllNullsRow();
-
+        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
         for (int i = 0; i < 150; i++) {
-            builder = builder.addRow(i);
+            builder = builder.addRow((long) i);
         }
 
         ColumnarBatch expData = builder.build();

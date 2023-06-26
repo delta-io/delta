@@ -473,7 +473,7 @@ public class SnapshotManager
                 .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
                 .collect(Collectors.toList());
 
-            if (newCheckpointFileList.size() == newCheckpointPaths.size()) {
+            if (newCheckpointFileList.size() != newCheckpointPaths.size()) {
                 String msg = String.format(
                     "Seems like the checkpoint is corrupted. Failed in getting the file " +
                         "information for:\n%s\namong\n%s",

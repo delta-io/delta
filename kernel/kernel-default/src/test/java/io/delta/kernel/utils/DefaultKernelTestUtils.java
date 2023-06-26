@@ -40,7 +40,8 @@ public class DefaultKernelTestUtils
     private DefaultKernelTestUtils() {}
 
     public static String getTestResourceFilePath(String resourcePath) {
-        return DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
+        return "file:" +
+            DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
     }
 
     public static String goldenTablePath(String goldenTable) {
