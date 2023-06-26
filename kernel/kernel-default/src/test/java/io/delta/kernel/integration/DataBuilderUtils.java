@@ -17,12 +17,9 @@ package io.delta.kernel.integration;
 
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import static java.util.function.Function.identity;
-import static java.util.stream.Collectors.toMap;
 import java.util.stream.IntStream;
 
 import io.delta.kernel.data.ColumnarBatch;
