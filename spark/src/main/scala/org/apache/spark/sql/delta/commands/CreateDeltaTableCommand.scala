@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
+import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -109,6 +110,11 @@ case class CreateDeltaTableCommand(
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
+
+      // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
+      // we always remove the post commit hook here.
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+
       val opStartTs = System.currentTimeMillis()
       if (query.isDefined) {
         // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
@@ -268,6 +274,10 @@ case class CreateDeltaTableCommand(
       val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
       updateCatalog(sparkSession, tableWithLocation, snapshot, txn)
 
+
+      if (UniversalFormat.icebergEnabled(snapshot.metadata)) {
+        deltaLog.icebergConverter.convertSnapshot(snapshot, None)
+      }
 
       result
     }
