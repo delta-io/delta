@@ -196,40 +196,45 @@ public class ScanImpl
      */
     private StructType convertToPhysicalSchema(StructType logicalSchema, StructType snapshotSchema)
     {
-        String columnMappingMode = protocolAndMetadata.get()._2.getConfiguration()
+        String columnMappingMode = protocolAndMetadata.get()._2
+            .getConfiguration()
             .get("delta.columnMapping.mode");
-        if ("name".equalsIgnoreCase(columnMappingMode)) {
-            StructType newSchema = new StructType();
-            for (StructField field : logicalSchema.fields()) {
-                DataType oldType = field.getDataType();
-                StructField fieldFromMetadata = snapshotSchema.get(field.getName());
-                DataType newType;
-                if (oldType instanceof StructType) {
-                    newType = convertToPhysicalSchema(
-                        (StructType) field.getDataType(),
-                        (StructType) fieldFromMetadata.getDataType());
+        switch (columnMappingMode) {
+            case "none":
+                return logicalSchema;
+            case "id":
+                throw new UnsupportedOperationException(
+                    "Column mapping `id` mode is not yet supported");
+            case "name": {
+                StructType newSchema = new StructType();
+                for (StructField field : logicalSchema.fields()) {
+                    DataType oldType = field.getDataType();
+                    StructField fieldFromMetadata = snapshotSchema.get(field.getName());
+                    DataType newType;
+                    if (oldType instanceof StructType) {
+                        newType = convertToPhysicalSchema(
+                            (StructType) field.getDataType(),
+                            (StructType) fieldFromMetadata.getDataType());
+                    }
+                    else if (oldType instanceof ArrayType) {
+                        throw new UnsupportedOperationException("NYI");
+                    }
+                    else if (oldType instanceof MapType) {
+                        throw new UnsupportedOperationException("NYI");
+                    }
+                    else {
+                        newType = oldType;
+                    }
+                    String physicalName = fieldFromMetadata
+                        .getMetadata()
+                        .get("delta.columnMapping.physicalName");
+                    newSchema = newSchema.add(physicalName, newType);
                 }
-                else if (oldType instanceof ArrayType) {
-                    throw new UnsupportedOperationException("NYI");
-                }
-                else if (oldType instanceof MapType) {
-                    throw new UnsupportedOperationException("NYI");
-                }
-                else {
-                    newType = oldType;
-                }
-                String physicalName = fieldFromMetadata
-                    .getMetadata()
-                    .get("delta.columnMapping.physicalName");
-                newSchema = newSchema.add(physicalName, newType);
+                return newSchema;
             }
-            return newSchema;
+            default:
+                throw new UnsupportedOperationException(
+                    "Unsupported column mapping mode: " + columnMappingMode)
         }
-        if ("id".equalsIgnoreCase(columnMappingMode)) {
-            throw new UnsupportedOperationException(
-                "Column mapping `id` mode is not yet supported");
-        }
-
-        return logicalSchema;
     }
 }

@@ -23,7 +23,9 @@ import java.sql.Date;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.DefaultTableClient;
@@ -42,6 +44,9 @@ import io.delta.kernel.types.*;
 public class TestDeltaTableReads
     extends BaseIntegration
 {
+    @Rule
+    public ExpectedException expectedEx = ExpectedException.none();
+
     @Test
     public void tablePrimitives()
         throws Exception
@@ -359,10 +364,15 @@ public class TestDeltaTableReads
     }
 
     @Test
-    public void tableWithDeletionVectors()
+    public void columnMappingIdModeThrowsError()
         throws Exception
     {
+        expectedEx.expect(UnsupportedOperationException.class);
+        expectedEx.expectMessage("Unsupported column mapping mode: id");
 
+        String tablePath = getTestResourceFilePath("column-mapping-id");
+        Snapshot snapshot = snapshot(tablePath);
+        readSnapshot(snapshot.getSchema(tableClient), snapshot);
     }
 
     private StructType structTypeOf(StructType structType, String colName)
