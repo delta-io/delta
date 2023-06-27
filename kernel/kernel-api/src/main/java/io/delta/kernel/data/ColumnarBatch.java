@@ -47,29 +47,35 @@ public interface ColumnarBatch
     int getSize();
 
     /**
-     * Insert the given {@code columnVector} at given {@code ordinal}. Shift the existing
+     * Return a copy of the {@link ColumnarBatch} with given new column vector inserted at the
+     * given {@code columnVector} at given {@code ordinal}. Shift the existing
      * {@link ColumnVector}s located at from {@code ordinal} to the end by one position.
-     * The schema of the {@link ColumnarBatch} will also be changed to reflect the newly inserted
-     * vector.
+     * The schema of the new {@link ColumnarBatch} will also be changed to reflect the newly
+     * inserted vector.
      *
      * @param ordinal
      * @param columnSchema Column name and schema details of the new column vector.
      * @param columnVector
+     * @return {@link ColumnarBatch} with new vector inserted.
      * @throws IllegalArgumentException If the ordinal is not valid (ie less than zero or
      * greater than the current number of vectors).
      */
-    default void insertVector(int ordinal, StructField columnSchema, ColumnVector columnVector)
+    default ColumnarBatch withNewColumn(int ordinal, StructField columnSchema,
+        ColumnVector columnVector)
     {
         throw new UnsupportedOperationException("Not yet implemented");
     }
 
     /**
-     * Update the schema of this {@link ColumnarBatch}. The data types of elements in
-     * the given new schema and existing schema should be the same. Rest of the details such as
-     * name of the column or column metadata could be different.
+     * Generate a copy of this {@link ColumnarBatch} with the given {@code newSchema}. The data
+     * types of elements in the given new schema and existing schema should be the same. Rest of
+     * the details such as name of the column or column metadata could be different.
+     *
      * @param newSchema
+     * @return {@link ColumnarBatch} with given new schema.
      */
-    default void updateSchema(StructType newSchema) {
+    default ColumnarBatch withNewSchema(StructType newSchema)
+    {
         throw new UnsupportedOperationException("Not yet implemented");
     }
 

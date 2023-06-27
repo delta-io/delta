@@ -126,7 +126,7 @@ public interface Scan
                 String columnMappingMode = Utils.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
                     case "name":
-                        updatedBatch.updateSchema(logicalSchema);
+                        updatedBatch = updatedBatch.withNewSchema(logicalSchema);
                         break;
                     case "none":
                         break;

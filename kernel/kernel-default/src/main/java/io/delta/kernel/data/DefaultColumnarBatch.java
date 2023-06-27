@@ -17,6 +17,7 @@ package io.delta.kernel.data;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import io.delta.kernel.types.StructField;
@@ -26,9 +27,8 @@ public class DefaultColumnarBatch
     implements ColumnarBatch
 {
     private final int size;
-
-    private StructType schema;
-    private List<ColumnVector> columnVectors;
+    private final StructType schema;
+    private final List<ColumnVector> columnVectors;
 
     public DefaultColumnarBatch(
         int size,
@@ -38,7 +38,7 @@ public class DefaultColumnarBatch
     {
         this.schema = schema;
         this.size = size;
-        this.columnVectors = Arrays.asList(columnVectors);
+        this.columnVectors = Collections.unmodifiableList(Arrays.asList(columnVectors));
     }
 
     @Override
@@ -55,7 +55,8 @@ public class DefaultColumnarBatch
     }
 
     @Override
-    public void insertVector(int ordinal, StructField structField, ColumnVector columnVector)
+    public ColumnarBatch withNewColumn(int ordinal, StructField structField,
+        ColumnVector columnVector)
     {
         if (ordinal < 0 || ordinal > columnVectors.size()) {
             throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
@@ -70,24 +71,27 @@ public class DefaultColumnarBatch
         ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
         newStructFields.ensureCapacity(schema.length() + 1);
         newStructFields.add(ordinal, structField);
-        schema = new StructType(newStructFields);
+        StructType newSchema = new StructType(newStructFields);
 
         // Update the vectors
         ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
         newColumnVectors.ensureCapacity(columnVectors.size() + 1);
         newColumnVectors.add(ordinal, columnVector);
-        columnVectors = newColumnVectors;
+
+        return new DefaultColumnarBatch(
+            size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
     }
 
     @Override
-    public void updateSchema(StructType newSchema)
+    public ColumnarBatch withNewSchema(StructType newSchema)
     {
         if (!schema.equivalent(newSchema)) {
             throw new IllegalArgumentException
                 ("Given new schema data type is not same as the existing schema");
         }
 
-        this.schema = newSchema;
+        return new DefaultColumnarBatch(
+            size, newSchema, columnVectors.toArray(new ColumnVector[0]));
     }
 
     @Override
