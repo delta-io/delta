@@ -61,7 +61,6 @@ public class DeletionVectorUtils
         int rowIndexColIdx = data.getSchema().indexOf(StructField.ROW_INDEX_COLUMN_NAME);
         ColumnVector selectionVector =
             new SelectionColumnVector(bitmap, rowIndexVector);
-        // TODO: remove row_index column here
         return new DataReadResult(data, Optional.of(selectionVector));
     }
 }

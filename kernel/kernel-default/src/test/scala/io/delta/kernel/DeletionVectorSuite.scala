@@ -101,7 +101,6 @@ class DeletionVectorSuite extends AnyFunSuite {
     assert(result.toSet === expectedResult)
   }
 
-  // TODO: failing because cannot find protocol
   test("end-to-end usage: reading a table with dv with checkpoint") {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-with-checkpoint")
     val expectedResult = Seq.range(start = 0, end = 500).filter(_ % 11 != 0).toSet
