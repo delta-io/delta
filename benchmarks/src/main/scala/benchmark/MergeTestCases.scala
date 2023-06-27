@@ -47,13 +47,13 @@ trait MergeTestCase {
  * Trait shared by all insert-only merge test cases.
  */
 trait InsertOnlyTestCase extends MergeTestCase {
-    val fileMatchedFraction: Double
-    val rowNotMatchedFraction: Double
+    val filesMatchedFraction: Double
+    val rowsNotMatchedFraction: Double
 
   override def sourceTable: MergeSourceTable = MergeSourceTable(
-    fileMatchedFraction,
-    rowMatchedFraction = 0,
-    rowNotMatchedFraction)
+    filesMatchedFraction,
+    rowsMatchedFraction = 0,
+    rowsNotMatchedFraction)
 
   override def validate(mergeStats: Seq[Row], targetRowCount: Long): Unit = {
     assert(mergeStats.length == 1)
@@ -66,12 +66,12 @@ trait InsertOnlyTestCase extends MergeTestCase {
  * A merge test case with a single WHEN NOT MATCHED THEN INSERT * clause.
  */
 case class SingleInsertOnlyTestCase(
-    fileMatchedFraction: Double,
-    rowNotMatchedFraction: Double) extends InsertOnlyTestCase {
+    filesMatchedFraction: Double,
+    rowsNotMatchedFraction: Double) extends InsertOnlyTestCase {
 
   override val name: String = "single_insert_only" +
-    s"_fileMatchedFraction_$fileMatchedFraction" +
-    s"_rowNotMatchedFraction_$rowNotMatchedFraction"
+    s"_filesMatchedFraction_$filesMatchedFraction" +
+    s"_rowsNotMatchedFraction_$rowsNotMatchedFraction"
 
 
   override def sqlCmd(targetTable: String): String = {
@@ -86,12 +86,12 @@ case class SingleInsertOnlyTestCase(
  * A merge test case with two WHEN NOT MATCHED (AND condition) THEN INSERT * clauses.
  */
 case class MultipleInsertOnlyTestCase(
-    fileMatchedFraction: Double,
-    rowNotMatchedFraction: Double) extends InsertOnlyTestCase {
+    filesMatchedFraction: Double,
+    rowsNotMatchedFraction: Double) extends InsertOnlyTestCase {
 
   override val name: String = "multiple_insert_only" +
-    s"_fileMatchedFraction_$fileMatchedFraction" +
-    s"_rowNotMatchedFraction_$rowNotMatchedFraction"
+    s"_filesMatchedFraction_$filesMatchedFraction" +
+    s"_rowsNotMatchedFraction_$rowsNotMatchedFraction"
 
   override def sqlCmd(targetTable: String): String = {
     s"""MERGE INTO $targetTable t
@@ -106,17 +106,17 @@ case class MultipleInsertOnlyTestCase(
  * A merge test case with a single WHEN MATCHED THEN DELETED clause.
  */
 case class DeleteOnlyTestCase(
-    fileMatchedFraction: Double,
-    rowMatchedFraction: Double) extends MergeTestCase {
+    filesMatchedFraction: Double,
+    rowsMatchedFraction: Double) extends MergeTestCase {
 
   override val name: String = "delete_only" +
-    s"_fileMatchedFraction_$fileMatchedFraction" +
-    s"_rowMatchedFraction_$rowMatchedFraction"
+    s"_filesMatchedFraction_$filesMatchedFraction" +
+    s"_rowsMatchedFraction_$rowsMatchedFraction"
 
   override def sourceTable: MergeSourceTable = MergeSourceTable(
-    fileMatchedFraction,
-    rowMatchedFraction,
-    rowNotMatchedFraction = 0)
+    filesMatchedFraction,
+    rowsMatchedFraction,
+    rowsNotMatchedFraction = 0)
 
   override def sqlCmd(targetTable: String): String = {
     s"""MERGE INTO $targetTable t
@@ -136,19 +136,19 @@ case class DeleteOnlyTestCase(
  * A merge test case with a MATCHED UPDATE and a NOT MATCHED INSERT clause.
  */
 case class UpsertTestCase(
-    fileMatchedFraction: Double,
-    rowMatchedFraction: Double,
-    rowNotMatchedFraction: Double) extends MergeTestCase {
+    filesMatchedFraction: Double,
+    rowsMatchedFraction: Double,
+    rowsNotMatchedFraction: Double) extends MergeTestCase {
 
   override val name: String = "upsert" +
-    s"_fileMatchedFraction_$fileMatchedFraction" +
-    s"_rowMatchedFraction_$rowMatchedFraction" +
-    s"_rowNotMatchedFraction_$rowNotMatchedFraction"
+    s"_filesMatchedFraction_$filesMatchedFraction" +
+    s"_rowsMatchedFraction_$rowsMatchedFraction" +
+    s"_rowsNotMatchedFraction_$rowsNotMatchedFraction"
 
   override def sourceTable: MergeSourceTable = MergeSourceTable(
-    fileMatchedFraction,
-    rowMatchedFraction,
-    rowNotMatchedFraction)
+    filesMatchedFraction,
+    rowsMatchedFraction,
+    rowsNotMatchedFraction)
 
   override def sqlCmd(targetTable: String): String = {
     s"""MERGE INTO $targetTable t
@@ -171,53 +171,53 @@ object MergeTestCases {
     upsertTestCases
 
   def insertOnlyTestCases: Seq[MergeTestCase] =
-    Seq(0.05, 0.5, 1.0).flatMap { rowNotMatchedFraction =>
+    Seq(0.05, 0.5, 1.0).flatMap { rowsNotMatchedFraction =>
       Seq(
         SingleInsertOnlyTestCase(
-          fileMatchedFraction = 0.05,
-          rowNotMatchedFraction),
+          filesMatchedFraction = 0.05,
+          rowsNotMatchedFraction),
 
         MultipleInsertOnlyTestCase(
-          fileMatchedFraction = 0.05,
-          rowNotMatchedFraction)
+          filesMatchedFraction = 0.05,
+          rowsNotMatchedFraction)
       )
     }
 
   def deleteOnlyTestCases: Seq[MergeTestCase] = Seq(
     DeleteOnlyTestCase(
-      fileMatchedFraction = 0.05,
-      rowMatchedFraction = 0.05))
+      filesMatchedFraction = 0.05,
+      rowsMatchedFraction = 0.05))
 
   def upsertTestCases: Seq[MergeTestCase] = Seq(
-    Seq(0.0, 0.01, 0.1).map { rowMatchedFraction =>
+    Seq(0.0, 0.01, 0.1).map { rowsMatchedFraction =>
       UpsertTestCase(
-        fileMatchedFraction = 0.05,
-        rowMatchedFraction,
-        rowNotMatchedFraction = 0.1)
+        filesMatchedFraction = 0.05,
+        rowsMatchedFraction,
+        rowsNotMatchedFraction = 0.1)
     },
 
-    Seq(0.5, 0.99, 1.0).map { rowMatchedFraction =>
+    Seq(0.5, 0.99, 1.0).map { rowsMatchedFraction =>
       UpsertTestCase(
-        fileMatchedFraction = 0.05,
-        rowMatchedFraction,
-        rowNotMatchedFraction = 0.001)
+        filesMatchedFraction = 0.05,
+        rowsMatchedFraction,
+        rowsNotMatchedFraction = 0.001)
     },
 
     Seq(
       UpsertTestCase(
-        fileMatchedFraction = 0.05,
-        rowMatchedFraction = 0.1,
-        rowNotMatchedFraction = 0.0),
+        filesMatchedFraction = 0.05,
+        rowsMatchedFraction = 0.1,
+        rowsNotMatchedFraction = 0.0),
 
       UpsertTestCase(
-        fileMatchedFraction = 0.5,
-        rowMatchedFraction = 0.01,
-        rowNotMatchedFraction = 0.001),
+        filesMatchedFraction = 0.5,
+        rowsMatchedFraction = 0.01,
+        rowsNotMatchedFraction = 0.001),
 
       UpsertTestCase(
-        fileMatchedFraction = 1.0,
-        rowMatchedFraction = 0.01,
-        rowNotMatchedFraction = 0.001)
+        filesMatchedFraction = 1.0,
+        rowsMatchedFraction = 0.01,
+        rowsNotMatchedFraction = 0.001)
     )
   ).flatten
 }

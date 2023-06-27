@@ -33,22 +33,22 @@ case class MergeDataLoadConf(
  * Represents a table configuration used as a source in merge test cases. Each [[MergeTestCase]] has
  * one [[MergeSourceTable]] associated with it, the data loader will collect all source table
  * configurations for all tests and create the required source tables.
- * @param fileMatchedFraction Fraction of files from the base table that will get sampled to
- *                            create the source table.
- * @param rowMatchedFraction Fraction of rows from the selected files that will get sampled to form
- *                           the part of the source table that matches the merge condition.
- * @param rowNotMatchedFraction Fraction of rows from the selected files that will get sampled to
- *                              form the part of the source table that doesn't match the merge
- *                              condition.
+ * @param filesMatchedFraction Fraction of files from the base table that will get sampled to
+ *                             create the source table.
+ * @param rowsMatchedFraction Fraction of rows from the selected files that will get sampled to form
+ *                            the part of the source table that matches the merge condition.
+ * @param rowsNotMatchedFraction Fraction of rows from the selected files that will get sampled to
+ *                               form the part of the source table that doesn't match the merge
+ *                               condition.
  */
 case class MergeSourceTable(
-    fileMatchedFraction: Double,
-    rowMatchedFraction: Double,
-    rowNotMatchedFraction: Double) {
+    filesMatchedFraction: Double,
+    rowsMatchedFraction: Double,
+    rowsNotMatchedFraction: Double) {
   def name: String = formatTableName(s"source_" +
-    s"_fileMatchedFraction_$fileMatchedFraction" +
-    s"_rowMatchedFraction_$rowMatchedFraction" +
-    s"_rowNotMatchedFraction_$rowNotMatchedFraction")
+    s"_filesMatchedFraction_$filesMatchedFraction" +
+    s"_rowsMatchedFraction_$rowsMatchedFraction" +
+    s"_rowsNotMatchedFraction_$rowsNotMatchedFraction")
 
   protected def formatTableName(s: String): String = {
     s.toLowerCase(Locale.ROOT).replaceAll("\\s+", "_").replaceAll("[-,.]", "_")
@@ -175,7 +175,7 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
     val sampledFilesDF = fullTableDF
       .select("_metadata.file_path")
       .distinct
-      .sample(sourceTableConf.fileMatchedFraction)
+      .sample(sourceTableConf.filesMatchedFraction)
 
     // Read the data from the sampled files and sample two sets of rows for MATCHED clauses and
     // NOT MATCHED clauses respectively.
@@ -186,8 +186,8 @@ class MergeDataLoad(conf: MergeDataLoadConf) extends Benchmark(conf) {
 
     val numberOfNulls = sampledDataDF.filter(isnull(col("wr_order_number"))).count
     log(s"wr_order_number contains $numberOfNulls null values")
-    val matchedData = sampledDataDF.sample(sourceTableConf.rowMatchedFraction)
-    val notMatchedData = sampledDataDF.sample(sourceTableConf.rowNotMatchedFraction)
+    val matchedData = sampledDataDF.sample(sourceTableConf.rowsMatchedFraction)
+    val notMatchedData = sampledDataDF.sample(sourceTableConf.rowsNotMatchedFraction)
       .withColumn("wr_order_number", rand())
       .withColumn("wr_item_sk", rand())
 

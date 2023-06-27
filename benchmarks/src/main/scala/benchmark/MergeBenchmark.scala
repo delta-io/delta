@@ -19,6 +19,7 @@ package benchmark
 import java.util.UUID
 
 import org.apache.spark.sql.Row
+import org.apache.spark.util.Utils
 
 trait MergeConf extends BenchmarkConf {
   def scaleInGB: Int
@@ -82,12 +83,11 @@ class MergeBenchmark(conf: MergeBenchmarkConf) extends Benchmark(conf) {
     val results = getQueryResults().filter(_.name.startsWith("q"))
     if (results.forall(x => x.errorMsg.isEmpty && x.durationMs.nonEmpty) ) {
       val medianDurationSecPerQuery = results.groupBy(_.name).map { case (q, results) =>
-        assert(results.size == conf.iterations)
-        val medianMs = results.map(_.durationMs.get).sorted
-            .drop(math.floor(conf.iterations / 2.0).toInt).head
+        assert(results.length == conf.iterations)
+        val medianMs = Utils.median(results.map(_.durationMs.get), alreadySorted = false)
         (q, medianMs / 1000.0)
       }
-      val sumOfMedians = medianDurationSecPerQuery.map(_._2).sum
+      val sumOfMedians = medianDurationSecPerQuery.values.sum
       reportExtraMetric("merge-result-seconds", sumOfMedians)
     }
   }

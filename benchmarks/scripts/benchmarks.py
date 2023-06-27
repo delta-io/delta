@@ -105,7 +105,7 @@ class TPCDSDataLoadSpec(BenchmarkSpec):
 
 class TPCDSBenchmarkSpec(BenchmarkSpec):
     """
-    Specifications of TPC-DS benchmark
+    Specifications of TPC-DS benchmark.
     """
     def __init__(self, scale_in_gb, **kwargs):
         # forward all keyword args to next constructor
@@ -134,7 +134,7 @@ class MergeDataLoadSpec(BenchmarkSpec):
 
 class MergeBenchmarkSpec(BenchmarkSpec):
     """
-    Specifications of Merge benchmark
+    Specifications of Merge benchmark.
     """
     def __init__(self, scale_in_gb, **kwargs):
         # forward all keyword args to next constructor
@@ -151,7 +151,7 @@ class MergeBenchmarkSpec(BenchmarkSpec):
 
 class DeltaBenchmarkSpec(BenchmarkSpec):
     """
-    Specification of a benchmark using the Delta format
+    Specification of a benchmark using the Delta format.
     """
     def __init__(self, delta_version, benchmark_main_class, main_class_args=None, scala_version="2.12", **kwargs):
         delta_spark_confs = [
@@ -207,7 +207,7 @@ class DeltaMergeBenchmarkSpec(MergeBenchmarkSpec, DeltaBenchmarkSpec):
 
 class ParquetBenchmarkSpec(BenchmarkSpec):
     """
-    Specification of a benchmark using the Parquet format
+    Specification of a benchmark using the Parquet format.
     """
     def __init__(self, benchmark_main_class, main_class_args=None, **kwargs):
         super().__init__(
