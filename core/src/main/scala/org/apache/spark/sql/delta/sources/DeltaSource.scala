@@ -1011,12 +1011,12 @@ case class DeltaSource(
     var commitProcessedInBatch = false
 
     /**
-     * This overloaded method checks if all the AddCDCFiles for a commit can be accommodated by
+     * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
      */
-    def admit(fileActions: Seq[AddCDCFile]): Boolean = {
-      def getSize(actions: Seq[AddCDCFile]): Long = {
-        actions.foldLeft(0L) { (l, r) => l + r.size }
+    def admit(fileActions: Seq[FileAction]): Boolean = {
+      def getSize(actions: Seq[FileAction]): Long = {
+        actions.foldLeft(0L) { (l, r) => l + r.getFileSize }
       }
       if (fileActions.isEmpty) {
         true
