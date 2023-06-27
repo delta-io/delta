@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.actions;
 
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
 
 public class CommitInfo implements Action
@@ -31,5 +32,6 @@ public class CommitInfo implements Action
 
     // TODO: This is a concern, we expect the data to be in certain format, but
     // CommitInfo has no schema specification.
-    public static final StructType READ_SCHEMA = new StructType();
+    public static final StructType READ_SCHEMA = new StructType()
+        .add("timestamp", LongType.INSTANCE);
 }
