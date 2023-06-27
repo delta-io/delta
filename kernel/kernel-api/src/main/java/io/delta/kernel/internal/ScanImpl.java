@@ -45,7 +45,6 @@ import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
-import io.delta.kernel.internal.util.PartitionUtils;
 
 /**
  * Implementation of {@link Scan}
@@ -65,50 +64,26 @@ public class ScanImpl
      */
     private final StructType readSchema;
 
-    /**
-     * Partition schema.
-     */
-    private final StructType snapshotPartitionSchema;
-
     private final CloseableIterator<AddFile> filesIter;
-    private final TableClient tableClient;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
     private final Optional<Expression> filter;
-    private final Optional<Expression> metadataFilterConjunction;
-    private final Optional<Expression> dataFilterConjunction;
 
     public ScanImpl(
         StructType snapshotSchema,
         StructType readSchema,
-        StructType snapshotPartitionSchema,
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
         CloseableIterator<AddFile> filesIter,
         Optional<Expression> filter,
-        Path dataPath,
-        TableClient tableClient)
+        Path dataPath)
     {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
-        this.snapshotPartitionSchema = snapshotPartitionSchema;
         this.protocolAndMetadata = protocolAndMetadata;
         this.filesIter = filesIter;
         this.dataPath = dataPath;
-        this.tableClient = tableClient;
 
         this.filter = filter;
-        if (filter.isPresent()) {
-            final List<String> partitionColumns = snapshotPartitionSchema.fieldNames();
-            final Tuple2<Optional<Expression>, Optional<Expression>> metadataAndDataConjunctions =
-                PartitionUtils.splitMetadataAndDataPredicates(filter.get(), partitionColumns);
-
-            this.metadataFilterConjunction = metadataAndDataConjunctions._1;
-            this.dataFilterConjunction = metadataAndDataConjunctions._2;
-        }
-        else {
-            this.metadataFilterConjunction = Optional.empty();
-            this.dataFilterConjunction = Optional.empty();
-        }
     }
 
     /**
@@ -198,7 +173,7 @@ public class ScanImpl
     {
         String columnMappingMode = protocolAndMetadata.get()._2
             .getConfiguration()
-            .get("delta.columnMapping.mode");
+            .getOrDefault("delta.columnMapping.mode", "none");
         switch (columnMappingMode) {
             case "none":
                 return logicalSchema;
@@ -234,7 +209,7 @@ public class ScanImpl
             }
             default:
                 throw new UnsupportedOperationException(
-                    "Unsupported column mapping mode: " + columnMappingMode)
+                    "Unsupported column mapping mode: " + columnMappingMode);
         }
     }
 }

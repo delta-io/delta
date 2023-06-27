@@ -33,11 +33,8 @@ import io.delta.kernel.internal.snapshot.LogSegment;
  */
 public class SnapshotImpl implements Snapshot
 {
-    private final Path logPath;
     private final Path dataPath;
     private final long version;
-    private final LogSegment logSegment;
-    private final long timestamp;
 
     private final LogReplay logReplay;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
@@ -49,12 +46,9 @@ public class SnapshotImpl implements Snapshot
         LogSegment logSegment,
         TableClient tableClient,
         long timestamp)
-    {
-        this.logPath = logPath;
+    {;
         this.dataPath = dataPath;
         this.version = version;
-        this.logSegment = logSegment;
-        this.timestamp = timestamp;
 
         this.logReplay = new LogReplay(
             logPath,
@@ -83,7 +77,6 @@ public class SnapshotImpl implements Snapshot
             dataPath,
             protocolAndMetadata,
             getSchema(tableClient),
-            getMetadata().getPartitionSchema(),
             logReplay.getAddFiles(),
             tableClient
         );

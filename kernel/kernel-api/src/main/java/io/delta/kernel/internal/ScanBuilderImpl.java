@@ -41,7 +41,6 @@ public class ScanBuilderImpl
 {
 
     private final StructType snapshotSchema;
-    private final StructType snapshotPartitionSchema;
     private final CloseableIterator<AddFile> filesIter;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
     private final TableClient tableClient;
@@ -54,13 +53,11 @@ public class ScanBuilderImpl
         Path dataPath,
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
         StructType snapshotSchema,
-        StructType snapshotPartitionSchema,
         CloseableIterator<AddFile> filesIter,
         TableClient tableClient)
     {
         this.dataPath = dataPath;
         this.snapshotSchema = snapshotSchema;
-        this.snapshotPartitionSchema = snapshotPartitionSchema;
         this.filesIter = filesIter;
         this.protocolAndMetadata = protocolAndMetadata;
         this.tableClient = tableClient;
@@ -94,11 +91,9 @@ public class ScanBuilderImpl
         return new ScanImpl(
             snapshotSchema,
             readSchema,
-            snapshotPartitionSchema,
             protocolAndMetadata,
             filesIter,
             filter,
-            dataPath,
-            tableClient);
+            dataPath);
     }
 }

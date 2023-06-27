@@ -117,13 +117,6 @@ public class Metadata implements Action
         return partitionColumns;
     }
 
-    public StructType getPartitionSchema()
-    {
-        return new StructType(
-            partitionColumns.stream().map(schema::get).collect(Collectors.toList())
-        );
-    }
-
     public String getId()
     {
         return id;
