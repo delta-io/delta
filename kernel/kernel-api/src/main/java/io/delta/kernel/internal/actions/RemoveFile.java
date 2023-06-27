@@ -42,6 +42,7 @@ public class RemoveFile extends FileAction
         final long deletionTimestamp = row.getLong(1);
         final Map<String, String> partitionValues = row.getMap(2);
         final long size = row.getLong(3);
+        final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
         final DeletionVectorDescriptor deletionVector =
                 DeletionVectorDescriptor.fromRow(row.getStruct(5));
 

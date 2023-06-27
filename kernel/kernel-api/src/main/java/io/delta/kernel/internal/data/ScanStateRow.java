@@ -42,7 +42,6 @@ import io.delta.kernel.internal.actions.Protocol;
 /**
  * Expose the common scan state for all scan files.
  */
-// TODO: combine with PojoRow?
 public class ScanStateRow
     implements Row
 {
@@ -77,9 +76,9 @@ public class ScanStateRow
     }
 
     private static final Map<String, Integer> colNameToOrdinal = ordinalToColName
-            .entrySet()
-            .stream()
-            .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+        .entrySet()
+        .stream()
+        .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
 
     public static int getLogicalSchemaStringColOrdinal()
     {
@@ -96,13 +95,13 @@ public class ScanStateRow
         return getOrdinal("partitionColumns");
     }
 
-    public static int getConfigurationColOrdinal() {
+    public static int getConfigurationColOrdinal()
+    {
         return getOrdinal("configuration");
     }
 
-
     public static String getTablePath(Row row) {
-        return row.getString(colNameToOrdinal.get("tablePath"));
+        return row.getString(getOrdinal("tablePath"));
     }
 
     private final Map<String, String> configuration;

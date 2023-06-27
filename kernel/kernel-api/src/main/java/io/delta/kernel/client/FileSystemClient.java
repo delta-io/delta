@@ -44,8 +44,12 @@ public interface FileSystemClient
     CloseableIterator<FileStatus> listFrom(String filePath)
             throws FileNotFoundException;
 
+    // TODO: solidify input type; need some combination of path, offset, size
     /**
-     * TODO: solidify input type; need some combination of path, offset, size
+     * Read data specified by the start and end offset from the file.
+     * @param iter Iterator for tuples (file path, range (start offset, end offset)
+     * @return Data for each range requested as one {@link ByteArrayInputStream}.
+     * @throws IOException
      */
     CloseableIterator<ByteArrayInputStream> readFiles(
             CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)

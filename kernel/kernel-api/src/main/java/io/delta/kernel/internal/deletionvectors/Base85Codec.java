@@ -26,7 +26,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.
  *
- * @see https://rfc.zeromq.org/spec/32/
+ * @see <a href="https://rfc.zeromq.org/spec/32/">Z85 encoding</a>
  *
  * Taken from https://github.com/delta-io/delta/blob/master/spark/src/main/scala/org/apache/spark/sql/delta/util/Codec.scala
  */

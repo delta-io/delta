@@ -47,10 +47,10 @@ public class AddFile extends FileAction
         final long modificationTime = requireNonNull(row, 3, "modificationTime").getLong(3);
         final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
         final DeletionVectorDescriptor deletionVector =
-                DeletionVectorDescriptor.fromRow(row.getStruct(5));
+            DeletionVectorDescriptor.fromRow(row.getStruct(5));
 
         return new AddFile(
-                path, partitionValues, size, modificationTime, dataChange, deletionVector);
+            path, partitionValues, size, modificationTime, dataChange, deletionVector);
     }
 
     // TODO: there are more optional fields in `AddFile` according to the spec. We will be adding
@@ -76,7 +76,8 @@ public class AddFile extends FileAction
         long size,
         long modificationTime,
         boolean dataChange,
-        DeletionVectorDescriptor deletionVector) {
+        DeletionVectorDescriptor deletionVector)
+    {
 
         super(path, dataChange);
         this.partitionValues = partitionValues == null ? Collections.emptyMap() : partitionValues;
@@ -133,16 +134,19 @@ public class AddFile extends FileAction
         return modificationTime;
     }
 
-    public DeletionVectorDescriptor getDeletionVector() { return deletionVector; }
+    public DeletionVectorDescriptor getDeletionVector() {return deletionVector;}
 
-    public Optional<String> getDeletionVectorUniqueId() {
+    public Optional<String> getDeletionVectorUniqueId()
+    {
         return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
-    public Row getDeletionVectorAsRow() {
+    public Row getDeletionVectorAsRow()
+    {
         if (deletionVector == null) {
             return null;
-        } else {
+        }
+        else {
             return deletionVector.toRow();
         }
     }

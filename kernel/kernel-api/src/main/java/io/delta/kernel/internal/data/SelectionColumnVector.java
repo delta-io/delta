@@ -52,7 +52,9 @@ public class SelectionColumnVector
     }
 
     @Override
-    public void close() { }
+    public void close() {
+        rowIndices.close();
+    }
 
     @Override
     public boolean isNullAt(int rowId)
