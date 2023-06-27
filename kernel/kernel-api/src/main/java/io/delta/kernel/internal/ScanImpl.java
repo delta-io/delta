@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.internal;
 
 import java.io.IOException;
@@ -29,10 +28,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -45,6 +40,7 @@ import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.internal.util.InternalSchemaUtils;
 
 /**
  * Implementation of {@link Scan}
@@ -53,7 +49,8 @@ public class ScanImpl
     implements Scan
 {
     /**
-     * Complete schema of the snapshot to be scanned.
+     * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
+     * with metadata properties to derive the physical schema.
      */
     private final StructType snapshotSchema;
 
@@ -63,11 +60,11 @@ public class ScanImpl
      * Schema that we actually want to read.
      */
     private final StructType readSchema;
-
     private final CloseableIterator<AddFile> filesIter;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
-
     private final Optional<Expression> filter;
+
+    private boolean accessedScanFiles;
 
     public ScanImpl(
         StructType snapshotSchema,
@@ -94,6 +91,10 @@ public class ScanImpl
     @Override
     public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient)
     {
+        if (accessedScanFiles) {
+            throw new IllegalStateException("Scan files are already fetched from this instance");
+        }
+        accessedScanFiles = true;
         return new CloseableIterator<ColumnarBatch>()
         {
             private Optional<AddFile> nextValid = Optional.empty();
@@ -121,6 +122,7 @@ public class ScanImpl
                     throw new NoSuchElementException();
                 }
 
+                // TODO: Figure out a way to take batch size as a parameter.
                 List<AddFile> batchAddFiles = new ArrayList<>();
                 do {
                     batchAddFiles.add(nextValid.get());
@@ -155,7 +157,14 @@ public class ScanImpl
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
             TableSchemaSerDe.toJson(readSchema),
-            TableSchemaSerDe.toJson(convertToPhysicalSchema(readSchema, snapshotSchema)),
+            TableSchemaSerDe.toJson(
+                InternalSchemaUtils.convertToPhysicalSchema(
+                    readSchema,
+                    snapshotSchema,
+                    protocolAndMetadata.get()._2.getConfiguration()
+                        .getOrDefault("delta.columnMapping.mode", "none")
+                )
+            ),
             dataPath.toUri().toString());
     }
 
@@ -163,53 +172,5 @@ public class ScanImpl
     public Expression getRemainingFilter()
     {
         return filter.orElse(Literal.TRUE);
-    }
-
-    /**
-     * Helper method that converts the logical schema (requested by the connector) to physical
-     * schema of the data stored in data files.
-     */
-    private StructType convertToPhysicalSchema(StructType logicalSchema, StructType snapshotSchema)
-    {
-        String columnMappingMode = protocolAndMetadata.get()._2
-            .getConfiguration()
-            .getOrDefault("delta.columnMapping.mode", "none");
-        switch (columnMappingMode) {
-            case "none":
-                return logicalSchema;
-            case "id":
-                throw new UnsupportedOperationException(
-                    "Column mapping `id` mode is not yet supported");
-            case "name": {
-                StructType newSchema = new StructType();
-                for (StructField field : logicalSchema.fields()) {
-                    DataType oldType = field.getDataType();
-                    StructField fieldFromMetadata = snapshotSchema.get(field.getName());
-                    DataType newType;
-                    if (oldType instanceof StructType) {
-                        newType = convertToPhysicalSchema(
-                            (StructType) field.getDataType(),
-                            (StructType) fieldFromMetadata.getDataType());
-                    }
-                    else if (oldType instanceof ArrayType) {
-                        throw new UnsupportedOperationException("NYI");
-                    }
-                    else if (oldType instanceof MapType) {
-                        throw new UnsupportedOperationException("NYI");
-                    }
-                    else {
-                        newType = oldType;
-                    }
-                    String physicalName = fieldFromMetadata
-                        .getMetadata()
-                        .get("delta.columnMapping.physicalName");
-                    newSchema = newSchema.add(physicalName, newType);
-                }
-                return newSchema;
-            }
-            default:
-                throw new UnsupportedOperationException(
-                    "Unsupported column mapping mode: " + columnMappingMode);
-        }
     }
 }

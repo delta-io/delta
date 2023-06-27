@@ -19,7 +19,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
@@ -31,6 +30,9 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
+import static io.delta.kernel.utils.Utils.requireNonNull;
+import static java.util.Objects.requireNonNull;
+
 public class Metadata implements Action
 {
     public static Metadata fromRow(Row row, TableClient tableClient)
@@ -39,14 +41,14 @@ public class Metadata implements Action
             return null;
         }
 
-        final String schemaJson = row.getString(4);
+        final String schemaJson = requireNonNull(row, 4, "schemaString").getString(4);
         StructType schema = TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaJson);
 
         return new Metadata(
-            row.getString(0),
+            requireNonNull(row, 0, "id").getString(0),
             Optional.ofNullable(row.isNullAt(1) ? null : row.getString(1)),
             Optional.ofNullable(row.isNullAt(2) ? null : row.getString(2)),
-            Format.fromRow(row.getStruct(3)),
+            Format.fromRow(requireNonNull(row, 0, "id").getStruct(3)),
             schemaJson,
             schema,
             row.getArray(5),
@@ -90,11 +92,11 @@ public class Metadata implements Action
         Optional<Long> createdTime,
         Map<String, String> configuration)
     {
-        this.id = id;
+        this.id = requireNonNull(id, "id is null");
         this.name = name;
-        this.description = description;
-        this.format = format;
-        this.schemaString = schemaString;
+        this.description = requireNonNull(description, "description is null");
+        this.format = requireNonNull(format, "format is null");
+        this.schemaString = requireNonNull(schemaString, "schemaString is null");
         this.schema = schema;
         this.partitionColumns =
             partitionColumns == null ? Collections.emptyList() : partitionColumns;

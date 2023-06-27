@@ -18,7 +18,6 @@ package io.delta.kernel.internal;
 
 import java.util.Optional;
 
-import io.delta.kernel.InvalidExpressionException;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
@@ -68,7 +67,6 @@ public class ScanBuilderImpl
 
     @Override
     public ScanBuilder withFilter(TableClient tableClient, Expression filter)
-        throws InvalidExpressionException
     {
         if (this.filter.isPresent()) {
             throw new IllegalArgumentException("There already exists a filter in current builder");

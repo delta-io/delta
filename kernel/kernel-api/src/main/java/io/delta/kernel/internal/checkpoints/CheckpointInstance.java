@@ -29,6 +29,7 @@ import io.delta.kernel.internal.util.FileNames;
 public class CheckpointInstance
     implements Comparable<CheckpointInstance>
 {
+    /** Placeholder to identify the version that is always the latest on timeline */
     public static final CheckpointInstance MAX_VALUE = new CheckpointInstance(-1);
 
     public final long version;

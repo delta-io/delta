@@ -20,6 +20,8 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import static io.delta.kernel.utils.Utils.requireNonNull;
+
 public class SetTransaction
     implements Action
 {
@@ -30,9 +32,9 @@ public class SetTransaction
         }
 
         return new SetTransaction(
-            row.getString(0),
-            row.getLong(1),
-            row.getLong(2)
+            requireNonNull(row, 0, "appId").getString(0),
+            requireNonNull(row, 1, "version").getLong(1),
+            requireNonNull(row, 2, "lastUpdated").getLong(2)
         );
     }
 

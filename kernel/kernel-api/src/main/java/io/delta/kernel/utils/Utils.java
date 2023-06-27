@@ -272,4 +272,12 @@ public class Utils
             // ignore
         }
     }
+
+    public static Row requireNonNull(Row row, int ordinal, String columnName)
+    {
+        if (row.isNullAt(ordinal)) {
+            throw new IllegalArgumentException("Expected a non-null value for column: " + columnName);
+        }
+        return row;
+    }
 }

@@ -20,6 +20,8 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import static io.delta.kernel.utils.Utils.requireNonNull;
+
 public class Format
 {
     public static Format fromRow(Row row)
@@ -28,7 +30,7 @@ public class Format
             return null;
         }
 
-        final String provider = row.getString(0);
+        final String provider = requireNonNull(row, 0, "provider").getString(0);
         return new Format(provider);
     }
 

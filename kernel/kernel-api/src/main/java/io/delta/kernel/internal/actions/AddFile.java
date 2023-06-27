@@ -26,6 +26,9 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.Utils;
+
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 /**
  * Delta log action representing an `AddFile`
@@ -38,11 +41,11 @@ public class AddFile extends FileAction
             return null;
         }
 
-        final String path = row.getString(0);
+        final String path = requireNonNull(row, 0, "path").getString(0);
         final Map<String, String> partitionValues = row.getMap(1);
-        final long size = row.getLong(2);
-        final long modificationTime = row.getLong(3);
-        final boolean dataChange = row.getBoolean(4);
+        final long size = requireNonNull(row, 2, "size").getLong(2);
+        final long modificationTime = requireNonNull(row, 3, "modificationTime").getLong(3);
+        final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
 
         return new AddFile(path, partitionValues, size, modificationTime, dataChange);
     }

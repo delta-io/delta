@@ -26,6 +26,9 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.Utils;
+
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 public class RemoveFile extends FileAction
 {
@@ -35,11 +38,11 @@ public class RemoveFile extends FileAction
             return null;
         }
 
-        final String path = row.getString(0);
+        final String path = requireNonNull(row, 0, "path").getString(0);
         final long deletionTimestamp = row.getLong(1);
         final Map<String, String> partitionValues = row.getMap(2);
         final long size = row.getLong(3);
-        final boolean dataChange = row.getBoolean(4);
+        final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
 
         return new RemoveFile(
             path,

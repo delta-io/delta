@@ -117,8 +117,8 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Returns the binary type value for {@code rowId}. If the slot for {@code rowId} is null, it
-     * should return null.
+     * Returns the binary type value for {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
      * @param rowId
      * @return Binary value at the given row id
      */
@@ -127,8 +127,8 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Returns the string type value for {@code rowId}. If the slot for {@code rowId} is null, it
-     * should return null.
+     * Returns the string type value for {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
      * @param rowId
      * @return String value at the given row id
      */
@@ -137,8 +137,8 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the map type value located at {@code rowId}. If the slot for {@code rowId} is null,
-     * returns null.
+     * Return the map type value located at {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
      * @param rowId
      * @param <K> Return map key type
      * @param <V> Return map value type
@@ -149,8 +149,8 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the row value located at {@code rowId}. If the slot for {@code rowId} is null,
-     * returns null.
+     * Return the row value located at {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
      * @param rowId
      * @return
      */
@@ -159,8 +159,8 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the array value located at {@code rowId}. If the slot for {@code rowId} is null,
-     * returns null.
+     * Return the array value located at {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
      *
      * @param rowId
      * @param <T> Array element type

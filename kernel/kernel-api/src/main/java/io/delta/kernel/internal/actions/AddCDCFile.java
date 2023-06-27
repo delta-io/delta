@@ -19,12 +19,15 @@ import java.util.Collections;
 import java.util.Map;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.fs.Path;
+
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 /**
  * Delta log action representing an `AddCDCFile`
@@ -37,10 +40,10 @@ public class AddCDCFile extends FileAction
             return null;
         }
 
-        final String path = row.getString(0);
+        final String path = requireNonNull(row, 0, "path").getString(0);
         final Map<String, String> partitionValues = row.getMap(1);
-        final long size = row.getLong(2);
-        final boolean dataChange = row.getBoolean(3);
+        final long size = requireNonNull(row, 2, "size").getLong(2);
+        final boolean dataChange = requireNonNull(row, 3, "dataChange").getBoolean(3);
 
         return new AddCDCFile(path, partitionValues, size, dataChange);
     }

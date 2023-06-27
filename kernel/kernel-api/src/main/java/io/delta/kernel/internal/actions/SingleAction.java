@@ -26,38 +26,38 @@ public class SingleAction
 {
     public static SingleAction fromRow(Row row, TableClient tableClient)
     {
-        final SetTransaction txn = SetTransaction.fromRow(row.getStruct(0));
-        if (txn != null) {
+        if (!row.isNullAt(0)) {
+            final SetTransaction txn = SetTransaction.fromRow(row.getStruct(0));
             return new SingleAction(txn, null, null, null, null, null, null);
         }
 
-        final AddFile add = AddFile.fromRow(row.getStruct(1));
-        if (add != null) {
+        if (!row.isNullAt(1)) {
+            final AddFile add = AddFile.fromRow(row.getStruct(1));
             return new SingleAction(null, add, null, null, null, null, null);
         }
 
-        final RemoveFile remove = RemoveFile.fromRow(row.getStruct(2));
-        if (remove != null) {
+        if (!row.isNullAt(2)) {
+            final RemoveFile remove = RemoveFile.fromRow(row.getStruct(2));
             return new SingleAction(null, null, remove, null, null, null, null);
         }
 
-        final Metadata metadata = Metadata.fromRow(row.getStruct(3), tableClient);
-        if (metadata != null) {
+        if (!row.isNullAt(3)) {
+            final Metadata metadata = Metadata.fromRow(row.getStruct(3), tableClient);
             return new SingleAction(null, null, null, metadata, null, null, null);
         }
 
-        final Protocol protocol = Protocol.fromRow(row.getStruct(4));
-        if (protocol != null) {
+        if (!row.isNullAt(4)) {
+            final Protocol protocol = Protocol.fromRow(row.getStruct(4));
             return new SingleAction(null, null, null, null, protocol, null, null);
         }
 
-        final AddCDCFile cdc = AddCDCFile.fromRow(row.getStruct(5));
-        if (cdc != null) {
+        if (!row.isNullAt(5)) {
+            final AddCDCFile cdc = AddCDCFile.fromRow(row.getStruct(5));
             return new SingleAction(null, null, null, null, null, cdc, null);
         }
 
-        final CommitInfo commitInfo = CommitInfo.fromRow(row.getStruct(6));
-        if (commitInfo != null) {
+        if (!row.isNullAt(6)) {
+            final CommitInfo commitInfo = CommitInfo.fromRow(row.getStruct(6));
             return new SingleAction(null, null, null, null, null, null, commitInfo);
         }
 
