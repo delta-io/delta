@@ -39,7 +39,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 
 /**
- * Expose the {@link Metadata} as a {@link Row}.
+ * Expose the common scan state for all scan files.
  */
 public class ScanStateRow
     implements Row

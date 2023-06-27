@@ -169,8 +169,8 @@ public class ScanImpl
     }
 
     @Override
-    public Expression getRemainingFilter()
+    public Optional<Expression> getRemainingFilter()
     {
-        return filter.orElse(Literal.TRUE);
+        return filter;
     }
 }

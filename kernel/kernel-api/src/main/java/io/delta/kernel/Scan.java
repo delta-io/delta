@@ -57,7 +57,7 @@ public interface Scan
      *
      * @return the remaining filter as an {@link Expression}.
      */
-    Expression getRemainingFilter();
+    Optional<Expression> getRemainingFilter();
 
     /**
      * Get the scan state associated with the current scan. This state is common across all

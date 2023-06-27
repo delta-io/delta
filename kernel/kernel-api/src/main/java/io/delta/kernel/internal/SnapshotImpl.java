@@ -46,7 +46,7 @@ public class SnapshotImpl implements Snapshot
         LogSegment logSegment,
         TableClient tableClient,
         long timestamp)
-    {;
+    {
         this.dataPath = dataPath;
         this.version = version;
 
