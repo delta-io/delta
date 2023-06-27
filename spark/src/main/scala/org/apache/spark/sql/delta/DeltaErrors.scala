@@ -1804,6 +1804,17 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedMapKeyTypeChange(mapType: DataType, fromKeyType: DataType, toKeyType: DataType)
+    : Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE",
+      messageParameters = Array(
+        fromKeyType.catalogString,
+        toKeyType.catalogString,
+        mapType.catalogString)
+    )
+  }
+
   def cannotResolveColumn(fieldName: String, schema: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",

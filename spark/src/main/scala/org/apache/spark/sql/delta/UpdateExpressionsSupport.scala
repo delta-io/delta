@@ -40,6 +40,23 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
   case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
 
   /**
+   * A matcher for a valid nested map conversion, i.e. from a map of structs, arrays or maps
+   * to a map with the same nested type of values.
+   */
+  object NestedMapConversion {
+    def unapply(conversion: (DataType, DataType)): Option[(MapType, MapType)] =
+      conversion match {
+        case (from @ MapType(_, _: StructType, _), to @ MapType(_, _: StructType, _)) =>
+          Some(from, to)
+        case (from @ MapType(_, _: ArrayType, _), to @ MapType(_, _: ArrayType, _)) =>
+          Some(from, to)
+        case (from @ MapType(_, _: MapType, _), to @ MapType(_, _: MapType, _)) =>
+          Some(from, to)
+        case _ => None
+      }
+  }
+
+  /**
    * Add a cast to the child expression if it differs from the specified data type. Note that
    * structs here are cast by name, rather than the Spark SQL default of casting by position.
    *
@@ -114,6 +131,25 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   ArrayType(toEt, containsNull = true)
                 )
             }
+          case NestedMapConversion(from: MapType, to: MapType) =>
+            if (!from.keyType.sameType(to.keyType)) {
+              throw DeltaErrors.unsupportedMapKeyTypeChange(
+                mapType = from,
+                fromKeyType = from.keyType,
+                toKeyType = to.keyType
+              )
+            }
+            val valueConverter: (Expression, Expression) => Expression = (key, _) =>
+              castIfNeeded(GetMapValue(fromExpression, key), to.valueType, allowStructEvolution)
+            val transformLambdaFunc = {
+              val keyVar = NamedLambdaVariable("keyVar", from.keyType, nullable = false)
+              val valueVar = NamedLambdaVariable("valueVar", from.valueType, from.valueContainsNull)
+              LambdaFunction(valueConverter(keyVar, valueVar), Seq(keyVar, valueVar))
+            }
+            cast(
+              TransformValues(fromExpression, transformLambdaFunc),
+              to.copy(valueContainsNull = true)
+            )
           case (from: StructType, to: StructType)
             if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

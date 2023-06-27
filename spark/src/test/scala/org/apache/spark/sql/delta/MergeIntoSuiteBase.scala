@@ -3449,6 +3449,205 @@ abstract class MergeIntoSuiteBase
       """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null } ] }, "b": 2 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] new source column in map struct")(
+    target =
+      """{ "key": "A", "map": { "key": { "a": 1 } } }
+         { "key": "C", "map": { "key": { "a": 3 } } }""",
+    source =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": 2 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": 2 } } }
+         { "key": "C", "map": { "key": { "a": 3, "b": null } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] new source column in nested map struct")(
+    target =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 1 } } } }
+         {"key": "C", "map": { "key": { "innerKey": { "a": 3 } } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType)))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": 3 } } } }
+         {"key": "C", "map": { "key": { "innerKey": { "a": 3, "b": null } } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] source map struct value contains less columns than target")(
+    target =
+      """{ "key": "A", "map": { "key": { "a": 1, "b": 1 } } }
+         { "key": "C", "map": { "key": { "a": 3, "b": 1 } } }""",
+    source =
+      """{ "key": "A", "map": { "key": { "a": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": null } } }
+         { "key": "B", "map": { "key": { "a": 1, "b": null } } }
+         { "key": "C", "map": { "key": { "a": 3, "b": 1 } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] source nested map struct value contains less columns than target")(
+    target =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 1, "b": 1 } } } }
+         {"key": "C", "map": { "key": { "innerKey": { "a": 3, "b": 1 } } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2 } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2 } } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType)))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "innerKey": { "a": 2, "b": null } } } }
+         {"key": "B", "map": { "key": { "innerKey": { "a": 2, "b": null } } } }
+         {"key": "C", "map": { "key": { "innerKey": { "a": 3, "b": 1 } } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] source nested map struct value contains different type than target")(
+    target =
+      """{"key": "A", "map": { "key": { "a": 1, "b" : 1 } } }
+         {"key": "C", "map": { "key": { "a": 3, "b" : 1 } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "a": 1, "b" : "2" } } }
+         {"key": "B", "map": { "key": { "a": 2, "b" : "2" } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "a": 1, "b" : 2 } } }
+         {"key": "B", "map": { "key": { "a": 2, "b" : 2 } } }
+         {"key": "C", "map": { "key": { "a": 3, "b" : 1 } } }""",
+    resultWithoutEvolution =
+      """{"key": "A", "map": { "key": { "a": 1, "b" : 2 } } }
+         {"key": "B", "map": { "key": { "a": 2, "b" : 2 } } }
+         {"key": "C", "map": { "key": { "a": 3, "b" : 1 } } }""")
+
+
+  testNestedStructsEvolution("[new] source nested map struct value in different order")(
+    target =
+      """{"key": "A", "map": { "key": { "a" : 1, "b" : 1 } } }
+         {"key": "C", "map": { "key": { "a" : 3, "b" : 1 } } }""",
+    source =
+      """{"key": "A", "map": { "key": { "b" : 2, "a" : 1, "c" : 3 } } }
+         {"key": "B", "map": { "key": { "b" : 2, "a" : 2, "c" : 4 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{"key": "A", "map": { "key": { "a": 1, "b" : 2, "c" : 3 } } }
+         {"key": "B", "map": { "key": { "a": 2, "b" : 2, "c" : 4 } } }
+         {"key": "C", "map": { "key": { "a": 3, "b" : 1, "c" : null } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("[new] source map struct value to map array value")(
+    target =
+      """{ "key": "A", "map": { "key": [ 1, 2 ] } }
+         { "key": "C", "map": { "key": [ 3, 4 ] } }""",
+    source =
+      """{ "key": "A", "map": { "key": { "a": 2 } } }
+         { "key": "B", "map": { "key": { "a": 1 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          ArrayType(IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
   testEvolution("new column with update * and insert non-*")(
