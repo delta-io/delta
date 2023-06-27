@@ -43,6 +43,8 @@
     - [JSON Example 3 — Inline](#json-example-3--inline)
   - [Reader Requirements for Deletion Vectors](#reader-requirements-for-deletion-vectors)
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
+- [Iceberg Compatibility V1](#iceberg-compatibility-v1)
+  - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
 - [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
 - [Row Tracking](#row-tracking)
   - [Row IDs](#row-ids)
@@ -789,6 +791,31 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 
 ## Writer Requirement for Deletion Vectors
 When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
+
+# Iceberg Compatibility V1
+
+This table feature (`icebergCompatV1`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
+
+Enablement:
+- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
+
+Activation: Set table property `delta.enableIcebergCompatV1` to `true`.
+
+Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `false`.
+
+## Writer Requirements for IcebergCompatV1
+
+When enabled and active, writers must:
+- Require that Column Mapping be enabled and set to either `name` or `id` mode
+- Require that Deletion Vectors are not enabled (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
+- Require that partition column values are materialized into any Parquet data file that is present in the table, placed *after* the data columns in the parquet schema
+- Require that all `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
+- Block adding `Map`/`Array`/`Void` types to the table schema (and, thus, block writing them, too)
+- Block replacing partitioned tables with a differently-named partition spec
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
 
 # Timestamp without timezone (TimestampNTZ)
 This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
