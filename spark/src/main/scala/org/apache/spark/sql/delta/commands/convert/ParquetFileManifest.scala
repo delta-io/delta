@@ -91,6 +91,9 @@ class CatalogFileManifest(
     serializableConf: SerializableConfiguration)
   extends ConvertTargetFileManifest with DeltaLogging {
 
+  private val useCatalogSchema =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA)
+
   // List of partition directories and corresponding partition values.
   private lazy val partitionList = {
     if (catalogTable.partitionSchema.isEmpty) {
@@ -137,46 +140,45 @@ class CatalogFileManifest(
 
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
-    val useParquetSchema = !spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA)
+    val useParquetSchema = !useCatalogSchema
     val fetchConfig = parquetSchemaFetchConfig
 
     val files = doList().mapPartitions { iter =>
       val fileStatusWithSpecSeq = iter.toSeq
-      // TODO: Currently "spark.sql.files.ignoreCorruptFiles" is not respected for
-      //  CatalogFileManifest when DELTA_CONVERT_USE_CATALOG_SCHEMA is true
-      if (!useParquetSchema) {
+      if (useParquetSchema) {
+        val pathToStatusSpecMapping = fileStatusWithSpecSeq.map {
+          case (fileStatus, partitionSpec) => fileStatus.path -> (fileStatus, partitionSpec)
+        }.toMap
+        val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
+          conf.value.value,
+          fileStatusWithSpecSeq.map(_._1.toFileStatus),
+          fetchConfig.ignoreCorruptFiles)
+        val schemaConverter = new ParquetToSparkSchemaConverter(
+          assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
+          assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
+        )
+        footerSeq.map { footer =>
+          pathToStatusSpecMapping(footer.getFile.toString) match {
+            case (fileStatus, partitionSpec) =>
+              val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
+              ConvertTargetFile(fileStatus, Some(partitionSpec), Some(schema.toDDL))
+          }
+        }.toIterator
+      } else {
+        // TODO: Currently "spark.sql.files.ignoreCorruptFiles" is not respected for
+        //  CatalogFileManifest when catalog schema is used to avoid performance regression.
         fileStatusWithSpecSeq.map {
           case (fileStatus, partitionSpec) =>
             ConvertTargetFile(fileStatus, Some(partitionSpec), None)
         }.toIterator
       }
-
-      val pathToStatusSpecMapping = fileStatusWithSpecSeq.map {
-        case (fileStatus, partitionSpec) => fileStatus.path -> (fileStatus, partitionSpec)
-      }.toMap
-      val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
-        conf.value.value,
-        fileStatusWithSpecSeq.map(_._1.toFileStatus),
-        fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
-      footerSeq.map { footer =>
-        pathToStatusSpecMapping(footer.getFile.toString) match {
-          case (fileStatus, partitionSpec) =>
-            val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
-            ConvertTargetFile(fileStatus, Some(partitionSpec), Some(schema.toDDL))
-        }
-      }.toIterator
     }
     files.cache()
     files
   }
 
   override lazy val parquetSchema: Option[StructType] = {
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA)) {
+    if (useCatalogSchema) {
       Some(catalogTable.schema)
     } else {
       recordDeltaOperationForTablePath(basePath, "delta.convert.schemaInference") {
