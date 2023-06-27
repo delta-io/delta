@@ -792,6 +792,47 @@
     ],
     "sqlState" : "42K09"
   },
+  "DELTA_ICEBERG_COMPAT_V1_VIOLATION" : {
+    "message" : [
+      "The validation of IcebergCompatV1 has failed."
+    ],
+    "subClass" : {
+      "DISABLING_REQUIRED_TABLE_FEATURE" : {
+        "message" : [
+          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot remove it from the table. Instead, please disable IcebergCompatV1 first."
+        ]
+      },
+      "INCOMPATIBLE_TABLE_FEATURE" : {
+        "message" : [
+          "IcebergCompatV1 is incompatible with feature <feature>."
+        ]
+      },
+      "MISSING_REQUIRED_TABLE_FEATURE" : {
+        "message" : [
+          "IcebergCompatV1 requires feature <feature> to be supported and enabled."
+        ]
+      },
+      "REPLACE_TABLE_CHANGE_PARTITION_NAMES" : {
+        "message" : [
+          "IcebergCompatV1 doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
+          "Prev Partition Spec: <prevPartitionSpec>",
+          "New Partition Spec: <newPartitionSpec>"
+        ]
+      },
+      "UNSUPPORTED_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV1 doesn't support schema with MapType or ArrayType or NullType. Your schema:",
+          "<schema>"
+        ]
+      },
+      "WRONG_REQUIRED_TABLE_PROPERTY" : {
+        "message" : [
+          "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
+        ]
+      }
+    },
+    "sqlState" : "KD00E"
+  },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"
@@ -1901,6 +1942,12 @@
       "Expected Project but got <project>"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
+    "message" : [
+      "The validation of Universal Format (<format>) has failed: <violation>"
+    ],
+    "sqlState" : "KD00E"
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [

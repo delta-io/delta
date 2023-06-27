@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -314,6 +314,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
+  registerPostCommitHook(IcebergConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
@@ -1319,6 +1320,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
     // Protocol change (stored in newProtocol)
 
+    val (protocolUpdate1, metadataUpdate1) =
+      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+        // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
+        prevProtocol = snapshot.protocol,
+        prevMetadata = snapshot.metadata,
+        newestProtocol = protocol, // Note: this will try to use `newProtocol`
+        newestMetadata = metadata, // Note: this will try to use `newMetadata`
+        isCreatingNewTable
+      )
+    newProtocol = protocolUpdate1.orElse(newProtocol)
+    newMetadata = metadataUpdate1.orElse(newMetadata)
+
+    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
+      prevProtocol = snapshot.protocol,
+      prevMetadata = snapshot.metadata,
+      newestProtocol = protocol, // Note: this will try to use `newProtocol`
+      newestMetadata = metadata, // Note: this will try to use `newMetadata`
+      isCreatingNewTable,
+      otherActions
+    )
+    newProtocol = protocolUpdate2.orElse(newProtocol)
+    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -1806,6 +1829,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         hook.handleError(e, version)
     }
   }
+
+  private[delta] def unregisterPostCommitHooksWhere(predicate: PostCommitHook => Boolean): Unit =
+    postCommitHooks --= postCommitHooks.filter(predicate)
 
   protected lazy val logPrefix: String = {
     def truncate(uuid: String): String = uuid.split("-").head

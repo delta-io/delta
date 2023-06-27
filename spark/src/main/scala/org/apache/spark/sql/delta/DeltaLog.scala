@@ -82,6 +82,7 @@ class DeltaLog private(
   with LogStoreProvider
   with SnapshotManagement
   with DeltaFileFormat
+  with ProvidesUniFormConverters
   with ReadChecksum {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
