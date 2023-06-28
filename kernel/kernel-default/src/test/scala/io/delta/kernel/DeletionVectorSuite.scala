@@ -22,7 +22,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.client.DefaultTableClient
 import io.delta.kernel.data.Row
-import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.types.{IntegerType, LongType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DefaultKernelTestUtils}
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
@@ -42,13 +42,19 @@ class DeletionVectorSuite extends AnyFunSuite {
     }
   }
 
-  def readTable[T](
-    path: String, conf: Configuration, readSchema: StructType)(getValue: Row => T): Seq[T] = {
+  def readTable[T](path: String, conf: Configuration, schema: StructType = null)
+      (getValue: Row => T): Seq[T] = {
     val result = ArrayBuffer[T]()
 
     val tableClient = DefaultTableClient.create(conf)
     val table = Table.forPath(path)
     val snapshot = table.getLatestSnapshot(tableClient)
+
+    val readSchema = if (schema == null) {
+       snapshot.getSchema(tableClient)
+    } else {
+      schema
+    }
 
     val scan = snapshot.getScanBuilder(tableClient)
       .withReadSchema(tableClient, readSchema)
@@ -112,12 +118,71 @@ class DeletionVectorSuite extends AnyFunSuite {
 
     assert(result.toSet === expectedResult)
   }
+  
+  /**
+  generateGoldenTable("dv-partitioned-with-checkpoint") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+   */
+  test("end-to-end usage: reading partitioned dv table with checkpoint") {
+    val path = DefaultKernelTestUtils.getTestResourceFilePath("dv-partitioned-with-checkpoint")
+    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      .filter{ case (_, col1, _) =>
+        !(col1 % 2 == 0 && col1 < 30)
+      }.toSet
+
+    val conf = new Configuration()
+    // Set the batch size small enough so there will be multiple batches
+    conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2);
+    val result = readTable(path, conf) { row =>
+      (row.getInt(0), row.getInt(1), row.getString(2))
+    }
+
+    assert (result.toSet == expectedResult)
+  }
+
+  /**
+  generateGoldenTable("dv-with-columnmapping") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.columnMapping.mode", "name")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+   */
+  test(
+    "end-to-end usage: reading partitioned dv table with checkpoint with columnMappingMode=name") {
+    val path = DefaultKernelTestUtils.getTestResourceFilePath("dv-with-columnmapping")
+    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      .filter{ case (_, col1, _) =>
+        !(col1 % 2 == 0 && col1 < 30)
+      }.toSet
+
+    val result = readTable(path, new Configuration()) { row =>
+      (row.getInt(0), row.getInt(1), row.getString(2))
+    }
+
+    assert (result.toSet == expectedResult)
+  }
+
 
   // TODO detect corrupted DV checksum
   // TODO detect corrupted dv size
   // TODO multiple dvs in one file
-  // TODO log replay with DV works correctly
-
 }
 
 object DeletionVectorsSuite {
