@@ -53,19 +53,3 @@ We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track commun
 
 # Contributing
 We welcome contributions to Delta Lake and we accept contributions via Pull Requests. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details. We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
