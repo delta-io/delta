@@ -118,7 +118,7 @@ class DeletionVectorSuite extends AnyFunSuite {
 
     assert(result.toSet === expectedResult)
   }
-  
+
   /**
   generateGoldenTable("dv-partitioned-with-checkpoint") { tablePath =>
     withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {

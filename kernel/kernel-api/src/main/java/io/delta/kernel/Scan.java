@@ -32,6 +32,7 @@ import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -148,24 +149,45 @@ public interface Scan
             {
                 FileDataReadResult fileDataReadResult = data.next();
 
+                Row scanFileRow = fileDataReadResult.getScanFileRow();
+                DeletionVectorDescriptor dv = DeletionVectorDescriptor.fromRow(
+                    scanFileRow.getStruct(AddFileColumnarBatch.getDeletionVectorColOrdinal()));
+
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
-                    .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
-                ColumnVector rowIndexVector =
-                    fileDataReadResult.getData().getColumnVector(rowIndexOrdinal);
+                        .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
+
+                // Get the selectionVector if DV is present
+                Optional<ColumnVector> selectionVector;
+                if (dv == null) {
+                    selectionVector = Optional.empty();
+                } else {
+                    if (!dv.equals(currDV)) {
+                        Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
+                                DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
+                        this.currDV = dvInfo._1;
+                        this.currBitmap = dvInfo._2;
+                    }
+                    ColumnVector rowIndexVector =
+                            fileDataReadResult.getData().getColumnVector(rowIndexOrdinal);
+                    selectionVector = Optional.of(
+                            new SelectionColumnVector(currBitmap, rowIndexVector));
+                }
 
                 // Remove the row_index columns
                 ColumnarBatch updatedBatch = fileDataReadResult.getData()
-                    .withDeletedColumnAt(rowIndexOrdinal);
+                        .withDeletedColumnAt(rowIndexOrdinal);
 
+                // Add partition columns
                 updatedBatch =
-                    PartitionUtils.withPartitionColumns(
-                        tableClient.getExpressionHandler(),
-                        updatedBatch,
-                        readSchemaWithoutPartitionColumns,
-                        Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
-                        physicalSchema
-                    );
+                        PartitionUtils.withPartitionColumns(
+                                tableClient.getExpressionHandler(),
+                                updatedBatch,
+                                readSchemaWithoutPartitionColumns,
+                                Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                                physicalSchema
+                        );
 
+                // Change back to logical schema
                 String columnMappingMode = Utils.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
                     case "name":
@@ -175,27 +197,10 @@ public interface Scan
                         break;
                     default:
                         throw new UnsupportedOperationException(
-                            "Column mapping mode is not yet supported: " + columnMappingMode);
+                                "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
-                Row scanFileRow = fileDataReadResult.getScanFileRow();
-                DeletionVectorDescriptor dv = DeletionVectorDescriptor.fromRow(
-                    scanFileRow.getStruct(AddFileColumnarBatch.getDeletionVectorColOrdinal()));
-
-                if (dv == null) { // No deletion vector
-                    return new DataReadResult(updatedBatch, Optional.empty());
-                }
-
-                if (!dv.equals(currDV)) {
-                    Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
-                        DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
-                    this.currDV = dvInfo._1;
-                    this.currBitmap = dvInfo._2;
-                }
-                return DeletionVectorUtils.withSelectionVector(
-                    updatedBatch,
-                    rowIndexVector,
-                    currBitmap);
+                return new DataReadResult(updatedBatch, selectionVector);
             }
         };
     }

@@ -34,6 +34,7 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 /** Information about a deletion vector attached to a file action. */
 public class DeletionVectorDescriptor {
@@ -44,12 +45,12 @@ public class DeletionVectorDescriptor {
     public static DeletionVectorDescriptor fromRow(Row row) {
         if (row == null) return null;
 
-        final String storageType = row.getString(0);
-        final String pathOrInlineDv = row.getString(1);
+        final String storageType = requireNonNull(row, 0, "storageType").getString(0);
+        final String pathOrInlineDv = requireNonNull(row, 1, "pathOrInlineDv").getString(1);
         final Optional<Integer> offset = Optional.ofNullable(
                 row.isNullAt(2) ? null : row.getInt(2));
-        final int sizeInBytes = row.getInt(3);
-        final long cardinality = row.getLong(4);
+        final int sizeInBytes = requireNonNull(row, 3, "sizeInBytes").getInt(3);
+        final long cardinality = requireNonNull(row, 4, "cardinality").getLong(4);
 
         return new DeletionVectorDescriptor(storageType, pathOrInlineDv, offset,
                 sizeInBytes, cardinality);

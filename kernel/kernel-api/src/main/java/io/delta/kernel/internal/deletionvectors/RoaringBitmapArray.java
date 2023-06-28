@@ -277,6 +277,4 @@ final public class RoaringBitmapArray {
         }
         return bitmap;
     }
-
-
 }

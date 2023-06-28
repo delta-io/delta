@@ -50,17 +50,4 @@ public class DeletionVectorUtils
             throw new RuntimeException("Couldn't load dv", e);
         }
     }
-
-    public static DataReadResult withSelectionVector(
-        ColumnarBatch data,
-        ColumnVector rowIndexVector,
-        RoaringBitmapArray bitmap)
-    {
-        // we can either have SelectionColumnVector(bitmap, row_index_vector)
-        // or materialize into a boolean array
-        int rowIndexColIdx = data.getSchema().indexOf(StructField.ROW_INDEX_COLUMN_NAME);
-        ColumnVector selectionVector =
-            new SelectionColumnVector(bitmap, rowIndexVector);
-        return new DataReadResult(data, Optional.of(selectionVector));
-    }
 }

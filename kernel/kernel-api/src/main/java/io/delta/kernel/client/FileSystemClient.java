@@ -46,7 +46,9 @@ public interface FileSystemClient
 
     // TODO: solidify input type; need some combination of path, offset, size
     /**
-     * Read data specified by the start and end offset from the file.
+     * Read data specified by the start and end offset from the file. It is the responsibility
+     * of the caller close each returned stream.
+     *
      * @param iter Iterator for tuples (file path, range (start offset, end offset)
      * @return Data for each range requested as one {@link ByteArrayInputStream}.
      * @throws IOException
