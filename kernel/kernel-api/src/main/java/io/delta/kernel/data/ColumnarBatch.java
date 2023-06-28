@@ -67,6 +67,17 @@ public interface ColumnarBatch
     }
 
     /**
+     * Return a copy of this {@link ColumnarBatch} with the column at given {@code ordinal}
+     * removed. All columns after the {@code ordinal} will be shifted to left by one position.
+     * @param ordinal Column ordinal to delete.
+     * @return {@link ColumnarBatch} with a column vector deleted.
+     */
+    default ColumnarBatch withDeletedColumnAt(int ordinal)
+    {
+        throw new UnsupportedOperationException("Not yet implemented");
+    }
+
+    /**
      * Generate a copy of this {@link ColumnarBatch} with the given {@code newSchema}. The data
      * types of elements in the given new schema and existing schema should be the same. Rest of
      * the details such as name of the column or column metadata could be different.

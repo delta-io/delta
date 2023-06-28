@@ -39,6 +39,11 @@ class RowConverter
     private int currentRowIndex;
     private boolean[] nullability;
 
+    /**
+     * We have some necessary requirements here:
+     * - the fields in fileSchema are a subset of readSchema (parquet schema has been pruned)
+     * - the fields in fileSchema are in the same order as the corresponding fields in readSchema
+     */
     RowConverter(
         int initialBatchSize,
         StructType readSchema,
