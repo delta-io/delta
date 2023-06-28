@@ -97,7 +97,7 @@ lazy val root = (project in file("."))
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies ++= Seq(
-      "io.delta" %% "delta-core" % getDeltaVersion.value,
+      "io.delta" %% "delta-spark" % getDeltaVersion.value,
       "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
         getMajorMinor(getDeltaVersion.value)
       )
