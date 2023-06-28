@@ -21,7 +21,7 @@ Scan.readData(...)                                               // returns the 
 
 Notice that there two sets of public APIs to build connectors. 
 - **Table APIs** - Interfaces like [`Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html?io/delta/kernel/Table.html) and [`Snapshot`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html?io/delta/kernel/Snapshot.html) that allow you to read (and soon write to) Delta tables 
-- **TableClient APIs** - The [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html?io/delta/kernel/Table.html) interface allow you to plug in connector-specific optimizations to compute intensive components in the Kernel. For example, Delta Kernel provides a *default* Parquet file reader via the DefaultTableClient, but you may choose to replace that default with a custom `TableClient` implementation that has a faster Parquet reader for your connector / processing engine.
+- **TableClient APIs** - The [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html?io/delta/kernel/Table.html) interface allow you to plug in connector-specific optimizations to compute intensive components in the Kernel. For example, Delta Kernel provides a *default* Parquet file reader via the `DefaultTableClient`, but you may choose to replace that default with a custom `TableClient` implementation that has a faster Parquet reader for your connector / processing engine.
 
 # Project setup with Delta Kernel 
 The Delta Kernel project provides the following two Maven artifacts:
