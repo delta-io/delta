@@ -77,7 +77,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-spark_2.12:" + version
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
@@ -119,9 +119,9 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     test_file = path.join(root_dir, path.join("examples", "python", "missing_delta_storage_jar.py"))
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
-        "delta-core_2.12",
+        "delta-spark_2.12",
         version,
-        "delta-core_2.12-%s.jar" % str(version))
+        "delta-spark_2.12-%s.jar" % str(version))
 
     try:
         cmd = ["spark-submit",
@@ -151,7 +151,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-core_2.12:" + version
+    packages = "io.delta:delta-spark_2.12:" + version
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -211,7 +211,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-core_2.12:" + version,
+        "io.delta:delta-spark_2.12:" + version,
         "io.delta:delta-iceberg_2.12:" + version,
         "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
 
