@@ -42,7 +42,7 @@ Depending on the version of the connector you can use it with following Apache F
 |  0.4.x (Sink Only)  | 1.12.0 <= X <= 1.14.5 |
 |        0.5.0        | 1.13.0 <= X <= 1.13.6 |
 |        0.6.0        |      X >= 1.15.3      |
-|        2.5.0        |      X >= 1.16.1      |
+|        3.0.0        |      X >= 1.16.1      |
 
 ### APIs
 
@@ -312,7 +312,7 @@ public DataStream<RowData> createContinuousDeltaSourceUserColumns(
 ```
 
 ## SQL Support
-Starting from version 2.5.0 the Delta connector can be used for Flink SQL jobs.
+Starting from version 3.0.0 the Delta connector can be used for Flink SQL jobs.
 Both Delta Source and Delta Sink can be used as Flink Tables for SELECT and INSERT queries.
 
 Flink/Delta SQL connector **must** be used with Delta Catalog. Trying to execute SQL queries on Delta table
@@ -684,7 +684,7 @@ Please see the following build files for more details.
 <project>
     <properties>
         <scala.main.version>2.12</scala.main.version>
-        <delta-connectors-version>2.5.0</delta-connectors-version>
+        <delta-connectors-version>3.0.0</delta-connectors-version>
         <flink-version>1.16.1</flink-version>
         <hadoop-version>3.1.0</hadoop-version>
     </properties>
