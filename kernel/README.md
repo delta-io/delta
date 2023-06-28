@@ -46,7 +46,7 @@ The Delta Kernel project provides the following two Maven artifacts:
 # API Guarantees
 **Note: This project is currently in "preview" and all APIs are currently unstable. It is cuurrently meant for testing and providing feedback (see below) to the project authors.**
 
-The Java API docs are available [here](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html). Only the classes and interfaces documented here are considered as public APIs with backward compatibility guarantees (when marked as Stable APIs). All the classes and interfaces available in the JAR are considered as private APIs with no stability guarantees.   
+The Java API docs are available [here](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/index.html). Only the classes and interfaces documented here are considered as public APIs with backward compatibility guarantees (when marked as Stable APIs). All other classes and interfaces available in the JAR are considered as private APIs with no stability guarantees.   
 
 # Providing feedback
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
