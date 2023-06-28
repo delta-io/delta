@@ -1025,9 +1025,10 @@ def getPrevVersion(currentVersion: String): String = {
 
   val lastVersionInMajorVersion = Map(
     0 -> "0.8.0",
-    1 -> "1.2.1"
+    1 -> "1.2.1",
+    2 -> "2.4.0"
   )
-  if (minor == 0) {  // 1.0.0 or 2.0.0
+  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
     lastVersionInMajorVersion.getOrElse(major - 1, {
       throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
     })
