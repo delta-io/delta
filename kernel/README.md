@@ -1,6 +1,6 @@
 # Delta Kernel
 
-The Delta Kernel project is a set of Java libraries for building Delta connectors that can read  (and soon, write to) Delta tables without the need to understand the [Delta protocol details](https://github.com/delta-io/delta/blob/master/PROTOCOL.md).
+The Delta Kernel project is a set of Java libraries for building Delta connectors that can read (and soon, write to) Delta tables without the need to understand the [Delta protocol details](https://github.com/delta-io/delta/blob/master/PROTOCOL.md).
 
 You can use this library to do the following:
 - Read data from small Delta tables in a single thread in a single process.
