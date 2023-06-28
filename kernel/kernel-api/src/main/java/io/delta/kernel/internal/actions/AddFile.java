@@ -46,8 +46,11 @@ public class AddFile extends FileAction
         final long size = requireNonNull(row, 2, "size").getLong(2);
         final long modificationTime = requireNonNull(row, 3, "modificationTime").getLong(3);
         final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
+        final DeletionVectorDescriptor deletionVector =
+            DeletionVectorDescriptor.fromRow(row.getStruct(5));
 
-        return new AddFile(path, partitionValues, size, modificationTime, dataChange);
+        return new AddFile(
+            path, partitionValues, size, modificationTime, dataChange, deletionVector);
     }
 
     // TODO: there are more optional fields in `AddFile` according to the spec. We will be adding
@@ -59,23 +62,28 @@ public class AddFile extends FileAction
             false /* nullable*/)
         .add("size", LongType.INSTANCE, false /* nullable*/)
         .add("modificationTime", LongType.INSTANCE, false /* nullable*/)
-        .add("dataChange", BooleanType.INSTANCE, false /* nullable*/);
+        .add("dataChange", BooleanType.INSTANCE, false /* nullable*/)
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
 
     private final Map<String, String> partitionValues;
     private final long size;
     private final long modificationTime;
+    private final DeletionVectorDescriptor deletionVector;
 
     public AddFile(
         String path,
         Map<String, String> partitionValues,
         long size,
         long modificationTime,
-        boolean dataChange)
+        boolean dataChange,
+        DeletionVectorDescriptor deletionVector)
     {
+
         super(path, dataChange);
         this.partitionValues = partitionValues == null ? Collections.emptyMap() : partitionValues;
         this.size = size;
         this.modificationTime = modificationTime;
+        this.deletionVector = deletionVector;
     }
 
     @Override
@@ -89,7 +97,8 @@ public class AddFile extends FileAction
             this.partitionValues,
             this.size,
             this.modificationTime,
-            dataChange
+            dataChange,
+            this.deletionVector
         );
     }
 
@@ -105,19 +114,14 @@ public class AddFile extends FileAction
             this.partitionValues,
             this.size,
             this.modificationTime,
-            this.dataChange
+            this.dataChange,
+            this.deletionVector
         );
     }
 
     public Map<String, String> getPartitionValues()
     {
         return Collections.unmodifiableMap(partitionValues);
-    }
-
-    public Optional<String> getDeletionVectorUniqueId()
-    {
-        // TODO:
-        return Optional.empty();
     }
 
     public long getSize()
@@ -130,6 +134,23 @@ public class AddFile extends FileAction
         return modificationTime;
     }
 
+    public DeletionVectorDescriptor getDeletionVector() {return deletionVector;}
+
+    public Optional<String> getDeletionVectorUniqueId()
+    {
+        return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
+    }
+
+    public Row getDeletionVectorAsRow()
+    {
+        if (deletionVector == null) {
+            return null;
+        }
+        else {
+            return deletionVector.toRow();
+        }
+    }
+
     @Override
     public String toString()
     {
@@ -139,6 +160,7 @@ public class AddFile extends FileAction
             ", size=" + size +
             ", modificationTime=" + modificationTime +
             ", dataChange=" + dataChange +
+            ", deletionVector=" + deletionVector +
             '}';
     }
 }

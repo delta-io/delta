@@ -513,6 +513,7 @@ class ParquetConverters
         {
             ColumnVector vector = new DefaultBinaryVector(dataType, batchSize, values);
             // re-initialize the working space
+            this.nullability = initNullabilityVector(nullability.length);
             this.values = new byte[values.length][];
             this.currentRowIndex = 0;
             return vector;

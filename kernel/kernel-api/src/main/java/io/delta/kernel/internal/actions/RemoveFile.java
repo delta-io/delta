@@ -43,13 +43,16 @@ public class RemoveFile extends FileAction
         final Map<String, String> partitionValues = row.getMap(2);
         final long size = row.getLong(3);
         final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
+        final DeletionVectorDescriptor deletionVector =
+                DeletionVectorDescriptor.fromRow(row.getStruct(5));
 
         return new RemoveFile(
             path,
             deletionTimestamp,
             partitionValues,
             size,
-            dataChange
+            dataChange,
+            deletionVector
         );
     }
 
@@ -60,30 +63,28 @@ public class RemoveFile extends FileAction
         .add("deletionTimestamp", LongType.INSTANCE)
         .add("partitionValues", new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
         .add("size", LongType.INSTANCE)
-        .add("dataChange", BooleanType.INSTANCE, false /* nullable */);
+        .add("dataChange", BooleanType.INSTANCE, false /* nullable */)
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
 
     private final long deletionTimestamp;
     private final Map<String, String> partitionValues;
     private final long size;
+    private final DeletionVectorDescriptor deletionVector;
 
     public RemoveFile(
         String path,
         long deletionTimestamp,
         Map<String, String> partitionValues,
         long size,
-        boolean dataChange)
+        boolean dataChange,
+        DeletionVectorDescriptor deletionVector)
     {
         super(path, dataChange);
 
         this.deletionTimestamp = deletionTimestamp;
         this.partitionValues = partitionValues;
         this.size = size;
-    }
-
-    public Optional<String> getDeletionVectorUniqueId()
-    {
-        // TODO: fill in when we add the DV support
-        return null;
+        this.deletionVector = deletionVector;
     }
 
     @Override
@@ -97,8 +98,13 @@ public class RemoveFile extends FileAction
             this.deletionTimestamp,
             this.partitionValues,
             this.size,
-            dataChange
+            dataChange,
+            this.deletionVector
         );
+    }
+
+    public Optional<String> getDeletionVectorUniqueId() {
+        return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
     public RemoveFile withAbsolutePath(Path dataPath)
@@ -113,7 +119,8 @@ public class RemoveFile extends FileAction
             this.deletionTimestamp,
             this.partitionValues,
             this.size,
-            this.dataChange
+            this.dataChange,
+            this.deletionVector
         );
     }
 }

@@ -83,6 +83,26 @@ public class DefaultColumnarBatch
     }
 
     @Override
+    public ColumnarBatch withDeletedColumnAt(int ordinal)
+    {
+        if (ordinal < 0 || ordinal > columnVectors.size()) {
+            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
+        }
+
+        // Update the schema
+        ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
+        newStructFields.remove(ordinal);
+        StructType newSchema = new StructType(newStructFields);
+
+        // Update the vectors
+        ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
+        newColumnVectors.remove(ordinal);
+
+        return new DefaultColumnarBatch(
+            size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+    }
+
+    @Override
     public ColumnarBatch withNewSchema(StructType newSchema)
     {
         if (!schema.equivalent(newSchema)) {

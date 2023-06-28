@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import static java.util.Objects.requireNonNull;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import io.delta.kernel.data.ColumnarBatch;
 
@@ -41,7 +42,7 @@ public class AddFileColumnarBatch
         ordinalToAccessor.put(2, (a) -> a.getSize());
         ordinalToAccessor.put(3, (a) -> a.getModificationTime());
         ordinalToAccessor.put(4, (a) -> a.isDataChange());
-        ordinalToAccessor.put(5, (a) -> a.getDeletionVectorUniqueId().orElse(null));
+        ordinalToAccessor.put(5, (a) -> a.getDeletionVectorAsRow());
 
         ordinalToColName.put(0, "path");
         ordinalToColName.put(1, "partitionValues");
@@ -49,6 +50,16 @@ public class AddFileColumnarBatch
         ordinalToColName.put(3, "modificationTime");
         ordinalToColName.put(4, "dataChange");
         ordinalToColName.put(5, "deletionVector");
+    }
+
+    // TODO move this somewhere else? Scan File Row?
+    private static final Map<String, Integer> colNameToOrdinal = ordinalToColName
+            .entrySet()
+            .stream()
+            .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+
+    public static int getDeletionVectorColOrdinal() {
+        return colNameToOrdinal.get("deletionVector");
     }
 
     public AddFileColumnarBatch(List<AddFile> addFiles)
