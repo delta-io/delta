@@ -1769,7 +1769,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         //  using the old physical schema, we cannot read them back correctly. This is a corner case
         //  with schema overwrite + CDC, although technically CDC should not worry about overwrite
         //  because that means the downstream table needs to be truncated after applying CDC.
-        (if (isCdcTest) (-1 until 5).map(_.toString).map(_ => (null, null)) else Nil) ++
+        // Note that since we support reuse physical name across overwrite, the value of partition
+        // can still be read.
+        (if (isCdcTest) (-1 until 5).map(_.toString).map(i => (null, i)) else Nil) ++
         (5 until 10).map(_.toString).map(i => (i, i)): _*),
       ExpectSchemaEvolutionException
     )

@@ -26,11 +26,12 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
@@ -95,7 +96,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       oldProtocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      isCreatingNewTable: Boolean): Metadata = {
+      isCreatingNewTable: Boolean,
+      isOverwriteSchema: Boolean): Metadata = {
     // field in new metadata should have been dropped
     val oldMappingMode = oldMetadata.columnMappingMode
     val newMappingMode = newMetadata.columnMappingMode
@@ -134,7 +136,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       }
     }
 
-    val updatedMetadata = tryFixMetadata(oldMetadata, newMetadata, isChangingModeOnExistingTable)
+    val updatedMetadata = updateColumnMappingMetadata(
+      oldMetadata, newMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 
     // record column mapping table creation/upgrade
     if (newMappingMode != NoMapping) {
@@ -239,14 +242,16 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
-  def tryFixMetadata(
+  private def updateColumnMappingMetadata(
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      isChangingModeOnExistingTable: Boolean): Metadata = {
+      isChangingModeOnExistingTable: Boolean,
+      isOverwritingSchema: Boolean): Metadata = {
     val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
     newMappingMode match {
       case IdMapping | NameMapping =>
-        assignColumnIdAndPhysicalName(newMetadata, oldMetadata, isChangingModeOnExistingTable)
+        assignColumnIdAndPhysicalName(
+          newMetadata, oldMetadata, isChangingModeOnExistingTable, isOverwritingSchema)
       case NoMapping =>
         newMetadata
       case mode =>
@@ -330,25 +335,52 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def assignColumnIdAndPhysicalName(
       newMetadata: Metadata,
       oldMetadata: Metadata,
-      isChangingModeOnExistingTable: Boolean): Metadata = {
+      isChangingModeOnExistingTable: Boolean,
+      isOverwritingSchema: Boolean): Metadata = {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
                 findMaxColumnId(rawSchema)
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
-        val builder = new MetadataBuilder()
-          .withMetadata(field.metadata)
+        val builder = new MetadataBuilder().withMetadata(field.metadata)
+
+        lazy val fullName = path :+ field.name
+        lazy val existingFieldOpt =
+          SchemaUtils.findNestedFieldIgnoreCase(
+            oldMetadata.schema, fullName, includeCollections = true)
+        lazy val canReuseColumnMappingMetadataDuringOverwrite = {
+          val canReuse =
+            isOverwritingSchema &&
+              SparkSession.getActiveSession.exists(
+                _.conf.get(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE)) &&
+              existingFieldOpt.exists { existingField =>
+                // Ensure data type & nullability are compatible
+                DataType.equalsIgnoreCompatibleNullability(
+                  from = existingField.dataType,
+                  to = field.dataType
+                )
+              }
+          if (canReuse) {
+            require(!isChangingModeOnExistingTable,
+              "Cannot change column mapping mode while overwriting the table")
+            assert(hasColumnId(existingFieldOpt.get) && hasPhysicalName(existingFieldOpt.get))
+          }
+          canReuse
+        }
+
         if (!hasColumnId(field)) {
-          maxId += 1
-          builder.putLong(COLUMN_MAPPING_METADATA_ID_KEY, maxId)
+          val columnId = if (canReuseColumnMappingMetadataDuringOverwrite) {
+            getColumnId(existingFieldOpt.get)
+          } else {
+            maxId += 1
+            maxId
+          }
+
+          builder.putLong(COLUMN_MAPPING_METADATA_ID_KEY, columnId)
         }
         if (!hasPhysicalName(field)) {
           val physicalName = if (isChangingModeOnExistingTable) {
-            val fullName = path :+ field.name
-            val existingField =
-              SchemaUtils.findNestedFieldIgnoreCase(
-                oldMetadata.schema, fullName, includeCollections = true)
-            if (existingField.isEmpty) {
+            if (existingFieldOpt.isEmpty) {
               if (oldMetadata.schema.isEmpty) {
                 // We should relax the check for tables that have both an empty schema
                 // and no data. Assumption: no schema => no data
@@ -361,8 +393,11 @@ trait DeltaColumnMappingBase extends DeltaLogging {
               // existing Parquet files, and 2) display names in no-mapping mode have all the
               // properties required for physical names: unique, stable and compliant with Parquet
               // column naming restrictions.
-              existingField.get.name
+              existingFieldOpt.get.name
             }
+          } else if (canReuseColumnMappingMetadataDuringOverwrite) {
+            // Copy the physical name metadata over from the existing field if possible
+            getPhysicalName(existingFieldOpt.get)
           } else {
             generatePhysicalName
           }
@@ -567,7 +602,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       // easily capture any difference in the schema using the same is{Drop,Rename}ColumnOperation
       // utils.
       var upgradedMetadata = assignColumnIdAndPhysicalName(
-        oldMetadata, oldMetadata, isChangingModeOnExistingTable = true
+        oldMetadata, oldMetadata, isChangingModeOnExistingTable = true, isOverwritingSchema = false
       )
       // need to change to a column mapping mode too so the utils below can recognize
       upgradedMetadata = upgradedMetadata.copy(
