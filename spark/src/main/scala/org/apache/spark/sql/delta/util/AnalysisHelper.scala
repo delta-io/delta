@@ -27,37 +27,18 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 trait AnalysisHelper {
   import AnalysisHelper._
 
+  // Keeping the following two methods for backward compatibility with previous Delta versions.
   protected def tryResolveReferences(
       sparkSession: SparkSession)(
       expr: Expression,
-      planContainingExpr: LogicalPlan): Expression = {
-    val newPlan = FakeLogicalPlan(Seq(expr), planContainingExpr.children)
-    sparkSession.sessionState.analyzer.execute(newPlan) match {
-      case FakeLogicalPlan(resolvedExpr, _) =>
-        // Return even if it did not successfully resolve
-        resolvedExpr.head
-      case _ =>
-        // This is unexpected
-        throw DeltaErrors.analysisException(
-          s"Could not resolve expression $expr", plan = Option(planContainingExpr))
-    }
-  }
+      planContainingExpr: LogicalPlan): Expression =
+  tryResolveReferencesForExpressions(sparkSession)(Seq(expr), planContainingExpr.children).head
 
   protected def tryResolveReferencesForExpressions(
       sparkSession: SparkSession,
       exprs: Seq[Expression],
-      planContainingExpr: LogicalPlan): Seq[Expression] = {
-    val newPlan = FakeLogicalPlan(exprs, planContainingExpr.children)
-    sparkSession.sessionState.analyzer.execute(newPlan) match {
-      case FakeLogicalPlan(resolvedExprs, _) =>
-        // Return even if it did not successfully resolve
-        resolvedExprs
-      case _ =>
-        // This is unexpected
-        throw DeltaErrors.analysisException(
-          s"Could not resolve expression $exprs", plan = Option(planContainingExpr))
-    }
-  }
+      planContainingExpr: LogicalPlan): Seq[Expression] =
+  tryResolveReferencesForExpressions(sparkSession)(exprs, planContainingExpr.children)
 
   /**
    * Resolve expressions using the attributes provided by `planProvidingAttrs`. Throw an error if
@@ -67,20 +48,33 @@ trait AnalysisHelper {
       sparkSession: SparkSession,
       exprs: Seq[Expression],
       planProvidingAttrs: LogicalPlan): Seq[Expression] = {
-    val newPlan = FakeLogicalPlan(exprs, Seq(planProvidingAttrs))
+    val resolvedExprs =
+      tryResolveReferencesForExpressions(sparkSession)(exprs, Seq(planProvidingAttrs))
+    resolvedExprs.foreach { expr =>
+      if (!expr.resolved) {
+        throw new AnalysisException(
+          s"cannot resolve ${expr.sql} given $planProvidingAttrs")
+      }
+    }
+    resolvedExprs
+  }
+
+  /**
+   * Resolve expressions using the attributes provided by `planProvidingAttrs`, ignoring errors.
+   */
+  protected def tryResolveReferencesForExpressions(
+      sparkSession: SparkSession)(
+      exprs: Seq[Expression],
+      plansProvidingAttrs: Seq[LogicalPlan]): Seq[Expression] = {
+    val newPlan = FakeLogicalPlan(exprs, plansProvidingAttrs)
     sparkSession.sessionState.analyzer.execute(newPlan) match {
       case FakeLogicalPlan(resolvedExprs, _) =>
-        resolvedExprs.foreach { expr =>
-          if (!expr.resolved) {
-            throw new AnalysisException(
-              s"cannot resolve ${expr.sql} given $planProvidingAttrs")
-          }
-        }
+        // Return even if it did not successfully resolve
         resolvedExprs
       case _ =>
         // This is unexpected
-        throw new AnalysisException(
-          s"Could not resolve expressions $exprs", plan = Option(planProvidingAttrs))
+        throw DeltaErrors.analysisException(
+          s"Could not resolve expression $exprs", plan = Some(newPlan))
     }
   }
 
