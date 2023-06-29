@@ -131,7 +131,9 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   ArrayType(toEt, containsNull = true)
                 )
             }
-          case NestedMapConversion(from: MapType, to: MapType) =>
+          case NestedMapConversion(from: MapType, to: MapType) if !Cast.canCast(from, to) =>
+            // Manually convert map values if the types are not compatible to allow schema
+            // evolution. This is slower than direct cast so we only do it when required.
             if (!from.keyType.sameType(to.keyType)) {
               throw DeltaErrors.unsupportedMapKeyTypeChange(
                 mapType = from,
