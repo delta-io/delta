@@ -13,11 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.types;
 
-public class LongType extends DataType {
+/**
+ * The data type representing {@code long} type values.
+ */
+public class LongType extends BasePrimitiveType
+{
     public static final LongType INSTANCE = new LongType();
 
-    private LongType() { }
+    private LongType()
+    {
+        super("long");
+    }
 }

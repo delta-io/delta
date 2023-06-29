@@ -140,7 +140,7 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def getLogSegmentForVersion(
       versionToLoad: Option[Long] = None,
-      oldCheckpointProviderOpt: Option[CheckpointProvider] = None,
+      oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider] = None,
       lastCheckpointInfo: Option[LastCheckpointInfo] = None): Option[LogSegment] = {
     // List based on the last known checkpoint version.
     // if that is -1, list from version 0L
@@ -161,7 +161,7 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def getCheckpointVersion(
       lastCheckpointInfoOpt: Option[LastCheckpointInfo],
-      oldCheckpointProviderOpt: Option[CheckpointProvider]): Long = {
+      oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider]): Long = {
     lastCheckpointInfoOpt.map(_.version)
       .orElse(oldCheckpointProviderOpt.map(_.version))
       .getOrElse(-1)
@@ -208,7 +208,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       versionToLoad: Option[Long],
       files: Option[Array[FileStatus]],
-      oldCheckpointProviderOpt: Option[CheckpointProvider],
+      oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCheckpointInfo: Option[LastCheckpointInfo]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
       val lastCheckpointVersion = getCheckpointVersion(lastCheckpointInfo, oldCheckpointProviderOpt)
@@ -459,7 +459,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /** Used to compute the LogSegment after a commit */
   protected[delta] def getLogSegmentAfterCommit(
-      oldCheckpointProvider: CheckpointProvider): LogSegment = {
+      oldCheckpointProvider: UninitializedCheckpointProvider): LogSegment = {
     /**
      * We can't specify `versionToLoad = committedVersion` for the call below.
      * If there are a lot of concurrent commits to the table on the same cluster, each
@@ -643,7 +643,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val updateTimestamp = clock.getTimeMillis()
       val previousSnapshot = currentSnapshot.snapshot
       val segmentOpt = getLogSegmentForVersion(
-        oldCheckpointProviderOpt = Some(previousSnapshot.logSegment.checkpointProvider))
+        oldCheckpointProviderOpt = Some(previousSnapshot.checkpointProvider))
       installLogSegmentInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
     }
 
@@ -730,7 +730,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
       val segment = getLogSegmentAfterCommit(
-        previousSnapshot.getCheckpointProvider)
+        previousSnapshot.checkpointProvider)
 
       // This likely implies a list-after-write inconsistency
       if (segment.version < committedVersion) {
@@ -911,7 +911,7 @@ case class LogSegment(
     logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
-    checkpointProvider: CheckpointProvider,
+    checkpointProvider: UninitializedCheckpointProvider,
     lastCommitTimestamp: Long) {
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
@@ -936,7 +936,7 @@ object LogSegment {
       logPath: Path,
       version: Long,
       deltas: Seq[FileStatus],
-      checkpointProviderOpt: Option[CheckpointProvider],
+      checkpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCommitTimestamp: Long): LogSegment = {
     val checkpointProvider = checkpointProviderOpt.getOrElse(EmptyCheckpointProvider)
     LogSegment(logPath, version, deltas, checkpointProvider, lastCommitTimestamp)

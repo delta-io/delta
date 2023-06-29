@@ -24,7 +24,8 @@ import io.delta.kernel.types.StructType;
 /**
  * Represent a single record
  */
-public interface Row {
+public interface Row
+{
 
     /**
      * @return Schema of the record.
@@ -44,6 +45,18 @@ public interface Row {
     boolean getBoolean(int ordinal);
 
     /**
+     * Return byte value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of boolean type,
+     */
+    byte getByte(int ordinal);
+
+    /**
+     * Return short value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of boolean type,
+     */
+    short getShort(int ordinal);
+
+    /**
      * Return integer value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of integer type,
      */
@@ -56,22 +69,40 @@ public interface Row {
     long getLong(int ordinal);
 
     /**
+     * Return float value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of long type,
+     */
+    float getFloat(int ordinal);
+
+    /**
+     * Return double value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of long type,
+     */
+    double getDouble(int ordinal);
+
+    /**
      * Return string value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of varchar type,
      */
     String getString(int ordinal);
 
     /**
+     * Return binary value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of varchar type,
+     */
+    byte[] getBinary(int ordinal);
+
+    /**
      * Return struct value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of struct type,
      */
-    Row getRecord(int ordinal);
+    Row getStruct(int ordinal);
 
     /**
      * Return array value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of array type,
      */
-    <T> List<T> getList(int ordinal);
+    <T> List<T> getArray(int ordinal);
 
     /**
      * Return map value of the column located at the given ordinal.

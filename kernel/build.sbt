@@ -46,7 +46,14 @@ lazy val kernelApi = (project in file("kernel-api"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq(),
+    libraryDependencies ++= Seq(
+      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
+
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "junit" % "junit" % "4.11" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
+    ),
     Compile / doc / javacOptions := Seq(
       "-public",
       "-windowtitle", "Delta Kernel API " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
@@ -54,6 +61,11 @@ lazy val kernelApi = (project in file("kernel-api"))
       "-Xdoclint:all"
       // TODO: exclude internal packages
     ),
+    Compile / doc / sources := {
+      (Compile / doc / sources).value
+        // exclude internal classes
+        .filterNot(_.getCanonicalPath.contains("/internal/"))
+    },
     // Ensure doc is run with tests. Must be cleaned before test for docs to be generated
     (Test / test) := ((Test / test) dependsOn (Compile / doc)).value
   )
@@ -72,17 +84,13 @@ lazy val kernelDefault = (project in file("kernel-default"))
     scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion, // Configuration, Path
+      "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion, // Configuration, Path
       "io.delta" % "delta-storage" % deltaStorageVersion, // LogStore
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5", // ObjectMapper
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "io.delta" %% "delta-core" % deltaSparkVersion % "test",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test", // SparkSession
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     )

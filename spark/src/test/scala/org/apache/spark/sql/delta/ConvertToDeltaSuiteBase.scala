@@ -1153,7 +1153,7 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
   }
 
   testQuietly("convert a parquet table using table name") {
-    val tableName = "pqtable"
+    val tableName = "pqtable2"
     withTable(tableName) {
       // Create a parquet table
       simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)

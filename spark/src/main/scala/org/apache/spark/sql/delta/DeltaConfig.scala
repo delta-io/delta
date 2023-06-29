@@ -81,6 +81,17 @@ case class DeltaConfig[T](
  */
 trait DeltaConfigsBase extends DeltaLogging {
   /**
+   * The prefix for a category of special configs for delta universal format to support the
+   * user facing config naming convention for different table formats:
+   * "delta.universalFormat.config.[iceberg/hudi].[config_name]"
+   * Note that config_name can be arbitrary.
+   */
+  final val DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX = "delta.universalformat.config."
+
+  final val DELTA_UNIVERSAL_FORMAT_ICEBERG_CONFIG_PREFIX =
+    s"${DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX}iceberg."
+
+  /**
    * A global default value set as a SQLConf will overwrite the default value of a DeltaConfig.
    * For example, user can run:
    *   set spark.databricks.delta.properties.defaults.randomPrefixLength = 5
@@ -599,6 +610,31 @@ trait DeltaConfigsBase extends DeltaLogging {
     fromString = _.toBoolean,
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
+
+  /**
+   * Convert the table's metadata into other storage formats after each Delta commit.
+   * Only Iceberg is supported for now
+   */
+  val UNIVERSAL_FORMAT_ENABLED_FORMATS = buildConfig[Seq[String]](
+    "universalFormat.enabledFormats",
+    "",
+    fromString = str =>
+      if (str == null || str.isEmpty) Nil
+      else str.split(","),
+    validationFunction = seq =>
+      if (seq.distinct.length != seq.length) false
+      else seq.toSet.subsetOf(UniversalFormat.SUPPORTED_FORMATS),
+    s"Must be a comma-separated list of formats from the list: " +
+    s"${UniversalFormat.SUPPORTED_FORMATS.mkString("{", ",", "}")}."
+  )
+
+  val ICEBERG_COMPAT_V1_ENABLED = buildConfig[Option[Boolean]](
+    "enableIcebergCompatV1",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
 }
 
 object DeltaConfigs extends DeltaConfigsBase

@@ -80,6 +80,52 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
   }
 
   /**
+   * Helper to compute all valid files based on basePath and Snapshot provided.
+   */
+  private def getValidFilesFromSnapshot(
+      spark: SparkSession,
+      basePath: String,
+      snapshot: Snapshot,
+      retentionMillis: Option[Long],
+      hadoopConf: Broadcast[SerializableConfiguration],
+      clock: Clock,
+      checkAbsolutePathOnly: Boolean): DataFrame = {
+    import org.apache.spark.sql.delta.implicits._
+    require(snapshot.version >= 0, "No state defined for this table. Is this really " +
+      "a Delta table? Refusing to garbage collect.")
+
+    val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
+    checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
+    val deleteBeforeTimestamp = retentionMillis match {
+      case Some(millis) => clock.getTimeMillis() - millis
+      case _ => snapshot.minFileRetentionTimestamp
+    }
+    val relativizeIgnoreError =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+
+    snapshot.stateDS.mapPartitions { actions =>
+      val reservoirBase = new Path(basePath)
+      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+      actions.flatMap {
+        _.unwrap match {
+          case fa: FileAction if checkAbsolutePathOnly && !fa.path.contains(basePath) =>
+            Nil
+          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
+            Nil
+          case fa: FileAction =>
+            getValidRelativePathsAndSubdirs(
+              fa,
+              fs,
+              reservoirBase,
+              relativizeIgnoreError
+            )
+          case _ => Nil
+        }
+      }
+    }.toDF("path")
+  }
+
+  /**
    * Clears all untracked files and folders within this table. First lists all the files and
    * directories in the table, and gets the relative paths with respect to the base of the
    * table. Then it gets the list of all tracked files for this table, which may or may not
@@ -110,50 +156,33 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       import org.apache.spark.sql.delta.implicits._
 
       val snapshot = deltaLog.update()
-
-      require(snapshot.version >= 0, "No state defined for this table. Is this really " +
-        "a Delta table? Refusing to garbage collect.")
-
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
-      checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
-
-      val deleteBeforeTimestamp = retentionMillis.map { millis =>
-        clock.getTimeMillis() - millis
-      }.getOrElse(snapshot.minFileRetentionTimestamp)
+      val deleteBeforeTimestamp = retentionMillis match {
+        case Some(millis) => clock.getTimeMillis() - millis
+        case _ => snapshot.minFileRetentionTimestamp
+      }
       logInfo(s"Starting garbage collection (dryRun = $dryRun) of untracked files older than " +
         s"${new Date(deleteBeforeTimestamp).toGMTString} in $path")
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(deltaHadoopConf))
       val basePath = fs.makeQualified(path).toString
-      var isBloomFiltered = false
       val parallelDeleteEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
       val parallelDeletePartitions =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
-      val relativizeIgnoreError =
-        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
-      val validFiles = snapshot.stateDS
-        .mapPartitions { actions =>
-          val reservoirBase = new Path(basePath)
-          val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-          actions.flatMap {
-            _.unwrap match {
-              case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-                Nil
-              case fa: FileAction =>
-                getValidRelativePathsAndSubdirs(
-                  fa,
-                  fs,
-                  reservoirBase,
-                  relativizeIgnoreError,
-                  isBloomFiltered)
-              case _ => Nil
-            }
-          }
-        }.toDF("path")
+
+      val validFiles =
+        getValidFilesFromSnapshot(
+          spark,
+          basePath,
+          snapshot,
+          retentionMillis,
+          hadoopConf,
+          clock,
+          checkAbsolutePathOnly = false)
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -493,8 +522,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       action: FileAction,
       fs: FileSystem,
       basePath: Path,
-      relativizeIgnoreError: Boolean,
-      isBloomFiltered: Boolean): Seq[String] = {
+      relativizeIgnoreError: Boolean
+  ): Seq[String] = {
     val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
       .map {
         relativePath =>

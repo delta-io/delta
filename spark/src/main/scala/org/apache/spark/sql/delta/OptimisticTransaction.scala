@@ -27,11 +27,12 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -313,6 +314,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
+  registerPostCommitHook(IcebergConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
@@ -344,7 +346,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
-  private[delta] var preCommitLogSegment: LogSegment = snapshot.logSegment
+  private[delta] var preCommitLogSegment: LogSegment =
+    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -1102,6 +1105,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
+      val tags = Map.empty[String, String]
       val commitInfo = CommitInfo(
         time = clock.getTimeMillis(),
         operation = op.name,
@@ -1112,7 +1116,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = getUserMetadata(op),
-        tags = None,
+        tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       val extraActions = Seq(commitInfo, metadata)
@@ -1123,6 +1127,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var numRemoveFiles: Int = 0
       var numSetTransaction: Int = 0
       var bytesNew: Long = 0L
+      var numOfDomainMetadatas: Long = 0L
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
@@ -1144,6 +1149,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             assertMetadata(m)
           case p: Protocol =>
             recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+          case d: DomainMetadata =>
+            numOfDomainMetadatas += 1
           case _ =>
         }
         action
@@ -1202,6 +1209,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
+        numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
@@ -1312,6 +1320,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
     // Protocol change (stored in newProtocol)
 
+    val (protocolUpdate1, metadataUpdate1) =
+      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+        // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
+        prevProtocol = snapshot.protocol,
+        prevMetadata = snapshot.metadata,
+        newestProtocol = protocol, // Note: this will try to use `newProtocol`
+        newestMetadata = metadata, // Note: this will try to use `newMetadata`
+        isCreatingNewTable
+      )
+    newProtocol = protocolUpdate1.orElse(newProtocol)
+    newMetadata = metadataUpdate1.orElse(newMetadata)
+
+    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
+      prevProtocol = snapshot.protocol,
+      prevMetadata = snapshot.metadata,
+      newestProtocol = protocol, // Note: this will try to use `newProtocol`
+      newestMetadata = metadata, // Note: this will try to use `newMetadata`
+      isCreatingNewTable,
+      otherActions
+    )
+    newProtocol = protocolUpdate2.orElse(newProtocol)
+    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -1407,20 +1437,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       preparedActions: Seq[Action], op: DeltaOperations.Operation): Boolean = {
 
     var dataChanged = false
-    var hasNonFileActions = false
+    var hasIncompatibleActions = false
     preparedActions.foreach {
       case f: FileAction =>
         if (f.dataChange) {
           dataChanged = true
         }
+      // Row tracking is able to resolve write conflicts regardless of isolation level.
+      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) =>
+        // Do nothing
       case _ =>
-        hasNonFileActions = true
+        hasIncompatibleActions = true
     }
     val noDataChanged = !dataChanged
 
-    if (hasNonFileActions) {
-      // if Non-file-actions are present (e.g. METADATA etc.), then don't downgrade the isolation
-      // level to SnapshotIsolation.
+    if (hasIncompatibleActions) {
+      // if incompatible actions are present (e.g. METADATA etc.), then don't downgrade the
+      // isolation level to SnapshotIsolation.
       return false
     }
 
@@ -1796,6 +1829,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         hook.handleError(e, version)
     }
   }
+
+  private[delta] def unregisterPostCommitHooksWhere(predicate: PostCommitHook => Boolean): Unit =
+    postCommitHooks --= postCommitHooks.filter(predicate)
 
   protected lazy val logPrefix: String = {
     def truncate(uuid: String): String = uuid.split("-").head

@@ -82,6 +82,7 @@ class DeltaLog private(
   with LogStoreProvider
   with SnapshotManagement
   with DeltaFileFormat
+  with ProvidesUniFormConverters
   with ReadChecksum {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
@@ -169,21 +170,7 @@ class DeltaLog private(
   def indexToRelation(
       index: DeltaLogFileIndex,
       schema: StructType = Action.logSchema): LogicalRelation = {
-    val formatSpecificOptions: Map[String, String] = index.format match {
-      case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
-        DeltaLog.jsonCommitParseOption
-      case _ => Map.empty
-    }
-    // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
-    // entire table unusable. Hard-wire that into the file source options so the user can't override
-    // it by setting spark.sql.files.ignoreCorruptFiles or spark.sql.files.ignoreMissingFiles.
-    val allOptions = options ++ formatSpecificOptions ++ Map(
-      FileSourceOptions.IGNORE_CORRUPT_FILES -> "false",
-      FileSourceOptions.IGNORE_MISSING_FILES -> "false"
-    )
-    val fsRelation = HadoopFsRelation(
-      index, index.partitionSchema, schema, None, index.format, allOptions)(spark)
-    LogicalRelation(fsRelation)
+    DeltaLog.indexToRelation(spark, index, options, schema)
   }
 
   /**
@@ -600,8 +587,9 @@ object DeltaLog extends DeltaLogging {
   /** The name of the subdirectory that holds Delta metadata files */
   private val LOG_DIR_NAME = "_delta_log"
 
-  private[delta] def logPathFor(dataPath: String): Path = new Path(dataPath, LOG_DIR_NAME)
-  private[delta] def logPathFor(dataPath: Path): Path = new Path(dataPath, LOG_DIR_NAME)
+  private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
+  private[delta] def logPathFor(dataPath: Path): Path =
+    DeltaTableUtils.safeConcatPaths(dataPath, LOG_DIR_NAME)
   private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
 
   /**
@@ -625,6 +613,32 @@ object DeltaLog extends DeltaLogging {
     builder.build[DeltaLogCacheKey, DeltaLog]()
   }
 
+
+  /**
+   * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source
+   * options taken from the Delta Log. All reads of Delta metadata files should use this method.
+   */
+  def indexToRelation(
+      spark: SparkSession,
+      index: DeltaLogFileIndex,
+      additionalOptions: Map[String, String],
+      schema: StructType = Action.logSchema): LogicalRelation = {
+    val formatSpecificOptions: Map[String, String] = index.format match {
+      case DeltaLogFileIndex.COMMIT_FILE_FORMAT =>
+        jsonCommitParseOption
+      case _ => Map.empty
+    }
+    // Delta should NEVER ignore missing or corrupt metadata files, because doing so can render the
+    // entire table unusable. Hard-wire that into the file source options so the user can't override
+    // it by setting spark.sql.files.ignoreCorruptFiles or spark.sql.files.ignoreMissingFiles.
+    val allOptions = additionalOptions ++ formatSpecificOptions ++ Map(
+      FileSourceOptions.IGNORE_CORRUPT_FILES -> "false",
+      FileSourceOptions.IGNORE_MISSING_FILES -> "false"
+    )
+    val fsRelation = HadoopFsRelation(
+      index, index.partitionSchema, schema, None, index.format, allOptions)(spark)
+    LogicalRelation(fsRelation)
+  }
 
   // Don't tolerate malformed JSON when parsing Delta log actions (default is PERMISSIVE)
   val jsonCommitParseOption = Map("mode" -> FailFastMode.name)

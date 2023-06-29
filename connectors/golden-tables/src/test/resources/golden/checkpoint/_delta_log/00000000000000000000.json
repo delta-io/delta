@@ -1,0 +1,4 @@
+{"commitInfo":{"timestamp":1603723953523,"operation":"Manual Update","operationParameters":{},"isBlindAppend":true}}
+{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
+{"metaData":{"id":"51f5f7e5-098d-4035-a2bc-85a31092c36b","format":{"provider":"parquet","options":{}},"partitionColumns":[],"configuration":{},"createdTime":1603723953510}}
+{"add":{"path":"1","partitionValues":{},"size":1,"modificationTime":1,"dataChange":true}}

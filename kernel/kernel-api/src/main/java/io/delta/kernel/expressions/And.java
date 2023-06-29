@@ -48,8 +48,8 @@ public final class And extends BinaryOperator implements Predicate {
             throw new IllegalArgumentException(
                 String.format(
                     "'And' requires expressions of type boolean. Got %s and %s.",
-                    left.dataType().typeName(),
-                    right.dataType().typeName()
+                    left.dataType(),
+                    right.dataType()
                 )
             );
         }

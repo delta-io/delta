@@ -17,8 +17,11 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.collection.JavaConverters._
+import scala.collection.concurrent
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
@@ -26,7 +29,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
+import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -120,14 +123,14 @@ trait DeltaTestUtilsBase {
   }
 
   def countSparkJobs(sc: SparkContext, f: => Unit): Int = {
-    val jobCount = new AtomicInteger(0)
+    val jobs: concurrent.Map[Int, Long] = new ConcurrentHashMap[Int, Long]().asScala
     val listener = new SparkListener {
-
       override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
-        // Spark will always log a job start/end event even when the job does not launch any task.
-        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
-          jobCount.incrementAndGet()
-        }
+        jobs.put(jobStart.jobId, jobStart.stageInfos.map(_.numTasks).sum)
+      }
+      override def onJobEnd(jobEnd: SparkListenerJobEnd): Unit = jobEnd.jobResult match {
+        case JobFailed(_) => jobs.remove(jobEnd.jobId)
+        case _ => // On success, do nothing.
       }
     }
     sc.addSparkListener(listener)
@@ -138,7 +141,8 @@ trait DeltaTestUtilsBase {
     } finally {
       sc.removeSparkListener(listener)
     }
-    jobCount.get()
+    // Spark will always log a job start/end event even when the job does not launch any task.
+    jobs.values.count(_ > 0)
   }
 
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
@@ -286,17 +290,6 @@ trait DeltaTestUtilsForTempViews
   extends SharedSparkSession
 {
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
-    Seq(true, false).foreach { isSQLTempView =>
-      val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
-      test(s"$testName - $tempViewUsed") {
-        withTempView("v") {
-          testFun(isSQLTempView)
-        }
-      }
-    }
-  }
-
-  def testOssOnlyWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
     Seq(true, false).foreach { isSQLTempView =>
       val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
       test(s"$testName - $tempViewUsed") {

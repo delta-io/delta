@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId, Serializable, SnapshotIsolation, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.RowId.RowIdHighWaterMark
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
+import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -228,10 +229,37 @@ class RowIdSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir)
 
         val exception = intercept[IllegalStateException] {
-          log.startTransaction().commit(Seq(RowIdHighWaterMark(highWaterMark = 9001)), ManualUpdate)
+          log.startTransaction().commit(
+            Seq(RowTrackingMetadataDomain(rowIdHighWaterMark = 9001).toDomainMetadata),
+            ManualUpdate)
         }
         assert(exception.getMessage.contains(
           "Manually setting the Row ID high water mark is not allowed"))
+      }
+    }
+  }
+
+  for (prevIsolationLevel <- Seq(
+    Serializable))
+  test(s"Maintenance operations can downgrade to snapshot isolation, " +
+    s"previousIsolationLevel = $prevIsolationLevel") {
+    withTable("table") {
+      withSQLConf(
+        DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "true",
+        DeltaConfigs.ISOLATION_LEVEL.defaultTablePropertyKey -> prevIsolationLevel.toString) {
+        // Create two files that will be picked up by OPTIMIZE
+        spark.range(10).repartition(2).write.format("delta").saveAsTable("table")
+        val log = DeltaLog.forTable(spark, TableIdentifier("table"))
+        val versionBeforeOptimize = log.update().version
+
+        spark.sql("OPTIMIZE table").collect()
+
+        val commitInfos = log.getChanges(versionBeforeOptimize + 1).flatMap(_._2).flatMap {
+          case commitInfo: CommitInfo => Some(commitInfo)
+          case _ => None
+        }.toList
+        assert(commitInfos.size == 1)
+        assert(commitInfos.forall(_.isolationLevel.get == SnapshotIsolation.toString))
       }
     }
   }

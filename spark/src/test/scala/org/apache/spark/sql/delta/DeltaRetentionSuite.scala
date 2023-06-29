@@ -151,7 +151,7 @@ class DeltaRetentionSuite extends QueryTest
   }
 
   def removeFileCountFromUnderlyingCheckpoint(snapshot: Snapshot): Long = {
-    val df = snapshot.logSegment.checkpointProvider
+    val df = snapshot.checkpointProvider
       .allActionsFileIndexes()
       .map(snapshot.deltaLog.loadIndex(_))
       .reduce(_.union(_))

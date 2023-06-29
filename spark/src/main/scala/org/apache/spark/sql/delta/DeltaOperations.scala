@@ -74,7 +74,8 @@ object DeltaOperations {
       predicate: Option[String] = None,
       override val userMetadata: Option[String] = None
   ) extends Operation("WRITE") {
-    override val parameters: Map[String, Any] = Map("mode" -> mode.name()) ++
+    override val parameters: Map[String, Any] = Map("mode" -> mode.name()
+    ) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
 
@@ -203,7 +204,8 @@ object DeltaOperations {
       insertPredicate: Option[String],
       matchedPredicates: Seq[MergePredicate],
       notMatchedPredicates: Seq[MergePredicate],
-      notMatchedBySourcePredicates: Seq[MergePredicate])
+      notMatchedBySourcePredicates: Seq[MergePredicate]
+  )
     extends OperationWithPredicates(OP_MERGE, predicate.toSeq) {
 
     override val parameters: Map[String, Any] = {
@@ -243,14 +245,16 @@ object DeltaOperations {
         predicate: Option[Expression],
         matchedPredicates: Seq[MergePredicate],
         notMatchedPredicates: Seq[MergePredicate],
-        notMatchedBySourcePredicates: Seq[MergePredicate]): Merge = Merge(
+        notMatchedBySourcePredicates: Seq[MergePredicate]
+    ): Merge = Merge(
           predicate,
           updatePredicate = None,
           deletePredicate = None,
           insertPredicate = None,
           matchedPredicates,
           notMatchedPredicates,
-          notMatchedBySourcePredicates)
+          notMatchedBySourcePredicates
+    )
   }
 
   /** Recorded when an update operation is committed to the table. */
@@ -270,7 +274,8 @@ object DeltaOperations {
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
-      "properties" -> JsonUtils.toJson(metadata.configuration))
+      "properties" -> JsonUtils.toJson(metadata.configuration)
+    )
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
@@ -291,7 +296,8 @@ object DeltaOperations {
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
-      "properties" -> JsonUtils.toJson(metadata.configuration))
+      "properties" -> JsonUtils.toJson(metadata.configuration)
+  )
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {

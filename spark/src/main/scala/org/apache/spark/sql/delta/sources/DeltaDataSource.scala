@@ -262,14 +262,14 @@ class DeltaDataSource
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceSchemaTrackingLog] = {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
 
-    Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
-      .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
+    DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
       .map { schemaTrackingLocation =>
         if (!spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)) {
           throw new UnsupportedOperationException(
             "Schema tracking location is not supported for Delta streaming source")
         }
+
         DeltaSourceSchemaTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
           Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
@@ -453,5 +453,16 @@ object DeltaDataSource extends DatabricksLogging {
     } else {
       None
     }
+  }
+
+  /**
+   * Extract the schema tracking location from options.
+   */
+  def extractSchemaTrackingLocationConfig(
+      spark: SparkSession, parameters: Map[String, String]): Option[String] = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+
+    Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+      .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
   }
 }
