@@ -1,6 +1,8 @@
 <img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="200" alt="Delta Lake Logo"></img>
 
-[![Test](https://github.com/delta-io/delta/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/test.yaml)
+[![Connectors Test](https://github.com/delta-io/delta/actions/workflows/connectors_test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/connectors_test.yaml)
+[![Kernel Test](https://github.com/delta-io/delta/actions/workflows/kernel_test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/kernel_test.yaml)
+[![Spark Test](https://github.com/delta-io/delta/actions/workflows/spark_test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/spark_test.yaml)
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
 [![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/delta-spark)](https://pypistats.org/packages/delta-spark)
