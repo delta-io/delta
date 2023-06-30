@@ -61,7 +61,7 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
         import importlib_metadata
         scala_version = "2.12"
         delta_version = importlib_metadata.version("delta_spark")
-        maven_artifacts = [f"io.delta:delta-core_{scala_version}:{delta_version}"]
+        maven_artifacts = [f"io.delta:delta-spark_{scala_version}:{delta_version}"]
         # configure extra packages
         self.spark = delta.configure_spark_with_delta_pip(builder, maven_artifacts).getOrCreate()
 

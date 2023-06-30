@@ -374,6 +374,11 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Method for assuring consistency on filesystem according to the external cache.
      * Method tries to rewrite TransactionLog entry from temporary path if it does not exist.
+     *
+     * Should never throw a FileAlreadyExistsException.
+     * - If we see one when copying the temp file, we can assume the target file N.json already
+     *   exists and a concurrent writer has already copied the contents of T(N).
+     * - We will never see one when writing to the external cache since overwrite=true.
      */
     private void fixDeltaLog(FileSystem fs, ExternalCommitEntry entry) throws IOException {
         if (entry.complete) {
@@ -396,7 +401,13 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     fixDeltaLogPutCompleteDbEntry(entry);
                     LOG.info("fixed file {}", entry.fileName);
                     return;
-                } catch(Throwable e) {
+                } catch (java.nio.file.FileAlreadyExistsException e) {
+                    LOG.info("file {} already copied: {}:",
+                        entry.fileName, e.getClass().getSimpleName(), e);
+                    copied = true;
+                    // Don't return since we still need to mark the DB entry as complete. This will
+                    // happen when we execute the main try block on the next while loop iteration
+                } catch (Throwable e) {
                     LOG.info("{}:", e.getClass().getSimpleName(), e);
                     if (retry >= 3) {
                         throw e;

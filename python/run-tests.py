@@ -65,7 +65,7 @@ def prepare(root_dir):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-spark_2.12:" + version
     return package
 
 

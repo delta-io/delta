@@ -1,0 +1,4 @@
+{"commitInfo":{"timestamp":1626806331480,"operation":"Manual Update","operationParameters":{},"isBlindAppend":true,"operationMetrics":{}}}
+{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
+{"metaData":{"id":"testId","format":{"provider":"parquet","options":{}},"partitionColumns":[],"configuration":{},"createdTime":1626806331460}}
+{"add":{"path":"fake/path/1","partitionValues":{},"size":1,"modificationTime":1,"dataChange":true}}
