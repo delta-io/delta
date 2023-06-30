@@ -295,11 +295,16 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
-    val uriEncode = DeltaUDF.stringFromString(path => SparkPath.fromPathString(path).urlEncoded)
+    // If the metadata column is not canonicalized, we must canonicalize them before use.
     val targetDfWithMetadataColumn = if (sparkMetadataFilePathIsCanonicalized) {
       targetDf.withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
     } else {
-      targetDf.withColumn(FILE_NAME_COL, uriEncode(col(s"${METADATA_NAME}.${FILE_PATH}")))
+      val canonicalizedPathStringMap = buildCanonicalizedPathStringMap(txn.deltaLog, candidateFiles)
+      val broadcastCanonicalizedPathStringMap =
+        sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
+
+      val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
+      targetDf.withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
     }
     val matchedRowsDf = targetDfWithMetadataColumn
       // Filter after getting input file name as the filter might introduce a join and we
@@ -336,6 +341,16 @@ object DeletionVectorBitmapGenerator {
     }
 
     DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
+  }
+
+  private def buildCanonicalizedPathStringMap(
+      log: DeltaLog,
+      addFiles: Seq[AddFile]): Map[String, String] = {
+    val basePath = log.dataPath.toString
+    addFiles.map { add =>
+      val absPath = absolutePath(basePath, add.path)
+      absPath.toString -> SparkPath.fromPath(absPath).urlEncoded
+    }.toMap
   }
 
   /**
