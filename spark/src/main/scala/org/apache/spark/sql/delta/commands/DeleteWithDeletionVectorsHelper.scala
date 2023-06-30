@@ -340,18 +340,18 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
-    // TODO: fix this to work regardless of whether Spark encodes or doesn't encode
-    //  _metadata.file_path. See https://github.com/delta-io/delta/issues/1725
-    // Build two maps, using Path or String as keys. The one with String keys is used in UDF.
-    val canonicalizedPathMap = buildCanonicalizedPathMap(txn.deltaLog, candidateFiles)
-    val canonicalizedPathStringMap =
-      canonicalizedPathMap.map { case (k, v) => k.toString -> v }
-    val broadcastCanonicalizedPathStringMap =
-      sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
+    // If the metadata column is not canonicalized, we must canonicalize them before use.
+    val targetDfWithMetadataColumn = if (sparkMetadataFilePathIsCanonicalized) {
+      targetDf.withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
+    } else {
+      val canonicalizedPathStringMap = buildCanonicalizedPathStringMap(txn.deltaLog, candidateFiles)
+      val broadcastCanonicalizedPathStringMap =
+        sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
 
-    val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
-    val matchedRowsDf = targetDf
-      .withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
+      val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
+      targetDf.withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
+    }
+    val matchedRowsDf = targetDfWithMetadataColumn
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
@@ -364,7 +364,9 @@ object DeletionVectorBitmapGenerator {
       val filePathToDV = candidateFiles.map { add =>
         val serializedDV = Option(add.deletionVector).map(dvd => JsonUtils.toJson(dvd))
         // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
-        FileToDvDescriptor(canonicalizedPathMap(absolutePath(basePath, add.path)), serializedDV)
+        FileToDvDescriptor(
+          SparkPath.fromPath(absolutePath(basePath, add.path)).urlEncoded,
+          serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
@@ -386,14 +388,35 @@ object DeletionVectorBitmapGenerator {
     DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
   }
 
-  private def buildCanonicalizedPathMap(
+  private def buildCanonicalizedPathStringMap(
       log: DeltaLog,
-      addFiles: Seq[AddFile]): Map[Path, String] = {
+      addFiles: Seq[AddFile]): Map[String, String] = {
     val basePath = log.dataPath.toString
     addFiles.map { add =>
       val absPath = absolutePath(basePath, add.path)
-      absPath -> SparkPath.fromPath(absPath).urlEncoded
+      absPath.toString -> SparkPath.fromPath(absPath).urlEncoded
     }.toMap
+  }
+
+  /**
+   * In Spark 3.4 the file path metadata column is not canonicalized but it is in Spark 3.4.1. To
+   * make Delta Lake works with both Spark versions, we must use Spark's internal path
+   * transformation method to transform our paths here. This method will return a un-canonicalized
+   * path in Spark 3.4 and a canonicalized one in Spark 3.4.1.
+   *
+   * Related issue: https://github.com/delta-io/delta/issues/1725.
+   */
+  private lazy val sparkMetadataFilePathIsCanonicalized: Boolean = {
+    val probeString = "file:/path with space/data.parquet"
+    val row = FileFormat.updateMetadataInternalRow(
+      new GenericInternalRow(size = 1),
+      Seq(FileFormat.FILE_PATH),
+      filePath = new Path(probeString),
+      fileSize = 0L,
+      fileBlockStart = 0L,
+      fileBlockLength = 0L,
+      fileModificationTime = 0L)
+    !row.getUTF8String(0).toString.equals(probeString)
   }
 }
 
