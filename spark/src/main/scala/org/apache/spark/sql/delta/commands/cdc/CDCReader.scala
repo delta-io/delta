@@ -35,6 +35,8 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
+import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, Filter, PrunedFilteredScan}
@@ -620,8 +622,15 @@ trait CDCReaderImpl extends DeltaLogging {
 
     val readSchema = cdcReadSchema(readSchemaSnapshot.metadata.schema)
     // build an empty DS. This DS retains the table schema and the isStreaming property
-    val emptyDf = spark.sqlContext.internalCreateDataFrame(
-      spark.sparkContext.emptyRDD[InternalRow], readSchema, isStreaming)
+    // NOTE: We need to manually set the stats to 0 otherwise we will use default stats of INT_MAX,
+    // which causes lots of optimizations to be applied wrong.
+    val emptyRdd = LogicalRDD(
+      readSchema.toAttributes,
+      spark.sparkContext.emptyRDD[InternalRow],
+      isStreaming = isStreaming
+    )(spark.sqlContext.sparkSession, Some(Statistics(0, Some(0))))
+    val emptyDf =
+      Dataset.ofRows(spark.sqlContext.sparkSession, emptyRdd)
 
     CDCVersionDiffInfo(
       (emptyDf +: dfs).reduce((df1, df2) => df1.union(
