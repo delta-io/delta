@@ -126,6 +126,10 @@ To execute tests, run
 
     build/sbt test
 
+To generate single artifact, run (For delta-spark)
+
+    build/sbt spark/package
+
 To execute a single test suite, run
 
     build/sbt 'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSuite'
