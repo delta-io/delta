@@ -123,56 +123,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySo
     update = "value.a.x = 2" :: "value.a.x = 3" :: Nil,
     errorStrs = "There is a conflict from these SET columns" :: Nil)
 
-  test("Complex Data Type - Map with Struct Values") {
-    withTable("source") {
-      withTable("target") {
-        // scalastyle:off line.size.limit
-        sql("CREATE TABLE source(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
-        sql("CREATE TABLE target(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
-        // scalastyle:on line.size.limit
-        sql(
-          s"""
-             |MERGE INTO target as t
-             |USING source as s
-             |ON s.id = t.id
-             |WHEN MATCHED THEN
-             |  UPDATE SET t.map = s.map
-             |WHEN NOT MATCHED THEN
-             |  INSERT *
-             """.stripMargin)
-      }
-    }
-  }
-
-  test("Disallow changing map key types in merge") {
-    withTable("source") {
-      withTable("target") {
-        // scalastyle:off line.size.limit
-        sql("CREATE TABLE source(`id` STRING,`map` MAP<INT, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
-        sql("CREATE TABLE target(`id` STRING,`map` MAP<STRING, STRUCT<`a`: STRING, `b`: STRING, `c`: STRING>>) using delta")
-        // scalastyle:on line.size.limit
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql(
-              s"""
-                 |MERGE INTO target as t
-                 |USING source as s
-                 |ON s.id = t.id
-                 |WHEN MATCHED THEN
-                 |  UPDATE SET *
-                 |WHEN NOT MATCHED THEN
-                 |  INSERT *
-               """.stripMargin)
-          },
-          errorClass = "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE",
-          parameters = Map(
-            "mapType" -> "map<int,struct<a:string,b:string,c:string>>",
-            "fromKeyType" -> "int",
-            "toKeyType" -> "string"))
-      }
-    }
-  }
-
   test("Negative case - basic syntax analysis SQL") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")

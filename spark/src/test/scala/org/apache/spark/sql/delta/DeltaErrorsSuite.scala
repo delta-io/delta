@@ -53,7 +53,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -1670,19 +1670,6 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Updating nested fields is only supported for StructType, but you " +
         "are trying to update a field of `col1`, which is of type: DateType.")
     }
-    checkError(
-      exception = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.unsupportedMapKeyTypeChange(
-          mapType = MapType(StringType, new StructType().add("a", IntegerType).add("b", IntegerType)),
-          fromKeyType = StringType,
-          toKeyType = IntegerType)
-      },
-      errorClass = "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE",
-      parameters = Map(
-        "mapType" -> "map<string,struct<a:int,b:int>>",
-        "fromKeyType" -> "string",
-        "toKeyType" -> "int"))
-
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.extractReferencesFieldNotFound("struct1",

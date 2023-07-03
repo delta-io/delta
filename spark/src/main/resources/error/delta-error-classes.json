@@ -2123,12 +2123,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_MAP_KEY_TYPE_CHANGE" : {
-    "message" : [
-      "Changing map key type is not supported: '<fromKeyType>' to '<toKeyType>' in <mapType>."
-    ],
-    "sqlState" : "0AKDC"
-  },
   "DELTA_UNSUPPORTED_MULTI_COL_IN_PREDICATE" : {
     "message" : [
       "Multi-column In predicates are not supported in the <operation> condition."
