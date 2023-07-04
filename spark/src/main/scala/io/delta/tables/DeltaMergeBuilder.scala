@@ -275,7 +275,7 @@ class DeltaMergeBuilder private(
     // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
       DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
-        tryResolveReferencesForExpressions(sparkSession) _)
+        tryResolveReferencesForExpressions(sparkSession))
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }

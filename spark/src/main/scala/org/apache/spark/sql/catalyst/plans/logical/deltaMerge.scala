@@ -152,7 +152,7 @@ object DeltaMergeIntoClause {
     if (colNames.isEmpty && isEmptySeqEqualToStar) {
       Seq[Expression](UnresolvedStar(None))
     } else {
-      colNames.zip(exprs).map { case (col, expr) => DeltaMergeAction(col.nameParts, expr) }
+      (colNames, exprs).zipped.map { (col, expr) => DeltaMergeAction(col.nameParts, expr) }
     }
   }
 
@@ -488,10 +488,11 @@ object DeltaMergeInto {
             val unresolvedExprs = target.output.map { attr =>
               UnresolvedAttribute.quotedString(s"`${attr.name}`")
             }
-            resolveOrFail(unresolvedExprs, Seq(source), s"$typ clause")
-              .zip(target.output.map(_.name))
-              .map { case (resolvedExpr, tgtColName) =>
-                DeltaMergeAction(Seq(tgtColName), resolvedExpr, targetColNameResolved = true)
+            val resolvedExprs = resolveOrFail(unresolvedExprs, Seq(source), s"$typ clause")
+            (resolvedExprs, target.output.map(_.name))
+              .zipped
+              .map { (resolvedExpr, targetColName) =>
+                DeltaMergeAction(Seq(targetColName), resolvedExpr, targetColNameResolved = true)
               }
           case _: UnresolvedStar if canAutoMigrate =>
             clause match {
