@@ -3649,6 +3649,39 @@ abstract class MergeIntoSuiteBase
     clauses = update("*") :: insert("*") :: Nil,
     expectErrorContains = "Failed to merge incompatible data types",
     expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("source struct nested in map array values contains more columns in different order")(
+    target =
+      """{ "key": "A", "map": { "key": [ { "a": 1, "b": 2 } ] } }
+         { "key": "C", "map": { "key": [ { "a": 3, "b": 4 } ] } }""",
+    source =
+      """{ "key": "A", "map": { "key": [ { "b": 6, "c": 7, "a": 5 } ] } }
+         { "key": "B", "map": { "key": [ { "b": 9, "c": 10, "a": 8 } ] } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          ArrayType(
+            new StructType().add("a", IntegerType).add("b", IntegerType)))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          ArrayType(
+          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType)))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          ArrayType(
+          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType)))),
+    clauses = update("*") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": [ { "a": 5, "b": 6, "c": 7 } ] } }
+         { "key": "B", "map": { "key": [ { "a": 8, "b": 9, "c": 10 } ] } }
+         { "key": "C", "map": { "key": [ { "a": 3, "b": 4, "c": null } ] } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
   // scalastyle:on line.size.limit
 
   // Struct evolution inside of map keys.
@@ -3708,6 +3741,20 @@ abstract class MergeIntoSuiteBase
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x")
+  )
+
+  testEvolution(
+    "source struct nested in map array keys contains more columns")(
+    targetData = Seq((1, 1, 2, 1)).toDF("key", "a", "b", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b)), value) as x"),
+    sourceData = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2)).toDF("key", "a", "b", "c", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
+    expectErrorWithoutEvolutionContains = "cannot cast"
   )
 
   testEvolution("new column with update * and insert non-*")(
