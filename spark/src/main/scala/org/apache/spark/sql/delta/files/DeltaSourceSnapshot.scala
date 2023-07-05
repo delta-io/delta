@@ -18,13 +18,14 @@ package org.apache.spark.sql.delta.files
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.util.StateCache
 
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.functions._
 
 /**
@@ -37,11 +38,21 @@ import org.apache.spark.sql.functions._
  */
 class DeltaSourceSnapshot(
     val spark: SparkSession,
-    val snapshot: Snapshot)
+    val snapshot: Snapshot,
+    val filters: Seq[Expression])
   extends StateCache {
 
   protected val version = snapshot.version
   protected val path = snapshot.path
+
+  protected lazy val (partitionFilters, dataFilters) = {
+    val partitionCols = snapshot.metadata.partitionColumns
+    val (part, data) = filters.partition { e =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(e, partitionCols, spark)
+    }
+    logInfo(s"Classified filters: partition: $part, data: $data")
+    (part, data)
+  }
 
   private lazy val cachedState = {
     import spark.implicits.rddToDatasetHolder
@@ -64,15 +75,20 @@ class DeltaSourceSnapshot(
         .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
-        .withColumn("shouldSkip", lit(false))
-        .as[IndexedFile],
+        .withColumn("shouldSkip", lit(false)),
       s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
   }
 
-  protected def initialFiles: Dataset[IndexedFile] = cachedState.getDS
+  protected def initialFiles: DataFrame = cachedState.getDF
 
   def iterator(): Iterator[IndexedFile] = {
-    initialFiles.toLocalIterator.asScala
+    import org.apache.spark.sql.delta.implicits._
+
+    DeltaLog.filterFileList(
+      snapshot.metadata.partitionSchema,
+      initialFiles,
+      partitionFilters,
+      Seq("add")).as[IndexedFile].toLocalIterator.asScala
   }
 
   def close(unpersistSnapshot: Boolean): Unit = {
