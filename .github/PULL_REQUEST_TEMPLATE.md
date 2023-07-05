@@ -10,7 +10,7 @@ Thanks for sending a pull request!  Here are some tips for you:
 
 #### Which Delta project/connector is this regarding?
 <!--
-Please add the component selected below to the beginning of the issue title
+Please add the component selected below to the beginning of the pull request title
 For example: [Spark] Title of my pull request
 -->
 
