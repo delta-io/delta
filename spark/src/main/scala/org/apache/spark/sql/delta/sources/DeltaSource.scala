@@ -856,8 +856,8 @@ case class DeltaSource(
       .sliding(size = 2)
       .flatMap {
         case Seq((action, index), (secondAction, _)) =>
-          Some(IndexedFile(version, index.toLong, action.copy(stats = null),
-            isLast = secondAction.eq(sentinelFile)))
+          val isLast = secondAction.eq(sentinelFile)
+          Some(IndexedFile(version, index.toLong, action.copy(stats = null), isLast = isLast))
         // Only sentinel left in iterator, do not return it.
         case Seq(_) => None
       }

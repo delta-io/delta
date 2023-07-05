@@ -60,8 +60,7 @@ class DeltaSourceSnapshot(
 
     val numPartitions = snapshot.getNumPartitions
 
-    cacheDS(
-      snapshot.allFiles
+    val initialFiles = snapshot.allFiles
         // This allows us to control the number of partitions created from the sort instead of
         // using the shufflePartitions setting
         .repartitionByRange(numPartitions, col("modificationTime"), col("path"))
@@ -75,20 +74,21 @@ class DeltaSourceSnapshot(
         .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
-        .withColumn("shouldSkip", lit(false)),
-      s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
+        .withColumn("shouldSkip", lit(false))
+
+    val filteredFiles = DeltaLog.filterFileList(
+      snapshot.metadata.partitionSchema,
+      initialFiles,
+      partitionFilters,
+      Seq("add")).as[IndexedFile]
+
+    cacheDS(filteredFiles, s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
   }
 
   protected def initialFiles: DataFrame = cachedState.getDF
 
   def iterator(): Iterator[IndexedFile] = {
-    import org.apache.spark.sql.delta.implicits._
-
-    DeltaLog.filterFileList(
-      snapshot.metadata.partitionSchema,
-      initialFiles,
-      partitionFilters,
-      Seq("add")).as[IndexedFile].toLocalIterator.asScala
+    cachedState.getDS.toLocalIterator.asScala
   }
 
   def close(unpersistSnapshot: Boolean): Unit = {
