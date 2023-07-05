@@ -21,7 +21,7 @@ import java.util.Locale
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
@@ -31,7 +31,12 @@ import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.types.StructType
 
 /**
- * Helper functions for schema evolution related handling for DeltaSource.
+ * Helper functions for metadata evolution related handling for DeltaSource.
+ * A metadata change is one of:
+ * 1. Schema change
+ * 2. Delta table configuration change
+ * 3. Delta protocol change
+ * The documentation below will use schema change as example throughout.
  *
  * To achieve schema evolution, we intercept in different stages of the normal streaming process to:
  * 1. Capture all schema changes inside a stream
@@ -43,10 +48,10 @@ import org.apache.spark.sql.types.StructType
  *
  * Specifically,
  * 1. During latestOffset calls, if we detect schema change at version V, we generate a special
- *    barrier [[DeltaSourceOffset]] X that has ver=V and index=INDEX_SCHEMA_CHANGE.
+ *    barrier [[DeltaSourceOffset]] X that has ver=V and index=INDEX_METADATA_CHANGE.
  *    (We first generate an [[IndexedFile]] at this index, and that gets converted into an
  *    equivalent [[DeltaSourceOffset]].)
- *    [[INDEX_SCHEMA_CHANGE]] comes after [[INDEX_VERSION_BASE]] (the first
+ *    [[INDEX_METADATA_CHANGE]] comes after [[INDEX_VERSION_BASE]] (the first
  *    offset index that exists for any reservoir version) and before the offsets that represent data
  *    changes. This ensures that we apply the schema change before processing the data
  *    that uses that schema.
@@ -63,10 +68,10 @@ import org.apache.spark.sql.types.StructType
  *    has been written to the schema tracking log, and the stream has been aborted and restarted.
  *    A nuance here - streaming engine won't [[commit]] until it sees a new offset that is
  *    semantically different, which is why we first generate an offset X with index
- *    INDEX_SCHEMA_CHANGE, but another second barrier offset X' immediately following
+ *    INDEX_METADATA_CHANGE, but another second barrier offset X' immediately following
  *    it with index INDEX_POST_SCHEMA_CHANGE.
   *    In this way, we could ensure:
- *    a) Offset with index INDEX_SCHEMA_CHANGE is always committed (typically)
+ *    a) Offset with index INDEX_METADATA_CHANGE is always committed (typically)
  *    b) Even if streaming engine changed its behavior and ONLY offset with index
  *       INDEX_POST_SCHEMA_CHANGE is committed, we can still see this is a
  *       schema change barrier with a schema change ready to be evolved.
@@ -80,7 +85,7 @@ import org.apache.spark.sql.types.StructType
  * schema changes to propagate. We detect such non-additive schema changes during stream start by
  * comparing the last schema log entry with the current one.
  */
-trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
+trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
   /**
    * Whether this DeltaSource is utilizing a schema log entry as its read schema.
@@ -88,19 +93,19 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    * If user explicitly turn on the flag to fall back to using latest schema to read (i.e. the
    * legacy mode), we will ignore the schema log.
    */
-  protected def trackingSchemaChange: Boolean =
+  protected def trackingMetadataChange: Boolean =
     !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-      schemaTrackingLog.flatMap(_.getCurrentTrackedSchema).nonEmpty
+      metadataTrackingLog.flatMap(_.getCurrentTrackedMetadata).nonEmpty
 
   /**
    * Whether a schema tracking log is provided (and is empty), so we could initialize eagerly.
    * This should only be used for the first write to the schema log, after then, schema tracking
    * should not rely on this state any more.
    */
-  protected def readyToInitializeSchemaTrackingEagerly: Boolean =
+  protected def readyToInitializeMetadataTrackingEagerly: Boolean =
     !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-      schemaTrackingLog.exists { log =>
-        log.getCurrentTrackedSchema.isEmpty && log.initSchemaLogEagerly
+      metadataTrackingLog.exists { log =>
+        log.getCurrentTrackedMetadata.isEmpty && log.initMetadataLogEagerly
       }
 
 
@@ -111,7 +116,7 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
       fileActionScanIter: ClosableIterator[IndexedFile]): ClosableIterator[IndexedFile] = {
     fileActionScanIter.withClose { iter =>
       val (untilSchemaChange, fromSchemaChange) = iter.span { i =>
-        i.index != DeltaSourceOffset.SCHEMA_CHANGE_INDEX
+        i.index != DeltaSourceOffset.METADATA_CHANGE_INDEX
       }
       // This will end at the schema change indexed file (inclusively)
       // If there are no schema changes, this is an no-op.
@@ -121,49 +126,65 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
 
   /**
    * Check if a schema change is different from the stream read schema. We make sure:
-   * 1. A strict equality check on the schemas to capture all schema changes, AND
-   * 2. The incoming schema change should not be considered a failure-causing change if we have
+   * 1. A strict equality check on the schemas to capture all schema changes, OR
+   * 2. A strict equality check on the delta related table configurations, AND
+   * 3. The incoming metadata change should not be considered a failure-causing change if we have
    *    marked the persisted schema and the stream progress is behind that schema version.
    *    This could happen when we've already merged consecutive schema changes during the analysis
    *    phase and we are using the merged schema as the read schema. All the schema changes in
    *    between can be safely ignored because they won't contribute any data.
    */
-  private def hasSchemaChangeComparedToStreamSchema(
-      newMetadata: Metadata,
-      newSchemaVersion: Long): Boolean =
-    (newMetadata.schema != readSchemaAtSourceInit ||
-      newMetadata.partitionSchema != readPartitionSchemaAtSourceInit) &&
-      !persistedSchemaAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)
+  private def hasMetadataOrProtocolChangeComparedToStreamMetadata(
+      metadataChangeOpt: Option[Metadata],
+      protocolChangeOpt: Option[Protocol],
+      newSchemaVersion: Long): Boolean = {
+    if (persistedMetadataAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)) {
+      false
+    } else {
+      protocolChangeOpt.exists(_ != readProtocolAtSourceInit) ||
+      metadataChangeOpt.exists { newMetadata =>
+         newMetadata.schema != readSchemaAtSourceInit ||
+           newMetadata.partitionSchema != readPartitionSchemaAtSourceInit ||
+           newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
+             readConfigurationsAtSourceInit.filterKeys(_.startsWith("delta.")).toMap
+      }
+    }
+  }
 
   /**
-   * If the current stream schema is not equal to the schema change in [[metadataChangeOpt]], return
-   * a schema change barrier [[IndexedFile]].
-   * Only returns something if [[trackingSchemaChange]]is true.
+   * If the current stream metadata is not equal to the metadata change in [[metadataChangeOpt]],
+   * return a metadata change barrier [[IndexedFile]].
+   * Only returns something if [[trackingMetadataChange]]is true.
    */
-  protected def getSchemaChangeIndexedFileIterator(
-      metadataChangeOpt: Option[Metadata], version: Long): ClosableIterator[IndexedFile] = {
-    if (trackingSchemaChange &&
-        metadataChangeOpt.exists(m => hasSchemaChangeComparedToStreamSchema(m, version))) {
+  protected def getMetadataOrProtocolChangeIndexedFileIterator(
+      metadataChangeOpt: Option[Metadata],
+      protocolChangeOpt: Option[Protocol],
+      version: Long): ClosableIterator[IndexedFile] = {
+    if (trackingMetadataChange && hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        metadataChangeOpt, protocolChangeOpt, version)) {
       // Create an IndexedFile with metadata change
-      Iterator.single(IndexedFile(version, DeltaSourceOffset.SCHEMA_CHANGE_INDEX, null)).toClosable
+      Iterator.single(IndexedFile(version, DeltaSourceOffset.METADATA_CHANGE_INDEX, null))
+        .toClosable
     } else {
       Iterator.empty.toClosable
     }
   }
 
   /**
-   * Collect all metadata actions between start and end version, both inclusive
+   * Collect all actions between start and end version, both inclusive
    */
-  private def collectMetadataActions(
-      startVersion: Long, endVersion: Long): Seq[(Long, Metadata)] = {
-    val metadataActions = mutable.ArrayBuffer[(Long, Metadata)]()
+  private def collectActions(
+      startVersion: Long,
+      endVersion: Long
+  )(matcher: Action => Boolean): Seq[(Long, Action)] = {
+    val metadataActions = mutable.ArrayBuffer[(Long, Action)]()
     deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).takeWhile {
       case (version, _) => version <= endVersion
     }.foreach { case (version, fileStatus) =>
       val fileIterator = DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
       fileIterator.processAndClose { actionsIter =>
         actionsIter
-          .collectFirst { case m: Metadata => m }
+          .collectFirst { case a if matcher(a) => a }
           .foreach { m => metadataActions.append((version, m)) }
       }
     }
@@ -172,55 +193,84 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
 
   /**
    * Given the version range for an ALREADY fetched batch, check if there are any
-   * read-incompatible schema changes.
+   * read-incompatible schema changes or protocol changes.
    * In this case, the streaming engine wants to getBatch(X,Y) on an existing Y that is already
    * loaded and saved in the offset log in the past before requesting new offsets. Therefore we
-   * should verify if we could find a schema that is safe to read this constructed batch, which
-   * then can be used to initialize the schema log.
-   * If not, there's not much we could do, even with schema log, because unlike finding new offsets,
-   * we don't have a chance to "split" this batch at schema change boundaries any more. The
+   * should verify if we could find a schema or protocol that is safe to read this constructed batch
+   * , which then can be used to initialize the metadata log.
+   * If not, there's not much we could do, even with metadata log, because unlike finding new
+   * offsets, we don't have a chance to "split" this batch at schema change boundaries any more. The
    * streaming engine is not able to change the ranges of a batch after it has created it.
-   * If there are no non-additive schema changes, the latest schema in the range should be the best
-   * schema to read this batch as it must be a superset of all schema changes in between.
+   * If there are no non-additive schema changes, or incompatible protocol changes, it is safe to
+   * mark the metadata and protocol safe to read for all data files between startVersion and
+   * endVersion.
    */
-  private def resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(
-      startVersion: Long, endVersion: Long): (Long, Metadata) = {
-    assert(readyToInitializeSchemaTrackingEagerly)
-    val schemaChanges = collectMetadataActions(startVersion, endVersion)
-    // If no schema changes in between, just serve the start version
-    val startSchemaMetadata = getSnapshotFromDeltaLog(startVersion).metadata
-    if (schemaChanges.isEmpty) {
-      return (startVersion, startSchemaMetadata)
-    }
+  private def resolveValidMetadataOfConstructedBatchForInitialization(
+      startVersion: Long, endVersion: Long): (Metadata, Protocol) = {
+    assert(readyToInitializeMetadataTrackingEagerly)
+    val metadataChanges =
+      collectActions(startVersion, endVersion)(_.isInstanceOf[Metadata]).map(_._2)
+        .map(_.asInstanceOf[Metadata])
+    val startSnapshot = getSnapshotFromDeltaLog(startVersion)
+    val startMetadata = startSnapshot.metadata
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
     // the last schema as the read schema and if so we cannot find a good read schema.
-    val (mostRecentSchemaVersion, mostRecentSchemaChange) = schemaChanges.last
-    val otherSchemaChanges = Seq((startVersion, startSchemaMetadata)) ++ schemaChanges.dropRight(1)
-    otherSchemaChanges.foreach { case (_, potentialSchemaChangeMetadata) =>
-      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-        newMetadata = mostRecentSchemaChange,
-        oldMetadata = potentialSchemaChangeMetadata) ||
-        !SchemaUtils.isReadCompatible(
-          existingSchema = potentialSchemaChangeMetadata.schema,
-          readSchema = mostRecentSchemaChange.schema,
-          forbidTightenNullability = true)) {
-        throw DeltaErrors.streamingSchemaLogInitFailedIncompatibleSchemaException(
+    // Otherwise, the most recent metadata change will be the most encompassing schema as well.
+    val mostRecentMetadataChangeOpt = metadataChanges.lastOption
+    mostRecentMetadataChangeOpt.foreach { mostRecentMetadataChange =>
+      val otherMetadataChanges = Seq(startMetadata) ++ metadataChanges.dropRight(1)
+      otherMetadataChanges.foreach { potentialSchemaChangeMetadata =>
+        if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+          newMetadata = mostRecentMetadataChange,
+          oldMetadata = potentialSchemaChangeMetadata) ||
+          !SchemaUtils.isReadCompatible(
+            existingSchema = potentialSchemaChangeMetadata.schema,
+            readSchema = mostRecentMetadataChange.schema,
+            forbidTightenNullability = true)) {
+          throw DeltaErrors.streamingMetadataLogInitFailedIncompatibleMetadataException(
+            startVersion, endVersion)
+        }
+      }
+    }
+
+    // Check protocol changes and use the most supportive protocol
+    val startProtocol = startSnapshot.protocol
+    val protocolChanges =
+      collectActions(startVersion, endVersion)(_.isInstanceOf[Protocol])
+        .map(_._2.asInstanceOf[Protocol])
+
+    var mostSupportiveProtocol = startProtocol
+    protocolChanges.foreach { p =>
+      if (mostSupportiveProtocol.readerAndWriterFeatureNames
+          .subsetOf(p.readerAndWriterFeatureNames)) {
+        mostSupportiveProtocol = p
+      } else {
+        // TODO: or use protocol union instead?
+        throw DeltaErrors.streamingMetadataLogInitFailedIncompatibleMetadataException(
           startVersion, endVersion)
       }
     }
 
-    // If not, the schema changes must be additive, we can use the most recent schema change.
-    (mostRecentSchemaVersion, mostRecentSchemaChange)
+    (mostRecentMetadataChangeOpt.getOrElse(startMetadata), mostSupportiveProtocol)
   }
 
   /**
-   * If we know there must exist a schema change at `version`, we read it out directly.
+   * Collect a metadata action at the commit version if possible.
    */
-  private def collectMetadataChangeAtVersion(version: Long): Metadata = {
-    val Seq((_, metadata)) = collectMetadataActions(version, version)
-    metadata
+  private def collectMetadataAtVersion(version: Long): Option[Metadata] = {
+    collectActions(version, version)(_.isInstanceOf[Metadata])
+      .headOption.map(_._2.asInstanceOf[Metadata])
   }
+
+  /**
+   * Collect a protocol action at the commit version if possible.
+   */
+  private def collectProtocolAtVersion(version: Long): Option[Protocol] = {
+    collectActions(version, version)(_.isInstanceOf[Protocol])
+      .headOption.map(_._2.asInstanceOf[Protocol])
+  }
+
 
   /**
    * If the given previous Delta source offset is a schema change offset, returns the appropriate
@@ -233,14 +283,15 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
       previousOffset: DeltaSourceOffset): Option[DeltaSourceOffset] = {
     // Check if we've generated a previous offset with schema change (i.e. offset X in class doc)
     // Then, we will generate offset X' as mentioned in the class doc.
-    if (previousOffset.index == DeltaSourceOffset.SCHEMA_CHANGE_INDEX) {
-      return Some(previousOffset.copy(index = DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX))
+    if (previousOffset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX) {
+      return Some(previousOffset.copy(index = DeltaSourceOffset.POST_METADATA_CHANGE_INDEX))
     }
     // If the previous offset is already POST the schema change and schema evolution has not
     // occurred, simply block as no-op.
-    if (previousOffset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
-      hasSchemaChangeComparedToStreamSchema(
-        collectMetadataChangeAtVersion(previousOffset.reservoirVersion),
+    if (previousOffset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
+      hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        collectMetadataAtVersion(previousOffset.reservoirVersion),
+        collectProtocolAtVersion(previousOffset.reservoirVersion),
         previousOffset.reservoirVersion)) {
       return Some(previousOffset)
     }
@@ -258,26 +309,35 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    *                           within the batch range.
    * @param alwaysFail Whether we should always fail with the schema evolution exception.
    */
-  protected def initializeSchemaTrackingAndExitStream(
+  protected def initializeMetadataTrackingAndExitStream(
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
       alwaysFail: Boolean = false): Unit = {
-    // If possible, initialize the schema log with the desired start schema instead of failing.
+    // If possible, initialize the metadata log with the desired start metadata instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
     // schema log.
-    val (version, metadata) = batchEndVersionOpt.map(
-      resolveValidSchemaOfConstructedBatchForSchemaTrackingInitialization(batchStartVersion, _))
-      .getOrElse {
-        val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
-        (startSnapshot.version, startSnapshot.metadata)
-      }
-    val schemaToUse = PersistedSchema(tableId, version, metadata, metadataPath)
-    // Always initialize the schema log
-    schemaTrackingLog.get.writeNewSchema(schemaToUse)
-    if (hasSchemaChangeComparedToStreamSchema(metadata, version) || alwaysFail) {
-      // But trigger schema evolution exception when there's a difference
-      throw DeltaErrors.streamingSchemaEvolutionException(schemaToUse.dataSchema)
+    val (version, metadata, protocol) = batchEndVersionOpt.map { endVersion =>
+      val (validMetadata, validProtocol) =
+        resolveValidMetadataOfConstructedBatchForInitialization(batchStartVersion, endVersion)
+      // `endVersion` should be valid for initialization
+      (endVersion, validMetadata, validProtocol)
+    }.getOrElse {
+      val startSnapshot = getSnapshotFromDeltaLog(batchStartVersion)
+      (startSnapshot.version, startSnapshot.metadata, startSnapshot.protocol)
+    }
+
+    val newMetadata = PersistedMetadata(tableId, version, metadata, protocol, metadataPath)
+    // Always initialize the metadata log
+    metadataTrackingLog.get.writeNewMetadata(newMetadata)
+    if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        Some(metadata), Some(protocol), version) || alwaysFail) {
+      // But trigger evolution exception when there's a difference
+      throw DeltaErrors.streamingMetadataEvolutionException(
+        newMetadata.dataSchema,
+        newMetadata.tableConfigurations.get,
+        newMetadata.protocol.get
+      )
     }
   }
 
@@ -289,18 +349,12 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
    */
   protected def updateSchemaTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
     val offset = DeltaSourceOffset(tableId, end)
-    if (trackingSchemaChange &&
-        (offset.index == DeltaSourceOffset.SCHEMA_CHANGE_INDEX ||
-          offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX)) {
-
-      // The offset must point to a schema change metadata action
-      val schemaChangeMetadata = collectMetadataChangeAtVersion(offset.reservoirVersion)
-      val schemaToPersist = PersistedSchema(
-        deltaLog.tableId,
-        offset.reservoirVersion,
-        schemaChangeMetadata,
-        metadataPath
-      )
+    if (trackingMetadataChange &&
+        (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
+          offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
+      // The offset must point to a metadata or protocol change action
+      val changedMetadataOpt = collectMetadataAtVersion(offset.reservoirVersion)
+      val changedProtocolOpt = collectProtocolAtVersion(offset.reservoirVersion)
 
       // Evolve the schema when the schema is indeed different from the current stream schema. We
       // need to check this because we could potentially generate two offsets before schema
@@ -310,11 +364,24 @@ trait DeltaSourceSchemaEvolutionSupport extends DeltaSourceBase { base: DeltaSou
       // second one is committed.
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
-      if (hasSchemaChangeComparedToStreamSchema(schemaChangeMetadata, offset.reservoirVersion)) {
+      if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
+          changedMetadataOpt, changedProtocolOpt, offset.reservoirVersion)) {
+
+        val schemaToPersist = PersistedMetadata(
+          deltaLog.tableId,
+          offset.reservoirVersion,
+          changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
+          changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
+          metadataPath
+        )
         // Update schema log
-        schemaTrackingLog.get.writeNewSchema(schemaToPersist)
+        metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
         // Fail the stream with schema evolution exception
-        throw DeltaErrors.streamingSchemaEvolutionException(schemaChangeMetadata.schema)
+        throw DeltaErrors.streamingMetadataEvolutionException(
+          schemaToPersist.dataSchema,
+          schemaToPersist.tableConfigurations.get,
+          schemaToPersist.protocol.get
+        )
       }
     }
   }
@@ -329,7 +396,7 @@ object NonAdditiveSchemaChangeTypes {
   val SCHEMA_CHANGE_RENAME_AND_DROP = "RENAME AND DROP COLUMN"
 }
 
-object DeltaSourceSchemaEvolutionSupport {
+object DeltaSourceMetadataEvolutionSupport {
 
   /**
    * Determine the non-additive schema change type for an incoming schema change. None if it's
@@ -376,8 +443,8 @@ object DeltaSourceSchemaEvolutionSupport {
   protected[sources] def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
       spark: SparkSession,
       metadataPath: String,
-      currentSchema: PersistedSchema,
-      previousSchema: PersistedSchema): Unit = {
+      currentSchema: PersistedMetadata,
+      previousSchema: PersistedMetadata): Unit = {
     val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
     val checkpointHash = metadataPath.hashCode
     val allowAll = "allowSourceColumnRenameAndDrop"

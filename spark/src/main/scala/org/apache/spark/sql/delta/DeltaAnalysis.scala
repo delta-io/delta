@@ -965,7 +965,7 @@ class DeltaAnalysis(session: SparkSession)
             val log = DeltaLog.forTable(session, dataSourceV1.options("path"))
             val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
-              DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
+              DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
                 rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&
