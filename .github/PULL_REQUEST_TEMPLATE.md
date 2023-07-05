@@ -8,6 +8,18 @@ Thanks for sending a pull request!  Here are some tips for you:
   6. If applicable, include the corresponding issue number in the PR title and link it in the body.
 -->
 
+#### Which Delta project/connector is this regarding?
+<!--
+Please add the component selected below to the beginning of the issue title
+For example: [Spark] Title of my pull request
+-->
+
+- [ ] Spark
+- [ ] Standalone
+- [ ] Flink
+- [ ] Kernel
+- [ ] Other (fill in here)
+
 ## Description
 
 <!--
