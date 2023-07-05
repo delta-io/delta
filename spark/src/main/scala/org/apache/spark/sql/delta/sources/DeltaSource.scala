@@ -848,12 +848,13 @@ case class DeltaSource(
     Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
     getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
     filteredIterator
-      .map(_.asInstanceOf[AddFile].copy(stats = null))
+      .map(_.asInstanceOf[AddFile])
       .zipWithIndex
       .sliding(size = 2)
       .flatMap {
         case Seq((action, index), (secondAction, _)) =>
-          Some(IndexedFile(version, index.toLong, action, isLast = secondAction.eq(sentinelFile)))
+          Some(IndexedFile(version, index.toLong, action.copy(stats = null),
+            isLast = secondAction.eq(sentinelFile)))
         // Only sentinel left in iterator, do not return it.
         case Seq(_) => None
       }
