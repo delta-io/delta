@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.util.StateCache
 
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.functions._
 
@@ -58,12 +58,10 @@ class DeltaSourceSnapshot(
     import spark.implicits.rddToDatasetHolder
     import org.apache.spark.sql.delta.implicits._
 
-    val numPartitions = snapshot.getNumPartitions
-
     val initialFiles = snapshot.allFiles
         // This allows us to control the number of partitions created from the sort instead of
         // using the shufflePartitions setting
-        .repartitionByRange(numPartitions, col("modificationTime"), col("path"))
+        .repartitionByRange(snapshot.getNumPartitions, col("modificationTime"), col("path"))
         .sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
@@ -85,10 +83,10 @@ class DeltaSourceSnapshot(
     cacheDS(filteredFiles, s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
   }
 
-  protected def initialFiles: DataFrame = cachedState.getDF
+  private[delta] def filteredFiles: Dataset[IndexedFile] = cachedState.getDS
 
   def iterator(): Iterator[IndexedFile] = {
-    cachedState.getDS.toLocalIterator.asScala
+    filteredFiles.toLocalIterator.asScala
   }
 
   def close(unpersistSnapshot: Boolean): Unit = {
