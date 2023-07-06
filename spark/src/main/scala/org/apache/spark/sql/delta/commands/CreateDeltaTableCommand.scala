@@ -442,7 +442,8 @@ case class CreateDeltaTableCommand(
       spark: SparkSession,
       table: CatalogTable,
       snapshot: Snapshot,
-      txn: OptimisticTransaction): Unit = {
+      txn: OptimisticTransaction
+    ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
