@@ -126,15 +126,17 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
 
             var transformedKeysAndValues = fromExpression
             if (from.keyType != to.keyType) {
-              transformedKeysAndValues = TransformKeys(fromExpression, createMapConverter {
-                (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution)
-              })
+              transformedKeysAndValues =
+                TransformKeys(transformedKeysAndValues, createMapConverter {
+                  (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution)
+                })
             }
 
             if (from.valueType != to.valueType) {
-              transformedKeysAndValues = TransformValues(fromExpression, createMapConverter {
-                (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution)
-              })
+              transformedKeysAndValues =
+                TransformValues(transformedKeysAndValues, createMapConverter {
+                  (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution)
+                })
             }
             cast(transformedKeysAndValues, to)
           case (from: StructType, to: StructType)

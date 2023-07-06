@@ -3682,16 +3682,14 @@ abstract class MergeIntoSuiteBase
          { "key": "C", "map": { "key": [ { "a": 3, "b": 4, "c": null } ] } }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
-  // scalastyle:on line.size.limit
-
   // Struct evolution inside of map keys.
   testEvolution("new source column in map struct key")(
-    targetData = Seq((1, 1, 2, 1)).toDF("key", "a", "b", "value")
+    targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
     sourceData = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2)).toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2))
+    expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2), (3, 5, 6, null, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), value) as x"),
@@ -3699,12 +3697,12 @@ abstract class MergeIntoSuiteBase
   )
 
   testEvolution("source nested map struct key contains less columns than target")(
-    targetData = Seq((1, 1, 2, 3, 1)).toDF("key", "a", "b", "c", "value")
+    targetData = Seq((1, 2, 3, 4, 5), (3, 6, 7, 8, 9)).toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), value) as x"),
     sourceData = Seq((1, 10, 50, 1), (2, 20, 60, 2)).toDF("key", "a", "c", "value")
       .selectExpr("key", "map(named_struct('a', a, 'c', c), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 10, null, 50, 1), (2, 20, null, 60, 2))
+    expected = Seq((1, 10, null, 50, 1), (2, 20, null, 60, 2), (3, 6, 7, 8, 9))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), value) as x"),
@@ -3712,32 +3710,32 @@ abstract class MergeIntoSuiteBase
   )
 
   testEvolution("source nested map struct key contains different type than target")(
-    targetData = Seq((1, 1, 2, 1)).toDF("key", "a", "b", "value")
+    targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
     sourceData = Seq((1, 10, "30", 1), (2, 20, "40", 2)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 10, 30, 1), (2, 20, 40, 2))
+    expected = Seq((1, 10, 30, 1), (2, 20, 40, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
-    expectedWithoutEvolution = Seq((1, 10, 30, 1), (2, 20, 40, 2))
+    expectedWithoutEvolution = Seq((1, 10, 30, 1), (2, 20, 40, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x")
   )
 
   testEvolution("source nested map struct key in different order")(
-    targetData = Seq((1, 1, 2, 1)).toDF("key", "a", "b", "value")
+    targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
     sourceData = Seq((1, 10, 30, 1), (2, 20, 40, 2)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('b', b, 'a', a), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 30, 10, 1), (2, 40, 20, 2))
+    expected = Seq((1, 30, 10, 1), (2, 40, 20, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
-    expectedWithoutEvolution = Seq((1, 30, 10, 1), (2, 40, 20, 2))
+    expectedWithoutEvolution = Seq((1, 30, 10, 1), (2, 40, 20, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x")
@@ -3745,17 +3743,32 @@ abstract class MergeIntoSuiteBase
 
   testEvolution(
     "source struct nested in map array keys contains more columns")(
-    targetData = Seq((1, 1, 2, 1)).toDF("key", "a", "b", "value")
+    targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b)), value) as x"),
     sourceData = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2)).toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2))
+    expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2), (3, 5, 6, null, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
     expectErrorWithoutEvolutionContains = "cannot cast"
   )
+
+  testEvolution("struct evolution in both map keys and values")(
+    targetData = Seq((1, 2, 3, 4, 5), (3, 6, 7, 8, 9)).toDF("key", "a", "b", "d", "e")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b), named_struct('d', d, 'e', e)) as x"),
+    sourceData = Seq((1, 10, 30, 50, 70, 90, 110), (2, 20, 40, 60, 80, 100, 120))
+      .toDF("key", "a", "b", "c", "d", "e", "f")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = Seq((1, 10, 30, 50, 70, 90, 110), (2, 20, 40, 60, 80, 100, 120), (3, 6, 7, null, 8, 9, null))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c", "d", "e", "f")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
+    expectErrorWithoutEvolutionContains = "cannot cast"
+  )
+  // scalastyle:on line.size.limit
 
   testEvolution("new column with update * and insert non-*")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
