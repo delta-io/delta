@@ -509,7 +509,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     override def abortStagedChanges(): Unit = {}
 
-    override def capabilities(): util.Set[TableCapability] = Set(V1_BATCH_WRITE).asJava
+    override def capabilities(): util.Set[TableCapability] = {
+      Set(V1_BATCH_WRITE).asJava
+    }
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
       writeOptions = info.options.asCaseSensitiveMap().asScala.toMap
