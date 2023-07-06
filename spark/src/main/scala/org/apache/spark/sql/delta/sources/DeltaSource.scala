@@ -831,36 +831,25 @@ case class DeltaSource(
       version: Long,
       shouldSkipCommit: Boolean,
       metadataOpt: Option[Metadata]): Iterator[IndexedFile] = {
-    // Used to identify whether we reached the end of the iterator. We cannot just call hasNext to
-    // identify whether the given AddFile is the last in the iterator as it is unsafe to reuse
-    // the iterator.
-    val sentinelFile = AddFile(
-      path = "sentinel",
-      partitionValues = Map.empty,
-      size = 0L,
-      modificationTime = 0L,
-      dataChange = false)
     val filteredIterator =
       if (shouldSkipCommit) {
-        Iterator.empty.toClosable
-      } else iterator.filter {
-        case a: AddFile if a.dataChange => true
-        case _ => false
-      } ++ Iterator.single(sentinelFile)
-
-    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
-    getSchemaChangeIndexedFileIterator(metadataOpt, version) ++
-    filteredIterator
-      .map(_.asInstanceOf[AddFile])
-      .zipWithIndex
-      .sliding(size = 2)
-      .flatMap {
-        case Seq((action, index), (secondAction, _)) =>
-          val isLast = secondAction.eq(sentinelFile)
-          Some(IndexedFile(version, index.toLong, action.copy(stats = null), isLast = isLast))
-        // Only sentinel left in iterator, do not return it.
-        case Seq(_) => None
+        Iterator.empty
+      } else {
+        iterator.collect { case a: AddFile if a.dataChange => a }
       }
+
+    var index = -1L
+    val indexedFiles = new Iterator[IndexedFile] {
+      override def hasNext: Boolean = filteredIterator.hasNext
+      override def next(): IndexedFile = {
+        index += 1 // pre-increment the index (so it starts from 0)
+        val add = filteredIterator.next().copy(stats = null)
+        IndexedFile(version, index, add, isLast = !filteredIterator.hasNext)
+      }
+    }
+
+    val base = Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null))
+    base ++ getSchemaChangeIndexedFileIterator(metadataOpt, version) ++ indexedFiles
   }
 
   /**
