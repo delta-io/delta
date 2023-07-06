@@ -2176,6 +2176,41 @@ trait DeltaErrorsBase
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
+  def dropTableFeatureNonRemovableFeature(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureConflictRevalidationFailed(
+      conflictingCommit: Option[CommitInfo] = None): DeltaTableFeatureException = {
+    val concurrentCommit = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf, "", conflictingCommit)
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL",
+      messageParameters = Array(concurrentCommit))
+  }
+
+  def dropTableFeatureLegacyFeature(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_LEGACY_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFeatureNotSupportedByClient(
+      feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFeatureNotSupportedByProtocol(
+      feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE",
+      messageParameters = Array(feature))
+  }
+
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,

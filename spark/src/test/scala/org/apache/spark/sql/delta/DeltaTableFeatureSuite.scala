@@ -256,6 +256,25 @@ class DeltaTableFeatureSuite
         .canUpgradeTo(Protocol(1, 1)))
   }
 
+  test("protocol downgrade compatibility") {
+    val tableFeatureProtocol =
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+    // Cannot downgrade when at a minimum writer features are not supported.
+    assert(!Protocol(1, 6).canDowngradeTo(Protocol(1, 6)))
+    // Protocol version downgrades are not supported.
+    assert(!Protocol(3, 7).withFeature(TestWriterFeature).canDowngradeTo(Protocol(2, 7)))
+    assert(Protocol(3, 7).withFeature(TestWriterFeature).canDowngradeTo(Protocol(3, 7)))
+    assert(!tableFeatureProtocol
+      .canDowngradeTo(Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)))
+    // Only one writer feature per time.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(
+          TestWriterFeature,
+          AppendOnlyTableFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+  }
+
   test("add reader and writer feature descriptors") {
     var p = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
     val name = AppendOnlyTableFeature.name

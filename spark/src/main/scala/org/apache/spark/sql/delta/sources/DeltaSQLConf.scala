@@ -1205,6 +1205,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val TABLE_FEATURE_REMOVAL_ENABLED =
+    buildConf("tableFeatures.removalEnabled")
+      .internal()
+      .doc(
+           """Controls whether table feature removal is allowed.
+             |Table feature removal is currently a feature in development.
+             |This is a dev only config.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
       .internal()

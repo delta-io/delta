@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
@@ -174,6 +175,26 @@ private[delta] class ConflictChecker(
       }
       if (currentTransactionInfo.actions.exists(_.isInstanceOf[Protocol])) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+      }
+      // When a protocol downgrade occurs all other interleaved txns abort. Note, that in the
+      // opposite scenario, when the current transaction is the protocol downgrade, we resolve
+      // the conflict and proceed with the downgrade. This is because a protocol downgrade would
+      // be hard to succeed in concurrent workloads. On the other hand, a protocol downgrade is
+      // a rare event and thus not that disruptive if other concurrent transactions fail.
+      val currentProtocol = currentTransactionInfo.protocol
+      if (currentProtocol.isDropFeatureCommit(winningCommitSummary.commitInfo)) {
+        throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+      }
+    }
+    // When the protocol downgrade is the losing txn we re-validate the invariants of the
+    // removed feature. We could improve this by only revalidating against the snapshot of
+    // the last interleaved txn.
+    if (currentTransactionInfo.protocol.isDropFeatureCommit(currentTransactionInfo.commitInfo)) {
+      if (!currentTransactionInfo.protocol.validateFeatureRemoval(
+          currentTransactionInfo.commitInfo,
+          deltaLog.getSnapshotAt(winningCommitSummary.commitVersion))) {
+        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
+          winningCommitSummary.commitInfo)
       }
     }
   }

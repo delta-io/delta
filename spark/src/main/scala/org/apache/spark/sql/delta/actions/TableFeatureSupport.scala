@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta.actions
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import com.fasterxml.jackson.annotation.JsonIgnore
 
 /**
@@ -232,6 +234,67 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
+   * Determine whether this protocol can be safely downgraded to a new protocol `to`. This
+   * includes the following:
+   *  - Protocol version cannot be downgraded.
+   *  - The `to` protocol needs to support at least writer features.
+   *  - We can only remove one feature at a time.
+   *
+   * Note, this not an exhaustive list of downgrade rules. Rather, we check the most important
+   * downgrade invariants. We also perform checks during feature removal at
+   * [[AlterTableDropFeatureDeltaCommand]].
+   */
+  def canDowngradeTo(to: Protocol): Boolean = {
+    if (!to.supportsWriterFeatures) return false
+
+    // We only support feature removal not protocol version downgrade.
+    if (to.minReaderVersion != this.minReaderVersion) return false
+    if (to.minWriterVersion != this.minWriterVersion) return false
+
+    // Can only remove a maximum of one feature at a time.
+    (this.readerAndWriterFeatureNames -- to.readerAndWriterFeatureNames).size == 1
+  }
+
+  /**
+   * True if this protocol can be upgraded or downgraded to the 'to' protocol.
+   */
+  def canTransitionTo(to: Protocol, op: Operation): Boolean = {
+    if (op.isInstanceOf[DeltaOperations.DropTableFeature]) {
+      canDowngradeTo(to)
+    } else {
+      canUpgradeTo(to)
+    }
+  }
+
+  /**
+   * Validates whether all requirements of a removed feature hold against the provided snapshot.
+   */
+  def validateFeatureRemoval(
+      downgradeCommitInfo: Option[CommitInfo],
+      snapshot: Snapshot): Boolean = {
+    val tags = downgradeCommitInfo.flatMap(_.tags).getOrElse(Map.empty)
+
+    // No feature removal tag means this is not a protocol downgrade commit.
+    val removedFeatureName = tags.get(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG).getOrElse {
+      return true
+    }
+
+    TableFeature.featureNameToFeature(removedFeatureName) match {
+      case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
+      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(removedFeatureName)
+    }
+  }
+
+  /**
+   * Identify from CommitInfo whether this is a feature removal commit.
+   */
+  def isDropFeatureCommit(commitInfo: Option[CommitInfo]): Boolean = {
+    commitInfo
+      .flatMap(_.tags)
+      .exists(_.contains(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG))
+  }
+
+  /**
    * Merge this protocol with multiple `protocols` to have the highest reader and writer versions
    * plus all explicitly and implicitly supported features.
    */
@@ -252,6 +315,32 @@ trait TableFeatureSupport { this: Protocol =>
     } else {
       mergedProtocol
     }
+  }
+
+  /**
+   * Remove writer feature from protocol. To remove a writer feature we only need to
+   * remove it from the writerFeatures set.
+   */
+  private[delta] def removeWriterFeature(targetWriterFeature: WriterFeature): Protocol = {
+    require(targetWriterFeature.isRemovable)
+    copy(writerFeatures = writerFeatures.map(_ - targetWriterFeature.name))
+  }
+
+  /**
+   * Remove feature wrapper for removing either Reader/Writer or Writer features. We assume
+   * the feature exists in the protocol. There is a relevant validation at
+   * [[AlterTableRemoveFeatureDeltaCommand]].
+   */
+  def removeFeature(targetFeature: TableFeature): Protocol = targetFeature match {
+    case f: ReaderWriterFeature =>
+      throw new UnsupportedOperationException(
+        "ReaderWriter feature removal is currently not supported")
+    case f: WriterFeature =>
+      removeWriterFeature(f)
+    // Legacy features not currently supported.
+    case _ =>
+      throw new UnsupportedOperationException(
+        "Feature removal is not supported for this feature type")
   }
 
   /**

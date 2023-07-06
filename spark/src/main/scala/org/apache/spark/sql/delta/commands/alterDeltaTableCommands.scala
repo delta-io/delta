@@ -183,6 +183,63 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 }
 
 /**
+ * A command that removes an existing feature from the table. The feature needs to implement the
+ * [[RemovableFeature]] trait.
+ *
+ * The syntax of the command is:
+ * {{{
+ *   ALTER TABLE t DROP FEATURE f
+ * }}}
+ */
+case class AlterTableDropFeatureDeltaCommand(
+    table: DeltaTableV2,
+    featureName: String)
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
+      // This guard is only temporary while the remove feature is in development.
+      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED))
+
+      val removableFeature = TableFeature.featureNameToFeature(featureName) match {
+        case Some(feature: RemovableFeature) => feature
+        case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
+        case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
+      }
+
+      if (!table.snapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
+        throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+      }
+
+      // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
+      //
+      // a) Bring the table to a state the validation passes.
+      // b) To not allow concurrent commands to alter the table in a way the validation does not
+      //    pass. This can be done by disabling first the relevant metadata property.
+      // c) Undoing (b) should cause the preDowngrade command to fail.
+      //
+      // Note, for features that cannot be disabled we solely rely for correctness on
+      // validateRemoval.
+      removableFeature.preDowngradeCommand(table).run()
+
+      val txn = startTransaction(sparkSession)
+      val protocol = txn.protocol
+
+      // Verify whether all requirements hold before performing the protocol downgrade.
+      // If any concurrent transactions interfere with the protocol downgrade txn we
+      // revalidate the requirements against the snapshot of the winning txn.
+      if (!removableFeature.validateRemoval(txn.snapshot)) {
+        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
+      }
+      txn.updateProtocol(protocol.removeFeature(removableFeature))
+      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName))
+      Nil
+    }
+  }
+}
+
+/**
  * A command that add columns to a Delta table.
  * The syntax of using this command in SQL is:
  * {{{

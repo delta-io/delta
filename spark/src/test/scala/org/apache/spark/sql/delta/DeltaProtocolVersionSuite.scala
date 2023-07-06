@@ -25,6 +25,8 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
@@ -1969,6 +1971,223 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(intercept[DeltaTableFeatureException] {
         sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
       }.getMessage.contains(s"unsupported by this version of Delta Lake: $featureName"))
+    }
+  }
+
+  def protocolWithFeatures(
+      readerFeatures: Seq[TableFeature] = Seq.empty,
+      writerFeatures: Seq[TableFeature] = Seq.empty): Protocol = {
+    val readerFeaturesEnabled = readerFeatures.nonEmpty
+    val writerFeaturesEnabled = readerFeatures.nonEmpty || writerFeatures.nonEmpty
+    val minReaderVersion = if (readerFeaturesEnabled) TABLE_FEATURES_MIN_READER_VERSION else 1
+    val minWriterVersion = if (writerFeaturesEnabled) TABLE_FEATURES_MIN_WRITER_VERSION else 1
+    val readerFeatureNames =
+      if (readerFeaturesEnabled) Some(readerFeatures.map(_.name).toSet) else None
+    val writerFeatureNames = if (writerFeaturesEnabled) {
+      Some((readerFeatures ++ writerFeatures).map(_.name).toSet)
+    } else {
+      None
+    }
+
+    Protocol(
+      minReaderVersion = minReaderVersion,
+      minWriterVersion = minWriterVersion,
+      readerFeatures = readerFeatureNames,
+      writerFeatures = writerFeatureNames)
+  }
+
+  def protocolWithReaderFeature(readerFeature: TableFeature): Protocol = {
+    protocolWithFeatures(readerFeatures = Seq(readerFeature))
+  }
+
+  def protocolWithWriterFeature(writerFeature: TableFeature): Protocol = {
+    protocolWithFeatures(writerFeatures = Seq(writerFeature))
+  }
+
+  def emptyProtocolWithTableFeatures: Protocol =
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+      readerFeatures = Some(Set.empty),
+      writerFeatures = Some(Set.empty))
+
+  test("Remove writer feature when table protocol does not support reader features") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+             |)""".stripMargin)
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterFeature.name)
+        command.run(spark)
+
+        assert(
+          deltaLog.update().protocol === Protocol(
+            minReaderVersion = 1,
+            minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+            readerFeatures = None,
+            writerFeatures = Some(Set.empty)))
+      }
+    }
+  }
+
+  test("Remove writer feature") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
+             |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+             |)""".stripMargin)
+
+      AlterTableSetPropertiesDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        Map(TestRemovableWriterFeature.TABLE_PROP_KEY -> "true")).run(spark)
+
+      assert(
+        deltaLog.update().protocol === Protocol(
+          minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+          minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+          readerFeatures = Some(Set.empty),
+          writerFeatures = Some(Set(TestRemovableWriterFeature.name))))
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterFeature.name)
+        command.run(spark)
+      }
+
+      // Writer feature is removed from the writer features set.
+      val snapshot = deltaLog.update()
+      assert(snapshot.protocol === emptyProtocolWithTableFeatures)
+      assert(!snapshot.metadata.configuration.contains(TestRemovableWriterFeature.TABLE_PROP_KEY))
+      assertPropertiesAndShowTblProperties(deltaLog)
+    }
+  }
+
+  test("Remove a non-removable feature") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.feature.${TestWriterMetadataNoAutoUpdateFeature.name} = 'supported'
+             |)""".stripMargin)
+
+      val expectedProtocol = protocolWithWriterFeature(TestWriterMetadataNoAutoUpdateFeature)
+      assert(deltaLog.update().protocol === expectedProtocol)
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestWriterMetadataNoAutoUpdateFeature.name)
+
+        val e = intercept[DeltaTableFeatureException] {
+          command.run(spark)
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+          parameters = Map("feature" -> TestWriterMetadataNoAutoUpdateFeature.name))
+      }
+    }
+  }
+
+  test("Remove a feature not supported by the client") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      assert(
+        deltaLog.update().protocol === Protocol(
+          minReaderVersion = 1,
+          minWriterVersion = 2,
+          readerFeatures = None,
+          writerFeatures = None))
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          "NonSupportedFeature")
+
+        val e = intercept[DeltaTableFeatureException] {
+          command.run(spark)
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+          parameters = Map("feature" -> "NonSupportedFeature"))
+      }
+    }
+  }
+
+  test("Remove a feature not present in the protocol") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      assert(
+        deltaLog.update().protocol === Protocol(
+          minReaderVersion = 1,
+          minWriterVersion = 2,
+          readerFeatures = None,
+          writerFeatures = None))
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterFeature.name)
+
+        val e = intercept[DeltaTableFeatureException] {
+          command.run(spark)
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE",
+          parameters = Map("feature" -> TestRemovableWriterFeature.name))
+      }
+    }
+  }
+
+  test("Reintroduce a feature after removing it") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+             |)""".stripMargin)
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterFeature.name)
+        command.run(spark)
+      }
+
+      val expectedProtocol = Protocol(
+        minReaderVersion = 1,
+        minWriterVersion = 7,
+        readerFeatures = None,
+        writerFeatures = Some(Set.empty))
+      assert(deltaLog.update().protocol === expectedProtocol)
+
+      sql(s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
+             |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+             |)""".stripMargin)
+
+      val expectedProtocolAfterReintroduction =
+        protocolWithFeatures(writerFeatures = Seq(TestRemovableWriterFeature))
+      assert(deltaLog.update().protocol === expectedProtocolAfterReintroduction)
     }
   }
 

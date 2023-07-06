@@ -16,9 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -101,6 +103,11 @@ sealed abstract class TableFeature(
   def isLegacyFeature: Boolean = this.isInstanceOf[LegacyFeatureType]
 
   /**
+   * True if this feature can be removed.
+   */
+  def isRemovable: Boolean = this.isInstanceOf[RemovableFeature]
+
+  /**
    * Set of table features that this table feature depends on. I.e. the set of features that need
    * to be enabled if this table feature is enabled.
    */
@@ -143,6 +150,33 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
   require(
     !this.isLegacyFeature || automaticallyUpdateProtocolOfExistingTables,
     "Legacy feature must be auto-update capable.")
+}
+
+/**
+ * A trait indicating a feature can be removed. It introduces two methods:
+ *
+ * a) preDowngradeCommand. This is where all required actions for removing the feature are
+ *    implemented. For example, to remove the DVs feature we need to remove metadata config
+ *    and purge all DVs from table. This action takes place before the protocol downgrade in
+ *    separate commit(s). Note, the command needs to be implemented in a way concurrent
+ *    transactions do not nullify the effect. For example, disabling DVs on a table before
+ *    purging will stop concurrent transactions from adding DVs. During protocol downgrade
+ *    we perform a validation in [[validateRemoval]] to make sure all invariants still hold.
+ *
+ * b) validateRemoval. Add any feature-specific checks before proceeding to the protocol
+ *    downgrade. This function is guaranteed to be called at the latest version before the
+ *    protocol downgrade is committed to the table. When the protocol downgrade txn conflicts,
+ *    the validation is repeated against the winning txn snapshot. As soon as the protocol
+ *    downgrade succeeds, all subsequent interleaved txns are aborted.
+ */
+sealed trait RemovableFeature { self: TableFeature =>
+  // Legacy feature removal is not supported.
+  if (this.isLegacyFeature) {
+    throw DeltaErrors.dropTableFeatureLegacyFeature(this.name)
+  }
+
+  def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
+  def validateRemoval(snapshot: Snapshot): Boolean
 }
 
 /**
@@ -203,6 +237,7 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
+  val DROP_FEATURE_COMMIT_INFO_TAG = "delta.feature.drop"
 
   /**
    * All table features recognized by this client. Update this set when you added a new Table
@@ -232,6 +267,7 @@ object TableFeature {
         TestReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
+        TestRemovableWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
@@ -416,6 +452,26 @@ object TestReaderWriterMetadataAutoUpdateFeature
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
+}
+
+object TestRemovableWriterFeature
+  extends WriterFeature(name = "testRemovableWriter")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriter321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterFeaturePreDowngradeCommand(table)
 }
 
 object TestFeatureWithDependency
