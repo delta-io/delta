@@ -54,7 +54,7 @@ class DeltaSourceSnapshot(
     (part, data)
   }
 
-  private lazy val cachedState = {
+  private[delta] def filteredFiles: Dataset[IndexedFile] = {
     import spark.implicits.rddToDatasetHolder
     import org.apache.spark.sql.delta.implicits._
 
@@ -74,19 +74,19 @@ class DeltaSourceSnapshot(
         .withColumn("isLast", lit(false))
         .withColumn("shouldSkip", lit(false))
 
-    val filteredFiles = DeltaLog.filterFileList(
+    DeltaLog.filterFileList(
       snapshot.metadata.partitionSchema,
       initialFiles,
       partitionFilters,
       Seq("add")).as[IndexedFile]
+  }
 
+  private lazy val cachedState = {
     cacheDS(filteredFiles, s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
   }
 
-  private[delta] def filteredFiles: Dataset[IndexedFile] = cachedState.getDS
-
   def iterator(): Iterator[IndexedFile] = {
-    filteredFiles.toLocalIterator.asScala
+    cachedState.getDS.toLocalIterator.asScala
   }
 
   def close(unpersistSnapshot: Boolean): Unit = {
