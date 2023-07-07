@@ -121,7 +121,8 @@ class DeletionVectorSuite extends AnyFunSuite {
   }
 
   test("end-to-end usage: reading partitioned dv table with checkpoint") {
-    val path = goldenTablePath("dv-partitioned-with-checkpoint")
+    // kernel expects a fully qualified path
+    val path = "file:" + goldenTablePath("dv-partitioned-with-checkpoint")
     val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
       .filter{ case (_, col1, _) =>
         !(col1 % 2 == 0 && col1 < 30)
