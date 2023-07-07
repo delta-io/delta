@@ -833,6 +833,37 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
     data.toDF("a", "b").write.format("delta").save(tablePath)
   }
+
+  generateGoldenTable("dv-partitioned-with-checkpoint") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+
+  // TODO: requires bug fix in delta-io/delta#1886
+  /*
+  generateGoldenTable("dv-with-columnmapping") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
+      ("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+  */
 }
 
 case class TestStruct(f1: String, f2: Long)

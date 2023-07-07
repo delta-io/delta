@@ -20,6 +20,7 @@ import java.util.Optional
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 
+import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.client.DefaultTableClient
 import io.delta.kernel.data.Row
 import io.delta.kernel.types.{IntegerType, LongType, StringType, StructType}
@@ -119,22 +120,8 @@ class DeletionVectorSuite extends AnyFunSuite {
     assert(result.toSet === expectedResult)
   }
 
-  /**
-  generateGoldenTable("dv-partitioned-with-checkpoint") { tablePath =>
-    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
-      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
-      data.toDF("part", "col1", "col2").write
-        .format("delta")
-        .partitionBy("part")
-        .save(tablePath)
-      (0 until 15).foreach { n =>
-        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
-      }
-    }
-  }
-   */
   test("end-to-end usage: reading partitioned dv table with checkpoint") {
-    val path = DefaultKernelTestUtils.getTestResourceFilePath("dv-partitioned-with-checkpoint")
+    val path = goldenTablePath("dv-partitioned-with-checkpoint")
     val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
       .filter{ case (_, col1, _) =>
         !(col1 % 2 == 0 && col1 < 30)
@@ -150,20 +137,7 @@ class DeletionVectorSuite extends AnyFunSuite {
     assert (result.toSet == expectedResult)
   }
 
-  /**
-  generateGoldenTable("dv-with-columnmapping") { tablePath =>
-    withSQLConf(("spark.databricks.delta.properties.defaults.columnMapping.mode", "name")) {
-      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
-      data.toDF("part", "col1", "col2").write
-        .format("delta")
-        .partitionBy("part")
-        .save(tablePath)
-      (0 until 15).foreach { n =>
-        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
-      }
-    }
-  }
-   */
+  // TODO: update to use goldenTables once bug is fixed in delta-spark see issue #1886
   test(
     "end-to-end usage: reading partitioned dv table with checkpoint with columnMappingMode=name") {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("dv-with-columnmapping")
