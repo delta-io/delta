@@ -465,11 +465,11 @@ The Delta transaction protocol does not, for example, assume monotonicity of the
 
 The schema of the `txn` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-appId | String | A unique identifier for the application performing the transaction
-version | Long | An application-specific numeric identifier for this transaction
-lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+appId | String | A unique identifier for the application performing the transaction | required
+version | Long | An application-specific numeric identifier for this transaction | required
+lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch | optional
 
 The following is an example `txn` action:
 ```json
@@ -493,12 +493,12 @@ Reader Version 3 and Writer Version 7 add two lists of table features to the pro
 
 The schema of the `protocol` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
-minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
-readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
-writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table | required
+minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table | required
+readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`) | optional
+writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`) | optional
 
 Some example Delta protocols:
 ```json
