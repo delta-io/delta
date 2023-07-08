@@ -30,7 +30,7 @@ from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
 from delta.testing.utils import DeltaTestCase
 
 
-class DeltaTableTests(DeltaTestCase):
+class DeltaTableTestsMixin:
 
     def test_forPath(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -46,9 +46,10 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_forName(self) -> None:
-        self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
-        df = DeltaTable.forName(self.spark, "test").toDF()
-        self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
+        with self.table("test"):
+            self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
+            df = DeltaTable.forName(self.spark, "test").toDF()
+            self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_alias_and_toDF(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -95,7 +96,7 @@ class DeltaTableTests(DeltaTestCase):
             files = f.readlines()
 
         # the number of files we write should equal the number of lines in the manifest
-        assert(len(files) == numFiles)
+        self.assertEqual(len(files), numFiles)
 
     def test_update(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
@@ -531,7 +532,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile2),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile2)))
 
         # convert to delta with partition column provided as a string
         tempFile3 = self.tempFile + "_3"
@@ -543,7 +544,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile3)))
 
     def test_isDeltaTable(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
@@ -567,23 +568,24 @@ class DeltaTableTests(DeltaTestCase):
             if col in comments:
                 metadata["comment"] = comments[col]
             fields.append(StructField(col, dataType, col in nullables, metadata))
-        assert (StructType(fields) == schema)
+        self.assertEqual(StructType(fields), schema)
         if len(properties) > 0:
-            tablePropertyMap: Dict[str, str] = (
+            result = (
                 self.spark.sql(  # type: ignore[assignment, misc]
                     "SHOW TBLPROPERTIES {}".format(tableName)
                 )
-                .rdd.collectAsMap())
+                .collect())
+            tablePropertyMap = {row.key: row.value for row in result}
             for key in properties:
-                assert (key in tablePropertyMap)
-                assert (tablePropertyMap[key] == properties[key])
+                self.assertIn(key, tablePropertyMap)
+                self.assertEqual(tablePropertyMap[key], properties[key])
         tableDetails = self.spark.sql("DESCRIBE DETAIL {}".format(tableName))\
             .collect()[0]
-        assert(tableDetails.format == "delta")
+        self.assertEqual(tableDetails.format, "delta")
         actualComment = tableDetails.description
-        assert(actualComment == tblComment)
+        self.assertEqual(actualComment, tblComment)
         partitionCols = tableDetails.partitionColumns
-        assert(sorted(partitionCols) == sorted((partitioningColumns)))
+        self.assertEqual(sorted(partitionCols), sorted((partitioningColumns)))
 
     def __verify_generated_column(self, tableName: str, deltaTable: DeltaTable) -> None:
         cmd = "INSERT INTO {table} (col1, col2) VALUES (1, 11)".format(table=tableName)
@@ -623,86 +625,89 @@ class DeltaTableTests(DeltaTestCase):
 
     def test_create_table_with_existing_schema(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        deltaTable = DeltaTable.create(self.spark).tableName("test") \
-            .addColumns(df.schema) \
-            .addColumn("value2", dataType="int")\
-            .partitionedBy(["value2", "value"])\
-            .execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["key", "value", "value2"],
-                                   [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"},
-                                   partitioningColumns=["value", "value2"])
+        with self.table("test"):
+            deltaTable = DeltaTable.create(self.spark).tableName("test") \
+                .addColumns(df.schema) \
+                .addColumn("value2", dataType="int")\
+                .partitionedBy(["value2", "value"])\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=["value", "value2"])
 
-        # verify creating table with list of structFields
-        deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
-            df.schema.fields) \
-            .addColumn("value2", dataType="int") \
-            .partitionedBy("value2", "value")\
-            .execute()
-        self.__verify_table_schema("test2",
-                                   deltaTable2.toDF().schema,
-                                   ["key", "value", "value2"],
-                                   [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"},
-                                   partitioningColumns=["value", "value2"])
+        with self.table("test2"):
+            # verify creating table with list of structFields
+            deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .partitionedBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test2",
+                                       deltaTable2.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=["value", "value2"])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
-        # create table.
-        deltaTable = DeltaTable.create().tableName("test")\
-            .addColumn("value", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["value"],
-                                   [IntegerType()],
-                                   nullables={"value"})
+        with self.table("test"):
+            # create table.
+            deltaTable = DeltaTable.create().tableName("test")\
+                .addColumn("value", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["value"],
+                                       [IntegerType()],
+                                       nullables={"value"})
 
-        # ignore existence with createIfNotExists
-        deltaTable = DeltaTable.createIfNotExists().tableName("test") \
-            .addColumn("value2", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["value"],
-                                   [IntegerType()],
-                                   nullables={"value"})
+            # ignore existence with createIfNotExists
+            deltaTable = DeltaTable.createIfNotExists().tableName("test") \
+                .addColumn("value2", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["value"],
+                                       [IntegerType()],
+                                       nullables={"value"})
 
-        # replace table with replace
-        deltaTable = DeltaTable.replace().tableName("test") \
-            .addColumn("key", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["key"],
-                                   [IntegerType()],
-                                   nullables={"key"})
+            # replace table with replace
+            deltaTable = DeltaTable.replace().tableName("test") \
+                .addColumn("key", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key"],
+                                       [IntegerType()],
+                                       nullables={"key"})
 
-        # replace with a new column again
-        deltaTable = DeltaTable.createOrReplace().tableName("test") \
-            .addColumn("col1", dataType="int").execute()
+            # replace with a new column again
+            deltaTable = DeltaTable.createOrReplace().tableName("test") \
+                .addColumn("col1", dataType="int").execute()
 
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["col1"],
-                                   [IntegerType()],
-                                   nullables={"col1"})
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["col1"],
+                                       [IntegerType()],
+                                       nullables={"col1"})
 
     def test_create_table_with_name_only(self) -> None:
         for ifNotExists in (False, True):
             tableName = "testTable{}".format(ifNotExists)
-            deltaTable = self.__create_table(ifNotExists, tableName=tableName)
+            with self.table(tableName):
+                deltaTable = self.__create_table(ifNotExists, tableName=tableName)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_create_table_with_location_only(self) -> None:
         for ifNotExists in (False, True):
@@ -724,59 +729,59 @@ class DeltaTableTests(DeltaTestCase):
         for ifNotExists in (False, True):
             path = self.tempFile + str(ifNotExists)
             tableName = "testTable{}".format(ifNotExists)
-            deltaTable = self.__create_table(
-                ifNotExists, tableName=tableName, location=path)
+            with self.table(tableName):
+                deltaTable = self.__create_table(
+                    ifNotExists, tableName=tableName, location=path)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_create_table_behavior(self) -> None:
-        self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
+        with self.table("testTable"):
+            self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
 
-        # Errors out if doesn't ignore.
-        try:
-            self.__create_table(False, tableName="testTable")
-        except AnalysisException as e:
-            msg = e.desc
-        assert ("testTable" in msg and "already exists" in msg)
+            # Errors out if doesn't ignore.
+            with self.assertRaises(AnalysisException) as error_ctx:
+                self.__create_table(False, tableName="testTable")
+            msg = str(error_ctx.exception)
+            assert ("testTable" in msg and "already exists" in msg)
 
-        # ignore table creation.
-        self.__create_table(True, tableName="testTable")
-        schema = self.spark.read.format("delta").table("testTable").schema
-        self.__verify_table_schema("testTable",
-                                   schema,
-                                   ["c1"],
-                                   [IntegerType()],
-                                   nullables={"c1"})
+            # ignore table creation.
+            self.__create_table(True, tableName="testTable")
+            schema = self.spark.read.format("delta").table("testTable").schema
+            self.__verify_table_schema("testTable",
+                                       schema,
+                                       ["c1"],
+                                       [IntegerType()],
+                                       nullables={"c1"})
 
     def test_replace_table_with_name_only(self) -> None:
         for orCreate in (False, True):
             tableName = "testTable{}".format(orCreate)
-            self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
-            deltaTable = self.__replace_table(orCreate, tableName=tableName)
+            with self.table(tableName):
+                self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
+                deltaTable = self.__replace_table(orCreate, tableName=tableName)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_replace_table_with_location_only(self) -> None:
         for orCreate in (False, True):
@@ -800,12 +805,33 @@ class DeltaTableTests(DeltaTestCase):
         for orCreate in (False, True):
             path = self.tempFile + str(orCreate)
             tableName = "testTable{}".format(orCreate)
-            self.spark.sql("CREATE TABLE {} (col int) USING DELTA LOCATION '{}'"
-                           .format(tableName, path))
-            deltaTable = self.__replace_table(
-                orCreate, tableName=tableName, location=path)
+            with self.table(tableName):
+                self.spark.sql("CREATE TABLE {} (col int) USING DELTA LOCATION '{}'"
+                               .format(tableName, path))
+                deltaTable = self.__replace_table(
+                    orCreate, tableName=tableName, location=path)
 
-            self.__verify_table_schema(tableName,
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
+
+    def test_replace_table_behavior(self) -> None:
+        with self.table("testTable"):
+            with self.assertRaises(AnalysisException) as error_ctx:
+                self.__replace_table(False, tableName="testTable")
+            msg = str(error_ctx.exception)
+            self.assertIn("testTable", msg)
+            self.assertTrue("did not exist" in msg or "cannot be found" in msg)
+            deltaTable = self.__replace_table(True, tableName="testTable")
+            self.__verify_table_schema("testTable",
                                        deltaTable.toDF().schema,
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
@@ -814,52 +840,30 @@ class DeltaTableTests(DeltaTestCase):
                                        properties={"foo": "bar"},
                                        partitioningColumns=["col1"],
                                        tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
-
-    def test_replace_table_behavior(self) -> None:
-        msg = None
-        try:
-            self.__replace_table(False, tableName="testTable")
-        except AnalysisException as e:
-            msg = e.desc
-        assert msg is not None
-        assert ("testTable" in msg)
-        assert("did not exist" in msg or "cannot be found" in msg)
-        deltaTable = self.__replace_table(True, tableName="testTable")
-        self.__verify_table_schema("testTable",
-                                   deltaTable.toDF().schema,
-                                   ["col1", "col2"],
-                                   [IntegerType(), IntegerType()],
-                                   nullables={"col2"},
-                                   comments={"col1": "foo"},
-                                   properties={"foo": "bar"},
-                                   partitioningColumns=["col1"],
-                                   tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
-        tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
-            .addColumn("col1", "int", comment="foo", nullable=False) \
-            .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
-            .property("foo", "bar") \
-            .comment("comment")
-        tableBuilder._jbuilder = tableBuilder._jbuilder.partitionedBy(
-            _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
-        )
-        deltaTable = tableBuilder.execute()
-        self.__verify_table_schema("testTable",
-                                   deltaTable.toDF().schema,
-                                   ["col1", "col2"],
-                                   [IntegerType(), IntegerType()],
-                                   nullables={"col2"},
-                                   comments={"col1": "foo"},
-                                   properties={"foo": "bar"},
-                                   partitioningColumns=["col1"],
-                                   tblComment="comment")
+        with self.table("testTable"):
+            tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
+                .addColumn("col1", "int", comment="foo", nullable=False) \
+                .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
+                .property("foo", "bar") \
+                .comment("comment")
+            tableBuilder._jbuilder = tableBuilder._jbuilder.partitionedBy(
+                _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
+            )
+            deltaTable = tableBuilder.execute()
+            self.__verify_table_schema("testTable",
+                                       deltaTable.toDF().schema,
+                                       ["col1", "col2"],
+                                       [IntegerType(), IntegerType()],
+                                       nullables={"col2"},
+                                       comments={"col1": "foo"},
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
 
     def test_delta_table_builder_with_bad_args(self) -> None:
-        builder = DeltaTable.create(self.spark)
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad table name
         with self.assertRaises(TypeError):
@@ -884,6 +888,7 @@ class DeltaTableTests(DeltaTestCase):
         # bad column datatype - can't be pared
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
+            builder.execute()
 
         # bad comment
         with self.assertRaises(TypeError):
@@ -1037,8 +1042,6 @@ class DeltaTableTests(DeltaTestCase):
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(3, res.first().metrics.numFilesRemoved)
         self.assertEqual('[]', op_params['predicate'])
@@ -1068,11 +1071,9 @@ class DeltaTableTests(DeltaTestCase):
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(2, res.first().metrics.numFilesRemoved)
-        self.assertEqual('["(key = \'a\')"]', op_params['predicate'])
+        self.assertEqual('''["('key = a)"]''', op_params['predicate'])
 
         # test non-partition column
         def optimize() -> None:
@@ -1205,6 +1206,10 @@ class DeltaTableTests(DeltaTestCase):
             if exceptionMsg in str(e):
                 seenTheRightException = True
         assert seenTheRightException, ("Did not catch expected Exception:" + exceptionMsg)
+
+
+class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
+    pass
 
 
 if __name__ == "__main__":

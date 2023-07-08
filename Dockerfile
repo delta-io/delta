@@ -14,25 +14,30 @@
 # limitations under the License.
 #
 
-FROM python:3.7.3-stretch
+# Debian buster LTS is until June 30th 2024. [TODO] Upgrade to a newer version before then.
+FROM openjdk:8-jdk-buster
 
-RUN apt-get update && apt-get -y install openjdk-8-jdk
+# Install pip3
+RUN apt-get update && apt-get install -y python3-pip
+# Upgrade pip. This is needed to use prebuilt wheels for packages cffi (dep of cryptography) and
+# cryptography. Otherwise, building wheels for these packages fails.
+RUN pip3 install --upgrade pip
 
-RUN pip install pyspark==3.3.0
+RUN pip3 install pyspark==3.4.0
 
-RUN pip install mypy==0.910
+RUN pip3 install mypy==0.910
 
-RUN pip install importlib_metadata==3.10.0
+RUN pip3 install importlib_metadata==3.10.0
 
-RUN pip install cryptography==37.0.4
+RUN pip3 install cryptography==37.0.4
 
 # We must install cryptography before twine. Else, twine will pull a newer version of
 # cryptography that requires a newer version of Rust and may break tests.
-RUN pip install twine==4.0.1
+RUN pip3 install twine==4.0.1
 
-RUN pip install wheel==0.33.4
+RUN pip3 install wheel==0.33.4
 
-RUN pip install setuptools==41.0.1
+RUN pip3 install setuptools==41.0.1
 
 # Do not add any non-deterministic changes (e.g., copy from files 
 # from repo) in this Dockerfile, so that the  docker image 

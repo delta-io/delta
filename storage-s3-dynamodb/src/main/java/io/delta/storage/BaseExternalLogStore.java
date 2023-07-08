@@ -17,6 +17,7 @@
 package io.delta.storage;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.storage.internal.FileNameUtils;
+import io.delta.storage.internal.PathLock;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -43,9 +45,26 @@ import org.slf4j.LoggerFactory;
  * <p>
  * This implementation depends on child methods, particularly `putExternalEntry`, to provide
  * the mutual exclusion that the cloud store is lacking.
+ *
+ * Notation:
+ * - N: the target commit version we are writing. e.g. 10 for 0000010.json
+ * - N.json: the actual target commit we want to write.
+ * - T(N): the temp file path for commit N used during the prepare-commit-acknowledge `write`
+ *         algorithm below. We will eventually copy T(N) into N.json
+ * - E(N, T(N), complete=true/false): the entry we will atomically commit into the external
+ *                                      cache.
  */
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(BaseExternalLogStore.class);
+
+    /**
+     * A global path lock to ensure that no two writers/readers are copying a given T(N) into N.json
+     * at the same time within the same JVM. This can occur
+     * - while a writer is performing a normal write operation AND a reader happens to see an
+     *   external entry E(complete=false) and so starts a recovery operation
+     * - while two readers see E(complete=false) and so both start a recovery operation
+     */
+    private static final PathLock pathLock = new PathLock();
 
     /**
      * The delay, in seconds, after an external entry has been committed to the delta log at which
@@ -113,6 +132,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
 
         if (entry.isPresent() && !entry.get().complete) {
+            // Note: `fixDeltaLog` will apply per-JVM mutual exclusion via a lock to help reduce
+            // the chance of many reader threads in a single JVM doing duplicate copies of
+            // T(N) -> N.json.
             fixDeltaLog(fs, entry.get());
         }
 
@@ -144,83 +166,101 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+        try {
+            // Prevent concurrent writers in this JVM from either
+            // a) concurrently overwriting N.json if overwrite=true
+            // b) both checking if N-1.json exists and performing a "recovery" where they both
+            //    copy T(N-1) into N-1.json
+            //
+            // Note that the mutual exclusion on writing into N.json with overwrite=false from
+            // different JVMs (which is the entire point of BaseExternalLogStore) is provided by the
+            // external cache, not by this lock, of course.
+            //
+            // Also note that this lock path (resolvedPath) is for N.json, while the lock path used
+            // below in the recovery `fixDeltaLog` path is for N-1.json. Thus, no deadlock.
+            pathLock.acquire(resolvedPath);
 
-        if (overwrite) {
-            writeActions(fs, path, actions);
-            return;
-        } else if (fs.exists(path)) {
-            // Step 0: Fail if N.json already exists in FileSystem and overwrite=false.
-            throw new java.nio.file.FileAlreadyExistsException(path.toString());
-        }
+            if (overwrite) {
+                writeActions(fs, path, actions);
+                return;
+            } else if (fs.exists(path)) {
+                // Step 0: Fail if N.json already exists in FileSystem and overwrite=false.
+                throw new java.nio.file.FileAlreadyExistsException(path.toString());
+            }
 
-        // Step 1: Ensure that N-1.json exists
-        final Path tablePath = getTablePath(resolvedPath);
-        if (FileNameUtils.isDeltaFile(path)) {
-            final long version = FileNameUtils.deltaVersion(path);
-            if (version > 0) {
-                final long prevVersion = version - 1;
-                final Path deltaLogPath = new Path(tablePath, "_delta_log");
-                final Path prevPath = FileNameUtils.deltaFile(deltaLogPath, prevVersion);
-                final String prevFileName = prevPath.getName();
-                final Optional<ExternalCommitEntry> prevEntry = getExternalEntry(
-                    tablePath.toString(),
-                    prevFileName
-                );
-                if (prevEntry.isPresent() && !prevEntry.get().complete) {
-                    fixDeltaLog(fs, prevEntry.get());
-                } else {
-                    if (!fs.exists(prevPath)) {
-                        throw new java.nio.file.FileSystemException(
-                            String.format("previous commit %s doesn't exist", prevPath)
-                        );
+            // Step 1: Ensure that N-1.json exists
+            final Path tablePath = getTablePath(resolvedPath);
+            if (FileNameUtils.isDeltaFile(path)) {
+                final long version = FileNameUtils.deltaVersion(path);
+                if (version > 0) {
+                    final long prevVersion = version - 1;
+                    final Path deltaLogPath = new Path(tablePath, "_delta_log");
+                    final Path prevPath = FileNameUtils.deltaFile(deltaLogPath, prevVersion);
+                    final String prevFileName = prevPath.getName();
+                    final Optional<ExternalCommitEntry> prevEntry = getExternalEntry(
+                        tablePath.toString(),
+                        prevFileName
+                    );
+                    if (prevEntry.isPresent() && !prevEntry.get().complete) {
+                        fixDeltaLog(fs, prevEntry.get());
+                    } else {
+                        if (!fs.exists(prevPath)) {
+                            throw new java.nio.file.FileSystemException(
+                                String.format("previous commit %s doesn't exist", prevPath)
+                            );
+                        }
                     }
-                }
-            } else {
-                final String fileName = path.getName();
-                final Optional<ExternalCommitEntry> entry = getExternalEntry(
-                    tablePath.toString(),
-                    fileName
-                );
-                if (entry.isPresent()) {
-                    if (entry.get().complete && !fs.exists(path)) {
-                        throw new java.nio.file.FileSystemException(
-                            String.format(
-                                "Old entries for table %s still exist in the external store",
-                                tablePath
-                            )
-                        );
+                } else {
+                    final String fileName = path.getName();
+                    final Optional<ExternalCommitEntry> entry = getExternalEntry(
+                        tablePath.toString(),
+                        fileName
+                    );
+                    if (entry.isPresent()) {
+                        if (entry.get().complete && !fs.exists(path)) {
+                            throw new java.nio.file.FileSystemException(
+                                String.format(
+                                    "Old entries for table %s still exist in the external store",
+                                    tablePath
+                                )
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        // Step 2: PREPARE the commit
-        final String tempPath = createTemporaryPath(resolvedPath);
-        final ExternalCommitEntry entry = new ExternalCommitEntry(
-            tablePath,
-            resolvedPath.getName(),
-            tempPath,
-            false, // not complete
-            null // no expireTime
-        );
-
-        // Step 2.1: Create temp file T(N)
-        writeActions(fs, entry.absoluteTempPath(), actions);
-
-        // Step 2.2: Create externals store entry E(N, T(N), complete=false)
-        putExternalEntry(entry, false); // overwrite=false
-
-        try {
-            // Step 3: COMMIT the commit to the delta log.
-            //         Copy T(N) -> N.json with overwrite=false
-            writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath);
-
-            // Step 4: ACKNOWLEDGE the commit
-            writePutCompleteDbEntry(entry);
-        } catch (Throwable e) {
-            LOG.info(
-                "{}: ignoring recoverable error", e.getClass().getSimpleName(), e
+            // Step 2: PREPARE the commit
+            final String tempPath = createTemporaryPath(resolvedPath);
+            final ExternalCommitEntry entry = new ExternalCommitEntry(
+                tablePath,
+                resolvedPath.getName(),
+                tempPath,
+                false, // not complete
+                null // no expireTime
             );
+
+            // Step 2.1: Create temp file T(N)
+            writeActions(fs, entry.absoluteTempPath(), actions);
+
+            // Step 2.2: Create externals store entry E(N, T(N), complete=false)
+            putExternalEntry(entry, false); // overwrite=false
+
+            try {
+                // Step 3: COMMIT the commit to the delta log.
+                //         Copy T(N) -> N.json with overwrite=false
+                writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath);
+
+                // Step 4: ACKNOWLEDGE the commit
+                writePutCompleteDbEntry(entry);
+            } catch (Throwable e) {
+                LOG.info(
+                    "{}: ignoring recoverable error", e.getClass().getSimpleName(), e
+                );
+            }
+        } catch (java.lang.InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
+        } finally {
+            pathLock.release(resolvedPath);
         }
     }
 
@@ -334,30 +374,51 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Method for assuring consistency on filesystem according to the external cache.
      * Method tries to rewrite TransactionLog entry from temporary path if it does not exist.
+     *
+     * Should never throw a FileAlreadyExistsException.
+     * - If we see one when copying the temp file, we can assume the target file N.json already
+     *   exists and a concurrent writer has already copied the contents of T(N).
+     * - We will never see one when writing to the external cache since overwrite=true.
      */
     private void fixDeltaLog(FileSystem fs, ExternalCommitEntry entry) throws IOException {
         if (entry.complete) {
             return;
         }
-        int retry = 0;
-        boolean copied = false;
-        while (true) {
-            LOG.debug("trying to fix: {}", entry.fileName);
-            try {
-                if (!copied && !fs.exists(entry.absoluteFilePath())) {
-                    fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteFilePath());
+
+        final Path targetPath = entry.absoluteFilePath();
+        try {
+            pathLock.acquire(targetPath);
+
+            int retry = 0;
+            boolean copied = false;
+            while (true) {
+                LOG.info("trying to fix: {}", entry.fileName);
+                try {
+                    if (!copied && !fs.exists(targetPath)) {
+                        fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), targetPath);
+                        copied = true;
+                    }
+                    fixDeltaLogPutCompleteDbEntry(entry);
+                    LOG.info("fixed file {}", entry.fileName);
+                    return;
+                } catch (java.nio.file.FileAlreadyExistsException e) {
+                    LOG.info("file {} already copied: {}:",
+                        entry.fileName, e.getClass().getSimpleName(), e);
                     copied = true;
+                    // Don't return since we still need to mark the DB entry as complete. This will
+                    // happen when we execute the main try block on the next while loop iteration
+                } catch (Throwable e) {
+                    LOG.info("{}:", e.getClass().getSimpleName(), e);
+                    if (retry >= 3) {
+                        throw e;
+                    }
                 }
-                fixDeltaLogPutCompleteDbEntry(entry);
-                LOG.info("fixed {}", entry.fileName);
-                return;
-            } catch(Throwable e) {
-                LOG.info("{}:", e.getClass().getSimpleName(), e);
-                if (retry >= 3) {
-                    throw e;
-                }
+                retry += 1;
             }
-            retry += 1;
+        } catch (java.lang.InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
+        } finally {
+            pathLock.release(targetPath);
         }
     }
 
@@ -369,7 +430,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     * @param dst path to destination file
     */
     private void copyFile(FileSystem fs, Path src, Path dst) throws IOException {
-        LOG.debug("copy file: {} -> {}", src, dst);
+        LOG.info("copy file: {} -> {}", src, dst);
         final FSDataInputStream inputStream = fs.open(src);
         try {
             final FSDataOutputStream outputStream = fs.create(dst, false); // overwrite=false

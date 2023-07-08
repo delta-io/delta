@@ -35,8 +35,14 @@ def getMajorMinor(version: String): (Int, Int) = {
   }
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
-  // versions 2.1.0 and above
-  case (major, minor) if (major == 2  && minor >= 1) || major >= 3 => "3.3.0"
+  // versions 2.4.0 and above
+  case (major,  minor) if (major == 2 && minor >= 4) || major >= 3 => "3.4.0"
+  // versions 2.3.x
+  case (major, minor) if major == 2  && minor == 3 => "3.3.2"
+  // versions 2.2.x
+  case (major, minor) if major == 2  && minor == 2 => "3.3.1"
+  // versions 2.1.x
+  case (major, minor) if major == 2  && minor == 1 => "3.3.0"
   // versions 1.0.0 to 2.0.x
   case (major, minor) if major == 1 || (major == 2 && minor == 0) => "3.2.1"
   // versions 0.7.x to 0.8.x
