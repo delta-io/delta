@@ -68,7 +68,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   private val shouldGenerateGoldenTables = sys.env.contains("GENERATE_GOLDEN_TABLES")
 
   private lazy val goldenTablePath = {
-    val dir = new File("src/test/resources/golden").getCanonicalFile
+    val dir = new File("src/main/resources/golden").getCanonicalFile
     require(dir.exists(),
       s"Cannot find $dir. Please run `GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test'`.")
     dir
