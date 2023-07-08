@@ -1073,7 +1073,7 @@ class DeltaTableTestsMixin:
         # assertions
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(2, res.first().metrics.numFilesRemoved)
-        self.assertEqual('["(key = \'a\')"]', op_params['predicate'])
+        self.assertEqual('''["('key = a)"]''', op_params['predicate'])
 
         # test non-partition column
         def optimize() -> None:

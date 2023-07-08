@@ -23,9 +23,12 @@
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
+    - [Domain Metadata](#domain-metadata)
+      - [Reader Requirements for Domain Metadata](#reader-requirements-for-domain-metadata)
+      - [Writer Requirements for Domain Metadata](#writer-requirements-for-domain-metadata)
 - [Action Reconciliation](#action-reconciliation)
 - [Table Features](#table-features)
-  - [Table Features for new and Existing Tables](#table-features-for-new-and-existing-tables)
+  - [Table Features for New and Existing Tables](#table-features-for-new-and-existing-tables)
   - [Enabled Features](#enabled-features)
   - [Disabled Features](#disabled-features)
 - [Column Mapping](#column-mapping)
@@ -38,6 +41,15 @@
     - [JSON Example 2 — On Disk with Absolute Path](#json-example-2--on-disk-with-absolute-path)
     - [JSON Example 3 — Inline](#json-example-3--inline)
   - [Reader Requirements for Deletion Vectors](#reader-requirements-for-deletion-vectors)
+  - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
+- [Iceberg Compatibility V1](#iceberg-compatibility-v1)
+  - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
+- [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
+- [Row Tracking](#row-tracking)
+  - [Row IDs](#row-ids)
+  - [Row Commit Versions](#row-commit-versions)
+  - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
+  - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -342,17 +354,21 @@ dataChange | Boolean | When `false` the logical file must already be present in 
 stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
 tags | Map[String, String] | Map containing metadata about this logical file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
+baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
 
 The following is an example `add` action:
 ```json
 {
   "add": {
-    "path":"date=2017-12-10/part-000...c000.gz.parquet",
-    "partitionValues":{"date":"2017-12-10"},
-    "size":841454,
-    "modificationTime":1512909768000,
-    "dataChange":true,
-    "stats":"{\"numRecords\":1,\"minValues\":{\"val..."
+    "path": "date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues": {"date": "2017-12-10"},
+    "size": 841454,
+    "modificationTime": 1512909768000,
+    "dataChange": true,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
 ```
@@ -369,14 +385,18 @@ partitionValues| Map[String, String] | A map from partition column to value for 
 size| Long | The size of this data file in bytes | optional
 tags | Map[String, String] | Map containing metadata about this file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
+baseRowId | Long | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
 
 The following is an example `remove` action.
 ```json
 {
-  "remove":{
-    "path":"part-00001-9…..snappy.parquet",
-    "deletionTimestamp":1515488792485,
-    "dataChange":true
+  "remove": {
+    "path": "part-00001-9…..snappy.parquet",
+    "deletionTimestamp": 1515488792485,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "dataChange": true
   }
 }
 ```
@@ -467,7 +487,7 @@ Protocol versioning allows a newer client to exclude older readers and/or writer
 The _protocol version_ will be increased whenever non-forward-compatible changes are made to this specification.
 In the case where a client is running an invalid protocol version, an error should be thrown instructing the user to upgrade to a newer protocol version of their Delta client library.
 
-Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
+Since breaking changes must be accompanied by an increase in the protocol version recorded in a table or by the addition of a table feature, clients can assume that unrecognized actions, fields, and/or metadata domains are never required in order to correctly interpret the transaction log. Clients must ignore such unrecognized fields, and should not produce an error when reading a table that contains unrecognized fields.
 
 Reader Version 3 and Writer Version 7 add two lists of table features to the protocol action. The capability for readers and writers to operate on such a table is not only dependent on their supported protocol versions, but also on whether they support all features listed in `readerFeatures` and `writerFeatures`. See [Table Features](#table-features) section for more information.
 
@@ -536,20 +556,61 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
+### Domain Metadata
+The domain metadata action contains a configuration (string) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
+
+There are two types of metadata domains:
+1. **User-controlled metadata domains** have names that start with anything other than the `delta.` prefix. Any Delta client implementation or user application can modify these metadata domains, and can allow users to modify them arbitrarily. Delta clients and user applications are encouraged to use a naming convention designed to avoid conflicts with other clients' or users' metadata domains (e.g. `com.databricks.*` or `org.apache.*`).
+2. **System-controlled metadata domains** have names that start with the `delta.` prefix. This prefix is reserved for metadata domains defined by the Delta spec, and Delta client implementations must not allow users to modify the metadata for system-controlled domains. A Delta client implementation should only update metadata for system-controlled domains that it knows about and understands. System-controlled metadata domains are used by various table features and each table feature may impose additional semantics on the metadata domains it uses.
+
+The schema of the `domainMetadata` action is as follows:
+
+Field Name | Data Type | Description
+-|-|-
+domain | String | Identifier for this domain (system- or user-provided)
+configuration | String | String containing configuration for the metadata domain
+removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain. Writers should preserve an accurate pre-image of the configuration.
+
+Enablement:
+- The table must be on Writer Version 7.
+- A feature name `domainMetadata` must exist in the table's `writerFeatures`.
+
+#### Reader Requirements for Domain Metadata
+- Readers must preserve all domains even if they don't understand them, i.e. the snapshot read must include them.
+- Any system-controlled domain that requires special attention from a reader is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
+
+#### Writer Requirements for Domain Metadata
+- Writers must not allow users to modify or delete system-controlled domains.
+- Writers must only modify or delete system-controlled domains they understand.
+- Any system-controlled domain that needs special attention from a writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
+
+The following is an example `domainMetadata` action:
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.deltaTableFeatureX",
+    "configuration": "{\"key1\":\"value1\"}",
+    "removed": false
+  }
+}
+```
+
 # Action Reconciliation
 A given snapshot of the table can be computed by replaying the events committed to the table in ascending order by commit version. A given snapshot of a Delta table consists of:
 
  - A single `protocol` action
  - A single `metaData` action
- - A map from `appId` to transaction `version`
- - A collection of `add` actions with unique `path`s.
+ - A collection of `txn` actions with unique `appId`s
+ - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
  
  - The latest `protocol` action seen wins
  - The latest `metaData` action seen wins
- - For transaction identifiers, the latest `version` seen for a given `appId` wins
+ - For `txn` actions, the latest `version` seen for a given `appId` wins
+ - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
@@ -647,14 +708,6 @@ When enabled:
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
-# Timestamp without timezone (TimestampNTZ)
-This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
-The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
-
-Enablement:
- - To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
-
-
 ## Deletion Vector Descriptor Schema
 
 The schema of the `DeletionVectorDescriptor` struct is as follows:
@@ -718,6 +771,178 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 ## Writer Requirement for Deletion Vectors
 When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
 
+# Iceberg Compatibility V1
+
+This table feature (`icebergCompatV1`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
+
+Enablement:
+- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
+
+Activation: Set table property `delta.enableIcebergCompatV1` to `true`.
+
+Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `false`.
+
+## Writer Requirements for IcebergCompatV1
+
+When enabled and active, writers must:
+- Require that Column Mapping be enabled and set to either `name` or `id` mode
+- Require that Deletion Vectors are not enabled (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
+- Require that partition column values are materialized into any Parquet data file that is present in the table, placed *after* the data columns in the parquet schema
+- Require that all `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
+- Block adding `Map`/`Array`/`Void` types to the table schema (and, thus, block writing them, too)
+- Block replacing partitioned tables with a differently-named partition spec
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+
+# Timestamp without timezone (TimestampNTZ)
+This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
+The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
+
+Enablement:
+ - To have a column of TimestampNtz type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNtz` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+# Row Tracking
+
+Row Tracking is a feature that allows the tracking of rows across multiple versions of a Delta table.
+It enables this by exposing two metadata columns: Row IDs, which uniquely identify a row across multiple versions of a table,
+and Row Commit Versions, which make it possible to check whether two rows with the same ID in two different versions of the table represent the same version of the row.
+
+Row Tracking is defined to be **supported** or **enabled** on a table as follows:
+- When the feature `rowTracking` exists in the table `protocol`'s `writerFeatures`, then we say that Row Tracking is **supported**.
+  In this situation, writers must assign Row IDs and Commit Versions, but they cannot yet be relied upon to be present in the table.
+  When Row Tracking is supported but not yet enabled writers cannot preserve Row IDs and Commit Versions.
+- When additionally the table property `delta.enableRowTracking` is set to `true`, then we say that Row Tracking is **enabled**.
+  In this situation, Row IDs and Row Commit versions can be relied upon to be present in the table for all rows.
+  When Row Tracking is enabled writers are expected to preserve Row IDs and Commit Versions.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`.
+- The table property `delta.enableRowTracking` must be set to `true`.
+
+## Row IDs
+
+Delta provides Row IDs. Row IDs are integers that are used to uniquely identify rows within a table.
+Every row has two Row IDs:
+
+- A **fresh** or unstable **Row ID**.
+  This ID uniquely identifies the row within one version of the table.
+  The fresh ID of a row may change every time the table is updated, even for rows that are not modified. E.g. when a row is copied unchanged during an update operation, it will get a new fresh ID. Fresh IDs can be used to identify rows within one version of the table, e.g. for identifying matching rows in self joins.
+- A **stable Row ID**.
+  This ID uniquely identifies the row across versions of the table and across updates.
+  When a row is inserted, it is assigned a new stable Row ID that is equal to the fresh Row ID.
+  When a row is updated or copied, the stable Row ID for this row is preserved.
+  When a row is restored (i.e. the table is restored to an earlier version), its stable Row ID is restored as well.
+
+The fresh and stable Row IDs are not required to be equal.
+
+Row IDs are stored in two ways:
+
+- **Default generated Row IDs** use the `baseRowId` field stored in `add` and `remove` actions to generate fresh Row IDs.
+  The default generated Row IDs for data files are calculated by adding the `baseRowId` of the file in which a row is contained to the (physical) position (index) of the row within the file.
+  Default generated Row IDs require little storage overhead but are reassigned every time a row is updated or moved to a different file (for instance when a row is contained in a file that is compacted by OPTIMIZE).
+
+- **Materialized Row IDs** are stored in a column in the data files.
+  This column is hidden from readers and writers, i.e. it is not part of the `schemaString` in the table's `metaData`.
+  Instead, the name of this column can be found in the value for the `delta.rowTracking.materializedRowIdColumnName` key in the `configuration` of the table's `metaData` action.
+  This column may contain `null` values meaning that the corresponding row has no materialized Row ID. This column may be omitted if all its values are `null` in the file.
+  Materialized Row IDs provide a mechanism for writers to preserve stable Row IDs for rows that are updated or copied.
+
+The fresh Row ID of a row is equal to the default generated Row ID. The stable Row ID of a row is equal to the materialized Row ID of the row when that column is present and the value is not NULL, otherwise it is equal to the default generated Row ID.
+
+When Row Tracking is enabled:
+- Default generated Row IDs must be assigned to all existing rows.
+  This means in particular that all files that are part of the table version that sets the table property `delta.enableRowTracking` to `true` must have `baseRowId` set.
+  A backfill operation may be required to commit `add` and `remove` actions with the `baseRowId` field set for all data files before the table property `delta.enableRowTracking` can be set to `true`.
+
+## Row Commit Versions
+
+Row Commit Versions provide versioning of rows.
+
+- **Fresh** or unstable **Row Commit Versions** can be used to identify the first commit version in which the `add` action containing the row was committed.
+  The fresh Commit Version of a row may change every time the table is updated, even for rows that are not modified. E.g. when a row is copied unchanged during an update operation, it will get a new fresh Commit Version.
+- **Stable Row Commit Versions** identify the last commit version in which the row (with the same ID) was either inserted or updated.
+  When a row is inserted or updated, it is assigned the commit version number of the log entry containing the `add` entry with the new row.
+  When a row is copied, the stable Row Commit Version for this row is preserved.
+  When a row is restored (i.e. the table is restored to an earlier version), its stable Row Commit Version is restored as well.
+
+The fresh and stable Row Commit Versions are not required to be equal.
+
+Commit Versions are stored in two ways:
+
+- **Default generated Row Commit Versions** use the `defaultRowCommitVersion` field in `add` and `remove` actions.
+  Default generated Row Commit Versions require little storage overhead but are reassigned every time a row is updated or moved to a different file (for instance when a row is contained in a file that is compacted by OPTIMIZE).
+
+- **Materialized Row Commit Versions** are stored in a column in the data files.
+  This column is hidden from readers and writers, i.e. it is not part of the `schemaString` in the table's `metaData`.
+  Instead, the name of this column can be found in the value for the `delta.rowTracking.materializedRowCommitVersionColumnName` key in the `configuration` of the table's `metaData` action.
+  This column may contain `null` values meaning that the corresponding row has no materialized Row Commit Version. This column may be omitted if all its values are `null` in the file.
+  Materialized Row Commit Versions provide a mechanism for writers to preserve Row Commit Versions for rows that are copied.
+
+The fresh Row Commit Version of a row is equal to the default generated Row Commit version.
+The stable Row Commit Version of a row is equal to the materialized Row Commit Version of the row when that column is present and the value is not NULL, otherwise it is equal to the default generated Commit Version.
+
+## Reader Requirements for Row Tracking
+
+When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
+- When Row IDs are requested, readers must reconstruct stable Row IDs as follows:
+  1. Readers must use the materialized Row ID if the column determined by `delta.rowTracking.materializedRowIdColumnName` is present in the data file and the column contains a non `null` value for a row.
+  2. Otherwise, readers must use the default generated Row ID of the `add` or `remove` action containing the row in all other cases.
+     I.e. readers must add the index of the row in the file to the `baseRowId` of the `add` or `remove` action for the file containing the row.
+- When Row Commit Versions are requested, readers must reconstruct them as follows:
+  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName is present in the data file and the column contains a non `null` value for a row.
+  2. Otherwise, Readers must use the default generated Row Commit Versions of the `add` or `remove` action containing the row in all other cases.
+     I.e. readers must use the `defaultRowCommitVersion` of the `add` or `remove` action for the file containing the row.
+- Readers cannot read Row IDs and Row Commit Versions while reading change data files from `cdc` actions.
+
+## Writer Requirements for Row Tracking
+
+When Row Tracking is supported (when the `writerFeatures` field of a table's `protocol` action contains `rowTracking`), then:
+- Writers must assign unique fresh Row IDs to all rows that they commit.
+  - Writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
+    Writers must never commit duplicate Row IDs in the table in any version.
+  - Writers must set the `baseRowId` field in recommitted and checkpointed `add` actions and `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
+  - Writers must track the high water mark, i.e. the highest fresh row id assigned.
+    - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
+      and a `configuration` containing a single key-value pair with `highWaterMark` as the key and the highest assigned fresh row id as the value.
+    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
+      The `highWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
+      Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
+    - Writers must set the `baseRowId` field to a value that is higher than the row id high water mark.
+- Writer must assign fresh Row Commit Versions to all rows that they commit.
+  - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
+  - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
+
+Writers can enable Row Tracking by setting `delta.enableRowTracking` to `true` in the `configuration` of the table's `metaData`.
+This is only allowed if the following requirements are satisfied:
+- The feature `rowTracking` has been added to the `writerFeatures` field of a table's `protocol` action either in the same version of the table or in an earlier version of the table.
+- The column name for the materialized Row IDs and Row Commit Versions have been assigned and added to the `configuration` in the table's `metaData` action using the keys `delta.rowTracking.materializedRowIdColumnName` and `delta.rowTracking.materializedRowCommitVersionColumnName` respectively.
+  - The assigned column names must be unique. They must not be equal to the name of any other column in the table's schema.
+    The assigned column names must remain unique in all future versions of the table.
+    If [Column Mapping](#column-mapping) is enabled, then the assigned column name must be distinct from the physical column names of the table.
+- The `baseRowId` and `defaultRowCommitVersion` fields are set for all active `add` actions in the version of the table in which `delta.enableRowTracking` is set to `true`.
+- If the `baseRowId` and `defaultRowCommitVersion` fields are not set in some active `add` action in the table, then writers must first commit new `add` actions that set these fields to replace the `add` actions that do not have these fields set.
+  This can be done in the commit that sets `delta.enableRowTracking` to `true` or in an earlier commit.
+  The assigned `baseRowId` and `defaultRowCommitVersion` values must satisfy the same requirements as when assigning fresh Row IDs and fresh Row Commit Versions respectively.
+
+When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
+- Writers must assign stable Row IDs to all rows.
+  - Stable Row IDs must be unique within a version of the table and must not be equal to the fresh Row IDs of other rows in the same version of the table.
+  - Writers should preserve the stable Row IDs of rows that are updated or copied using materialized Row IDs.
+    - The preserved stable Row ID (i.e. a stable Row ID that is not equal to the fresh Row ID of the same physical row) should be equal to the stable Row ID of the same logical row before it was updated or copied.
+    - Materialized Row IDs must be written to the column determined by `delta.rowTracking.materializedRowIdColumnName` in the `configuration` of the table's `metaData` action.
+      The value in this column must be set to `NULL` for stable Row IDs that are not preserved.
+- Writers must assign stable Row Commit Versions to all rows.
+  - Writers should preserve the stable Row Commit Versions of rows that are copied (but not updated) using materialized Row Commit Versions.
+    - The preserved stable Row Commit Version (i.e. a stable Row Commit Version that is not equal to the fresh Row Commit Version of the same physical row) should be equal to the stable Commit Version of the same logical row before it was copied.
+    - Materialized Row Commit Versions must be written to the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName` in the `configuration` of the table's `metaData` action.
+      The value in this column must be set to `NULL` for stable Row Commit Versions that are not preserved (i.e. that are equal to the fresh Row Commit Version).
+- Writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` whenever all the stable Row IDs of rows that are updated or copied and all the stable Row Commit Versions of rows that are copied were preserved.
+  In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
+  Writers should set that flag to false otherwise.
+
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
@@ -747,6 +972,7 @@ Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/
  * The [metadata](#Change-Metadata) of the table
  * Files that have been [added and removed](#Add-File-and-Remove-File)
  * [Transaction identifiers](#Transaction-Identifiers)
+ * [Domain Metadata](#Domain-Metadata)
 
 Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
 
@@ -903,7 +1129,9 @@ Feature | Name | Readers or Writers?
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
-[Timestamp without Timezone](#timestamp-ntz) | `timestampNTZ` | Readers and writers
+[Row Tracking](#row-tracking) | `rowTracking` | Writers only
+[Timestamp without Timezone](#timestamp-ntz) | `timestampNtz` | Readers and writers
+[Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 
 ## Deletion Vector Format
 
@@ -1015,7 +1243,7 @@ string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
 timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
-timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
 
@@ -1043,7 +1271,7 @@ boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
-timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNTZ`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
@@ -1210,6 +1438,8 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- dataChange: boolean
 |    |-- stats: string
 |    |-- tags: map<string,string>
+|    |-- baseRowId: long
+|    |-- defaultRowCommitVersion: long
 |    |-- partitionValues_parsed: struct
 |    |    |-- date: date
 |    |    |-- region: string
@@ -1230,7 +1460,10 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- dataChange: boolean
 ```
 
-Please note, as in the above example, the `readerFeatures` and `writerFeatures` fields do exist in the schema even when the table does not support table features. In such a case values of these two fields are `null`.
+Observe that `readerFeatures` and `writerFeatures` fields should comply with:
+- If a table has Reader Version 3, then a writer must write checkpoints with a not-null `readerFeatures` in the schema.
+- If a table has Writer Version 7, then a writer must write checkpoints with a not-null `writerFeatures` in the schema.
+- If a table has neither of the above, then a writer chooses whether to write `readerFeatures` and/or `writerFeatures` into the checkpoint schema. But if it does, their values must be null.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
@@ -1284,6 +1517,8 @@ Checkpoint schema (just the `add` column):
 |    |-- dataChange: boolean
 |    |-- stats: string
 |    |-- tags: map<string,string>
+|    |-- baseRowId: long
+|    |-- defaultRowCommitVersion: long
 |    |-- partitionValues_parsed: struct
 |    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
 |    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string

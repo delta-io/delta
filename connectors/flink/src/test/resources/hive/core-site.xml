@@ -1,0 +1,16 @@
+<!--- This is a Hive client configuration file used by IT tests for Delta Catalog.
+ This file should be as is without any manual interaction from user. !-->
+<configuration>
+  <property>
+    <name>hive.metastore.uris</name>
+    <!---
+    The "CHANGE_THIS" value will be replaced by HiveCatalogExtension during test setup phase. Every
+    Test run will use Hive server running on a different port. It's safer to let the Operating
+    System to assign the port, that we know that will be free on particular machine rather than hard
+    code port number. Hard coding port number could case random test failures on some machine where
+    this port could be already assigned to other application. !-->
+    <value>CHANGE_THIS</value>
+    <description>IP address (or fully-qualified domain name) and port of the metastore host</description>
+  </property>
+
+</configuration>

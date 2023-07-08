@@ -75,7 +75,7 @@ See the online documentation for the correct usage of this function.
         raise Exception(msg) from e
 
     scala_version = "2.12"
-    maven_artifact = f"io.delta:delta-core_{scala_version}:{delta_version}"
+    maven_artifact = f"io.delta:delta-spark_{scala_version}:{delta_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []
     all_artifacts = [maven_artifact] + extra_packages
