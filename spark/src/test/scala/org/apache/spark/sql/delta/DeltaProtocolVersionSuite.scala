@@ -2022,7 +2022,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val protocol = deltaLog.update().protocol
       assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           TestRemovableWriterFeature.name)
@@ -2058,7 +2058,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           readerFeatures = Some(Set.empty),
           writerFeatures = Some(Set(TestRemovableWriterFeature.name))))
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           TestRemovableWriterFeature.name)
@@ -2084,7 +2084,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val expectedProtocol = protocolWithWriterFeature(TestWriterMetadataNoAutoUpdateFeature)
       assert(deltaLog.update().protocol === expectedProtocol)
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           TestWriterMetadataNoAutoUpdateFeature.name)
@@ -2112,7 +2112,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           readerFeatures = None,
           writerFeatures = None))
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           "NonSupportedFeature")
@@ -2140,7 +2140,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           readerFeatures = None,
           writerFeatures = None))
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           TestRemovableWriterFeature.name)
@@ -2167,7 +2167,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val protocol = deltaLog.update().protocol
       assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
 
-      withSQLConf(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED.key -> true.toString) {
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, deltaLog.dataPath),
           TestRemovableWriterFeature.name)

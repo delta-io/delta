@@ -1029,13 +1029,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
-      val autoTags = mutable.HashMap.empty[String, String]
-      op match {
-        case dropOp: DropTableFeature =>
-          autoTags += (TableFeature.DROP_FEATURE_COMMIT_INFO_TAG -> dropOp.featureName)
-        case _ => // Nothing
-      }
-      val allTags = tags ++ autoTags
+      val allTags = tags ++ TableFeature.getAutoTags(op)
 
       commitInfo = CommitInfo(
         clock.getTimeMillis(),

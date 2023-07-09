@@ -1205,11 +1205,10 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val TABLE_FEATURE_REMOVAL_ENABLED =
-    buildConf("tableFeatures.removalEnabled")
+  val TABLE_FEATURE_DROP_ENABLED =
+    buildConf("tableFeatures.dropEnabled")
       .internal()
-      .doc(
-           """Controls whether table feature removal is allowed.
+      .doc("""Controls whether table feature removal is allowed.
              |Table feature removal is currently a feature in development.
              |This is a dev only config.""".stripMargin)
       .booleanConf

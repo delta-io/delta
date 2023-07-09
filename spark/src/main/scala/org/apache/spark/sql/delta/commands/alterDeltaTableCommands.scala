@@ -200,7 +200,7 @@ case class AlterTableDropFeatureDeltaCommand(
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
       // This guard is only temporary while the remove feature is in development.
-      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_REMOVAL_ENABLED))
+      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED))
 
       val removableFeature = TableFeature.featureNameToFeature(featureName) match {
         case Some(feature: RemovableFeature) => feature
@@ -208,6 +208,8 @@ case class AlterTableDropFeatureDeltaCommand(
         case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
       }
 
+      // Check whether the protocol contains the feature in either the writer features list or
+      // the reader+writer features list.
       if (!table.snapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
@@ -224,7 +226,6 @@ case class AlterTableDropFeatureDeltaCommand(
       removableFeature.preDowngradeCommand(table).run()
 
       val txn = startTransaction(sparkSession)
-      val protocol = txn.protocol
 
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
@@ -232,7 +233,7 @@ case class AlterTableDropFeatureDeltaCommand(
       if (!removableFeature.validateRemoval(txn.snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
-      txn.updateProtocol(protocol.removeFeature(removableFeature))
+      txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName))
       Nil
     }

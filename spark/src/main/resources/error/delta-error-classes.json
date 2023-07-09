@@ -747,6 +747,12 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_UNSUPPORTED_FEATURE_TYPE" : {
+    "message" : [
+      "Cannot drop <feature> because this feature type is not supported."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."

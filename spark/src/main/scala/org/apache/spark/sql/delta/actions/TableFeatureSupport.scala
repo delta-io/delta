@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.actions
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
 import scala.collection.mutable
@@ -267,34 +266,6 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * Validates whether all requirements of a removed feature hold against the provided snapshot.
-   */
-  def validateFeatureRemoval(
-      downgradeCommitInfo: Option[CommitInfo],
-      snapshot: Snapshot): Boolean = {
-    val tags = downgradeCommitInfo.flatMap(_.tags).getOrElse(Map.empty)
-
-    // No feature removal tag means this is not a protocol downgrade commit.
-    val removedFeatureName = tags.get(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG).getOrElse {
-      return true
-    }
-
-    TableFeature.featureNameToFeature(removedFeatureName) match {
-      case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
-      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(removedFeatureName)
-    }
-  }
-
-  /**
-   * Identify from CommitInfo whether this is a feature removal commit.
-   */
-  def isDropFeatureCommit(commitInfo: Option[CommitInfo]): Boolean = {
-    commitInfo
-      .flatMap(_.tags)
-      .exists(_.contains(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG))
-  }
-
-  /**
    * Merge this protocol with multiple `protocols` to have the highest reader and writer versions
    * plus all explicitly and implicitly supported features.
    */
@@ -329,18 +300,19 @@ trait TableFeatureSupport { this: Protocol =>
   /**
    * Remove feature wrapper for removing either Reader/Writer or Writer features. We assume
    * the feature exists in the protocol. There is a relevant validation at
-   * [[AlterTableRemoveFeatureDeltaCommand]].
+   * [[AlterTableDropFeatureDeltaCommand]].
+   *
+   * Assumes targetFeature is removable.
    */
-  def removeFeature(targetFeature: TableFeature): Protocol = targetFeature match {
-    case f: ReaderWriterFeature =>
-      throw new UnsupportedOperationException(
-        "ReaderWriter feature removal is currently not supported")
-    case f: WriterFeature =>
-      removeWriterFeature(f)
-    // Legacy features not currently supported.
-    case _ =>
-      throw new UnsupportedOperationException(
-        "Feature removal is not supported for this feature type")
+  def removeFeature(targetFeature: TableFeature): Protocol = {
+    require(targetFeature.isRemovable)
+    targetFeature match {
+      // Support for reader+writer and legacy features is going to added in follow up PRs.
+      case f: WriterFeature =>
+        removeWriterFeature(f)
+      case f =>
+        throw DeltaErrors.dropTableFeatureNotSupportedFeatureType(f.name)
+    }
   }
 
   /**

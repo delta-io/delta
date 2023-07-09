@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.DeltaOperations.DropTableFeature
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
@@ -282,6 +282,46 @@ object TableFeature {
   /** Get a [[TableFeature]] object by its name. */
   def featureNameToFeature(featureName: String): Option[TableFeature] =
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
+
+  /**
+   * Extracts the downgraded feature name from protocol downgrade commit info.
+   */
+  def getRemovedFeatureName(commitInfoOpt: Option[CommitInfo]): Option[String] = {
+    commitInfoOpt
+      .flatMap(_.tags)
+      .flatMap(_.get(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG))
+  }
+
+  /**
+   * Identifies from CommitInfo whether this is a feature removal commit.
+   */
+  def isDropFeatureCommit(commitInfoOpt: Option[CommitInfo]): Boolean =
+    getRemovedFeatureName(commitInfoOpt).isDefined
+
+  /**
+   * Validates whether all requirements of a removed feature hold against the provided snapshot.
+   */
+  def validateFeatureRemoval(
+      downgradeCommitInfo: Option[CommitInfo],
+      snapshot: Snapshot): Boolean = {
+    // No feature drop tag means this is not a protocol downgrade commit.
+    val removedFeatureName = TableFeature.getRemovedFeatureName(downgradeCommitInfo).getOrElse {
+      return true
+    }
+
+    TableFeature.featureNameToFeature(removedFeatureName) match {
+      case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
+      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(removedFeatureName)
+    }
+  }
+
+  /**
+   * Generates commit tags for table feature operations.
+   */
+  def getAutoTags(op: DeltaOperations.Operation): Seq[(String, String)] = Some(op).collect {
+    case dropOp: DropTableFeature =>
+      TableFeature.DROP_FEATURE_COMMIT_INFO_TAG -> dropOp.featureName
+  }.toSeq
 }
 
 /* ---------------------------------------- *
@@ -466,9 +506,8 @@ object TestRemovableWriterFeature
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
 
-  override def validateRemoval(snapshot: Snapshot): Boolean = {
+  override def validateRemoval(snapshot: Snapshot): Boolean =
     !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
-  }
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestWriterFeaturePreDowngradeCommand(table)

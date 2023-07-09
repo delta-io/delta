@@ -2211,6 +2211,13 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureNotSupportedFeatureType(
+      feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_FEATURE_TYPE",
+      messageParameters = Array(feature))
+  }
+
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,

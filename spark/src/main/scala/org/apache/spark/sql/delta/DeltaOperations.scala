@@ -318,7 +318,7 @@ object DeltaOperations {
       "properties" -> JsonUtils.toJson(propKeys),
       "ifExists" -> ifExists)
   }
-  /** Recorded when removing a table feature. */
+  /** Recorded when dropping a table feature. */
   case class DropTableFeature(featureName: String) extends Operation("DROP FEATURE") {
     override val parameters: Map[String, Any] = Map("featureName" -> featureName)
   }

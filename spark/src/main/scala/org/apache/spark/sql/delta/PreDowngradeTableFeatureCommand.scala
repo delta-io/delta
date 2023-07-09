@@ -36,7 +36,7 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   // To remove the feature we only need to remove the table property.
   override def run(): Unit = {
-    AlterTableUnsetPropertiesDeltaCommand(
-      table, Seq(TestRemovableWriterFeature.TABLE_PROP_KEY), true).run(table.spark)
+    val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
   }
 }
