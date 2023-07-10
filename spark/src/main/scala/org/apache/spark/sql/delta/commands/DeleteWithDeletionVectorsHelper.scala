@@ -407,16 +407,22 @@ object DeletionVectorBitmapGenerator {
    * Related issue: https://github.com/delta-io/delta/issues/1725.
    */
   private lazy val sparkMetadataFilePathIsCanonicalized: Boolean = {
-    val probeString = "file:/path with space/data.parquet"
-    val row = FileFormat.updateMetadataInternalRow(
-      new GenericInternalRow(size = 1),
-      Seq(FileFormat.FILE_PATH),
-      filePath = new Path(probeString),
-      fileSize = 0L,
-      fileBlockStart = 0L,
-      fileBlockLength = 0L,
-      fileModificationTime = 0L)
-    !row.getUTF8String(0).toString.equals(probeString)
+    try {
+      val probeString = "file:/path with space/data.parquet"
+      val row = FileFormat.updateMetadataInternalRow(
+        new GenericInternalRow(size = 1),
+        Seq(FileFormat.FILE_PATH),
+        filePath = new Path(probeString),
+        fileSize = 0L,
+        fileBlockStart = 0L,
+        fileBlockLength = 0L,
+        fileModificationTime = 0L)
+      row.getUTF8String(0).toString != probeString
+    } catch {
+      // method has changed (for example in Spark 3.5 onwards which does not have this bug).
+      // Return true in this case.
+      case _: NoSuchMethodError | _: NoClassDefFoundError => true
+    }
   }
 }
 
