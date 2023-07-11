@@ -147,6 +147,8 @@ class DeltaAnalysis(session: SparkSession)
           // maxColumnId will be set in the targetTable's configuration internally after
           val config =
             deltaLogSrc.snapshot.metadata.configuration.-("delta.columnMapping.maxColumnId")
+              .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
+              .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
 
           new CatalogTable(
             identifier = targetTableIdentifier,
