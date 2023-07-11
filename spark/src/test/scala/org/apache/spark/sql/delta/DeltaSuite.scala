@@ -2052,7 +2052,8 @@ class DeltaSuite extends QueryTest
       DeltaColumnMapping.assignColumnIdAndPhysicalName(
         snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json),
         snapshot.metadata,
-        isChangingModeOnExistingTable = false)
+        isChangingModeOnExistingTable = false,
+        isOverwritingSchema = false)
     } else {
       snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
     }

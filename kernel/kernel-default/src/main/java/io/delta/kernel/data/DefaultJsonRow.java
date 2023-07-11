@@ -177,7 +177,8 @@ public class DefaultJsonRow implements Row
         }
 
         if (dataType instanceof StringType) {
-            throwIfTypeMismatch("string", jsonValue.isTextual(), jsonValue);
+            // TODO: sometimes the Delta Log contains config as String -> String or String -> Int
+            throwIfTypeMismatch("string", jsonValue.isTextual() | jsonValue.isIntegralNumber(), jsonValue);
             return jsonValue.asText();
         }
 

@@ -57,11 +57,19 @@ trait ConvertTargetFileManifest extends Closeable {
   /** The base path of a table. Should be a qualified, normalized path. */
   val basePath: String
 
-  /** Return all files as a Dataset for parallelized processing */
+  /** Return all files as a Dataset for parallelized processing. */
   def allFiles: Dataset[ConvertTargetFile]
 
   /** Return the active files for a table in sequence */
   def getFiles: Iterator[ConvertTargetFile] = allFiles.toLocalIterator().asScala
+
+  /** Return the number of files for the table */
+  def numFiles: Long = allFiles.count()
+
+  /** Return the parquet schema for the table.
+   *  Defined only when the schema cannot be inferred from CatalogTable.
+   */
+  def parquetSchema: Option[StructType] = None
 }
 
 /**
@@ -71,7 +79,9 @@ trait ConvertTargetFileManifest extends Closeable {
  * @param partitionValues partition values of this file that may be available from the source
  *                        table format. If none, the converter will infer partition values from the
  *                        file path, assuming the Hive directory format.
+ * @param parquetSchemaDDL the Parquet schema DDL associated with the file.
  */
 case class ConvertTargetFile(
   fileStatus: SerializableFileStatus,
-  partitionValues: Option[Map[String, String]] = None) extends Serializable
+  partitionValues: Option[Map[String, String]] = None,
+  parquetSchemaDDL: Option[String] = None) extends Serializable

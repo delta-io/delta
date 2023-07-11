@@ -47,6 +47,7 @@ lazy val kernelApi = (project in file("kernel-api"))
     scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
+      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -60,6 +61,11 @@ lazy val kernelApi = (project in file("kernel-api"))
       "-Xdoclint:all"
       // TODO: exclude internal packages
     ),
+    Compile / doc / sources := {
+      (Compile / doc / sources).value
+        // exclude internal classes
+        .filterNot(_.getCanonicalPath.contains("/internal/"))
+    },
     // Ensure doc is run with tests. Must be cleaned before test for docs to be generated
     (Test / test) := ((Test / test) dependsOn (Compile / doc)).value
   )

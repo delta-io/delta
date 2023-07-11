@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.parquet;
 
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.io.IOException;
+import java.net.URI;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import static java.util.Objects.requireNonNull;
@@ -47,6 +49,7 @@ public class ParquetBatchReader
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.maxBatchSize =
             configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
+        checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: " + maxBatchSize);
     }
 
     public CloseableIterator<ColumnarBatch> read(String path, StructType schema)
@@ -54,7 +57,7 @@ public class ParquetBatchReader
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
 
-        Path filePath = new Path(path);
+        Path filePath = new Path(URI.create(path));
         try {
             FileSystem fs = filePath.getFileSystem(configuration);
             FileStatus fileStatus = fs.getFileStatus(filePath);

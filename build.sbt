@@ -272,6 +272,17 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
+/*
+// TODO: Investigate a smarter way to pull the Iceberg github.
+//       Make sure to add `iceberg` back to `sparkGroup` below.
+
+val icebergSparkRuntimeArtifactName = {
+ val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
+ s"iceberg-spark-runtime-$expMaj.$expMin"
+}
+
+// Build using: build/sbt clean icebergShaded/compile iceberg/compile
+// It will fail the first time, just re-run it.
 lazy val iceberg = (project in file("iceberg"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
@@ -279,17 +290,54 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq( {
-        val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.3.0" % "provided")
-          .cross(CrossVersion.binary)
-      },
+    libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1"
-    )
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.3.0" % "provided",
+      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
+    ),
+    Compile / unmanagedJars += (icebergShaded / assembly).value,
+    // Generate the assembly JAR as the package JAR
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assemblyPackageScala / assembleArtifact := false
   )
 
+lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
+
+lazy val icebergShaded = (project in file("icebergShaded"))
+  .dependsOn(spark % "provided")
+  .settings (
+    name := "iceberg-shaded",
+    commonSettings,
+    skipReleaseSettings,
+
+    // Compile, patch and generated Iceberg JARs
+    generateIcebergJarsTask := {
+      import sys.process._
+      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
+      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
+      Seq("python3", scriptPath.getPath)!
+    },
+    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
+    cleanFiles += baseDirectory.value / "iceberg_src",
+    cleanFiles += baseDirectory.value / "lib",
+
+    // Generated shaded Iceberg JARs
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyShadeRules := Seq(
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+    ),
+    assemblyPackageScala / assembleArtifact := false,
+    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+  )
+*/
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
@@ -910,7 +958,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB) /* iceberg */
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -982,9 +1030,10 @@ def getPrevVersion(currentVersion: String): String = {
 
   val lastVersionInMajorVersion = Map(
     0 -> "0.8.0",
-    1 -> "1.2.1"
+    1 -> "1.2.1",
+    2 -> "2.4.0"
   )
-  if (minor == 0) {  // 1.0.0 or 2.0.0
+  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
     lastVersionInMajorVersion.getOrElse(major - 1, {
       throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
     })

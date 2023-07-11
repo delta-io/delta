@@ -47,18 +47,32 @@ public class DefaultKernelUtils
         GroupType fileSchema, // parquet
         StructType deltaType) // delta-core
     {
-        return deltaType.fields().stream()
-            .map(column -> {
-                Type type = findSubFieldType(fileSchema, column);
-                if (type == null) {
-                    return null;
-                }
-                Type prunedSubfields = pruneSubfields(type, column.getDataType());
-                return new MessageType(column.getName(), prunedSubfields);
-            })
-            .filter(Objects::nonNull)
-            .reduce(MessageType::union)
-            .get();
+        return new MessageType("fileSchema", pruneFields(fileSchema, deltaType));
+    }
+
+    private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
+        // prune fields including nested pruning like in pruneSchema
+        return deltaDataType.fields().stream()
+                .map(column -> {
+                    Type subType = findSubFieldType(type, column);
+                    if (subType != null) {
+                        return prunedType(subType, column.getDataType());
+                    } else {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    private static Type prunedType(Type type, DataType deltaType) {
+        if (type instanceof GroupType && deltaType instanceof StructType) {
+            GroupType groupType = (GroupType) type;
+            StructType structType = (StructType) deltaType;
+            return groupType.withNewFields(pruneFields(groupType, structType));
+        } else {
+            return type;
+        }
     }
 
     /**
@@ -85,24 +99,6 @@ public class DefaultKernelUtils
         }
 
         return null;
-    }
-
-    // Note this only prunes top-level fields
-    private static Type pruneSubfields(Type type, DataType deltaDatatype)
-    {
-        if (!(deltaDatatype instanceof StructType)) {
-            // there is no pruning for non-struct types
-            return type;
-        }
-
-        GroupType groupType = (GroupType) type;
-        List<Type> newParquetSubFields =
-            ((StructType) deltaDatatype).fields().stream()
-                .map(structField -> findSubFieldType(groupType, structField))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-
-        return groupType.withNewFields(newParquetSubFields);
     }
 
     /**

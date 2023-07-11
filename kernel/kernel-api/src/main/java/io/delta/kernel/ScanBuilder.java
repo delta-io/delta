@@ -23,7 +23,8 @@ import io.delta.kernel.types.StructType;
 /**
  * Builder to construct {@link Scan} object.
  */
-public interface ScanBuilder {
+public interface ScanBuilder
+{
 
     /**
      * Apply the given filter expression to prune any files that do not contain data satisfying
@@ -32,11 +33,8 @@ public interface ScanBuilder {
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param filter an {@link Expression} which evaluates to boolean.
      * @return A {@link ScanBuilder} with filter applied.
-     *
-     * @throws InvalidExpressionException if the filter is not valid.
      */
-    ScanBuilder withFilter(TableClient tableClient, Expression filter)
-            throws InvalidExpressionException;
+    ScanBuilder withFilter(TableClient tableClient, Expression filter);
 
     /**
      * Apply the given <i>readSchema</i>. If the builder already has a projection applied, calling

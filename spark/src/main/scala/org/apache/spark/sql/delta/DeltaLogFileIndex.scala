@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs._
 
 import org.apache.spark.internal.Logging
@@ -24,7 +25,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 
 /**
  * A specialized file index for files found in the _delta_log directory. By using this file index,
@@ -40,12 +41,32 @@ case class DeltaLogFileIndex private (
   extends FileIndex
   with Logging {
 
+  import DeltaLogFileIndex._
+
   override lazy val rootPaths: Seq[Path] = files.map(_.getPath)
+
+  def listAllFiles(): Seq[PartitionDirectory] = {
+    files
+      .groupBy(f => FileNames.getFileVersionOpt(f.getPath).getOrElse(-1L))
+      .map { case (version, files) => PartitionDirectory(InternalRow(version), files) }
+      .toSeq
+  }
 
   override def listFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
-    PartitionDirectory(InternalRow(), files) :: Nil
+    if (partitionFilters.isEmpty) {
+      listAllFiles()
+    } else {
+      val predicate = partitionFilters.reduce(And)
+      val boundPredicate = predicate.transform {
+        case a: AttributeReference =>
+          val index = partitionSchema.indexWhere(a.name == _.name)
+          BoundReference(index, partitionSchema(index).dataType, partitionSchema(index).nullable)
+      }
+      val predicateEvaluator = Predicate.create(boundPredicate, Nil)
+      listAllFiles().filter(d => predicateEvaluator.eval(d.values))
+    }
   }
 
   override val inputFiles: Array[String] = files.map(_.getPath.toString)
@@ -54,7 +75,8 @@ case class DeltaLogFileIndex private (
 
   override val sizeInBytes: Long = files.map(_.getLen).sum
 
-  override def partitionSchema: StructType = new StructType()
+  override val partitionSchema: StructType =
+    new StructType().add(COMMIT_VERSION_COLUMN, LongType, nullable = false)
 
   override def toString: String =
     s"DeltaLogFileIndex($format, numFilesInSegment: ${files.size}, totalFileSize: $sizeInBytes)"
@@ -63,6 +85,7 @@ case class DeltaLogFileIndex private (
 }
 
 object DeltaLogFileIndex {
+  val COMMIT_VERSION_COLUMN = "version"
 
   lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
   lazy val CHECKPOINT_FILE_FORMAT_PARQUET = new ParquetFileFormat

@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -276,6 +276,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
+  // Whether this transaction is overwriting the existing schema (i.e. overwriteSchema = true).
+  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true.
+  private var isOverwritingSchema: Boolean = false
+
   // Whether this is a transaction that can select any new protocol, potentially downgrading
   // the existing protocol of the table during REPLACE table operations.
   private def canAssignAnyNewProtocol: Boolean =
@@ -314,6 +318,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
+  registerPostCommitHook(IcebergConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
@@ -397,7 +402,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataInternal(
       proposedNewMetadata: Metadata,
-      ignoreDefaultProperties: Boolean = false): Unit = {
+      ignoreDefaultProperties: Boolean): Unit = {
     var newMetadataTmp = proposedNewMetadata
     // Validate all indexed columns are inside table's schema.
     StatisticsCollection.validateDeltaStatsColumns(newMetadataTmp)
@@ -417,7 +422,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocolBeforeUpdate,
       snapshot.metadata,
       newMetadataTmp,
-      isCreatingNewTable)
+      isCreatingNewTable,
+      isOverwritingSchema)
 
     if (newMetadataTmp.schemaString != null) {
       // Replace CHAR and VARCHAR with StringType
@@ -589,6 +595,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def updateMetadataForNewTable(metadata: Metadata): Unit = {
     isCreatingNewTable = true
     updateMetadata(metadata)
+  }
+
+  /**
+   * Records an update to the metadata that should be committed with this transaction and when
+   * this transaction is attempt to overwrite the data and schema using .mode('overwrite') and
+   * .option('overwriteSchema', true).
+   * REPLACE the table is not considered in this category, because that is logically equivalent
+   * to DROP and RECREATE the table.
+   */
+  def updateMetadataForTableOverwrite(proposedNewMetadata: Metadata): Unit = {
+    isOverwritingSchema = true
+    updateMetadata(proposedNewMetadata)
   }
 
   protected def assertMetadata(metadata: Metadata): Unit = {
@@ -1319,6 +1337,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
     // Protocol change (stored in newProtocol)
 
+    val (protocolUpdate1, metadataUpdate1) =
+      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+        // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
+        prevProtocol = snapshot.protocol,
+        prevMetadata = snapshot.metadata,
+        newestProtocol = protocol, // Note: this will try to use `newProtocol`
+        newestMetadata = metadata, // Note: this will try to use `newMetadata`
+        isCreatingNewTable
+      )
+    newProtocol = protocolUpdate1.orElse(newProtocol)
+    newMetadata = metadataUpdate1.orElse(newMetadata)
+
+    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
+      prevProtocol = snapshot.protocol,
+      prevMetadata = snapshot.metadata,
+      newestProtocol = protocol, // Note: this will try to use `newProtocol`
+      newestMetadata = metadata, // Note: this will try to use `newMetadata`
+      isCreatingNewTable,
+      otherActions
+    )
+    newProtocol = protocolUpdate2.orElse(newProtocol)
+    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -1806,6 +1846,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         hook.handleError(e, version)
     }
   }
+
+  private[delta] def unregisterPostCommitHooksWhere(predicate: PostCommitHook => Boolean): Unit =
+    postCommitHooks --= postCommitHooks.filter(predicate)
 
   protected lazy val logPrefix: String = {
     def truncate(uuid: String): String = uuid.split("-").head

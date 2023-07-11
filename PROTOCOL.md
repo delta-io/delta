@@ -23,7 +23,6 @@
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
-    - [Increase Row ID High-water Mark](#increase-row-id-high-water-mark)
     - [Domain Metadata](#domain-metadata)
       - [Reader Requirements for Domain Metadata](#reader-requirements-for-domain-metadata)
       - [Writer Requirements for Domain Metadata](#writer-requirements-for-domain-metadata)
@@ -43,6 +42,8 @@
     - [JSON Example 3 — Inline](#json-example-3--inline)
   - [Reader Requirements for Deletion Vectors](#reader-requirements-for-deletion-vectors)
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
+- [Iceberg Compatibility V1](#iceberg-compatibility-v1)
+  - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
 - [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
 - [Row Tracking](#row-tracking)
   - [Row IDs](#row-ids)
@@ -555,24 +556,6 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
-### Increase Row ID High-water Mark
-The Row ID high-water mark tracks the largest ID that has been assigned to a row in the table.
-
-The schema of `rowIdHighWaterMark` action is as follows:
-
-Field Name | Data Type | Description | optional/required
--|-|-|-
-highWaterMark | Long | The highest Row ID that has been assigned to a row in the table. | required
-
-The following is an example `rowIdHighWaterMark` action:
-```json
-{
-  "rowIdHighWaterMark": {
-    "highWaterMark": 1432
-  }
-}
-```
-
 ### Domain Metadata
 The domain metadata action contains a configuration (string) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
 
@@ -617,7 +600,6 @@ A given snapshot of the table can be computed by replaying the events committed 
 
  - A single `protocol` action
  - A single `metaData` action
- - At most one `rowIdHighWaterMark` action
  - A collection of `txn` actions with unique `appId`s
  - A collection of `domainMetadata` actions with unique `domain`s.
  - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
@@ -627,7 +609,6 @@ To achieve the requirements above, related actions from different delta files ne
  
  - The latest `protocol` action seen wins
  - The latest `metaData` action seen wins
- - The latest `rowIdHighWaterMark` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
@@ -790,6 +771,31 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 ## Writer Requirement for Deletion Vectors
 When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
 
+# Iceberg Compatibility V1
+
+This table feature (`icebergCompatV1`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
+
+Enablement:
+- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
+
+Activation: Set table property `delta.enableIcebergCompatV1` to `true`.
+
+Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `false`.
+
+## Writer Requirements for IcebergCompatV1
+
+When enabled and active, writers must:
+- Require that Column Mapping be enabled and set to either `name` or `id` mode
+- Require that Deletion Vectors are not enabled (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
+- Require that partition column values are materialized into any Parquet data file that is present in the table, placed *after* the data columns in the parquet schema
+- Require that all `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
+- Block adding `Map`/`Array`/`Void` types to the table schema (and, thus, block writing them, too)
+- Block replacing partitioned tables with a differently-named partition spec
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+
 # Timestamp without timezone (TimestampNTZ)
 This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
 The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
@@ -898,10 +904,13 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
   - Writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
     Writers must never commit duplicate Row IDs in the table in any version.
   - Writers must set the `baseRowId` field in recommitted and checkpointed `add` actions and `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
-  - Writers must set the `baseRowId` field to a value that is higher than the `rowIdHighWatermark`.
-  - Writers must include a `rowIdHighWaterMark` action whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `rowIdHighWaterMark` action.
-    The `highWaterMark` value of the `rowIdHighWaterMark` action must always be equal to or greater than the highest fresh Row ID committed so far.
-    Writers can either commit the `rowIdHighWaterMark` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
+  - Writers must track the high water mark, i.e. the highest fresh row id assigned.
+    - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
+      and a `configuration` containing a single key-value pair with `highWaterMark` as the key and the highest assigned fresh row id as the value.
+    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
+      The `highWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
+      Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
+    - Writers must set the `baseRowId` field to a value that is higher than the row id high water mark.
 - Writer must assign fresh Row Commit Versions to all rows that they commit.
   - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
   - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.

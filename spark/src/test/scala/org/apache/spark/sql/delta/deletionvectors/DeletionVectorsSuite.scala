@@ -585,6 +585,55 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
   }
+  test("huge table: read from tables of 2B rows with existing DV of many zeros") {
+    val canonicalTable5Path = new File(table5Path).getCanonicalPath
+    checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
+  }
+
+  private sealed case class DeleteUsingDVWithResults(
+      scale: String,
+      sqlRule: String,
+      count: Long,
+      sum: Long)
+  private val deleteUsingDvSmallScale = DeleteUsingDVWithResults(
+    "small",
+    "value = 1",
+    table5CountByValues.filterKeys(_ != 1).values.sum,
+    table5SumByValues.filterKeys(_ != 1).values.sum)
+  private val deleteUsingDvMediumScale = DeleteUsingDVWithResults(
+    "medium",
+    "value > 10",
+    table5CountByValues.filterKeys(_ <= 10).values.sum,
+    table5SumByValues.filterKeys(_ <= 10).values.sum)
+  private val deleteUsingDvLargeScale = DeleteUsingDVWithResults(
+    "large",
+    "value != 21",
+    table5CountByValues(21),
+    table5SumByValues(21))
+
+  // deleteUsingDvMediumScale and deleteUsingDvLargeScale runs too slow thus disabled.
+  for (deleteSpec <- Seq(deleteUsingDvSmallScale)) {
+    test(
+      s"huge table: delete a ${deleteSpec.scale} number of rows from tables of 2B rows with DVs") {
+      withTempDir { dir =>
+        FileUtils.copyDirectory(new File(table5Path), dir)
+        val log = DeltaLog.forTable(spark, dir)
+
+        withDeletionVectorsEnabled() {
+          sql(s"DELETE FROM delta.`${dir.getCanonicalPath}` WHERE ${deleteSpec.sqlRule}")
+        }
+        val (added, _) = getFileActionsInLastVersion(log)
+        assert(added.forall(_.deletionVector != null))
+        checkCountAndSum("value", deleteSpec.count, deleteSpec.sum, dir.getCanonicalPath)
+      }
+    }
+  }
+
+  private def checkCountAndSum(column: String, count: Long, sum: Long, tableDir: String): Unit = {
+    checkAnswer(
+      sql(s"SELECT count($column), sum($column) FROM delta.`$tableDir`"),
+      Seq((count, sum)).toDF())
+  }
 
   private def assertPlanContains(queryDf: DataFrame, expected: String): Unit = {
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()

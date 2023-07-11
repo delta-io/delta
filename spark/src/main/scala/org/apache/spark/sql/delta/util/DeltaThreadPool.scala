@@ -31,6 +31,19 @@ private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
 
   /** Submits a task for execution and returns a [[Future]] representing that task. */
   def submit[T](spark: SparkSession)(body: => T): Future[T] = Future[T](spark.withActive(body))
+
+  /**
+   *  Executes `f` on each element of `items` as a task and returns the result.
+   *  Throws a [[SparkException]] if a timeout occurs.
+   */
+  def parallelMap[T, R](
+      spark: SparkSession,
+      items: Iterable[T],
+      timeout: Duration = Duration.Inf)(
+      f: T => R): Iterable[R] = {
+    val futures = items.map(i => submit(spark)(f(i)))
+    ThreadUtils.awaitResult(Future.sequence(futures), timeout)
+  }
 }
 
 

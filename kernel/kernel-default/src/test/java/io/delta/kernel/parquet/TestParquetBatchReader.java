@@ -17,6 +17,7 @@ package io.delta.kernel.parquet;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -425,7 +426,7 @@ public class TestParquetBatchReader
     @Test
     public void requestRowIndices() throws IOException {
         String path = DefaultKernelTestUtils.getTestResourceFilePath("parquet-basic-row-indexes");
-        File dir = new File(path);
+        File dir = new File(URI.create(path).getPath());
         List<String> parquetFiles = Arrays.stream(Objects.requireNonNull(dir.listFiles()))
                 .filter(file -> file.getName().endsWith(".parquet"))
                 .map(File::getAbsolutePath)
