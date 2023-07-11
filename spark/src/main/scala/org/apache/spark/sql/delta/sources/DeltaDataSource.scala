@@ -133,7 +133,6 @@ class DeltaDataSource
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, path)
-
     val schemaTrackingLogOpt =
       getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, parameters,

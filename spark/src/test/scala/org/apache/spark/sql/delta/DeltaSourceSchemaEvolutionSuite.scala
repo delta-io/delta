@@ -1732,7 +1732,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
 
     assert {
-      JsonUtils.fromJson[OldPersistedSchema](newSchema.toJson) == OldPersistedSchema(
+      JsonUtils.fromJson[OldPersistedSchema](JsonUtils.toJson(newSchema)) == OldPersistedSchema(
         tableId = "test",
         deltaCommitVersion = 1,
         StructType.fromDDL("a INT").json,

@@ -17,30 +17,27 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.{InputStream, OutputStream}
-import java.nio.charset.StandardCharsets.UTF_8
+import java.io.InputStream
 
-import scala.io.{Source => IOSource}
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.Path
-import org.json4s.{Formats, NoTypeHints}
-import org.json4s.jackson.Serialization
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
 import org.apache.spark.sql.types.{DataType, StructType}
 // scalastyle:on import.ordering.noEmptyLine
 
 /**
- * A PersistedSchema is an entry in Delta streaming source schema log, which can be used to read
- * data files during streaming.
+ * A [[PersistedMetadata]] is an entry in Delta streaming source schema log, which can be used to
+ * read data files during streaming.
+ *
  * @param tableId Delta table id
  * @param deltaCommitVersion Delta commit version in which this change is captured. It does not
  *                           necessarily have to be the commit when there's an actual change, e.g.
@@ -64,9 +61,7 @@ case class PersistedMetadata(
     partitionSchemaJson: String,
     sourceMetadataPath: String,
     tableConfigurations: Option[Map[String, String]] = None,
-    protocolJson: Option[String] = None) {
-
-  def toJson: String = JsonUtils.toJson(this)
+    protocolJson: Option[String] = None) extends PartitionAndDataSchema {
 
   private def parseSchema(schemaJson: String): StructType = {
     try {
@@ -98,8 +93,6 @@ case class PersistedMetadata(
 object PersistedMetadata {
   val VERSION = 1
   val EMPTY_JSON = "{}"
-
-  implicit val format: Formats = Serialization.formats(NoTypeHints)
 
   def fromJson(json: String): PersistedMetadata = JsonUtils.fromJson[PersistedMetadata](json)
 
@@ -136,97 +129,70 @@ class DeltaSourceMetadataTrackingLog private(
     rootMetadataLocation: String,
     sourceSnapshot: Snapshot,
     sourceMetadataPathOpt: Option[String] = None,
-    val initMetadataLogEagerly: Boolean = true)
-  extends HDFSMetadataLog[PersistedMetadata](sparkSession, rootMetadataLocation) {
-  import PersistedMetadata._
+    val initMetadataLogEagerly: Boolean = true) {
 
-  protected val metadataAtLogInit: Option[PersistedMetadata] = getLatestMetadata
+  import org.apache.spark.sql.delta.streaming.SchemaTrackingExceptions._
 
-  protected val metadataSeqNumAtLogInit: Option[Long] = getLatest().map(_._1)
-
-  // Next schema version to write, this should be updated after each schema evolution.
-  // This allow HDFSMetadataLog to best detect concurrent schema log updates.
-  protected var nextSeqNumToWrite: Long = metadataSeqNumAtLogInit.map(_ + 1).getOrElse(0L)
-  protected var currentSeqNum: Long = metadataSeqNumAtLogInit.getOrElse(-1)
-
-  // Current tracked schema log entry
-  protected var currentTrackedMetadata: Option[PersistedMetadata] = metadataAtLogInit
-
-  // Previous tracked schema log entry
-  protected var previousTrackedMetadata: Option[PersistedMetadata] =
-    metadataSeqNumAtLogInit.map(_ - 1L).flatMap(get)
-
-  override protected def deserialize(in: InputStream): PersistedMetadata = {
-    // Called inside a try-finally where the underlying stream is closed in the caller
-    val lines = IOSource.fromInputStream(in, UTF_8.name()).getLines()
-    if (!lines.hasNext) {
-      throw DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)
+  protected val schemaSerializer =
+    new JsonSchemaSerializer[PersistedMetadata](PersistedMetadata.VERSION) {
+      override def deserialize(in: InputStream): PersistedMetadata =
+        convertException(
+          FailedToDeserializeException,
+          DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)) {
+          super.deserialize(in)
+        }
     }
 
-    MetadataVersionUtil.validateVersion(lines.next(), VERSION)
-    val schemaJson = if (lines.hasNext) lines.next else EMPTY_JSON
-    PersistedMetadata.fromJson(schemaJson)
-  }
+  protected val trackingLog =
+    new SchemaTrackingLog[PersistedMetadata](
+      sparkSession, rootMetadataLocation, schemaSerializer)
 
-  override protected def serialize(metadata: PersistedMetadata, out: OutputStream): Unit = {
-    // Called inside a try-finally where the underlying stream is closed in the caller
-    out.write(s"v${VERSION}".getBytes(UTF_8))
-    out.write('\n')
-
-    // Write metadata
-    out.write(metadata.toJson.getBytes(UTF_8))
-  }
+  // Validate schema at log init
+  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstSnapshot(sourceSnapshot))
 
   /**
-   * Globally latest schema log entry.
+   * Get the global latest metadata for this metadata location.
+   * Visible for testing
    */
-  protected[delta] def getLatestMetadata: Option[PersistedMetadata] = getLatest().map(_._2)
+  private[delta] def getLatestMetadata: Option[PersistedMetadata] =
+    trackingLog.getLatest().map(_._2)
 
   /**
-   * The current schema being tracked since this schema log is created. This is typically used as
-   * the read schema for Delta streaming source.
+   * Get the current schema that is being tracked by this schema log. This is typically the latest
+   * schema log entry to the best of this schema log's knowledge.
    */
-  def getCurrentTrackedMetadata: Option[PersistedMetadata] = currentTrackedMetadata
+  def getCurrentTrackedMetadata: Option[PersistedMetadata] =
+    trackingLog.getCurrentTrackedSchema
+
 
   /**
-   * The previous schema being tracked since this schema log is created.
+   * Get the previously tracked schema entry by this schema log.
+   * DeltaSource requires it to compare the previous schema with the latest schema to determine if
+   * an automatic stream restart is allowed.
    */
-  def getPreviousTrackedMetadata: Option[PersistedMetadata] = previousTrackedMetadata
+  def getPreviousTrackedMetadata: Option[PersistedMetadata] =
+    trackingLog.getPreviousTrackedSchema
 
   /**
-   * Write a new entry to the schema log.
+   * Track a new schema to the log.
    */
-  def writeNewMetadata(newSchema: PersistedMetadata): Unit = synchronized {
-    // Write to schema log
-    logInfo(s"Writing a new metadata version $nextSeqNumToWrite in the metadata log")
-    // Similar to how MicrobatchExecution detects concurrent checkpoint updates
-    if (!add(nextSeqNumToWrite, newSchema)) {
-      throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
+  def writeNewMetadata(newSchema: PersistedMetadata): PersistedMetadata = {
+    convertException(FailedToEvolveSchema,
+      DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
+        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
+      trackingLog.addSchemaToLog(newSchema)
     }
-    previousTrackedMetadata = currentTrackedMetadata
-    currentTrackedMetadata = Some(newSchema)
-    currentSeqNum = nextSeqNumToWrite
-    nextSeqNumToWrite += 1
   }
 
   /**
-   * Replace the current (latest) entry in the schema log.
+   * Replace the latest/current tracked schema in the log
    */
-  def replaceCurrentSchema(newSchema: PersistedMetadata): Unit = synchronized {
-    logInfo(s"Replacing the latest metadata version $currentSeqNum in the metadata log")
-    // Ensure the current batch id is also the global latest.
-    assert(getLatestBatchId().forall(_ == currentSeqNum))
-    // Delete the current schema and then replace it with the new schema
-    purgeAfter(currentSeqNum - 1)
-    // Similar to how MicrobatchExecution detects concurrent checkpoint updates
-    if (!add(currentSeqNum, newSchema)) {
-      throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
+  def replaceCurrentSchema(newSchema: PersistedMetadata): Unit =
+    convertException(FailedToEvolveSchema,
+      DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
+        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
+      trackingLog.replaceCurrentSchemaInLog(newSchema)
     }
-    currentTrackedMetadata = Some(newSchema)
-  }
-
 }
 
 object DeltaSourceMetadataTrackingLog extends Logging {
@@ -241,7 +207,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
 
   /**
    * Create a schema log instance for a schema location.
-   * The schema location is constructed as `$rootSchemaLocation/_schema_log_$tableId`
+   * The schema location is constructed as `$rootMetadataLocation/_schema_log_$tableId`
    * a suffix of `_$sourceTrackingId` is appended if provided to further differentiate the sources.
    */
   def create(
