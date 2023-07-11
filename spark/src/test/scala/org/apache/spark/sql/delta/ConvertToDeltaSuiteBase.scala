@@ -52,6 +52,7 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected val blockNonDeltaMsg = "A transaction log for Delta was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
+  protected val invalidParquetMsg = " not a Parquet file. Expected magic number at tail"
   // scalastyle:off deltahadoopconfiguration
   protected def sessionHadoopConf = spark.sessionState.newHadoopConf
   // scalastyle:on deltahadoopconfiguration
@@ -164,6 +165,72 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
           convertToDelta(s"$format.`$tempDir`")
         }
         assert(ae.getMessage.contains(parquetOnlyMsg))
+      }
+    }
+  }
+
+  test("negative case: convert non-parquet file to delta") {
+    Seq("orc", "json", "csv").foreach { format =>
+      withTempDir { dir =>
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF, format)
+
+        val se = intercept[SparkException] {
+          convertToDelta(s"parquet.`$tempDir`")
+        }
+        assert(se.getMessage.contains(invalidParquetMsg))
+      }
+    }
+  }
+
+  test("filter non-parquet file for schema inference when not using catalog schema") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir + "/part=1/", Seq(1).toDF("corrupted_id"), format = "orc")
+      writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
+
+      val tableName = "pqtable"
+      withTable(tableName) {
+        // Create a catalog table on top of the parquet table with the wrong schema
+        // The schema should be picked from the parquet data files
+        sql(s"CREATE TABLE $tableName (key1 long, key2 string) " +
+          s"USING PARQUET PARTITIONED BY (part string) LOCATION '$dir'")
+        // Required for discovering partition of the table
+        sql(s"MSCK REPAIR TABLE $tableName")
+
+        withSQLConf(
+          "spark.sql.files.ignoreCorruptFiles" -> "false",
+          DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA.key -> "false") {
+          val se = intercept[SparkException] {
+            convertToDelta(tableName)
+          }
+          assert(se.getMessage.contains(invalidParquetMsg))
+        }
+
+        withSQLConf(
+          "spark.sql.files.ignoreCorruptFiles" -> "true",
+          DeltaSQLConf.DELTA_CONVERT_USE_CATALOG_SCHEMA.key -> "false") {
+
+          convertToDelta(tableName)
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+          val expectedSchema = StructType(
+            StructField("id", IntegerType, true) :: StructField("part", StringType, true) :: Nil)
+          // Schema is inferred from the data
+          assert(deltaLog.update().schema.equals(expectedSchema))
+        }
+      }
+    }
+  }
+
+  test("filter non-parquet files during delta conversion") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"), format = "json")
+      writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
+      withSQLConf("spark.sql.files.ignoreCorruptFiles" -> "true") {
+        convertToDelta(s"parquet.`$tempDir`", Some("part string"))
+        checkAnswer(spark.read.format("delta").load(tempDir), Row(2, "2") :: Nil)
       }
     }
   }

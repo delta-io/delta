@@ -1205,6 +1205,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
+    buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
+      .internal()
+      .doc(
+        """
+          |If enabled, when a column mapping table is overwritten, the new schema will reuse as many
+          |old schema's column mapping metadata (field id and physical name) as possible.
+          |This allows the analyzed schema from prior to the overwrite to be still read-compatible
+          |with the data post the overwrite, enabling better user experience when, for example,
+          |the column mapping table is being continuously scanned in a streaming query, the analyzed
+          |table schema will still be readable after the table is overwritten.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val ICEBERG_MAX_COMMITS_TO_CONVERT = buildConf("iceberg.maxPendingCommits")
     .doc("""
         |The maximum number of pending Delta commits to convert to Iceberg incrementally.

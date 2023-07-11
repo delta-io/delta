@@ -199,26 +199,7 @@ abstract class CloneTableBase(
       sourceTable.allFiles
     }
 
-    val newMetadata = {
-      sourceTable.metadata.copy(
-        id = UUID.randomUUID().toString,
-        name = txn.metadata.name,
-        description = txn.metadata.description)
-    }
-
-    // TODO: we have not decided on how to implement switching column mapping modes
-    //  so we block this feature for now
-    // 1. Validate configuration overrides
-    //    this checks if columnMapping.maxId is unexpected set in the properties
-    val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    val metadataToUpdate = newMetadata.copy(
-      configuration = newMetadata.configuration ++ validatedConfigurations)
-    // 2. Check for column mapping mode conflict with the source metadata w/ tablePropertyOverrides
-    checkColumnMappingMode(newMetadata, metadataToUpdate)
-    // 3. Checks for column mapping mode conflicts with existing metadata if there's any
-    if (txn.readVersion >= 0) {
-      checkColumnMappingMode(txn.snapshot.metadata, metadataToUpdate)
-    }
+    val metadataToUpdate = determineTargetMetadata(txn.snapshot, opName)
     // Don't merge in the default properties when cloning, or we'll end up with different sets of
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
@@ -237,41 +218,7 @@ abstract class CloneTableBase(
     val operationTimestamp = sourceTable.clock.getTimeMillis()
 
 
-    val sourceProtocol = sourceTable.protocol
-    // Pre-transaction version of the target table.
-    val targetProtocol = txn.snapshot.protocol
-    // Overriding properties during the CLONE can change the minimum required protocol for target.
-    // We need to look at the metadata of the transaction to see the entire set of table properties
-    // for the post-transaction state and decide a version based on that. We also need to re-add
-    // the table property overrides as table features set by it won't be in the transaction
-    // metadata anymore.
-    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
-    val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
-    var (minReaderVersion, minWriterVersion, enabledFeatures) =
-      Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)
-
-    // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
-    // time travel.
-    val protocolDowngradeAllowed =
-      conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED) ||
-      // It's not a real downgrade if the table doesn't exist before the CLONE.
-      txn.snapshot.version == -1
-    val newProtocol = if (protocolDowngradeAllowed) {
-      minReaderVersion = minReaderVersion.max(sourceProtocol.minReaderVersion)
-      minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
-      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      sourceProtocol.merge(minProtocol)
-    } else {
-      // Take the maximum of all protocol versions being merged to ensure that table features
-      // from table property overrides are correctly added to the table feature list or are only
-      // implicitly enabled
-      minReaderVersion =
-        Seq(targetProtocol.minReaderVersion, sourceProtocol.minReaderVersion, minReaderVersion).max
-      minWriterVersion = Seq(
-        targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
-      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      targetProtocol.merge(sourceProtocol, minProtocol)
-    }
+    val newProtocol = determineTargetProtocol(spark, txn, opName)
 
     try {
       var actions = Iterator.single(newProtocol) ++
@@ -320,6 +267,99 @@ abstract class CloneTableBase(
       getOutputSeq(commitOpMetrics)
     } finally {
       sourceTable.close()
+    }
+  }
+
+  /**
+   * Prepares the source metadata by making it compatible with the existing target metadata.
+   */
+  private def prepareSourceMetadata(
+      targetSnapshot: SnapshotDescriptor,
+      opName: String): Metadata = {
+      sourceTable.metadata.copy(
+        id = UUID.randomUUID().toString,
+        name = targetSnapshot.metadata.name,
+        description = targetSnapshot.metadata.description)
+  }
+
+  /**
+   * Verifies metadata invariants.
+   */
+  private def verifyMetadataInvariants(
+      targetSnapshot: SnapshotDescriptor,
+      updatedMetadataWithOverrides: Metadata): Unit = {
+    // TODO: we have not decided on how to implement switching column mapping modes
+    //  so we block this feature for now
+    // 1. Validate configuration overrides
+    //    this checks if columnMapping.maxId is unexpected set in the properties
+    DeltaConfigs.validateConfigurations(tablePropertyOverrides)
+    // 2. Check for column mapping mode conflict with the source metadata w/ tablePropertyOverrides
+    checkColumnMappingMode(sourceTable.metadata, updatedMetadataWithOverrides)
+    // 3. Checks for column mapping mode conflicts with existing metadata if there's any
+    if (targetSnapshot.version >= 0) {
+      checkColumnMappingMode(targetSnapshot.metadata, updatedMetadataWithOverrides)
+    }
+  }
+
+  /**
+   * Determines the expected metadata of the target.
+   */
+  private def determineTargetMetadata(
+      targetSnapshot: SnapshotDescriptor,
+      opName: String) : Metadata = {
+    var metadata = prepareSourceMetadata(targetSnapshot, opName)
+    val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
+    // Merge source configuration and table property overrides
+    metadata = metadata.copy(
+      configuration = metadata.configuration ++ validatedConfigurations)
+    verifyMetadataInvariants(targetSnapshot, metadata)
+    metadata
+  }
+
+  /**
+   * Determines the final protocol of the target. The metadata of the `txn` must be updated before
+   * determining the protocol.
+   */
+  private def determineTargetProtocol(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      opName: String): Protocol = {
+    val sourceProtocol = sourceTable.protocol
+    // Pre-transaction version of the target table.
+    val targetProtocol = txn.snapshot.protocol
+    // Overriding properties during the CLONE can change the minimum required protocol for target.
+    // We need to look at the metadata of the transaction to see the entire set of table properties
+    // for the post-transaction state and decide a version based on that. We also need to re-add
+    // the table property overrides as table features set by it won't be in the transaction
+    // metadata anymore.
+    val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
+    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
+    val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
+    var (minReaderVersion, minWriterVersion, enabledFeatures) =
+      Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)
+
+    // Only upgrade the protocol, never downgrade (unless allowed by flag), since that may break
+    // time travel.
+    val protocolDowngradeAllowed =
+    conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED) ||
+      // It's not a real downgrade if the table doesn't exist before the CLONE.
+      txn.snapshot.version == -1
+
+    if (protocolDowngradeAllowed) {
+      minReaderVersion = minReaderVersion.max(sourceProtocol.minReaderVersion)
+      minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
+      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
+      sourceProtocol.merge(minProtocol)
+    } else {
+      // Take the maximum of all protocol versions being merged to ensure that table features
+      // from table property overrides are correctly added to the table feature list or are only
+      // implicitly enabled
+      minReaderVersion =
+        Seq(targetProtocol.minReaderVersion, sourceProtocol.minReaderVersion, minReaderVersion).max
+      minWriterVersion = Seq(
+        targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
+      val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
+      targetProtocol.merge(sourceProtocol, minProtocol)
     }
   }
 }

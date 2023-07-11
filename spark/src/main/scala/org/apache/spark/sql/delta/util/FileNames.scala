@@ -95,19 +95,24 @@ object FileNames {
   def checkpointVersion(file: FileStatus): Long = checkpointVersion(file.getPath)
 
   /**
+   * Get the version of the checkpoint, checksum or delta file. Returns None if an unexpected
+   * file type is seen.
+   */
+  def getFileVersionOpt(path: Path): Option[Long] = path match {
+    case DeltaFile(_, version) => Some(version)
+    case ChecksumFile(_, version) => Some(version)
+    case CheckpointFile(_, version) => Some(version)
+    case _ => None
+  }
+
+  /**
    * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
    * file type is seen. These unexpected files should be filtered out to ensure forward
    * compatibility in cases where new file types are added, but without an explicit protocol
    * upgrade.
    */
   def getFileVersion(path: Path): Long = {
-    if (isCheckpointFile(path)) {
-      checkpointVersion(path)
-    } else if (isDeltaFile(path)) {
-      deltaVersion(path)
-    } else if (isChecksumFile(path)) {
-      checksumVersion(path)
-    } else {
+    getFileVersionOpt(path).getOrElse {
       // scalastyle:off throwerror
       throw new AssertionError(
         s"Unexpected file type found in transaction log: $path")

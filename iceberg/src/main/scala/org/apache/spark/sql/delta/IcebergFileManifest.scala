@@ -48,7 +48,7 @@ class IcebergFileManifest(
 
   val basePath = table.location()
 
-  def numFiles: Long = {
+  override def numFiles: Long = {
     if (_numFiles.isEmpty) getFileSparkResults()
     _numFiles.get
   }

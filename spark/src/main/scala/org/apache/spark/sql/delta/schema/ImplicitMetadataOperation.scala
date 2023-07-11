@@ -107,7 +107,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Overwrite the Delta table schema or " +
           "change the partition schema")
       }
-      txn.updateMetadata(newMetadata)
+      txn.updateMetadataForTableOverwrite(newMetadata)
     } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
       logInfo(s"New merged schema: ${mergedSchema.treeString}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")

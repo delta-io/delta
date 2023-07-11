@@ -138,7 +138,7 @@ class DeltaAnalysis(session: SparkSession)
 
       val catalogTableTarget =
         // If source table is Delta format
-        if (src.provider.exists(_.toLowerCase() == "delta")) {
+        if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
           val deltaLogSrc = DeltaTableV2(session, new Path(src.location))
 
           // maxColumnId field cannot be set externally. If column-mapping is
@@ -178,7 +178,7 @@ class DeltaAnalysis(session: SparkSession)
         }
 
       val protocol =
-        if (src.provider == Some("delta")) {
+        if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
           Some(DeltaTableV2(session, new Path(src.location)).snapshot.protocol)
         } else {
           None
@@ -1005,7 +1005,8 @@ class DeltaAnalysis(session: SparkSession)
     def unapply(arg: LogicalPlan): Option[(CreateTableLikeCommand, CatalogTable)] = arg match {
       case c: CreateTableLikeCommand =>
         val src = session.sessionState.catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
-        if (src.provider.contains("delta") || c.provider.exists(_.toLowerCase() == "delta")) {
+        if (src.provider.contains("delta") ||
+          c.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
           Some(c, src)
         } else {
           None

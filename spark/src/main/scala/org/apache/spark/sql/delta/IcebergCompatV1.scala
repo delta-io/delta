@@ -189,7 +189,8 @@ object IcebergCompatV1 extends DeltaLogging {
             tmpNewMetadata = DeltaColumnMapping.assignColumnIdAndPhysicalName(
               newMetadata = tmpNewMetadata,
               oldMetadata = prevMetadata,
-              isChangingModeOnExistingTable = false
+              isChangingModeOnExistingTable = false,
+              isOverwritingSchema = false
             )
             DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(tmpNewMetadata)
           }
