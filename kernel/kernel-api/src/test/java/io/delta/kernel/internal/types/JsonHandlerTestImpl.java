@@ -1,14 +1,14 @@
 package io.delta.kernel.internal.types;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
@@ -200,7 +200,7 @@ public class JsonHandlerTestImpl
         private final Object[] parsedValues;
         private final StructType readSchema;
 
-        public TestJsonRow(ObjectNode rootNode, StructType readSchema)
+        TestJsonRow(ObjectNode rootNode, StructType readSchema)
         {
             this.readSchema = readSchema;
             this.parsedValues = new Object[readSchema.length()];
