@@ -22,7 +22,6 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -30,6 +29,7 @@ import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 
 /**

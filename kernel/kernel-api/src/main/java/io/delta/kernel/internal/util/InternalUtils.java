@@ -48,8 +48,8 @@ public class InternalUtils
     }
 
     /**
-     * Utility method to read at most one row from the given data {@link FileDataReadResult} iterator.
-     * If there is more than one row, an exception will be thrown.
+     * Utility method to read at most one row from the given data {@link FileDataReadResult}
+     * iterator. If there is more than one row, an exception will be thrown.
      *
      * @param dataIter
      * @return

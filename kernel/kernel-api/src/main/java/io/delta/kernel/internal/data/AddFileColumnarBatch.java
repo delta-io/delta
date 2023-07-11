@@ -18,9 +18,9 @@ package io.delta.kernel.internal.data;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import static java.util.Objects.requireNonNull;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
 

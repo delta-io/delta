@@ -17,11 +17,9 @@ package io.delta.kernel.internal.actions;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Objects;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.lang.Lazy;
-
-import static java.util.Objects.requireNonNull;
 
 public abstract class FileAction implements Action
 {

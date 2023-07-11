@@ -17,13 +17,10 @@
 package io.delta.kernel.internal.data;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 
-import java.util.List;
-import java.util.Map;
+import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 
 /**
  * The selection vector for a columnar batch as a boolean {@link ColumnVector}.

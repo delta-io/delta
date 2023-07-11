@@ -208,7 +208,14 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
+    ),
+    // Can be run explicitly via: build/sbt $module/checkstyle
+    // Will automatically be run during compilation (e.g. build/sbt compile)
+    // and during tests (e.g. build/sbt test)
+    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
@@ -227,7 +234,14 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
+    ),
+    // Can be run explicitly via: build/sbt $module/checkstyle
+    // Will automatically be run during compilation (e.g. build/sbt compile)
+    // and during tests (e.g. build/sbt test)
+    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
 // TODO javastyle tests

@@ -18,20 +18,21 @@ package io.delta.kernel.internal.expressions;
 
 import java.util.Comparator;
 
-import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.ShortType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.TimestampType;
 
 public class CastingComparator<T extends Comparable<T>> implements Comparator<Object> {
+
+    // todo add binary type?
 
     public static Comparator<Object> forDataType(DataType dataType) {
         if (dataType instanceof BooleanType) {

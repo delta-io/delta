@@ -24,10 +24,10 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.fs.Path;
 
-import static io.delta.kernel.utils.Utils.requireNonNull;
 
 /**
  * Delta log action representing an `AddCDCFile`
