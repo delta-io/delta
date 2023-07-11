@@ -106,8 +106,8 @@ public class DefaultColumnarBatch
     public ColumnarBatch withNewSchema(StructType newSchema)
     {
         if (!schema.equivalent(newSchema)) {
-            throw new IllegalArgumentException
-                ("Given new schema data type is not same as the existing schema");
+            throw new IllegalArgumentException(
+                "Given new schema data type is not same as the existing schema");
         }
 
         return new DefaultColumnarBatch(

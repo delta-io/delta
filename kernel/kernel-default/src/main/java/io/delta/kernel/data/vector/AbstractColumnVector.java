@@ -15,15 +15,15 @@
  */
 package io.delta.kernel.data.vector;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.List;
 import java.util.Map;
-import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * Abstract implementation of {@link ColumnVector} that provides the default functionality

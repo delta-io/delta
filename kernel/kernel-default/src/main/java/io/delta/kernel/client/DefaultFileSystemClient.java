@@ -29,8 +29,8 @@ import org.apache.hadoop.fs.Path;
 
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
 import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.Utils;
 
 public class DefaultFileSystemClient
     implements FileSystemClient
