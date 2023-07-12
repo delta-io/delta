@@ -40,8 +40,8 @@ public class DefaultKernelTestUtils
         // can depend on.
 
         // Returns <repo-root>/kernel/kernel-default/target/test-classes/json-files
-        String jsonFilesDirectory =
-            "file:" + DefaultKernelTestUtils.class.getClassLoader().getResource("json-files").getFile();
+        String jsonFilesDirectory = "file:" + DefaultKernelTestUtils.class.getClassLoader()
+            .getResource("json-files").getFile();
 
         // Need to get to <repo-root>/connectors/golden-tables/src/test/resources/golden
 
