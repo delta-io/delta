@@ -282,43 +282,43 @@ object TableFeature {
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
 
   /**
-   * Extracts the removed feature name by comparing current and base protocols.
-   * Returns None if there is no removed feature.
-   * Assumes there can only be one feature removed at a time.
+   * Extracts the removed (explicit) feature names by comparing new and old protocols.
+   * Returns None if there are no removed (explicit) features.
    */
-  protected def getRemovedFeatureName(
-      currentProtocol: Protocol,
-      baseProtocol: Protocol): Option[String] = {
-    val currentFeatureNames = currentProtocol.readerAndWriterFeatureNames
-    val baseFeatureNames = baseProtocol.readerAndWriterFeatureNames
-    val removedFeatures = baseFeatureNames -- currentFeatureNames
-
-    require(removedFeatures.size <= 1)
-    Option(baseFeatureNames -- currentFeatureNames).filter(_.nonEmpty).map(_.head)
+  protected def getDroppedExplicitFeatureNames(
+      newProtocol: Protocol,
+      oldProtocol: Protocol): Option[Set[String]] = {
+    val newFeatureNames = newProtocol.readerAndWriterFeatureNames
+    val oldFeatureNames = oldProtocol.readerAndWriterFeatureNames
+    Option(oldFeatureNames -- newFeatureNames).filter(_.nonEmpty)
   }
 
   /**
-   * Identifies whether there was a feature removal between two protocols.
+   * Identifies whether there was any feature removal between two protocols.
    */
-  def isDropFeatureCommit(currentProtocol: Protocol, baseProtocol: Protocol): Boolean = {
-    getRemovedFeatureName(currentProtocol, baseProtocol).isDefined
+  def isProtocolRemovingExplicitFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
+    getDroppedExplicitFeatureNames(newProtocol = newProtocol, oldProtocol = oldProtocol).isDefined
   }
 
   /**
    * Validates whether all requirements of a removed feature hold against the provided snapshot.
    */
   def validateFeatureRemovalAtSnapshot(
-      currentProtocol: Protocol,
-      baseProtocol: Protocol,
+      newProtocol: Protocol,
+      oldProtocol: Protocol,
       snapshot: Snapshot): Boolean = {
-    val removedFeatureNameOpt = TableFeature.getRemovedFeatureName(currentProtocol, baseProtocol)
-    val removedFeatureName = removedFeatureNameOpt.getOrElse {
-      return true
+    val droppedFeatureNamesOpt = TableFeature.getDroppedExplicitFeatureNames(
+      newProtocol = newProtocol,
+      oldProtocol = oldProtocol)
+    val droppedFeatureName = droppedFeatureNamesOpt match {
+      case Some(f) if f.size == 1 => f.head
+      case Some(_) => return false
+      case None => return true
     }
 
-    TableFeature.featureNameToFeature(removedFeatureName) match {
+    TableFeature.featureNameToFeature(droppedFeatureName) match {
       case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
-      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(removedFeatureName)
+      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(droppedFeatureName)
     }
   }
 }
