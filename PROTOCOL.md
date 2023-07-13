@@ -383,6 +383,7 @@ dataChange | Boolean | When `false` the records in the removed file must be cont
 extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
 size| Long | The size of this data file in bytes | optional
+stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
 tags | Map[String, String] | Map containing metadata about this file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
@@ -990,6 +991,9 @@ Within the checkpoint, the `add` struct may or may not contain the following col
  - stats: Column level statistics can be stored as a JSON string in the checkpoint. This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsJson` is set to `true` (which is the default). When this property is set to `false`, this field should be omitted from the checkpoint.
  - stats_parsed: The stats can be stored in their [original format](#Per-file-Statistics). This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsStruct` is set to `true`. When this property is set to `false` (which is the default), this field should be omitted from the checkpoint.
 
+Within the checkpoint, the `remove` struct does not contain the `stats` and
+`tags` fields because VACUUM tombstones do not require them. These fields are only stored in Delta files.
+
 Refer to the [appendix](#checkpoint-schema) for an example on the schema of the checkpoint.
 
 ## Data Files
@@ -1186,7 +1190,7 @@ Bytes | Name | Description
 `<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
 
 ## Per-file Statistics
-`add` actions can optionally contain statistics about the data in the file being added to the table.
+`add` and `remove` actions can optionally contain statistics about the data in the file being added or removed from the table.
 These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
 
 Global statistics record information about the entire file.
@@ -1464,6 +1468,8 @@ Observe that `readerFeatures` and `writerFeatures` fields should comply with:
 - If a table has Reader Version 3, then a writer must write checkpoints with a not-null `readerFeatures` in the schema.
 - If a table has Writer Version 7, then a writer must write checkpoints with a not-null `writerFeatures` in the schema.
 - If a table has neither of the above, then a writer chooses whether to write `readerFeatures` and/or `writerFeatures` into the checkpoint schema. But if it does, their values must be null.
+
+Note that `remove` actions in the checkpoint are tombstones used only by VACUUM, and do not contain the `stats` and `tags` fields.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 

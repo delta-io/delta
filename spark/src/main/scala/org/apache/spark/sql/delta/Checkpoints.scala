@@ -441,9 +441,9 @@ object Checkpoints extends DeltaLogging {
         }
         action
       }
-      // commitInfo, cdc and remove.tags are not included in the checkpoint
+      // commitInfo, cdc, remove.tags and remove.stats are not included in the checkpoint
       .drop("commitInfo", "cdc")
-      .withColumn("remove", col("remove").dropFields("tags"))
+      .withColumn("remove", col("remove").dropFields("tags", "stats"))
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable

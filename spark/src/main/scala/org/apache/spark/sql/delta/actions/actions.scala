@@ -579,6 +579,8 @@ sealed trait FileAction extends Action {
   val partitionValues: Map[String, String]
   @JsonIgnore
   def getFileSize: Long
+  def stats: String
+  def deletionVector: DeletionVectorDescriptor
 
   /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
@@ -592,6 +594,71 @@ sealed trait FileAction extends Action {
 
 
   def toPath: Path = new Path(pathAsUri)
+}
+
+case class ParsedStatsFields(
+  numLogicalRecords: Option[Long],
+  tightBounds: Option[Boolean])
+
+/**
+ * Common trait for AddFile and RemoveFile actions providing methods for the computation of
+ * logical, physical and deleted number of records based on the statistics and the Deletion Vector
+ * of the file.
+ */
+trait HasNumRecords {
+  this: FileAction =>
+
+  @JsonIgnore
+  @transient
+  protected lazy val parsedStatsFields: Option[ParsedStatsFields] = Option(stats).collect {
+    case stats if stats.nonEmpty =>
+      val node = new ObjectMapper().readTree(stats)
+      val numLogicalRecords = if (node.has("numRecords")) {
+        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+          .map(_ - numDeletedRecords)
+      } else None
+      val tightBounds = if (node.has("tightBounds")) {
+        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
+      } else None
+
+      ParsedStatsFields(numLogicalRecords, tightBounds)
+  }
+
+  /** Returns the number of logical records, which do not include those marked as deleted. */
+  @JsonIgnore
+  @transient
+  override lazy val numLogicalRecords: Option[Long] = parsedStatsFields.flatMap(_.numLogicalRecords)
+
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = deletionVector match {
+    case dv: DeletionVectorDescriptor => dv.cardinality
+    case _ => 0L
+  }
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
+
+  /** Returns the estimated size of the logical records in the file. */
+  @JsonIgnore
+  override def estLogicalFileSize: Option[Long] =
+    logicalToPhysicalRecordsRatio.map(n => (n * getFileSize).toLong)
+
+  /** Returns the ratio of the logical number of records to the total number of records. */
+  @JsonIgnore
+  def logicalToPhysicalRecordsRatio: Option[Double] = numLogicalRecords.map { numLogicalRecords =>
+    numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords)
+  }
+
+  /** Returns the ratio of number of deleted records to the total number of records. */
+  @JsonIgnore
+  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
+
+  /** Returns whether the statistics are tight or wide. */
+  @JsonIgnore
+  @transient
+  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 /**
@@ -608,14 +675,14 @@ case class AddFile(
     size: Long,
     modificationTime: Long,
     override val dataChange: Boolean,
-    stats: String = null,
+    override val stats: String = null,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null,
+    override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None
-) extends FileAction {
+) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
   override def wrap: SingleAction = SingleAction(add = this)
@@ -633,10 +700,9 @@ case class AddFile(
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
       deletionVector = deletionVector,
       baseRowId = baseRowId,
-      defaultRowCommitVersion = defaultRowCommitVersion
+      defaultRowCommitVersion = defaultRowCommitVersion,
+      stats = stats
     )
-    removedFile.numLogicalRecords = numLogicalRecords
-    removedFile.estLogicalFileSize = estLogicalFileSize
     // scalastyle:on
     removedFile
   }
@@ -722,10 +788,6 @@ case class AddFile(
   @JsonIgnore
   override def getFileSize: Long = size
 
-  private case class ParsedStatsFields(
-      numLogicalRecords: Option[Long],
-      tightBounds: Option[Boolean])
-
   /**
    * Before serializing make sure deletionVector.maxRowIndex is not defined.
    * This is only a transient property and it is not intended to be stored in the log.
@@ -735,57 +797,6 @@ case class AddFile(
     super.json
   }
 
-  @JsonIgnore
-  @transient
-  private lazy val parsedStatsFields: Option[ParsedStatsFields] = {
-    if (stats == null || stats.isEmpty) {
-      None
-    } else {
-      val node = new ObjectMapper().readTree(stats)
-
-      val numLogicalRecords = if (node.has("numRecords")) {
-        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
-          .map(_ - numDeletedRecords)
-      } else None
-      val tightBounds = if (node.has("tightBounds")) {
-        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
-      } else None
-
-      Some(ParsedStatsFields(numLogicalRecords, tightBounds))
-    }
-  }
-
-  @JsonIgnore
-  @transient
-  override lazy val numLogicalRecords: Option[Long] =
-    parsedStatsFields.flatMap(_.numLogicalRecords)
-
-  /** Returns the number of records marked as deleted. */
-  @JsonIgnore
-  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
-
-  /** Returns the total number of records, including those marked as deleted. */
-  @JsonIgnore
-  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
-
-  @JsonIgnore
-  override def estLogicalFileSize: Option[Long] =
-    logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
-
-  /** Returns the ratio of the logical number of records to the total number of records. */
-  @JsonIgnore
-  def logicalToPhysicalRecordsRatio: Option[Double] = {
-    numLogicalRecords.map(numLogicalRecords =>
-      numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords).toDouble)
-  }
-
-  /** Returns the ratio of number of deleted records to the total number of records. */
-  @JsonIgnore
-  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
-
-  @JsonIgnore
-  @transient
-  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 object AddFile {
@@ -853,23 +864,17 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null,
+    override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
-) extends FileAction {
+    defaultRowCommitVersion: Option[Long] = None,
+    override val stats: String = null
+) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
-
-  /** The number of records contained inside the removed file. */
-  @JsonIgnore
-  var numLogicalRecords: Option[Long] = None
-
-  @JsonIgnore
-  var estLogicalFileSize: Option[Long] = None
 
   /**
    * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
@@ -879,14 +884,6 @@ case class RemoveFile(
    */
   @JsonIgnore
   def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
-
-  /** Returns the number of records marked as deleted. */
-  @JsonIgnore
-  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
-
-  /** Returns the total number of records, including those marked as deleted. */
-  @JsonIgnore
-  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
@@ -918,6 +915,10 @@ case class AddCDCFile(
     size: Long,
     override val tags: Map[String, String] = null) extends FileAction {
   override val dataChange = false
+  @JsonIgnore
+  override val stats: String = null
+  @JsonIgnore
+  override val deletionVector: DeletionVectorDescriptor = null
 
   override def wrap: SingleAction = SingleAction(cdc = this)
 
