@@ -263,7 +263,7 @@ trait DeltaSourceBase extends Source
       fromVersion: Long,
       fromIndex: Long,
       isStartingVersion: Boolean,
-      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())):
+      limits: Option[AdmissionLimits] = Some(AdmissionLimits())):
   ClosableIterator[IndexedFile] = {
     val iter = if (options.readChangeFeed) {
       // In this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
@@ -781,7 +781,7 @@ case class DeltaSource(
   }
 
   override def getDefaultReadLimit: ReadLimit = {
-    new AdmissionLimits().toReadLimit
+    AdmissionLimits().toReadLimit
   }
 
   def toDeltaSourceOffset(offset: streaming.Offset): DeltaSourceOffset = {
@@ -1031,6 +1031,11 @@ case class DeltaSource(
     // This variable indicates whether a commit has already been processed by a batch or not.
     var commitProcessedInBatch = false
 
+    protected def take(files: Int, bytes: Long): Unit = {
+      filesToTake -= files
+      bytesToTake -= bytes
+    }
+
     /**
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
@@ -1048,8 +1053,7 @@ case class DeltaSource(
           (filesToTake - fileActions.size >= 0 && bytesToTake - getSize(fileActions) >= 0)
 
         commitProcessedInBatch = true
-        filesToTake -= fileActions.size
-        bytesToTake -= getSize(fileActions)
+        take(files = fileActions.size, bytes = getSize(fileActions))
         shouldAdmit
       }
     }
@@ -1075,9 +1079,8 @@ case class DeltaSource(
         return shouldAdmit
       }
 
-      filesToTake -= 1
+      take(files = 1, bytes = getSize(fileAction.get))
 
-      bytesToTake -= getSize(fileAction.get)
       shouldAdmit
     }
 
@@ -1091,7 +1094,7 @@ case class DeltaSource(
   /**
    * Class that helps controlling how much data should be processed by a single micro-batch.
    */
-  class AdmissionLimits(
+  case class AdmissionLimits(
       maxFiles: Option[Int] = options.maxFilesPerTrigger,
       var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
   ) extends DeltaSourceAdmissionBase {
@@ -1119,6 +1122,7 @@ case class DeltaSource(
   }
 
   object AdmissionLimits {
+
     def apply(limit: ReadLimit): Option[AdmissionLimits] = limit match {
       case _: ReadAllAvailable => None
       case maxFiles: ReadMaxFiles => Some(new AdmissionLimits(Some(maxFiles.maxFiles())))
