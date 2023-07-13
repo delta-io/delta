@@ -284,6 +284,7 @@ object TableFeature {
   /**
    * Extracts the removed feature name by comparing current and base protocols.
    * Returns None if there is no removed feature.
+   * Assumes there can only be one feature removed at a time.
    */
   protected def getRemovedFeatureName(
       currentProtocol: Protocol,
@@ -310,8 +311,7 @@ object TableFeature {
       currentProtocol: Protocol,
       baseProtocol: Protocol,
       snapshot: Snapshot): Boolean = {
-    val removedFeatureNameOpt =
-      TableFeature.getRemovedFeatureName(currentProtocol, baseProtocol)
+    val removedFeatureNameOpt = TableFeature.getRemovedFeatureName(currentProtocol, baseProtocol)
     val removedFeatureName = removedFeatureNameOpt.getOrElse {
       return true
     }

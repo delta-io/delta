@@ -307,7 +307,7 @@ trait TableFeatureSupport { this: Protocol =>
   def removeFeature(targetFeature: TableFeature): Protocol = {
     require(targetFeature.isRemovable)
     targetFeature match {
-      // Support for reader+writer and legacy features is going to added in follow up PRs.
+      // Support for reader+writer and legacy features is going to be added in follow up PRs.
       case f: WriterFeature =>
         removeWriterFeature(f)
       case f =>
