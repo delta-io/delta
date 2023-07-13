@@ -237,8 +237,6 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
-  val DROP_FEATURE_COMMIT_INFO_TAG = "delta.feature.drop"
-
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -284,28 +282,37 @@ object TableFeature {
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
 
   /**
-   * Extracts the downgraded feature name from protocol downgrade commit info.
+   * Extracts the removed feature name by comparing current and base protocols.
+   * Returns None if there is no removed feature.
    */
-  def getRemovedFeatureName(commitInfoOpt: Option[CommitInfo]): Option[String] = {
-    commitInfoOpt
-      .flatMap(_.tags)
-      .flatMap(_.get(TableFeature.DROP_FEATURE_COMMIT_INFO_TAG))
+  protected def getRemovedFeatureName(
+      currentProtocol: Protocol,
+      baseProtocol: Protocol): Option[String] = {
+    val currentFeatureNames = currentProtocol.readerAndWriterFeatureNames
+    val baseFeatureNames = baseProtocol.readerAndWriterFeatureNames
+    val removedFeatures = baseFeatureNames -- currentFeatureNames
+
+    require(removedFeatures.size <= 1)
+    Option(baseFeatureNames -- currentFeatureNames).filter(_.nonEmpty).map(_.head)
   }
 
   /**
-   * Identifies from CommitInfo whether this is a feature removal commit.
+   * Identifies whether there was a feature removal between two protocols.
    */
-  def isDropFeatureCommit(commitInfoOpt: Option[CommitInfo]): Boolean =
-    getRemovedFeatureName(commitInfoOpt).isDefined
+  def isDropFeatureCommit(currentProtocol: Protocol, baseProtocol: Protocol): Boolean = {
+    getRemovedFeatureName(currentProtocol, baseProtocol).isDefined
+  }
 
   /**
    * Validates whether all requirements of a removed feature hold against the provided snapshot.
    */
-  def validateFeatureRemoval(
-      downgradeCommitInfo: Option[CommitInfo],
+  def validateFeatureRemovalAtSnapshot(
+      currentProtocol: Protocol,
+      baseProtocol: Protocol,
       snapshot: Snapshot): Boolean = {
-    // No feature drop tag means this is not a protocol downgrade commit.
-    val removedFeatureName = TableFeature.getRemovedFeatureName(downgradeCommitInfo).getOrElse {
+    val removedFeatureNameOpt =
+      TableFeature.getRemovedFeatureName(currentProtocol, baseProtocol)
+    val removedFeatureName = removedFeatureNameOpt.getOrElse {
       return true
     }
 
@@ -314,14 +321,6 @@ object TableFeature {
       case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(removedFeatureName)
     }
   }
-
-  /**
-   * Generates commit tags for table feature operations.
-   */
-  def getAutoTags(op: DeltaOperations.Operation): Seq[(String, String)] = Some(op).collect {
-    case dropOp: DropTableFeature =>
-      TableFeature.DROP_FEATURE_COMMIT_INFO_TAG -> dropOp.featureName
-  }.toSeq
 }
 
 /* ---------------------------------------- *

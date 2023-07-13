@@ -218,7 +218,7 @@ case class AlterTableDropFeatureDeltaCommand(
       //
       // a) Bring the table to a state the validation passes.
       // b) To not allow concurrent commands to alter the table in a way the validation does not
-      //    pass. This can be done by disabling first the relevant metadata property.
+      //    pass. This can be done by first disabling the relevant metadata property.
       // c) Undoing (b) should cause the preDowngrade command to fail.
       //
       // Note, for features that cannot be disabled we solely rely for correctness on

@@ -180,17 +180,22 @@ private[delta] class ConflictChecker(
       // the conflict and proceed with the downgrade. This is because a protocol downgrade would
       // be hard to succeed in concurrent workloads. On the other hand, a protocol downgrade is
       // a rare event and thus not that disruptive if other concurrent transactions fail.
-      if (TableFeature.isDropFeatureCommit(winningCommitSummary.commitInfo)) {
+      val winningProtocol = winningCommitSummary.protocol.get
+      val readProtocol = currentTransactionInfo.readSnapshot.protocol
+      if (TableFeature.isDropFeatureCommit(winningProtocol, readProtocol)) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
       }
     }
-    // When the protocol downgrade is the losing txn we re-validate the invariants of the
-    // removed feature. We could improve this by only revalidating against the snapshot of
-    // the last interleaved txn.
-    val currentCommitInfo = currentTransactionInfo.commitInfo
-    if (TableFeature.isDropFeatureCommit(currentCommitInfo)) {
+    // When the winning transaction does not change the protocol but the losing txn is
+    // a protocol downgrade, we re-validate the invariants of the removed feature. We could
+    // improve this by only revalidating against the snapshot of the last interleaved txn.
+    val currentProtocol = currentTransactionInfo.protocol
+    val readProtocol = currentTransactionInfo.readSnapshot.protocol
+    if (TableFeature.isDropFeatureCommit(currentProtocol, readProtocol)) {
       val winningSnapshot = deltaLog.getSnapshotAt(winningCommitSummary.commitVersion)
-      if (!TableFeature.validateFeatureRemoval(currentCommitInfo, winningSnapshot)) {
+      val isDowngradeCommitValid = TableFeature
+        .validateFeatureRemovalAtSnapshot(currentProtocol, readProtocol, winningSnapshot)
+      if (!isDowngradeCommitValid) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
           winningCommitSummary.commitInfo)
       }

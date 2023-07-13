@@ -2207,14 +2207,7 @@ trait DeltaErrorsBase
   def dropTableFeatureFeatureNotSupportedByProtocol(
       feature: String): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
-      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE",
-      messageParameters = Array(feature))
-  }
-
-  def dropTableFeatureNotSupportedFeatureType(
-      feature: String): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
-      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_FEATURE_TYPE",
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
       messageParameters = Array(feature))
   }
 

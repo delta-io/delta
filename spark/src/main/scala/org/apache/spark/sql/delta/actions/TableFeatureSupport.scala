@@ -311,7 +311,7 @@ trait TableFeatureSupport { this: Protocol =>
       case f: WriterFeature =>
         removeWriterFeature(f)
       case f =>
-        throw DeltaErrors.dropTableFeatureNotSupportedFeatureType(f.name)
+        throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
   }
 

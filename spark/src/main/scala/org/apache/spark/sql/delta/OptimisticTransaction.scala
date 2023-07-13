@@ -26,7 +26,7 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import org.apache.spark.sql.delta.DeltaOperations.{DropTableFeature, Operation}
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
@@ -1029,8 +1029,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
-      val allTags = tags ++ TableFeature.getAutoTags(op)
-
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
         op.name,
@@ -1041,7 +1039,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Some(isBlindAppend),
         getOperationMetrics(op),
         getUserMetadata(op),
-        tags = if (allTags.nonEmpty) Some(allTags) else None,
+        tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       val currentTransactionInfo = CurrentTransactionInfo(

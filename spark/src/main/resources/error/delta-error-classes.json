@@ -728,6 +728,12 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
+    "message" : [
+      "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_DROP_LEGACY_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because it is implicitly supported by the table protocol version."
@@ -744,18 +750,6 @@
     "message" : [
       "Cannot drop <feature> because it is not supported by this Delta version.",
       "Consider using Delta with a higher version."
-    ],
-    "sqlState" : "0AKDE"
-  },
-  "DELTA_FEATURE_DROP_UNSUPPORTED_FEATURE_TYPE" : {
-    "message" : [
-      "Cannot drop <feature> because this feature type is not supported."
-    ],
-    "sqlState" : "0AKDE"
-  },
-  "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE" : {
-    "message" : [
-      "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
     ],
     "sqlState" : "0AKDE"
   },

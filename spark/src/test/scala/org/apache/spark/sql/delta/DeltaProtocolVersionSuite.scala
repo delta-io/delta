@@ -2100,6 +2100,31 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Remove an implicit writer feature") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.minWriterVersion = 2)""".stripMargin)
+
+      assert(deltaLog.update().protocol === Protocol(minReaderVersion = 1, minWriterVersion = 2))
+
+      // Try removing AppendOnly which is an implicitly supported feature (writer version 2).
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
+        val command = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          AppendOnlyTableFeature.name)
+        val e = intercept[DeltaTableFeatureException] {
+          command.run(spark)
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+          parameters = Map("feature" -> AppendOnlyTableFeature.name))
+      }
+    }
+  }
+
   test("Remove a feature not supported by the client") {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
@@ -2128,17 +2153,27 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("Remove a feature not present in the protocol") {
+  for (withTableFeatures <- BOOLEAN_DOMAIN)
+  test(s"Remove a feature not present in the protocol - withTableFeatures: $withTableFeatures") {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
-      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+      val (minReaderVersion, minWriterVersion) = if (withTableFeatures) {
+        (TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+      } else {
+        (1, 2)
+      }
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.minReaderVersion = $minReaderVersion,
+           |delta.minWriterVersion = $minWriterVersion)""".stripMargin)
 
       assert(
         deltaLog.update().protocol === Protocol(
-          minReaderVersion = 1,
-          minWriterVersion = 2,
-          readerFeatures = None,
-          writerFeatures = None))
+          minReaderVersion = minReaderVersion,
+          minWriterVersion = minWriterVersion,
+          readerFeatures = if (withTableFeatures) Some(Set.empty) else None,
+          writerFeatures = if (withTableFeatures) Some(Set.empty) else None))
 
       withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
@@ -2150,7 +2185,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
         checkError(
           exception = e,
-          errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_PROTOCOL_FEATURE",
+          errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
           parameters = Map("feature" -> TestRemovableWriterFeature.name))
       }
     }
@@ -2176,7 +2211,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       val expectedProtocol = Protocol(
         minReaderVersion = 1,
-        minWriterVersion = 7,
+        minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
         readerFeatures = None,
         writerFeatures = Some(Set.empty))
       assert(deltaLog.update().protocol === expectedProtocol)
