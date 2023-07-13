@@ -24,11 +24,11 @@ val scala213 = "2.13.5"
 val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
-// It was necessary to change default_scala_version to scala213
+// It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
 // sbt 'set default_scala_version := 2.13.5' [commands]
-// FIXME Why not use scalaVersion?!
+// FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
@@ -55,18 +55,20 @@ scalaVersion := default_scala_version.value
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
-// Uncomment the following line for Java 11
-// val targetJvm = "11"
-val targetJvm = "1.8"
+// For Java 11 use the following on command line
+// sbt 'set targetJvm := "11"' [commands]
+val targetJvm = settingKey[String]("Target JVM version")
+Global / targetJvm := "1.8"
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version.value,
   crossScalaVersions := all_scala_versions,
   fork := true,
-  scalacOptions ++= Seq(s"-target:jvm-$targetJvm", "-Ywarn-unused:imports"),
-  javacOptions ++= Seq("-source", targetJvm),
+  scalacOptions ++= Seq(s"-target:jvm-${targetJvm.value}", "-Ywarn-unused:imports"),
+  javacOptions ++= Seq("-source", targetJvm.value),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", targetJvm),
+  Compile / compile / javacOptions ++= Seq("-target", targetJvm.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
