@@ -47,15 +47,18 @@ scalaVersion := default_scala_version
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
+// Uncomment the following line for Java 11
+// val targetJvm = "11"
+val targetJvm = "1.8"
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version,
   crossScalaVersions := all_scala_versions,
   fork := true,
-  scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused:imports"),
-  javacOptions ++= Seq("-source", "1.8"),
+  scalacOptions ++= Seq(s"-target:jvm-$targetJvm", "-Ywarn-unused:imports"),
+  javacOptions ++= Seq("-source", targetJvm),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", "1.8"),
+  Compile / compile / javacOptions ++= Seq("-target", targetJvm),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
