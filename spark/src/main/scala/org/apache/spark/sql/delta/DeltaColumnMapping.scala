@@ -56,7 +56,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
       CDCReader.CDC_COMMIT_VERSION,
       CDCReader.CDC_COMMIT_TIMESTAMP,
-      DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
+      DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
+      DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME)
     ).map(_.toLowerCase(Locale.ROOT)).toSet
 
   val supportedModes: Set[DeltaColumnMappingMode] =
