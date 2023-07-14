@@ -510,6 +510,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(4)
 
+  val MERGE_MATERIALIZE_SOURCE_EAGER =
+    buildConf("merge.materializeSource.eager")
+      .internal()
+      .doc("Materialize the source eagerly before Job 1")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
