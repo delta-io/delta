@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
 import org.apache.spark.sql.Encoder
+import org.apache.spark.sql.catalyst.catalog.CatalogTypes
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 
 private[delta] class DeltaEncoder[T: TypeTag] {
@@ -70,8 +71,8 @@ private[delta] trait DeltaEncoders {
   private lazy val _removeFileEncoder = new DeltaEncoder[RemoveFile]
   implicit def removeFileEncoder: Encoder[RemoveFile] = _removeFileEncoder.get
 
-  private lazy val _pmfEncoder = new DeltaEncoder[(Protocol, Metadata, String)]
-  implicit def pmfEncoder: Encoder[(Protocol, Metadata, String)] = _pmfEncoder.get
+  private lazy val _pmvEncoder = new DeltaEncoder[(Protocol, Metadata, Long)]
+  implicit def pmvEncoder: Encoder[(Protocol, Metadata, Long)] = _pmvEncoder.get
 
   private lazy val _serializableFileStatusEncoder = new DeltaEncoder[SerializableFileStatus]
   implicit def serializableFileStatusEncoder: Encoder[SerializableFileStatus] =
@@ -99,4 +100,10 @@ private[delta] trait DeltaEncoders {
   private lazy val _convertTargetFileEncoder = new DeltaEncoder[ConvertTargetFile]
   implicit def convertTargetFileEncoder: Encoder[ConvertTargetFile] =
     _convertTargetFileEncoder.get
+
+  private lazy val _fsPartitionSpecEncoder =
+    new DeltaEncoder[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)]
+  implicit def fsPartitionSpecEncoder
+    : Encoder[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)]
+      = _fsPartitionSpecEncoder.get
 }

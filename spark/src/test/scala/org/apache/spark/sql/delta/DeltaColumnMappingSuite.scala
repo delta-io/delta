@@ -1130,9 +1130,11 @@ class DeltaColumnMappingSuite extends QueryTest
       // Analysis phase
       val df = spark.read.format("delta").load(dir.getCanonicalPath)
       // Overwrite schema but with same logical schema
-      spark.range(10).toDF("id")
-        .write.format("delta").option("overwriteSchema", "true").mode("overwrite")
-        .save(dir.getCanonicalPath)
+      withSQLConf(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE.key -> "false") {
+        spark.range(10).toDF("id")
+          .write.format("delta").option("overwriteSchema", "true").mode("overwrite")
+          .save(dir.getCanonicalPath)
+      }
       // The previous analyzed DF no longer is able to read the data any more because it generates
       // new physical name for the underlying columns, so we should fail.
       assert {
@@ -1779,6 +1781,111 @@ class DeltaColumnMappingSuite extends QueryTest
     assert(DeltaColumnMapping.verifyInternalProperties(maxColumnIdOne, maxColumnIdOneWithOthers))
     // Max column IDs don't match
     assert(!DeltaColumnMapping.verifyInternalProperties(maxColumnIdOne, maxColumnIdTwo))
+  }
+
+  testColumnMapping(
+    "overwrite a column mapping table should preserve column mapping metadata",
+    enableSQLConf = true) { _ =>
+    val data = spark.range(10).toDF("id").withColumn("value", lit(1))
+
+    def checkReadability(
+        oldDf: DataFrame,
+        expected: DataFrame,
+        overwrite: () => Unit,
+        // Whether the new data files are readable after applying the fix.
+        readableWithFix: Boolean = true,
+        // Whether the method can read the new data files out of box, regardless of the fix.
+        readableOutOfBox: Boolean = false): Unit = {
+      // Overwrite
+      overwrite()
+      if (readableWithFix) {
+        // Previous analyzed DF is still readable
+        // Apply a .select so the plan cache won't kick in.
+        checkAnswer(oldDf.select("id"), expected.select("id").collect())
+        withSQLConf(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE.key -> "false") {
+          // Overwrite again
+          overwrite()
+          if (readableOutOfBox) {
+            checkAnswer(oldDf.select("value"), expected.select("value").collect())
+          } else {
+            // Without the fix, will fail
+            assert {
+              intercept[DeltaAnalysisException] {
+                oldDf.select("value").collect()
+              }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+            }
+          }
+        }
+      } else {
+        // Not readable, just fail
+        assert {
+          intercept[DeltaAnalysisException] {
+            oldDf.select("value").collect()
+          }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+        }
+      }
+    }
+
+    // Readable - overwrite using DF
+    val overwriteData1 = spark.range(10, 20).toDF("id").withColumn("value", lit(2))
+    withTempDir { dir =>
+      data.write.format("delta").save(dir.getCanonicalPath)
+      val df = spark.read.format("delta").load(dir.getCanonicalPath)
+      checkAnswer(df, data.collect())
+      checkReadability(df, overwriteData1, () => {
+        overwriteData1.write.mode("overwrite")
+          .option("overwriteSchema", "true")
+          .format("delta")
+          .save(dir.getCanonicalPath)
+      })
+    }
+
+    // Unreadable - data type changes
+    val overwriteIncompatibleDatatType =
+      spark.range(10, 20).toDF("id").withColumn("value", lit("name"))
+    withTempDir { dir =>
+      data.write.format("delta").save(dir.getCanonicalPath)
+      val df = spark.read.format("delta").load(dir.getCanonicalPath)
+      checkAnswer(df, data.collect())
+      checkReadability(df, overwriteIncompatibleDatatType, () => {
+        overwriteIncompatibleDatatType.write.mode("overwrite")
+          .option("overwriteSchema", "true")
+          .format("delta")
+          .save(dir.getCanonicalPath)
+      }, readableWithFix = false)
+    }
+
+    def withTestTable(f: (String, DataFrame) => Unit): Unit = {
+      val tableName = s"cm_table"
+      withTable(tableName) {
+        data.createOrReplaceTempView("src_data")
+        spark.sql(s"CREATE TABLE $tableName USING DELTA AS SELECT * FROM src_data")
+        val df = spark.read.table(tableName)
+        checkAnswer(df, data.collect())
+
+        f(tableName, df)
+      }
+    }
+
+    withTestTable { (tableName, df) =>
+      // "overwrite" using REPLACE won't be covered by this fix because this is logically equivalent
+      // to DROP and RECREATE a new table. Therefore this optimization won't kick in.
+      overwriteData1.createOrReplaceTempView("overwrite_data")
+      checkReadability(df, overwriteData1, () => {
+        spark.sql(s"REPLACE TABLE $tableName USING DELTA AS SELECT * FROM overwrite_data")
+      }, readableWithFix = false)
+    }
+
+    withTestTable { (tableName, df) =>
+      // "overwrite" using INSERT OVERWRITE actually works without this fix because it will NOT
+      // trigger the overwriteSchema code path. In this case, the pre and post schema are exactly
+      // the same, so in fact no schema updates would occur.
+      val overwriteData2 = spark.range(20, 30).toDF("id").withColumn("value", lit(2))
+      overwriteData2.createOrReplaceTempView("overwrite_data2")
+      checkReadability(df, overwriteData2, () => {
+        spark.sql(s"INSERT OVERWRITE $tableName SELECT * FROM overwrite_data2")
+      }, readableOutOfBox = true)
+    }
   }
 
   test("column mapping upgrade with table features") {

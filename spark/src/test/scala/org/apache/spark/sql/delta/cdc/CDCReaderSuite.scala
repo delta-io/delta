@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.{Row, SaveMode}
-import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
@@ -141,6 +141,30 @@ class CDCReaderSuite
             .withColumn(CDC_TYPE_COLUMN_NAME, lit("delete"))
             .withColumn(CDC_COMMIT_VERSION, lit(1)))
           .unionAll(cdcData.withColumn(CDC_COMMIT_VERSION, lit(2)))
+      )
+    }
+  }
+
+  test("CDC has correct stats") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      val data = spark.range(10)
+      val cdcData = spark.range(20, 25).withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
+
+      data.write.format("delta").save(dir.getAbsolutePath)
+      sql(s"DELETE FROM delta.`${dir.getAbsolutePath}`")
+      writeCdcData(log, cdcData)
+
+      assert(
+        CDCReader
+          .changesToBatchDF(log, 0, 2, spark)
+          .queryExecution
+          .optimizedPlan
+          .collectLeaves()
+          .exists {
+            case l: LogicalRDD => l.stats.sizeInBytes == 0 && !l.isStreaming
+            case _ => false
+          }
       )
     }
   }

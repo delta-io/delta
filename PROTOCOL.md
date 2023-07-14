@@ -23,7 +23,6 @@
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
-    - [Increase Row ID High-water Mark](#increase-row-id-high-water-mark)
     - [Domain Metadata](#domain-metadata)
       - [Reader Requirements for Domain Metadata](#reader-requirements-for-domain-metadata)
       - [Writer Requirements for Domain Metadata](#writer-requirements-for-domain-metadata)
@@ -557,24 +556,6 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
-### Increase Row ID High-water Mark
-The Row ID high-water mark tracks the largest ID that has been assigned to a row in the table.
-
-The schema of `rowIdHighWaterMark` action is as follows:
-
-Field Name | Data Type | Description | optional/required
--|-|-|-
-highWaterMark | Long | The highest Row ID that has been assigned to a row in the table. | required
-
-The following is an example `rowIdHighWaterMark` action:
-```json
-{
-  "rowIdHighWaterMark": {
-    "highWaterMark": 1432
-  }
-}
-```
-
 ### Domain Metadata
 The domain metadata action contains a configuration (string) for a named metadata domain. Two overlapping transactions conflict if they both contain a domain metadata action for the same metadata domain.
 
@@ -619,7 +600,6 @@ A given snapshot of the table can be computed by replaying the events committed 
 
  - A single `protocol` action
  - A single `metaData` action
- - At most one `rowIdHighWaterMark` action
  - A collection of `txn` actions with unique `appId`s
  - A collection of `domainMetadata` actions with unique `domain`s.
  - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
@@ -629,7 +609,6 @@ To achieve the requirements above, related actions from different delta files ne
  
  - The latest `protocol` action seen wins
  - The latest `metaData` action seen wins
- - The latest `rowIdHighWaterMark` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
@@ -925,10 +904,13 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
   - Writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
     Writers must never commit duplicate Row IDs in the table in any version.
   - Writers must set the `baseRowId` field in recommitted and checkpointed `add` actions and `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
-  - Writers must set the `baseRowId` field to a value that is higher than the `rowIdHighWatermark`.
-  - Writers must include a `rowIdHighWaterMark` action whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `rowIdHighWaterMark` action.
-    The `highWaterMark` value of the `rowIdHighWaterMark` action must always be equal to or greater than the highest fresh Row ID committed so far.
-    Writers can either commit the `rowIdHighWaterMark` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
+  - Writers must track the high water mark, i.e. the highest fresh row id assigned.
+    - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
+      and a `configuration` containing a single key-value pair with `highWaterMark` as the key and the highest assigned fresh row id as the value.
+    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
+      The `highWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
+      Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
+    - Writers must set the `baseRowId` field to a value that is higher than the row id high water mark.
 - Writer must assign fresh Row Commit Versions to all rows that they commit.
   - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
   - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.

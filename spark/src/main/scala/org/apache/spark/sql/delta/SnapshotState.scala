@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum}
-import org.apache.spark.sql.functions.collect_list
 import org.apache.spark.util.Utils
 
 
@@ -145,7 +144,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "numOfMetadata" -> count(col("metaData")),
       "numOfProtocol" -> count(col("protocol")),
       "setTransactions" -> collect_set(col("txn")),
-      "domainMetadata" -> collect_list(col("domainMetadata")),
+      "domainMetadata" -> collect_set(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)

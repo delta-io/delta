@@ -272,6 +272,10 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
+/*
+// TODO: Investigate a smarter way to pull the Iceberg github.
+//       Make sure to add `iceberg` back to `sparkGroup` below.
+
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -333,6 +337,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
+*/
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
@@ -953,7 +958,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB) /* iceberg */
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1025,9 +1030,10 @@ def getPrevVersion(currentVersion: String): String = {
 
   val lastVersionInMajorVersion = Map(
     0 -> "0.8.0",
-    1 -> "1.2.1"
+    1 -> "1.2.1",
+    2 -> "2.4.0"
   )
-  if (minor == 0) {  // 1.0.0 or 2.0.0
+  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
     lastVersionInMajorVersion.getOrElse(major - 1, {
       throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
     })
