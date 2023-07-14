@@ -123,14 +123,17 @@ trait MergeIntoMaterializeSourceTests
     hints
   }
 
-  test("materialize source preserves dataframe hints") {
+  for (eager <- BOOLEAN_DOMAIN)
+  test(s"materialize source preserves dataframe hints - eager=$eager") {
     withTable("A", "B", "T") {
       sql("select id, id as v from range(50000)").write.format("delta").saveAsTable("T")
       sql("select id, id+2 as v from range(10000)").write.format("csv").saveAsTable("A")
       sql("select id, id*2 as v from range(1000)").write.format("csv").saveAsTable("B")
 
       // Manually added broadcast hint will mess up the expected hints hence disable it
-      withSQLConf(SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "-1") {
+      withSQLConf(
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
+        SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "-1") {
         // Simple BROADCAST hint
         val hSimple = getHints(
           sql("MERGE INTO T USING (SELECT /*+ BROADCAST */ * FROM A) s ON T.id = s.id" +
