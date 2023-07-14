@@ -557,6 +557,8 @@ private[delta] object DeltaOperationMetrics {
   val DELETE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
+    "numDeletionVectorsAdded",  // number of deletion vectors added
+    "numDeletionVectorsRemoved", //  number of deletion vectors removed
     "numAddedChangeFiles", // number of CDC files
     "numDeletedRows", // number of rows removed
     "numCopiedRows", // number of rows copied in the process of deleting files
@@ -598,6 +600,8 @@ private[delta] object DeltaOperationMetrics {
   val DELETE_PARTITIONS = Set(
     "numRemovedFiles", // number of files removed
     "numAddedChangeFiles", // number of CDC files generated - generally 0 in this case
+    "numDeletionVectorsAdded", // number of deletion vectors added
+    "numDeletionVectorsRemoved", //  number of deletion vectors removed
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs", // time taken to rewrite the matched files

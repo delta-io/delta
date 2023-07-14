@@ -181,8 +181,12 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    // TODO: gather more metrics
-    val metricMap = Map("numDeletedRows" -> numDeletedRows, "numRemovedFiles" -> numRemovedFiles)
+    val numDeletionVectorsAdded: Long = dvAddFiles.count(_.deletionVector != null)
+    val numDeletionVectorsRemoved: Long = dvRemoveFiles.count(_.deletionVector != null) +
+      fullyRemoved.count(_.deletionVector != null)
+    val metricMap = Map("numDeletedRows" -> numDeletedRows, "numRemovedFiles" -> numRemovedFiles,
+      "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
+      "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved)
     (fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles, metricMap)
   }
 
