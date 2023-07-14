@@ -1396,7 +1396,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
         if (!canAssignAnyNewProtocol) {
           val currentVersion = snapshot.protocol
-          if (!currentVersion.canUpgradeTo(newVersion)) {
+          if (!currentVersion.canTransitionTo(newVersion, op)) {
             throw new ProtocolDowngradeException(currentVersion, newVersion)
           }
         }

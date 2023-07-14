@@ -318,6 +318,10 @@ object DeltaOperations {
       "properties" -> JsonUtils.toJson(propKeys),
       "ifExists" -> ifExists)
   }
+  /** Recorded when dropping a table feature. */
+  case class DropTableFeature(featureName: String) extends Operation("DROP FEATURE") {
+    override val parameters: Map[String, Any] = Map("featureName" -> featureName)
+  }
   /** Recorded when columns are added. */
   case class AddColumns(
       colsToAdd: Seq[QualifiedColTypeWithPositionForLog]) extends Operation("ADD COLUMNS") {
