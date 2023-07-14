@@ -312,6 +312,8 @@ object TableFeature {
       oldProtocol = oldProtocol)
     val droppedFeatureName = droppedFeatureNamesOpt match {
       case Some(f) if f.size == 1 => f.head
+      // We do not support dropping more than one features at a time so we have to reject
+      // the validation.
       case Some(_) => return false
       case None => return true
     }
