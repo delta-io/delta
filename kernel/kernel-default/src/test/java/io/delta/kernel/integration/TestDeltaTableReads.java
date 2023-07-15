@@ -18,7 +18,7 @@ package io.delta.kernel.integration;
 import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import static io.delta.kernel.integration.DataBuilderUtils.row;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
-import static io.delta.kernel.utils.DefaultKernelTestUtils.goldenTablePath;
+import static io.delta.golden.GoldenTableUtils.goldenTablePath;
 import java.sql.Date;
 import java.util.Arrays;
 import java.util.HashMap;

@@ -29,14 +29,6 @@ import io.delta.standalone.internal.util.TestUtils._
 object GoldenTableUtils {
 
   /**
-   * Load the golden table as a class resource so that it works in IntelliJ and SBT tests.
-   *
-   * If this is causing a `java.lang.NullPointerException` while debugging in IntelliJ, you
-   * probably just need to SBT test that specific test first.
-   */
-  val goldenTable = new File("../golden-tables/src/test/resources/golden").getCanonicalFile
-
-  /**
    * Create a [[DeltaLog]] (with Java interface) for the given golden table and execute the test
    * function. The caller SHOULD NOT modify the table.
    *
@@ -44,7 +36,7 @@ object GoldenTableUtils {
    * @param testFunc The test to execute which takes the [[DeltaLog]] as input arg.
    */
   def withLogForGoldenTable(name: String)(testFunc: DeltaLog => Unit): Unit = {
-    val tablePath = new File(goldenTable, name).getCanonicalPath
+    val tablePath = io.delta.golden.GoldenTableUtils.goldenTablePath(name)
     val log = DeltaLog.forTable(new Configuration(), tablePath)
     testFunc(log)
   }
@@ -58,8 +50,8 @@ object GoldenTableUtils {
    */
   def withLogForWritableGoldenTable(name: String)(testFunc: DeltaLog => Unit): Unit =
     withTempDir { tempDir =>
-      val tablePath = new File(goldenTable, name)
-      FileUtils.copyDirectory(tablePath, tempDir)
+      val tableFile = io.delta.golden.GoldenTableUtils.goldenTableFile(name)
+      FileUtils.copyDirectory(tableFile, tempDir)
       val log = DeltaLog.forTable(new Configuration(), tempDir.getCanonicalPath)
       testFunc(log)
     }
@@ -75,7 +67,7 @@ object GoldenTableUtils {
    * @param testFunc The test to execute which takes the [[DeltaLogImpl]] as input arg.
    */
   def withLogImplForGoldenTable(name: String)(testFunc: DeltaLogImpl => Unit): Unit = {
-    val tablePath = new File(goldenTable, name).getCanonicalPath
+    val tablePath = io.delta.golden.GoldenTableUtils.goldenTablePath(name)
     val log = DeltaLogImpl.forTable(new Configuration(), tablePath)
     testFunc(log)
   }
@@ -92,8 +84,8 @@ object GoldenTableUtils {
    */
   def withLogImplForWritableGoldenTable(name: String)(testFunc: DeltaLogImpl => Unit): Unit =
     withTempDir { tempDir =>
-      val tablePath = new File(goldenTable, name)
-      FileUtils.copyDirectory(tablePath, tempDir)
+      val tableFile = io.delta.golden.GoldenTableUtils.goldenTableFile(name)
+      FileUtils.copyDirectory(tableFile, tempDir)
       val log = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath)
       testFunc(log)
     }
@@ -105,7 +97,7 @@ object GoldenTableUtils {
    * @param testFunc The test to execute which takes the full table path as input arg.
    */
   def withGoldenTable(name: String)(testFunc: String => Unit): Unit = {
-    val tablePath = new File(goldenTable, name).getCanonicalPath
+    val tablePath = io.delta.golden.GoldenTableUtils.goldenTablePath(name)
     testFunc(tablePath)
   }
 }
