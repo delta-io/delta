@@ -35,6 +35,7 @@ import org.scalatest.BeforeAndAfterEach
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
@@ -4798,14 +4799,27 @@ abstract class MergeIntoSuiteBase
       result: Seq[(Int, Int)]): Unit =
     testExtendedMerge(name, "unlimited clauses")(source, target, mergeOn, mergeClauses : _*)(result)
 
-  protected def testAnalysisErrorsInUnlimitedClauses(
+  protected def testErrorsInUnlimitedClauses(
       name: String)(
       mergeOn: String,
       mergeClauses: MergeClause*)(
       errorStrs: Seq[String],
-      notErrorStrs: Seq[String] = Nil): Unit =
-    testAnalysisErrorsInExtendedMerge(name, "unlimited clauses")(mergeOn, mergeClauses : _*)(
-      errorStrs, notErrorStrs)
+      notErrorStrs: Seq[String] = Nil): Unit = {
+    test(s"unlimited clauses - analysis errors - $name") {
+      withKeyValueData(
+        source = Seq.empty,
+        target = Seq.empty,
+        sourceKeyValueNames = ("key", "srcValue"),
+        targetKeyValueNames = ("key", "tgtValue")
+      ) { case (sourceName, targetName) =>
+        val errMsg = intercept[Exception] {
+          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+        }.getMessage
+        errorStrs.foreach { s => errorContains(errMsg, s) }
+        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
+      }
+    }
+  }
 
   testUnlimitedClauses("two conditional update + two conditional delete + insert")(
     source = (0, 0) :: (1, 100) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
@@ -4967,7 +4981,7 @@ abstract class MergeIntoSuiteBase
       (9, 903)   // (9, 900) inserted by notMatched_3
     ))
 
-  testAnalysisErrorsInUnlimitedClauses("error on multiple insert clauses without condition")(
+  testErrorsInUnlimitedClauses("error on multiple insert clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
@@ -4976,7 +4990,7 @@ abstract class MergeIntoSuiteBase
       "clauses in a merge statement, only the last not matched" ::
       "clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses("error on multiple update clauses without condition")(
+  testErrorsInUnlimitedClauses("error on multiple update clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     update(condition = null, set = "key = s.key, value = 3 * srcValue"),
@@ -4985,7 +4999,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = "when there are more than one matched clauses in a merge statement, " +
       "only the last matched clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses("error on multiple update/delete clauses without condition")(
+  testErrorsInUnlimitedClauses("error on multiple update/delete clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     delete(condition = null),
@@ -4994,7 +5008,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = "when there are more than one matched clauses in a merge statement, " +
       "only the last matched clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on non-empty condition following empty condition for update clauses")(
     mergeOn = "s.key = t.key",
     update(condition = null, set = "key = s.key, value = 2 * srcValue"),
@@ -5003,7 +5017,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = "when there are more than one matched clauses in a merge statement, " +
       "only the last matched clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on non-empty condition following empty condition for insert clauses")(
     mergeOn = "s.key = t.key",
     update(condition = null, set = "key = s.key, value = srcValue"),
