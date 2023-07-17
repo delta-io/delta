@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
@@ -864,6 +865,134 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
   */
+
+  for (parquetTimestampType <- SQLConf.ParquetOutputTimestampType.values) {
+    generateGoldenTable(s"kernel-timestamp-${parquetTimestampType.toString}") { tablePath =>
+      withSQLConf(("spark.sql.parquet.outputTimestampType", parquetTimestampType.toString)) {
+        // Create a partition value of both {year}-{month}-{day} {hour}:{minute}:{second} format and
+        // {year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}
+        val data = Row(0, Timestamp.valueOf("2020-01-01 08:09:10.001"), Timestamp.valueOf("2020-02-01 08:09:10")) ::
+          Row(1, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("1999-01-01 09:00:00")) ::
+          Row(2, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("2000-01-01 09:00:00")) :: Nil
+
+        val schema = new StructType()
+          .add("id", IntegerType)
+          .add("part", TimestampType)
+          .add("time", TimestampType)
+
+        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .save(tablePath)
+      }
+    }
+  }
+
+  generateGoldenTable("parquet-all-types") { tablePath =>
+    val timeZone = java.util.TimeZone.getTimeZone("UTC")
+    java.util.TimeZone.setDefault(timeZone)
+    import org.apache.spark.sql.types._
+    import org.apache.spark.sql._
+    import java.sql._
+
+    val decimalType = DecimalType(10, 2)
+
+    val allDataTypes = Seq(
+      ByteType,
+      ShortType,
+      IntegerType,
+      LongType,
+      FloatType,
+      DoubleType,
+      decimalType,
+      BooleanType,
+      StringType,
+      BinaryType,
+      DateType,
+      TimestampType
+    )
+
+    var fields = allDataTypes.map(dt => {
+      val name = if (dt.isInstanceOf[DecimalType]) {
+        "decimal"
+      } else {
+        dt.toString
+      }
+      StructField(name, dt)
+    })
+
+    fields = fields :+ StructField("nested_struct", new StructType()
+      .add("aa", StringType)
+      .add("ac", new StructType()
+        .add("aca", IntegerType)
+      )
+    )
+
+    fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
+
+    fields = fields :+ StructField(
+      "array_of_structs",
+      ArrayType(new StructType().add("ab", LongType)))
+
+    fields = fields :+ StructField(
+      "map_of_prims",
+      MapType(IntegerType, LongType)
+    )
+
+    fields = fields :+ StructField(
+      "map_of_complex",
+      MapType(IntegerType, new StructType().add("ab", LongType))
+    )
+
+    val schema = StructType(fields)
+
+    def createRow(i: Int): Row = {
+      Row(
+        if (i % 72 != 0) i.byteValue() else null,
+        if (i % 56 != 0) i.shortValue() else null,
+        if (i % 23 != 0) i else null,
+        if (i % 25 != 0) (i + 1).longValue() else null,
+        if (i % 28 != 0) (i * 0.234).floatValue() else null,
+        if (i % 54 != 0) (i * 234234.23).doubleValue() else null,
+        if (i % 67 != 0) new java.math.BigDecimal(i * 123.52) else null,
+        if (i % 87 != 0) i % 2 == 0 else null,
+        if (i % 57 != 0) (i).toString else null,
+        if (i % 59 != 0) (i).toString.getBytes else null,
+        if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
+        if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
+        Row(i.toString, if (i % 23 != 0) Row(i) else null),
+        if (i % 25 != 0) {
+          if (i % 29 == 0) {
+            scala.Array()
+          } else {
+            scala.Array(i, null, i + 1)
+          }
+        } else null,
+        scala.Array(Row(i.longValue()), null),
+        if (i % 28 != 0) {
+          if (i % 30 == 0) {
+            Map()
+          } else {
+            Map(
+              i -> (if (i % 29 != 0) (i + 2).longValue() else null),
+              i * 2 -> (i + 9).longValue()
+            )
+          }
+        } else null,
+        Map(i + 1 -> (if (i % 10 == 0) Row((i*20).longValue()) else null))
+      )
+    }
+
+    val rows = Seq.range(0, 200).map(i => createRow(i))
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+    df.repartition(1)
+      .write
+      .format("parquet")
+      .mode("append")
+      .save(tablePath)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
