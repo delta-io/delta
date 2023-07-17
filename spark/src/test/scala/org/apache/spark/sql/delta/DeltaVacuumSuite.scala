@@ -125,6 +125,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Operation
   /** Garbage collect the reservoir. */
+  case class GCByPartitionPredicate(
+                 dryRun: Boolean,
+                 expectedDf: Seq[String],
+                 retentionHours: Option[Double] = None,
+                 partitionPredicates: Seq[String] = Seq.empty[String]) extends Operation
+  /** Garbage collect the reservoir. */
   case class ExecuteVacuumInScala(
       deltaTable: io.delta.tables.DeltaTable,
       expectedDf: Seq[String],
@@ -222,6 +228,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
       case GC(dryRun, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir")
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
+        val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
+        checkDatasetUnorderly(result.as[String], qualified: _*)
+      case GCByPartitionPredicate(dryRun, expectedDf, retention, partitionPredicates) =>
+        Given("*** Garbage collecting Reservoir using Partition Predicate")
+        val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention,
+          userPartitionPredicates = partitionPredicates, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
       case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
@@ -574,6 +586,40 @@ class DeltaVacuumSuite
         GC(dryRun = false, Seq(tempDir)),
         CheckFiles(Seq("file1.txt")),
         CheckFiles(Seq("_underscore_col_=10/test.txt"), exist = false)
+      )
+    }
+  }
+
+  test("GC by partition predicate filter") {
+    // We should be able to see inside partition directories to GC them, even if they'd normally
+    // be considered invisible because of their name.
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      val txn = deltaLog.startTransaction()
+      val schema = new StructType()
+        .add("part_col1", IntegerType)
+        .add("part_col2", IntegerType)
+        .add("part_col3", IntegerType)
+        .add("n", IntegerType)
+      val metadata =
+        Metadata(schemaString = schema.json,
+          partitionColumns = Seq("part_col1", "part_col2", "part_col3"))
+      txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true,
+          Map("part_col1" -> "1", "part_col2"->"2", "part_col3"->"3")),
+        CreateFile("part_col1=1/part_col2=2/part_col3=3/test.txt", true,
+          Map("part_col1" -> "1", "part_col2"->"2", "part_col3"->"3")),
+        CreateFile("part_col1=11/part_col2=22/part_col3=33/dummy.txt", false),
+        CheckFiles(Seq("file1.txt", "part_col1=1/part_col2=2/part_col3=3",
+          "part_col1=11/part_col2=22/part_col3=33/dummy.txt")),
+        LogicallyDeleteFile("part_col1=1/part_col2=2/part_col3=3/test.txt"),
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        GCByPartitionPredicate(dryRun = false,
+          Seq(tempDir), partitionPredicates = Seq("part_col1=11")),
+        CheckFiles(Seq("file1.txt")),
+        CheckFiles(Seq("part_col1=1/part_col2=2/part_col3=3/test.txt"), exist = true),
+        CheckFiles(Seq("part_col1=11/part_col2=22/part_col3=33/dummy.txt"), exist = false)
       )
     }
   }

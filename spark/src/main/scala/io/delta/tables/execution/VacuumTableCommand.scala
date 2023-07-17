@@ -16,13 +16,16 @@
 
 package io.delta.tables.execution
 
+import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.commands.VacuumCommand.verifyPartitionPredicates
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -34,6 +37,7 @@ import org.apache.spark.sql.types.StringType
 case class VacuumTableCommand(
     path: Option[String],
     table: Option[TableIdentifier],
+    userPartitionPredicates: Seq[String],
     horizonHours: Option[Double],
     dryRun: Boolean) extends LeafRunnableCommand {
 
@@ -66,6 +70,7 @@ case class VacuumTableCommand(
         "VACUUM",
         DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
     }
-    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
+    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours,
+      userPartitionPredicates).collect()
   }
 }

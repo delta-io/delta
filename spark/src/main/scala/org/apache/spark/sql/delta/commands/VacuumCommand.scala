@@ -20,23 +20,24 @@ package org.apache.spark.sql.delta.commands
 import java.net.URI
 import java.util.Date
 import java.util.concurrent.TimeUnit
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, PartitionUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, sum}
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -146,7 +147,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       deltaLog: DeltaLog,
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
-      clock: Clock = new SystemClock): DataFrame = {
+      userPartitionPredicates: Seq[String] = Seq.empty[String],
+      clock: Clock = new SystemClock
+      ): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
       val path = deltaLog.dataPath
@@ -187,7 +190,57 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
 
-      val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
+      val allFilesAndDirs = if (partitionColumns.nonEmpty) {
+        val dirsInFs = partitionColumns.foldLeft(Seq(basePath)) {
+          case (parentPaths, partition) =>
+            DeltaFileOperations.listDirs(
+              spark,
+              hadoopConf,
+              parentPaths,
+              dirFilter = p => DeltaTableUtils.isHiddenDirectory(partitionColumns, p),
+              fileFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+              fileListingParallelism = Option(parallelism))
+        }
+        val vacuumFolders = if (userPartitionPredicates.nonEmpty) {
+          val filters = userPartitionPredicates.flatMap { predicate =>
+            val predicates = parsePredicates(spark, predicate)
+            verifyPartitionPredicates(
+              spark,
+              partitionColumns,
+              predicates)
+            predicates
+          }
+          val pSchema = StructType(snapshot.metadata.partitionSchema
+            .map(f => StructField(f.name, f.dataType, true)))
+          val parts = dirsInFs.filter(p => p.contains(partitionColumns(0)))
+            .map(p => new Path(p))
+          val partitionRows = PartitionUtils.parsePartitions(parts, true,
+            Set(new Path(basePath)), Option(pSchema), true, false, "UTC")
+            .partitions
+            .map(p =>
+              new GenericInternalRow(p.values.toSeq(pSchema).toArray
+                ++ Seq(UTF8String.fromString(p.pathStr)))
+            )
+          val newSchema = StructType(pSchema.fields ++ Seq(StructField("path", StringType, false)))
+          val listingPlan = spark.internalCreateDataFrame(
+            spark.sparkContext.parallelize(partitionRows), newSchema).logicalPlan
+          val filteredListingPlan = filters.foldLeft(listingPlan)((plan, filter)
+          => spark.sessionState.analyzer.execute(Filter(filter, plan)))
+          val filteredPaths = Dataset.ofRows(spark, filteredListingPlan)
+          filteredPaths.select("path").collect().map(_.getString(0)).toSeq
+        } else {
+          dirsInFs
+        }
+        DeltaFileOperations.recursiveListDirs(
+          spark,
+          vacuumFolders,
+          hadoopConf,
+          hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+          hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+          fileListingParallelism = Option(parallelism)
+        )
+      } else {
+        DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
@@ -195,7 +248,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           fileListingParallelism = Option(parallelism)
         )
-        .groupByKey(_.path)
+      }.groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
           // of all the duplicates we can return the newest file.

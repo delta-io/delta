@@ -35,17 +35,20 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_")), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123_")), Seq.empty, None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_", Some("1a"))), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123_", Some("1a"))), Seq.empty, None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123A", Some("a"))), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123A", Some("a"))), Seq.empty, None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123E3_column", Some("a"))), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123E3_column", Some("a"))), Seq.empty,
+        None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), Seq.empty,
+        None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+      VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), Seq.empty,
+        None, false))
   }
 
   test("OPTIMIZE command is parsed as expected") {

@@ -313,6 +313,32 @@ object DeltaFileOperations extends DeltaLogging {
   }
 
   /**
+   * Lists the directory by launching a spark job. Returns an iterator
+   * from LogStore.
+   */
+  def listDirs(
+      spark: SparkSession,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      subDirs: Seq[String],
+      dirFilter: String => Boolean = defaultHiddenFileFilter,
+      fileFilter: String => Boolean = defaultHiddenFileFilter,
+      fileListingParallelism: Option[Int] = None): Array[String] = {
+    val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
+    spark.sparkContext.parallelize(subDirs, listParallelism)
+      .mapPartitions { dirs =>
+      val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
+      listUsingLogStore(
+        logStore,
+        hadoopConf.value.value,
+        dirs,
+        recurse = false,
+        dirFilter, fileFilter)
+    }.map {
+      case fileStatus => fileStatus.path
+    }.collect
+  }
+
+  /**
    * Incrementally lists files with filenames after `listDir` by alphabetical order. Helpful if you
    * only want to list new files instead of the entire directory.
    * Listed locally using LogStore without launching a spark job. Returns an iterator from LogStore.
