@@ -45,9 +45,7 @@ public class TestParquetBatchReader
 {
     /**
      * Test reads data from a Parquet file with data of various combinations of data types supported
-     * byt Delta Lake table protocol. Code for generating the golden parquet files is located:
-     * https://gist.github.com/vkorukanti/238bad726545e466202278966989f02b (TODO: Move this a better
-     * place).
+     * by the Delta Lake table protocol.
      */
     private static final String ALL_TYPES_FILE =
         Arrays.stream(goldenTableFile("parquet-all-types").listFiles())
