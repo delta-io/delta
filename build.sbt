@@ -273,10 +273,6 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
-/*
-// TODO: Investigate a smarter way to pull the Iceberg github.
-//       Make sure to add `iceberg` back to `sparkGroup` below.
-
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -338,7 +334,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
-*/
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
@@ -964,7 +959,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB) /* iceberg */
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
