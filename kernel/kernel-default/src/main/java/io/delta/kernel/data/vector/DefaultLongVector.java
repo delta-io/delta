@@ -19,7 +19,9 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static java.util.Objects.requireNonNull;
 import java.util.Optional;
 
+import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.TimestampType;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for long type data.
@@ -37,9 +39,11 @@ public class DefaultLongVector
      * All values in the vector are considered non-null when parameter is empty.
      * @param values column vector values.
      */
-    public DefaultLongVector(int size, Optional<boolean[]> nullability, long[] values)
+    public DefaultLongVector(
+        DataType dataType,int size, Optional<boolean[]> nullability, long[] values)
     {
-        super(size, LongType.INSTANCE, nullability);
+        super(size, dataType, nullability);
+        checkArgument(dataType instanceof LongType || dataType instanceof TimestampType);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

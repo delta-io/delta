@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util;
 
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -144,6 +145,9 @@ public class PartitionUtils
         }
         if (dataType instanceof DateType) {
             return Literal.of(Date.valueOf(partitionValue));
+        }
+        if (dataType instanceof TimestampType) {
+            return Literal.of(Timestamp.valueOf(partitionValue));
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

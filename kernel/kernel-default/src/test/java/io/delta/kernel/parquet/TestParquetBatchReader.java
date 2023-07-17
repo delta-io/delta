@@ -31,24 +31,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
+import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DefaultKernelTestUtils;
 import io.delta.kernel.utils.Tuple2;
@@ -62,7 +50,11 @@ public class TestParquetBatchReader
      * place).
      */
     private static final String ALL_TYPES_FILE =
-        DefaultKernelTestUtils.getTestResourceFilePath("parquet/all_types.parquet");
+        Arrays.stream(goldenTableFile("parquet-all-types").listFiles())
+            .filter(file -> file.getName().endsWith(".parquet"))
+            .map(File::getAbsolutePath)
+            .findFirst()
+            .get();
 
     private static final StructType ALL_TYPES_FILE_SCHEMA = new StructType()
         .add("byteType", ByteType.INSTANCE)
@@ -76,7 +68,7 @@ public class TestParquetBatchReader
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
         .add("dateType", DateType.INSTANCE)
-        // .add("timestampType", TimestampType.INSTANCE) // TODO
+         .add("timestampType", TimestampType.INSTANCE)
         .add("nested_struct",
             new StructType()
                 .add("aa", StringType.INSTANCE)
@@ -293,7 +285,14 @@ public class TestParquetBatchReader
                     break;
                 }
                 case "timestamptype": {
-                    throw new UnsupportedOperationException("not yet implemented: " + name);
+                    // Tests only for spark.sql.parquet.outputTimestampTyp = INT96
+                    Long expValue = (rowId % 62 != 0) ? 23423523L * rowId * 1000 : null;
+                    if (expValue == null) {
+                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                    } else {
+                        assertEquals(expValue.longValue(), vector.getLong(batchWithIdx._2));
+                    }
+                    break;
                 }
                 case "decimal": {
                     throw new UnsupportedOperationException("not yet implemented: " + name);
@@ -366,12 +365,8 @@ public class TestParquetBatchReader
                         Long expValue0 = (rowId % 29 == 0) ? null : (rowId + 2L);
                         assertEquals(expValue0, actValue0);
 
-                        // entry 1: key = if (rowId % 27 != 0) rowId + 2 else null
-                        // TODO: Not sure if this is a bug or expected behavior. In Delta-Spark,
-                        // whenever the map key value is null - it is stored as 0. Not sure
-                        // what happens for non-integer keys.
-                        // Integer key1 = (rowId % 27 == 0) ? null : rowId + 2;
-                        Integer key1 = (rowId % 27 == 0) ? 0 : rowId + 2;
+                        // entry 1: key = i*2
+                        Integer key1 = rowId * 2;
                         Long actValue1 = actValue.get(key1);
                         Long expValue1 = rowId + 9L;
                         assertEquals(expValue1, actValue1);

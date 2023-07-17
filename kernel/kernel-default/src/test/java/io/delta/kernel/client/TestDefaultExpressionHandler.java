@@ -244,6 +244,6 @@ public class TestDefaultExpressionHandler
             }
         }
 
-        return new DefaultLongVector(size, Optional.of(nullability), values);
+        return new DefaultLongVector(LongType.INSTANCE, size, Optional.of(nullability), values);
     }
 }
