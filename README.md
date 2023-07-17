@@ -22,6 +22,7 @@ The following are some of the more popular Delta Lake integrations, refer to [de
 * [Apache Flink (Preview)](https://github.com/delta-io/connectors/tree/master/flink): This connector allows Apache Flink to write to Delta Lake.
 * [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
 * [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
+* [StarRocks](https://docs.starrocks.io/en-us/latest/data_source/catalog/deltalake_catalog#view-delta-lake-catalogs): This connector allows StarRocks to read from Delta Lake.
 * [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): This library allows Scala and Java-based projects (including Apache Flink, Apache Hive, Apache Beam, and PrestoDB) to read from and write to Delta Lake.
 * [Apache Hive](https://docs.delta.io/latest/hive-integration.html): This connector allows Apache Hive to read from Delta Lake.
 * [Delta Rust API](https://docs.rs/deltalake/latest/deltalake/): This library allows Rust (with Python and Ruby bindings) low level access to Delta tables and is intended to be used with data processing frameworks like datafusion, ballista, rust-dataframe, vega, etc.
