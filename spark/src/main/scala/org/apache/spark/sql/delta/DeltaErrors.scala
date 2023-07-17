@@ -2814,8 +2814,15 @@ trait DeltaErrorsBase
 
   def materializedRowIdMetadataMissing(tableName: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_MATERIALIZED_ROW_ID_COLUMN_NAME_MISSING",
-      messageParameters = Array(tableName)
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row ID", tableName)
+    )
+  }
+
+  def materializedRowCommitVersionMetadataMissing(tableName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row Commit Version", tableName)
     )
   }
 

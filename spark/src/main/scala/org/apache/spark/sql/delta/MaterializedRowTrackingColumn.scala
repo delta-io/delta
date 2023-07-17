@@ -38,6 +38,12 @@ abstract class MaterializedRowTrackingColumn {
   val MATERIALIZED_COLUMN_NAME_PREFIX: String
 
   /**
+   * Returns the exception to throw when the materialized column name is not set in the table
+   * metadata. The table name is passed as argument.
+   */
+  def missingMetadataException: String => Throwable
+
+  /**
    * Generate a random name for a materialized row tracking column. The generated name contains a
    * unique UUID, we assume it shall not conflict with existing column.
    */
@@ -102,7 +108,7 @@ abstract class MaterializedRowTrackingColumn {
   def getMaterializedColumnNameOrThrow(
       protocol: Protocol, metadata: Metadata, tableId: String): String = {
     getMaterializedColumnName(protocol, metadata).getOrElse {
-      throw DeltaErrors.materializedRowIdMetadataMissing(tableId)
+      throw missingMetadataException(tableId)
     }
   }
 
@@ -134,6 +140,7 @@ object MaterializedRowId extends MaterializedRowTrackingColumn {
   /** Prefix to use for the name of the materialized Row ID column */
   val MATERIALIZED_COLUMN_NAME_PREFIX = "_row-id-col-"
 
+  def missingMetadataException: String => Throwable = DeltaErrors.materializedRowIdMetadataMissing
 }
 
 object MaterializedRowCommitVersion extends MaterializedRowTrackingColumn {
@@ -145,4 +152,7 @@ object MaterializedRowCommitVersion extends MaterializedRowTrackingColumn {
 
   /** Prefix to use for the name of the materialized Row commit version column */
   val MATERIALIZED_COLUMN_NAME_PREFIX = "_row-commit-version-col-"
+
+  def missingMetadataException: String => Throwable =
+    DeltaErrors.materializedRowCommitVersionMetadataMissing
 }

@@ -1875,6 +1875,30 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS")
       assert(e.getSqlState == "KD00D")
     }
+    {
+      checkError(
+        exception = intercept[DeltaIllegalStateException] {
+          throw MaterializedRowId.missingMetadataException("table_name")
+        },
+        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        parameters = Map(
+          "rowTrackingColumn" -> "Row ID",
+          "tableName" -> "table_name"
+        )
+      )
+    }
+    {
+      checkError(
+        exception = intercept[DeltaIllegalStateException] {
+          throw MaterializedRowCommitVersion.missingMetadataException("table_name")
+        },
+        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        parameters = Map(
+          "rowTrackingColumn" -> "Row Commit Version",
+          "tableName" -> "table_name"
+        )
+      )
+    }
   }
 
   // Complier complains the lambda function is too large if we put all tests in one lambda

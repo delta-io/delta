@@ -141,10 +141,10 @@ class DeltaAnalysis(session: SparkSession)
         if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
           val deltaLogSrc = DeltaTableV2(session, new Path(src.location))
 
-          // maxColumnId field cannot be set externally. If column-mapping is
-          // used on the source delta table, then maxColumnId would be set for the sourceTable
-          // and needs to be removed from the targetTable's configuration
-          // maxColumnId will be set in the targetTable's configuration internally after
+          // Column mapping and row tracking fields cannot be set externally. If the features are
+          // used on the source delta table, then the corresponding fields would be set for the
+          // sourceTable and needs to be removed from the targetTable's configuration. The fields
+          // will then be set in the targetTable's configuration internally after.
           val config =
             deltaLogSrc.snapshot.metadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
