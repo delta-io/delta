@@ -2846,6 +2846,27 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(errorClass = "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
   }
 
+  def addingColumnWithInternalNameFailed(colName: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def materializedRowIdMetadataMissing(tableName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row ID", tableName)
+    )
+  }
+
+  def materializedRowCommitVersionMetadataMissing(tableName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row Commit Version", tableName)
+    )
+  }
+
   def domainMetadataDuplicate(domainName: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR",

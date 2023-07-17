@@ -11,6 +11,12 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED" : {
+    "message" : [
+      "Failed to add column <colName> because the name is reserved."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ADDING_DELETION_VECTORS_DISALLOWED" : {
     "message" : [
       "The current operation attempted to add a deletion vector to a table that does not permit the creation of new deletion vectors. Please file a bug report."
@@ -1111,6 +1117,12 @@
       "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"
     ],
     "sqlState" : "42K03"
+  },
+  "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING" : {
+    "message" : [
+      "Materialized <rowTrackingColumn> column name missing for <tableName>."
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_MAX_ARRAY_SIZE_EXCEEDED" : {
     "message" : [

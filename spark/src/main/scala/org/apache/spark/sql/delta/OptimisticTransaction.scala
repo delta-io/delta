@@ -575,6 +575,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
+    newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
+      protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
+    newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(
+      protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
 
     RowId.verifyMetadata(
       snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
@@ -652,6 +656,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (spark.conf.get(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED)) {
       Protocol.assertTablePropertyConstraintsSatisfied(spark, metadata, snapshot)
     }
+    MaterializedRowId.throwIfMaterializedColumnNameConflictsWithSchema(metadata)
+    MaterializedRowCommitVersion.throwIfMaterializedColumnNameConflictsWithSchema(metadata)
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
