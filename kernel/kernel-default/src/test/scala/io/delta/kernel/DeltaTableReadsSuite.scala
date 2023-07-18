@@ -33,7 +33,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     // kernel expects a fully qualified path
     val path = "file:" + goldenTablePath("kernel-timestamp-" + timestampType)
     val result = readTable(path, new Configuration()) { row =>
-      // convert bc in micros
+      // Convert from micros to millis
       (row.getInt(0), new Timestamp(row.getLong(1)/1000), new Timestamp(row.getLong(2)/1000))
     }
     assert(result.toSet == expectedResult)

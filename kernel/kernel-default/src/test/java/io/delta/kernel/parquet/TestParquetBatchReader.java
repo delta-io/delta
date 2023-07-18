@@ -283,7 +283,8 @@ public class TestParquetBatchReader
                     break;
                 }
                 case "timestamptype": {
-                    // Tests only for spark.sql.parquet.outputTimestampTyp = INT96
+                    // Tests only for spark.sql.parquet.outputTimestampTyp = INT96, other formats
+                    // are tested in end-to-end tests in DeltaTableReadsSuite
                     Long expValue = (rowId % 62 != 0) ? 23423523L * rowId * 1000 : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
