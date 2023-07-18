@@ -204,8 +204,6 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   )
 
-// Requires iceberg release on 3.4
-/**
 lazy val deltaIceberg = (project in file("delta-iceberg"))
   .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
@@ -215,7 +213,7 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
     releaseSettings,
     libraryDependencies ++= Seq( {
         val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.1.0" % "provided")
+        ("org.apache.iceberg" % s"iceberg-spark-runtime-$expMaj.$expMin" % "1.3.0" % "provided")
           .cross(CrossVersion.binary)
       },
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
@@ -223,7 +221,6 @@ lazy val deltaIceberg = (project in file("delta-iceberg"))
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1"
     )
   )
-*/
 
 /**
  * Get list of python files and return the mapping between source files and target paths
