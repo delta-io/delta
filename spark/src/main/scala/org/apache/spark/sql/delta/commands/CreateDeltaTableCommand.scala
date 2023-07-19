@@ -64,21 +64,20 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    var table = this.table
 
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
     // while this command is running. Nothing we can do about that though :(
-    val tableExists = existingTableOpt.isDefined
-    if (mode == SaveMode.Ignore && tableExists) {
+    val tableExistsInCatalog = existingTableOpt.isDefined
+    if (mode == SaveMode.Ignore && tableExistsInCatalog) {
       // Early exit on ignore
       return Nil
-    } else if (mode == SaveMode.ErrorIfExists && tableExists) {
+    } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
 
-    var tableWithLocation = if (tableExists) {
+    var tableWithLocation = if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
@@ -100,13 +99,8 @@ case class CreateDeltaTableCommand(
       table
     }
 
-    val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val fs = tableLocation.getFileSystem(hadoopConf)
-    val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
-    var result: Seq[Row] = Nil
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
@@ -116,42 +110,7 @@ case class CreateDeltaTableCommand(
       txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
 
       val opStartTs = System.currentTimeMillis()
-      if (query.isDefined) {
-        // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
-        // earlier. And the data should not exist either, to match the behavior of
-        // Ignore/ErrorIfExists mode. This means the table path should not exist or is empty.
-        if (mode == SaveMode.Ignore || mode == SaveMode.ErrorIfExists) {
-          assert(!tableExists)
-          // We may have failed a previous write. The retry should still succeed even if we have
-          // garbage data
-          if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-            assertPathEmpty(hadoopConf, tableWithLocation)
-          }
-        }
-        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
-        // we are creating a table as part of a RunnableCommand
-        query.get match {
-          case cloneCmd: CloneTableCommand =>
-            result = cloneCmd.run(sparkSession)
-          case deltaWriter: WriteIntoDelta =>
-            handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-          case query =>
-            require(!query.isInstanceOf[RunnableCommand])
-            // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
-            // to once again go through analysis
-            val data = Dataset.ofRows(sparkSession, query)
-            val deltaWriter = WriteIntoDelta(
-              deltaLog = deltaLog,
-              mode = mode,
-              options,
-              partitionColumns = table.partitionColumnNames,
-              configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-              data = data)
-            handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        }
-      } else {
-        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
-      }
+      val result = handleCommit(sparkSession, txn, deltaLog, tableWithLocation)
 
       // We would have failed earlier on if we couldn't ignore the existence of the table
       // In addition, we just might using saveAsTable to append to the table, so ignore the creation
@@ -168,6 +127,64 @@ case class CreateDeltaTableCommand(
       }
 
       result
+    }
+  }
+
+  /**
+   * Handles the transaction logic for the command. Returns the operation metrics in case of CLONE.
+   */
+  private def handleCommit(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      tableWithLocation: CatalogTable): Seq[Row] = {
+    val tableExistsInCatalog = existingTableOpt.isDefined
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val tableLocation = new Path(tableWithLocation.location)
+    val fs = tableLocation.getFileSystem(hadoopConf)
+
+    def checkPathEmpty(): Unit = {
+      // Verify the table does not exist.
+      if (mode == SaveMode.Ignore || mode == SaveMode.ErrorIfExists) {
+        // We should have returned earlier in Ignore and ErrorIfExists mode if the table
+        // is already registered in the catalog.
+        assert(!tableExistsInCatalog)
+        // Verify that the data path does not contain any data.
+        // We may have failed a previous write. The retry should still succeed even if we have
+        // garbage data
+        if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
+          assertPathEmpty(hadoopConf, tableWithLocation)
+        }
+      }
+    }
+    query match {
+      // CLONE handled separately from other CREATE TABLE syntax
+      case Some(cmd: CloneTableCommand) =>
+        checkPathEmpty()
+        cmd.run(sparkSession)
+      case Some(deltaWriter: WriteIntoDelta) =>
+        checkPathEmpty()
+        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+        Nil
+      case Some(query) =>
+        checkPathEmpty()
+        require(!query.isInstanceOf[RunnableCommand])
+        // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
+        // to once again go through analysis
+        val data = Dataset.ofRows(sparkSession, query)
+        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+        val deltaWriter = WriteIntoDelta(
+          deltaLog = deltaLog,
+          mode = mode,
+          options,
+          partitionColumns = table.partitionColumnNames,
+          configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
+          data = data)
+        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+        Nil
+      case _ =>
+        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
+        Nil
     }
   }
 
@@ -237,7 +254,7 @@ case class CreateDeltaTableCommand(
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
-    val tableExists = existingTableOpt.isDefined
+    val tableExistsInCatalog = existingTableOpt.isDefined
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
 
     def createTransactionLogOrVerify(): Unit = {
@@ -290,10 +307,10 @@ case class CreateDeltaTableCommand(
     // We are defining a table using the Create or Replace Table statements.
     operation match {
       case TableCreationModes.Create =>
-        require(!tableExists, "Can't recreate a table when it exists")
+        require(!tableExistsInCatalog, "Can't recreate a table when it exists")
         createTransactionLogOrVerify()
 
-      case TableCreationModes.CreateOrReplace if !tableExists =>
+      case TableCreationModes.CreateOrReplace if !tableExistsInCatalog =>
         // If the table doesn't exist, CREATE OR REPLACE must provide a schema
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
