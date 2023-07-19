@@ -128,52 +128,18 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
-
-        // Execute write command for `deltaWriter` by
-        //   - replacing the metadata new target table for DataFrameWriterV2 writer if it is a
-        //     REPLACE or CREATE_OR_REPLACE command,
-        //   - running the write procedure of DataFrameWriter command and returning the
-        //     new created actions,
-        //   - returning the Delta Operation type of this DataFrameWriter
-        def doDeltaWrite(
-            deltaWriter: WriteIntoDelta,
-            schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
-          // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
-          // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-          if (!isV1Writer) {
-            replaceMetadataIfNecessary(txn, tableWithLocation, options, schema)
-          }
-          var actions = deltaWriter.write(
-            txn,
-            sparkSession
-          )
-          val newDomainMetadata = Seq.empty[DomainMetadata]
-          if (isReplace) {
-            // Ensure to remove any domain metadata for REPLACE TABLE.
-            actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
-              txn.snapshot.domainMetadata, newDomainMetadata)
-          } else {
-            actions = actions ++ newDomainMetadata
-          }
-          val op = getOperation(txn.metadata, isManagedTable, Some(options)
-          )
-          (actions, op)
-        }
-
         // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
         // we are creating a table as part of a RunnableCommand
         query.get match {
+          case cloneCmd: CloneTableCommand =>
+            result = cloneCmd.run(sparkSession)
           case deltaWriter: WriteIntoDelta =>
-              if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-                val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
-                txn.commit(actions, op)
-              }
-          case cmd: RunnableCommand =>
-            result = cmd.run(sparkSession)
-          case other =>
-            // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
+            handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          case query =>
+            require(!query.isInstanceOf[RunnableCommand])
+            // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
             // to once again go through analysis
-            val data = Dataset.ofRows(sparkSession, other)
+            val data = Dataset.ofRows(sparkSession, query)
             val deltaWriter = WriteIntoDelta(
               deltaLog = deltaLog,
               mode = mode,
@@ -181,10 +147,7 @@ case class CreateDeltaTableCommand(
               partitionColumns = table.partitionColumnNames,
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data)
-            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-              val (actions, op) = doDeltaWrite(deltaWriter, other.schema.asNullable)
-              txn.commit(actions, op)
-            }
+            handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         }
       } else {
         handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
@@ -205,6 +168,59 @@ case class CreateDeltaTableCommand(
       }
 
       result
+    }
+  }
+
+  /**
+   * Handles the transaction logic for CTAS-like statements, i.e.:
+   * CREATE TABLE AS SELECT
+   * CREATE OR REPLACE TABLE AS SELECT
+   * .saveAsTable in DataframeWriter API
+   */
+  private def handleCreateTableAsSelect(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      deltaWriter: WriteIntoDelta,
+      tableWithLocation: CatalogTable): Unit = {
+    val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
+    val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+
+    // Execute write command for `deltaWriter` by
+    //   - replacing the metadata new target table for DataFrameWriterV2 writer if it is a
+    //     REPLACE or CREATE_OR_REPLACE command,
+    //   - running the write procedure of DataFrameWriter command and returning the
+    //     new created actions,
+    //   - returning the Delta Operation type of this DataFrameWriter
+    def doDeltaWrite(
+        deltaWriter: WriteIntoDelta,
+        schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
+      // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+      // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+      if (!isV1Writer) {
+        replaceMetadataIfNecessary(txn, tableWithLocation, options, schema)
+      }
+      var actions = deltaWriter.write(
+        txn,
+        sparkSession
+      )
+      val newDomainMetadata = Seq.empty[DomainMetadata]
+      if (isReplace) {
+        // Ensure to remove any domain metadata for REPLACE TABLE.
+        actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          txn.snapshot.domainMetadata, newDomainMetadata)
+      } else {
+        actions = actions ++ newDomainMetadata
+      }
+      val op = getOperation(txn.metadata, isManagedTable, Some(options)
+      )
+      (actions, op)
+    }
+
+    // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
+    if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
+      val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
+      txn.commit(actions, op)
     }
   }
 
