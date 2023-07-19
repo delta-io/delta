@@ -18,9 +18,7 @@ package io.delta.kernel.parquet;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
-import java.sql.Date;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -33,6 +31,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 
+import io.delta.kernel.DefaultKernelUtils;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -80,8 +79,6 @@ public class TestParquetBatchReader
             IntegerType.INSTANCE,
             new StructType().add("ab", LongType.INSTANCE),
             true));
-
-    private static final LocalDate EPOCH = new Date(0).toLocalDate().ofEpochDay(0);
 
     @Test
     public void readAllTypesOfData()
@@ -208,16 +205,15 @@ public class TestParquetBatchReader
                     break;
                 }
                 case "datetype": {
-                    // Set `-Duser.timezone="UTC"` as JVM arg to pass this test in computers
-                    // whose local timezone is non-UTC zone.
-                    LocalDate expValue = (rowId % 61 != 0) ?
-                        new Date(rowId * 20000000L).toLocalDate() : null;
+                    Integer expValue = (rowId % 61 != 0) ?
+                        (int) Math.floorDiv(
+                            rowId * 20000000L,
+                            DefaultKernelUtils.DateTimeConstants.MILLIS_PER_DAY) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     }
                     else {
-                        long numDaysSinceEpoch = ChronoUnit.DAYS.between(EPOCH, expValue);
-                        assertEquals(numDaysSinceEpoch, vector.getInt(batchWithIdx._2));
+                        assertEquals(expValue.intValue(), vector.getInt(batchWithIdx._2));
                     }
                     break;
                 }

@@ -17,11 +17,11 @@
 package io.delta.kernel.client;
 
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Optional;
 
+import io.delta.kernel.DefaultKernelUtils;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -116,13 +116,17 @@ public class DefaultExpressionHandler
             return new DefaultConstantVector(dataType, size, result);
         }
         else if (dataType instanceof DateType) {
-            int numOfDaysSinceEpoch = daysSinceEpoch((Date) result);
+            int numOfDaysSinceEpoch = DefaultKernelUtils.daysSinceEpoch((Date) result);
             return new DefaultConstantVector(dataType, size, numOfDaysSinceEpoch);
         }
         else if (dataType instanceof TimestampType) {
+            // TODO: how do we express this expected evaluation to the implementing clients?
+            //   this seems very complex and unintuitive
+            // Should we not have Literal.of(Timestamp) and instead have Literal.of(long)?
+            // And do this transformation in PartitionUtils in kernel-api
             Timestamp timestamp = (Timestamp) result;
-            long micros = timestamp.getTime() * 1000;
-            return new DefaultConstantVector(dataType, size, micros);
+            return new DefaultConstantVector(dataType, size,
+                DefaultKernelUtils.microsSinceEpoch(timestamp));
         }
 
         throw new UnsupportedOperationException(
