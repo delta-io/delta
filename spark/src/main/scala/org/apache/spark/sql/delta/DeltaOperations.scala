@@ -126,9 +126,11 @@ object DeltaOperations {
       outputMode: OutputMode,
       queryId: String,
       epochId: Long,
-      override val userMetadata: Option[String] = None) extends Operation("STREAMING UPDATE") {
+      override val userMetadata: Option[String] = None
+  ) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
-      Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
+      Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString
+      )
     override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
     override def changesData: Boolean = true
   }
