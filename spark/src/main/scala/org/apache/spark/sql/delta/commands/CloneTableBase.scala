@@ -32,9 +32,9 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.catalyst.plans.logical.LeafCommand
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, SerializableConfiguration}
 // scalastyle:on import.ordering.noEmptyLine
@@ -153,27 +153,31 @@ abstract class CloneTableBase(
     sourceTable: CloneSource,
     tablePropertyOverrides: Map[String, String],
     targetPath: Path)
-  extends LeafRunnableCommand with CloneTableBaseUtils
+  extends LeafCommand
+  with CloneTableBaseUtils
+  with SQLConfHelper
 {
 
   import CloneTableBase._
   def dataChangeInFileAction: Boolean = true
 
   /**
-   * Run the clone command
+   * Handles the transaction logic for the CLONE command.
    *
    * @param spark [[SparkSession]] to use
+   * @param txn [[OptimisticTransaction]] to use for the commit to the target table.
+   * @param destinationTable [[DeltaLog]] of the destination table.
    * @param opName Name of the operation used in log4j logs
    * @param deltaOperation [[DeltaOperations.Operation]] to use when commit changes to DeltaLog
-   * @param fsOptions Extra filesystem options passed to target DeltaLog.
    * @return
    */
-  def runInternal(
+  protected def handleClone(
       spark: SparkSession,
+      txn: OptimisticTransaction,
+      destinationTable: DeltaLog,
       opName: String,
       hdpConf: Configuration,
-      deltaOperation: DeltaOperations.Operation,
-      fsOptions: Map[String, String]): Seq[Row] = {
+      deltaOperation: DeltaOperations.Operation): Seq[Row] = {
     val targetFs = targetPath.getFileSystem(hdpConf)
     val qualifiedTarget = targetFs.makeQualified(targetPath).toString
     val qualifiedSource = {
@@ -182,9 +186,6 @@ abstract class CloneTableBase(
       sourceFs.makeQualified(sourcePath).toString
     }
 
-    val destinationTable = DeltaLog.forTable(spark, targetPath, fsOptions)
-
-    val txn = destinationTable.startTransaction()
     if (txn.readVersion < 0) {
       destinationTable.createLogDirectory()
     }

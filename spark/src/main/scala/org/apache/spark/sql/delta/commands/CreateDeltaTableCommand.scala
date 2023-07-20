@@ -159,7 +159,7 @@ case class CreateDeltaTableCommand(
       // CLONE handled separately from other CREATE TABLE syntax
       case Some(cmd: CloneTableCommand) =>
         checkPathEmpty()
-        cmd.run(sparkSession)
+        cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
       case Some(deltaWriter: WriteIntoDelta) =>
         checkPathEmpty()
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
