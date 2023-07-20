@@ -69,7 +69,7 @@ def set_git_config_if_empty(config_key, default_value):
         (_, curr_val, _) = run_cmd("git config --get user.%s" % config_key)
         curr_val = curr_val.decode("utf-8")
     except:
-        print("Error getting user.%s" & config_key)
+        print("Error getting user.%s" % config_key)
     if not curr_val:
         run_cmd("git config user.%s \"%s\"" % (config_key, default_value))
 
