@@ -726,7 +726,9 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("Negative case - non-delta target") {
+  // Enable this test in OSS when Spark has the change to report better errors
+  // when MERGE is not supported.
+  ignore("Negative case - non-delta target") {
     withTable("source", "target") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
       Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value").write.saveAsTable("target")
@@ -739,7 +741,9 @@ abstract class MergeIntoSuiteBase
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }.getMessage
-      errorContains(e, "MERGE destination only supports Delta sources")
+      // The MERGE Scala API is for Delta only and reports error differently.
+      assert(e.contains("does not support MERGE") ||
+        e.contains("MERGE destination only supports Delta sources"))
     }
   }
 

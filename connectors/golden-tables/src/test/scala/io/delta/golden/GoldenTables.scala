@@ -68,7 +68,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   private val shouldGenerateGoldenTables = sys.env.contains("GENERATE_GOLDEN_TABLES")
 
   private lazy val goldenTablePath = {
-    val dir = new File("src/test/resources/golden").getCanonicalFile
+    val dir = new File("src/main/resources/golden").getCanonicalFile
     require(dir.exists(),
       s"Cannot find $dir. Please run `GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test'`.")
     dir
@@ -192,7 +192,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   /** TEST: DeltaLogSuite > handle corrupted '_last_checkpoint' file */
   generateGoldenTable("corrupted-last-checkpoint") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
-    val checkpointInterval = log.checkpointInterval
+    val checkpointInterval = log.checkpointInterval(log.unsafeVolatileSnapshot.metadata)
     for (f <- 0 to checkpointInterval) {
       val txn = log.startTransaction()
       txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
@@ -291,7 +291,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     generateGoldenTable(s"deltalog-state-reconstruction-from-checkpoint-missing-$action") {
       tablePath =>
         val log = DeltaLog.forTable(spark, tablePath)
-        val checkpointInterval = log.checkpointInterval
+        val checkpointInterval = log.checkpointInterval(log.unsafeVolatileSnapshot.metadata)
         // Create a checkpoint regularly
         for (f <- 0 to checkpointInterval) {
           val txn = log.startTransaction()
@@ -361,7 +361,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       userName = Some("username_0"),
       operation = "WRITE",
       operationParameters = Map("test" -> "\"test\""),
-      job = Some(JobInfo("job_id_0", "job_name_0", "run_id_0", "job_owner_0", "trigger_type_0")),
+      job = Some(JobInfo(
+        "job_id_0", "job_name_0", "job_run_id_0", "run_id_0", "job_owner_0", "trigger_type_0")),
       notebook = Some(NotebookInfo("notebook_id_0")),
       clusterId = Some("cluster_id_0"),
       readVersion = Some(-1L),
@@ -370,7 +371,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       operationMetrics = Some(Map("test" -> "test")),
       userMetadata = Some("foo"),
       tags = Some(Map("test" -> "test")),
-      engineInfo = Some("OSS")
+      engineInfo = Some("OSS"),
+      txnId = Some("txn_id_0")
     )
 
     val addFile = AddFile("abc", Map.empty, 1, 1, true)
@@ -831,6 +833,37 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
     data.toDF("a", "b").write.format("delta").save(tablePath)
   }
+
+  generateGoldenTable("dv-partitioned-with-checkpoint") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+
+  // TODO: requires bug fix in delta-io/delta#1886
+  /*
+  generateGoldenTable("dv-with-columnmapping") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
+      ("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      data.toDF("part", "col1", "col2").write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n*2}")
+      }
+    }
+  }
+  */
 }
 
 case class TestStruct(f1: String, f2: Long)

@@ -21,7 +21,7 @@ import java.nio.charset.Charset
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -78,17 +78,18 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected val ExpectSchemaLogInitializationFailedException =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
-        "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_SCHEMA"))
+        "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA"))
 
-  protected val ExpectSchemaEvolutionException =
+  protected val ExpectMetadataEvolutionException =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(
-        e.asInstanceOf[DeltaRuntimeException].getErrorClass == "DELTA_STREAMING_SCHEMA_EVOLUTION" &&
+        e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+          "DELTA_STREAMING_METADATA_EVOLUTION" &&
           !e.getStackTrace.exists(_.toString.contains("checkReadIncompatibleSchemaChanges"))
       )
     )
 
-  protected val indexWhenSchemaLogIsUpdated = DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX
+  protected val indexWhenSchemaLogIsUpdated = DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
 
   protected val AwaitTermination = AssertOnQuery { q =>
     q.awaitTermination(600 * 1000) // 600 seconds
@@ -190,8 +191,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   protected def getDefaultSchemaLog(
       sourceTrackingId: Option[String] = None
-  )(implicit log: DeltaLog): DeltaSourceSchemaTrackingLog =
-    DeltaSourceSchemaTrackingLog.create(
+  )(implicit log: DeltaLog): DeltaSourceMetadataTrackingLog =
+    DeltaSourceMetadataTrackingLog.create(
       spark, getDefaultSchemaLocation.toString, log.update(), sourceTrackingId)
 
   protected def getDefaultCheckpoint(implicit log: DeltaLog): Path =
@@ -315,16 +316,17 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
       // Schema log's schema is respected
       val schemaLog = getDefaultSchemaLog()
-      val newSchema = PersistedSchema(log.tableId, 0,
+      val newSchema = PersistedMetadata(log.tableId, 0,
         makeMetadata(
           new StructType().add("a", StringType, true)
             .add("b", StringType, true)
             .add("c", StringType, true),
           partitionSchema = new StructType()
         ),
+        log.update().protocol,
         sourceMetadataPath = ""
       )
-      schemaLog.writeNewSchema(newSchema)
+      schemaLog.writeNewMetadata(newSchema)
 
       testStream(readStream(schemaLocation = Some(getDefaultSchemaLocation.toString)))(
         StartStream(checkpointLocation = getDefaultCheckpoint.toString),
@@ -334,16 +336,17 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       )
 
       // Cannot use schema from another table
-      val newSchemaWithTableId = PersistedSchema(
+      val newSchemaWithTableId = PersistedMetadata(
         "some_random_id", 0,
         makeMetadata(
           new StructType().add("a", StringType, true)
           .add("b", StringType, true),
           partitionSchema = new StructType()
         ),
+        log.update().protocol,
         sourceMetadataPath = ""
       )
-      schemaLog.writeNewSchema(newSchemaWithTableId)
+      schemaLog.writeNewMetadata(newSchemaWithTableId)
       assert {
         val e = intercept[DeltaAnalysisException] {
           val q = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
@@ -367,16 +370,17 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       // of the case; True concurrent execution would require commit service to protected against.
       val schemaLocation = getDefaultSchemaLocation.toString
       val snapshot = log.update()
-      val schemaLog1 = DeltaSourceSchemaTrackingLog.create(spark, schemaLocation, snapshot)
-      val schemaLog2 = DeltaSourceSchemaTrackingLog.create(spark, schemaLocation, snapshot)
+      val schemaLog1 = DeltaSourceMetadataTrackingLog.create(spark, schemaLocation, snapshot)
+      val schemaLog2 = DeltaSourceMetadataTrackingLog.create(spark, schemaLocation, snapshot)
       val newSchema =
-        PersistedSchema("1", 1,
+        PersistedMetadata("1", 1,
           makeMetadata(new StructType(), partitionSchema = new StructType()),
+          Protocol(),
           sourceMetadataPath = "")
 
-      schemaLog1.writeNewSchema(newSchema)
+      schemaLog1.writeNewMetadata(newSchema)
       val e = intercept[DeltaAnalysisException] {
-        schemaLog2.writeNewSchema(newSchema)
+        schemaLog2.writeNewMetadata(newSchema)
       }
       assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT")
     }
@@ -418,7 +422,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val v0 = log.update().version
 
     // And schema log is initialized already, even though there aren't schema evolution exceptions
-    assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == v0)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v0)
 
     // Add a column and some data
     addColumn("c")
@@ -431,9 +435,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       CheckAnswer(Nil: _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == v1)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v1)
 
     var v2: Long = -1
     testStream(createNewDf())(
@@ -447,13 +451,13 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         v2 = log.update().version
       },
       Execute { _ => addData(10 until 15) },
-      ExpectSchemaEvolutionException,
+      ExpectMetadataEvolutionException,
       AssertOnQuery { q =>
         val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
         offset.sourceVersion == 3 && offset.index == indexWhenSchemaLogIsUpdated
       }
     )
-    assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == v2)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v2)
     testStream(createNewDf())(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailable(),
@@ -490,19 +494,19 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
     // Start the stream again with a schema location
     val df2 = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
-    assert(getDefaultSchemaLog().getLatestSchema.isEmpty)
+    assert(getDefaultSchemaLog().getLatestMetadata.isEmpty)
     testStream(df2)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       // No data should've been processed
       CheckAnswer(Nil: _*),
       // Schema evolution exception!
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // We should've updated the schema to the version just before the schema change version
     // because that's the previous version's schema we left with. To be safe and in case there
     // are more file actions to process, we saved that schema instead of the renamed schema.
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion ==
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion ==
       schemaChangeDeltaVersion - 1)
     // Start the stream again with the same schema location
     val df3 = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
@@ -512,10 +516,11 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       // Again, no data should've been processed because the next version has a rename
       CheckAnswer(Nil: _*),
       // And schema will be evolved again
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Now finally the schema log is up to date
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == schemaChangeDeltaVersion)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion ==
+      schemaChangeDeltaVersion)
     // Start the stream again should process the rest of the data without a problem
     val df4 = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
     val v1 = log.update().version
@@ -550,10 +555,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           offset.index == indexWhenSchemaLogIsUpdated &&
           offset.sourceVersion == 3
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
 
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v1 + 1)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v1 + 1)
 
     val df5 = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
     // Process the rest
@@ -590,17 +595,17 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // because a schema location is provided and any exception would evolve the schema.
     val df2 = readStream(startingVersion = Some(1),
       schemaLocation = Some(getDefaultSchemaLocation.toString))
-    assert(getDefaultSchemaLog().getLatestSchema.isEmpty)
+    assert(getDefaultSchemaLog().getLatestMetadata.isEmpty)
     testStream(df2)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       // Again, no data is processed
       CheckLastBatch(Nil: _*),
       // Schema evolution exception!
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Since the error happened during the first getBatch, we initialize schema log to schema@v1
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == 1)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == 1)
     // Restart again with a schema location
     val df3 = readStream(startingVersion = Some(1),
       schemaLocation = Some(getDefaultSchemaLocation.toString))
@@ -612,10 +617,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       // Also since we started at v1, -1 is not included.
       CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
       // Schema evolution exception!
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Now the schema is up to date
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == schemaChangeVersion)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == schemaChangeVersion)
     // Restart again should pick up the new schema and process the rest without a problem.
     // Note that startingVersion is ignored when we have existing progress to work with.
     val df4 = readStream(startingVersion = Some(1),
@@ -707,26 +712,26 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailableIgnoreError,
       CheckAnswer(Nil: _*),
       // Schema can be evolved
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Schema log is ready and populated with <a,b,c,d>
-    assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "b", "c", "d")))
-    // ... which is the schema from the second add column schema change
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == secondAddColumnVersion)
+    // ... which is the schema that should be valid until v2 (the batch end version).
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v2)
     // Keep going until rename is found
     testStream(readStream(schemaLocation = Some(schemaLocation)))(
       StartStream(checkpointLocation = ckpt),
       ProcessAllAvailableIgnoreError,
       CheckAnswer((Seq(5).map(i => (i.toString, i.toString, i.toString, null)) ++
         (6 until 10).map(i => (i.toString, i.toString, i.toString, i.toString))): _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Schema log is evolved with <a,b,c,d2>
-    assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "b", "c", "d2")))
     // ... which is the renamed version
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == renamedVersion)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == renamedVersion)
   }
 
   test("trigger.Once with deferred commit should work") {
@@ -755,10 +760,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         StartThisStream,
         AwaitTerminationIgnoreError,
         CheckAnswer(Nil: _*),
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
       // Latest schema in schema log has been initialized
-      assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == 1))
+      assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == 1))
 
       // This trigger:
       // 1. Finds the latest offset that ends with the schema change
@@ -774,14 +779,14 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           // bumped from file action
           offset.reservoirVersion == schemaChangeVersion &&
-            offset.index == DeltaSourceOffset.SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX &&
             // deserialized has latest version 3
             offset.sourceVersion == 3 &&
             // serialized has latest version 3 as well
             offset.json.contains(s""""sourceVersion":3""")
         }
       )
-      assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == 1))
+      assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == 1))
       // This trigger:
       // 1. Finds a NEW latest offset that sets the dummy offset index post schema change
       // 2. The previous valid batch can be committed
@@ -794,12 +799,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           // still stuck, but the pending schema change is marked as evolved
           offset.reservoirVersion == schemaChangeVersion &&
-            offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
             offset.sourceVersion == 3
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema
+      assert(getDefaultSchemaLog().getLatestMetadata
         .exists(_.deltaCommitVersion == schemaChangeVersion))
 
       // This trigger:
@@ -845,7 +850,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v2 + 1 &&
-            offset.index == DeltaSourceOffset.SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX &&
             offset.sourceVersion == 3
         }
       )
@@ -860,10 +865,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
-            offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
             offset.sourceVersion == 3
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
     }
   }
@@ -890,10 +895,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         StartThisStream,
         AwaitTerminationIgnoreError,
         CheckAnswer(Nil: _*),
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
       // Latest schema in schema log has been updated
-      assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == 1))
+      assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == 1))
 
       // Now, this trigger:
       // 1. Finds the latest offset RIGHT AT the schema change ending at schema change index
@@ -910,12 +915,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == schemaChangeVersion &&
             // schema change marked as evolved
-            offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
             offset.sourceVersion == 3
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema
+      assert(getDefaultSchemaLog().getLatestMetadata
         .exists(_.deltaCommitVersion == schemaChangeVersion))
 
       // This trigger:
@@ -953,10 +958,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
-            offset.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX &&
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
             offset.sourceVersion == 3
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
 
       // Finish the rest
@@ -989,10 +994,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           // initialization does not generate any offsets
           q.availableOffsets.isEmpty
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5)
-      assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
         .sameElements(Array("a", "b")))
       // Encounter next schema change <a, c>
       testStream(df)(
@@ -1006,10 +1011,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
               offset.sourceVersion == 3
           }
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5 + 1)
-      assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 1)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
         .sameElements(Array("a", "c")))
       // Encounter next schema change <a, b> again
       testStream(df)(
@@ -1023,10 +1028,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
               offset.sourceVersion == 3
           }
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5 + 2)
-      assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 2)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
         .sameElements(Array("a", "b")))
       // Encounter next schema change <a>
       testStream(df)(
@@ -1039,10 +1044,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
               offset.sourceVersion == 3
           }
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5 + 3)
-      assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 3)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
         .sameElements(Array("a")))
       // Encounter next schema change <a, b> again
       testStream(df)(
@@ -1055,10 +1060,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
               offset.sourceVersion == 3
           }
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5 + 4)
-      assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 4)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
         .sameElements(Array("a", "b")))
     }
   }
@@ -1085,10 +1090,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // initialization does not generate any offsets
         q.availableOffsets.isEmpty
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5)
-    assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "b")))
     // Encounter next schema change <a, c>
     // This still fails schema evolution exception and won't scan ahead
@@ -1103,10 +1108,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             offset.sourceVersion == 3
         }
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5 + 1)
-    assert(getDefaultSchemaLog().getLatestSchema.get.dataSchema.fieldNames
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 1)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "c")))
 
     // Now the next restart would scan over the consecutive schema changes and use the last one
@@ -1114,7 +1119,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val latestDf = df
     assert(latestDf.schema.fieldNames.sameElements(Array("a", "b")))
     // The analysis phase should've already updated schema log
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v10)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v10)
     // Processing should ignore the intermediary schema changes and process the data using the
     // merged schema.
     testStream(latestDf)(
@@ -1157,9 +1162,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // initialization does not generate any more offsets
         q.availableOffsets.size == 1
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v0)
+    // The schema should be valid until v1 (the batch end version).
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v1)
 
     // Restart again should be able to use the new offset version
     val df3 = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
@@ -1178,10 +1184,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             offset.index == indexWhenSchemaLogIsUpdated &&
             offset.sourceVersion == 3
         },
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
     }
-    assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v2)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v2)
     // Should've upgraded the legacy offset
     val target = logAppenderUpgrade.loggingEvents.find(
       _.getMessage.toString.contains("upgrading offset "))
@@ -1233,9 +1239,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             startingVersion = Some(v5)), allowMissingColumns = true)
 
     // Both schema log initialized
-    def schemaLog1: DeltaSourceSchemaTrackingLog = DeltaSourceSchemaTrackingLog.create(
+    def schemaLog1: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLog1Location, log.update())
-    def schemaLog2: DeltaSourceSchemaTrackingLog = DeltaSourceSchemaTrackingLog.create(
+    def schemaLog2: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLog2Location, log.update())
 
     // The schema log initializes @ v5 with schema <a, b>
@@ -1246,7 +1252,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // initialization does not generate any offsets
         q.availableOffsets.isEmpty
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
 
     // But takes another restart for the other Delta source
@@ -1257,12 +1263,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // initialization does not generate any offsets
         q.availableOffsets.isEmpty
       },
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
 
     // Both schema log should be initialized
-    assert(schemaLog1.getCurrentTrackedSchema.map(_.deltaCommitVersion) ==
-      schemaLog2.getCurrentTrackedSchema.map(_.deltaCommitVersion))
+    assert(schemaLog1.getCurrentTrackedMetadata.map(_.deltaCommitVersion) ==
+      schemaLog2.getCurrentTrackedMetadata.map(_.deltaCommitVersion))
 
     // One of the source will commit and fail
     testStream(df)(
@@ -1271,7 +1277,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       // The data prior to schema change is served
       // Two rows in schema [a, b]
       CheckAnswer(("4", "4"), ("4", "4")),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
 
     // Restart should fail the other commit
@@ -1279,11 +1285,11 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       CheckAnswer(Nil: _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
 
-    assert(schemaLog1.getCurrentTrackedSchema.map(_.deltaCommitVersion) ==
-      schemaLog2.getCurrentTrackedSchema.map(_.deltaCommitVersion))
+    assert(schemaLog1.getCurrentTrackedMetadata.map(_.deltaCommitVersion) ==
+      schemaLog2.getCurrentTrackedMetadata.map(_.deltaCommitVersion))
 
     // Restart stream should proceed on loading the rest of data
     testStream(df)(
@@ -1348,8 +1354,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           writeStream(df)
         }
       }
-      ExpectSchemaEvolutionException.assertFailure(e1)
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == v5)
+      ExpectMetadataEvolutionException.assertFailure(e1)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5)
 
       val e2 = ExceptionUtils.getRootCause {
         intercept[StreamingQueryException] {
@@ -1358,8 +1364,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       }
       assert(readSink.schema.fieldNames sameElements Array("a", "b"))
       checkAnswer(readSink, Seq(4).map(_.toString).map(i => Row(i, i)))
-      ExpectSchemaEvolutionException.assertFailure(e2)
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == renameVersion1)
+      ExpectMetadataEvolutionException.assertFailure(e2)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == renameVersion1)
 
       val e3 = ExceptionUtils.getRootCause {
         intercept[StreamingQueryException] {
@@ -1370,8 +1376,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       assert(readSink.schema.fieldNames sameElements Array("a", "b", "c"))
       checkAnswer(readSink, Seq(4).map(_.toString).map(i => Row(i, i, null)) ++
         (5 until 10).map(_.toString).map(i => Row(i, null, i)))
-      ExpectSchemaEvolutionException.assertFailure(e3)
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == renameVersion2)
+      ExpectMetadataEvolutionException.assertFailure(e3)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == renameVersion2)
 
       val e4 = ExceptionUtils.getRootCause {
         intercept[StreamingQueryException] {
@@ -1383,8 +1389,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       checkAnswer(readSink, Seq(4).map(_.toString).map(i => Row(i, i, null)) ++
         (5 until 10).map(_.toString).map(i => Row(i, null, i)) ++
         (10 until 15).map(_.toString).map(i => Row(i, i, null)))
-      ExpectSchemaEvolutionException.assertFailure(e4)
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == dropVersion)
+      ExpectMetadataEvolutionException.assertFailure(e4)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == dropVersion)
 
       val e5 = ExceptionUtils.getRootCause {
         intercept[StreamingQueryException] {
@@ -1397,8 +1403,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         (5 until 10).map(_.toString).map(i => Row(i, null, i)) ++
         (10 until 15).map(_.toString).map(i => Row(i, i, null)) ++
         (15 until 20).map(_.toString).map(i => Row(i, null, null)))
-      ExpectSchemaEvolutionException.assertFailure(e5)
-      assert(getDefaultSchemaLog().getLatestSchema.get.deltaCommitVersion == addVersion)
+      ExpectMetadataEvolutionException.assertFailure(e5)
+      assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == addVersion)
 
       // Finish the stream without errors
       writeStream(df)
@@ -1434,11 +1440,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         source.latestOffset(start.orNull, source.getDefaultReadLimit))
 
     // Initialize the schema log to skip initialization failure
-    getDefaultSchemaLog().writeNewSchema(
-      PersistedSchema(
+    getDefaultSchemaLog().writeNewMetadata(
+      PersistedMetadata(
         log.tableId,
         0L,
         s0.metadata,
+        s0.protocol,
         sourceMetadataPath = ""
       )
     )
@@ -1447,21 +1454,21 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
     // 1st call, land at INDEX_SCHEMA_CHANGE
     val ofs1 = getLatestOffset(source1)
-    assert(ofs1.index == DeltaSourceOffset.SCHEMA_CHANGE_INDEX)
+    assert(ofs1.index == DeltaSourceOffset.METADATA_CHANGE_INDEX)
     source1.getBatch(startOffsetOption = None, ofs1)
     // 2nd call, land at INDEX_POST_SCHEMA_CHANGE
     val ofs2 = getLatestOffset(source1, Some(ofs1))
-    assert(ofs2.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX)
+    assert(ofs2.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)
     source1.getBatch(Some(ofs1), ofs2)
     // 3rd call, still land at INDEX_POST_SCHEMA_CHANGE, because schema evolution has not happened
     val ofs3 = getLatestOffset(source1, Some(ofs2))
-    assert(ofs3.index == DeltaSourceOffset.POST_SCHEMA_CHANGE_INDEX)
+    assert(ofs3.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)
     // Commit and restart
     val e = intercept[DeltaRuntimeException] {
       source1.commit(ofs2)
     }
-    ExpectSchemaEvolutionException.assertFailure(e)
-    assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == v0)
+    ExpectMetadataEvolutionException.assertFailure(e)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v0)
 
     val source2 = getSource
     // restore previousOffset
@@ -1495,8 +1502,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       implicit val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
       val s0 = log.update()
       val schemaLog = getDefaultSchemaLog()
-      schemaLog.writeNewSchema(
-        PersistedSchema(log.tableId, s0.version, s0.metadata, sourceMetadataPath = "")
+      schemaLog.writeNewMetadata(
+        PersistedMetadata(log.tableId, s0.version, s0.metadata, s0.protocol,
+          sourceMetadataPath = "")
       )
 
       def read(): DataFrame =
@@ -1533,7 +1541,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
           ProcessAllAvailableIgnoreError,
           CheckAnswer(Nil: _*),
-          ExpectSchemaEvolutionException
+          ExpectMetadataEvolutionException
         )
         // Restart would fail due to SQL conf validation
         testStream(readDf())(
@@ -1627,7 +1635,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*)
       )
     }
-    assert(getDefaultSchemaLog().getCurrentTrackedSchema.isEmpty)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.isEmpty)
   }
 
   testSchemaEvolution(
@@ -1649,10 +1657,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       CheckAnswer(Nil: _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     assert {
-      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedSchema.get
+      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedMetadata.get
       schemaEntry.deltaCommitVersion == 1 &&
         // no physical name entry
         !DeltaColumnMapping.hasPhysicalName(schemaEntry.dataSchema.head)
@@ -1662,10 +1670,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     assert {
-      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedSchema.get
+      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedMetadata.get
       // stopped at the upgrade commit
       schemaEntry.deltaCommitVersion == v0 &&
         // now with physical name entry
@@ -1681,7 +1689,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
 
     assert {
-      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedSchema.get
+      val schemaEntry = getDefaultSchemaLog().getCurrentTrackedMetadata.get
       // schema log updated implicitly
       schemaEntry.deltaCommitVersion == v1 &&
         schemaEntry.dataSchema.fieldNames.sameElements(Array("a", "c"))
@@ -1689,42 +1697,48 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   }
 
-  test("backward-compat: persisted schema can read back entry without configurations") {
-    // scalastyle:off line.size.limit
-    val serialized = """{"tableId":"test","deltaCommitVersion":1,"dataSchemaJson":"{\"type\":\"struct\",\"fields\":[{\"name\":\"a\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","partitionSchemaJson":"{\"type\":\"struct\",\"fields\":[{\"name\":\"a\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","sourceMetadataPath":""}"""
-    // scalastyle:on line.size.limit
+  test("backward-compat: latest version can read back older JSON") {
+    val serialized = JsonUtils.toJson {
+      OldPersistedSchema(
+        tableId = "test",
+        deltaCommitVersion = 1,
+        StructType.fromDDL("a INT").json,
+        StructType.fromDDL("a INT").json,
+        sourceMetadataPath = ""
+      )
+    }
 
-    val schemaFromJson = PersistedSchema.fromJson(serialized)
-    assert(schemaFromJson == PersistedSchema(
+    val schemaFromJson = PersistedMetadata.fromJson(serialized)
+    assert(schemaFromJson == PersistedMetadata(
       tableId = "test",
       deltaCommitVersion = 1,
       StructType.fromDDL("a INT").json,
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "",
-      tableConfigurations = None
+      tableConfigurations = None,
+      protocolJson = None
     ))
   }
 
-  test("forward-compat: older version cannot read back newer JSON") {
-    val newSchema = PersistedSchema(
+  test("forward-compat: older version can read back newer JSON") {
+    val newSchema = PersistedMetadata(
       tableId = "test",
       deltaCommitVersion = 1,
       StructType.fromDDL("a INT").json,
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "/path",
-      tableConfigurations = Some(Map("a" -> "b"))
+      tableConfigurations = Some(Map("a" -> "b")),
+      protocolJson = Some(Protocol(1, 2).json)
     )
 
-    case class OldPersistedSchema(
-      tableId: String,
-      deltaCommitVersion: Long,
-      dataSchemaJson: String,
-      partitionSchemaJson: String,
-      sourceMetadataPath: String
-    )
-
-    intercept[Exception] {
-      JsonUtils.fromJson[OldPersistedSchema](newSchema.toJson)
+    assert {
+      JsonUtils.fromJson[OldPersistedSchema](JsonUtils.toJson(newSchema)) == OldPersistedSchema(
+        tableId = "test",
+        deltaCommitVersion = 1,
+        StructType.fromDDL("a INT").json,
+        StructType.fromDDL("a INT").json,
+        sourceMetadataPath = "/path"
+      )
     }
   }
 
@@ -1746,19 +1760,18 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       AwaitTerminationIgnoreError,
       CheckAnswer(Nil: _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
     // Latest schema in schema log has been updated
-    assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == 1))
-
+    assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == 1))
     // Process the first batch before overwrite
     testStream(readDf)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
       CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == v0))
+    assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == v0))
 
     // Process until the next overwrite
     testStream(readDf)(
@@ -1773,11 +1786,20 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // can still be read.
         (if (isCdcTest) (-1 until 5).map(_.toString).map(i => (null, i)) else Nil) ++
         (5 until 10).map(_.toString).map(i => (i, i)): _*),
-      ExpectSchemaEvolutionException
+      ExpectMetadataEvolutionException
     )
-    assert(getDefaultSchemaLog().getLatestSchema.exists(_.deltaCommitVersion == v1))
+    assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == v1))
   }
 }
+
+// Needs to be top-level for serialization to work.
+case class OldPersistedSchema(
+  tableId: String,
+  deltaCommitVersion: Long,
+  dataSchemaJson: String,
+  partitionSchemaJson: String,
+  sourceMetadataPath: String
+)
 
 class DeltaSourceSchemaEvolutionNameColumnMappingSuite
   extends StreamingSchemaEvolutionSuiteBase
@@ -1836,9 +1858,9 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
         StartStream(checkpointLocation = getDefaultCheckpoint.toString),
         ProcessAllAvailableIgnoreError,
         CheckAnswer(Nil: _*),
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == 0L)
+      assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == 0L)
 
       // Streaming CDC until the MERGE invoked schema change
       testStream(readDf)(
@@ -1846,10 +1868,10 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
         ProcessAllAvailableIgnoreError,
         // The first 10 inserts
         CheckAnswer((0L until 10L): _*),
-        ExpectSchemaEvolutionException
+        ExpectMetadataEvolutionException
       )
-      assert(getDefaultSchemaLog().getCurrentTrackedSchema.get.deltaCommitVersion == v1 &&
-        getDefaultSchemaLog().getCurrentTrackedSchema.get.dataSchema.fieldNames.sameElements(
+      assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v1 &&
+        getDefaultSchemaLog().getCurrentTrackedMetadata.get.dataSchema.fieldNames.sameElements(
           Array("id", "age")))
 
       // Streaming CDC of the MERGE
@@ -1862,6 +1884,85 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
         )
       )
     }
+  }
+
+  testSchemaEvolution(
+    "protocol and configuration evolution", columnMapping = false) { implicit log =>
+    // Updates table properties / protocol
+    spark.sql(
+      s"""
+         |ALTER TABLE delta.`${log.dataPath}`
+         |SET TBLPROPERTIES (
+         |  'delta.minReaderVersion' = 2,
+         |  'delta.minWriterVersion' = 5
+         |)
+         |""".stripMargin)
+    val v1 = log.update().version
+
+    addData(5 until 10)
+    // Update just delta table property
+    spark.sql(
+      s"""
+         |ALTER TABLE delta.`${log.dataPath}`
+         |SET TBLPROPERTIES (
+         |  'delta.isolationLevel' = 'SERIALIZABLE'
+         |)
+         |""".stripMargin
+    )
+    val v2 = log.update().version
+
+    addData(10 until 13)
+    // Update non-delta property won't need stream stop
+    spark.sql(
+      s"""
+         |ALTER TABLE delta.`${log.dataPath}`
+         |SET TBLPROPERTIES (
+         |  'hello' = 'its me'
+         |)
+         |""".stripMargin
+    )
+    addData(13 until 15)
+
+    def readDf: DataFrame =
+      readStream(schemaLocation = Some(getDefaultSchemaLocation.toString),
+        startingVersion = Some(1L))
+
+    // Init schema log
+    testStream(readDf)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer(Nil: _*),
+      ExpectMetadataEvolutionException
+    )
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == 1L)
+
+    // Reaching the first protocol change
+    testStream(readDf)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*),
+      ExpectMetadataEvolutionException
+    )
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v1)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.protocol.contains(Protocol(2, 5)))
+
+    // Reaching the second property change
+    testStream(readDf)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer((5 until 10).map(_.toString).map(i => (i, i)): _*),
+      ExpectMetadataEvolutionException
+    )
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v2)
+    assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.tableConfigurations
+      .get.contains("delta.isolationLevel"))
+
+    // The final property change won't stop stream because it's non delta
+    testStream(readDf)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailable(),
+      CheckAnswer((10 until 15).map(_.toString).map(i => (i, i)): _*)
+    )
   }
 }
 

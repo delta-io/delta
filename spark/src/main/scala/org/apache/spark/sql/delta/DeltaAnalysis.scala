@@ -487,18 +487,28 @@ class DeltaAnalysis(session: SparkSession)
              "clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
-      val newTarget =
-        stripTempViewForMergeWrapper(merge.targetTable).transformUp { case DeltaRelation(lr) => lr }
-      // Even if we're merging into a non-Delta target, we will catch it later and throw an
-      // exception.
-      val deltaMerge = DeltaMergeInto(
-        newTarget,
-        merge.sourceTable,
-        merge.mergeCondition,
-        matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
-      )
+      var isDelta = false
+      val newTarget = stripTempViewForMergeWrapper(merge.targetTable).transformUp {
+        case DeltaRelation(lr) =>
+          isDelta = true
+          lr
+      }
 
-      DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
+      if (isDelta) {
+        // Even if we're merging into a non-Delta target, we will catch it later and throw an
+        // exception.
+        val deltaMerge = DeltaMergeInto(
+          newTarget,
+          merge.sourceTable,
+          merge.mergeCondition,
+          matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
+        )
+
+        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+          tryResolveReferencesForExpressions(session))
+      } else {
+        merge
+      }
 
     case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
       DeltaReorgTableCommand(resolved)(reorg.predicates)
@@ -508,7 +518,8 @@ class DeltaAnalysis(session: SparkSession)
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
+        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+          tryResolveReferencesForExpressions(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
@@ -965,7 +976,7 @@ class DeltaAnalysis(session: SparkSession)
             val log = DeltaLog.forTable(session, dataSourceV1.options("path"))
             val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
-              DeltaSourceSchemaTrackingLog.fullSchemaTrackingLocation(
+              DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
                 rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&

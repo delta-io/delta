@@ -985,7 +985,8 @@ case class Metadata(
 
   /** Partition value keys in the AddFile map. */
   @JsonIgnore
-  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.renameColumns(partitionSchema)
+  lazy val physicalPartitionSchema: StructType =
+    DeltaColumnMapping.renameColumns(partitionSchema)
 
   /** Columns written out to files. */
   @JsonIgnore

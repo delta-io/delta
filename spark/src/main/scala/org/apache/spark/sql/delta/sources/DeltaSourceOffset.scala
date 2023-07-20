@@ -65,7 +65,7 @@ case class DeltaSourceOffset private(
     // 2. [Backward safety] If the source index is a new schema changing index, then use
     //    VERSION_3. Older Delta would explode upon seeing this, but that's the safe thing to do.
     val minVersion = {
-      if (DeltaSourceOffset.isSchemaChangeIndex(index)) {
+      if (DeltaSourceOffset.isMetadataChangeIndex(index)) {
         VERSION_3
       }
       else {
@@ -122,10 +122,10 @@ object DeltaSourceOffset extends Logging {
   // The base index version clients of DeltaSourceOffset should use
   val BASE_INDEX: Long = BASE_INDEX_V3
 
-  // The index for an IndexedFile that also contains a schema change. (from VERSION_3)
-  val SCHEMA_CHANGE_INDEX: Long = -20
-  // The index for an IndexedFile that is right after a schema change. (from VERSION_3)
-  val POST_SCHEMA_CHANGE_INDEX: Long = -19
+  // The index for an IndexedFile that also contains a metadata change. (from VERSION_3)
+  val METADATA_CHANGE_INDEX: Long = -20
+  // The index for an IndexedFile that is right after a metadata change. (from VERSION_3)
+  val POST_METADATA_CHANGE_INDEX: Long = -19
 
   /**
    * The ONLY external facing constructor to create a DeltaSourceOffset in memory.
@@ -235,6 +235,6 @@ object DeltaSourceOffset extends Logging {
     }
   }
 
-  def isSchemaChangeIndex(index: Long): Boolean =
-    index == SCHEMA_CHANGE_INDEX || index == POST_SCHEMA_CHANGE_INDEX
+  def isMetadataChangeIndex(index: Long): Boolean =
+    index == METADATA_CHANGE_INDEX || index == POST_METADATA_CHANGE_INDEX
 }

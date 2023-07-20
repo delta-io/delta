@@ -1130,8 +1130,9 @@ Feature | Name | Readers or Writers?
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
 [Row Tracking](#row-tracking) | `rowTracking` | Writers only
-[Timestamp without Timezone](#timestamp-ntz) | `timestampNtz` | Readers and writers
+[Timestamp without Timezone](#timestamp-without-timezone-timestampntz) | `timestampNtz` | Readers and writers
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
+[Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
 
 ## Deletion Vector Format
 

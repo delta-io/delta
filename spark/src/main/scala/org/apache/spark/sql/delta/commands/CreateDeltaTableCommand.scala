@@ -187,81 +187,7 @@ case class CreateDeltaTableCommand(
             }
         }
       } else {
-        def createTransactionLogOrVerify(): Unit = {
-          if (isManagedTable) {
-            // When creating a managed table, the table path should not exist or is empty, or
-            // users would be surprised to see the data, or see the data directory being dropped
-            // after the table is dropped.
-            assertPathEmpty(hadoopConf, tableWithLocation)
-          }
-
-          // However, if we allow creating an empty schema table and indeed the table is new, we
-          // would need to make sure txn.readVersion <= 0 so we are either:
-          // 1) Creating a new empty schema table (version = -1) or
-          // 2) Restoring an existing empty schema table at version 0. An empty schema table should
-          //    not have versions > 0 because it must be written with schema changes after initial
-          //    creation.
-          val emptySchemaTableFlag = sparkSession.sessionState.conf
-            .getConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE)
-          val allowRestoringExistingEmptySchemaTable =
-            emptySchemaTableFlag && txn.metadata.schema.isEmpty && txn.readVersion == 0
-          val allowCreatingNewEmptySchemaTable =
-            emptySchemaTableFlag && tableWithLocation.schema.isEmpty && txn.readVersion == -1
-
-          // This is either a new table, or, we never defined the schema of the table. While it is
-          // unexpected that `txn.metadata.schema` to be empty when txn.readVersion >= 0, we still
-          // guard against it, in case of checkpoint corruption bugs.
-          val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
-          if (noExistingMetadata && !allowRestoringExistingEmptySchemaTable) {
-            assertTableSchemaDefined(
-              fs, tableLocation, tableWithLocation, sparkSession,
-              allowCreatingNewEmptySchemaTable
-            )
-            assertPathEmpty(hadoopConf, tableWithLocation)
-            // This is a user provided schema.
-            // Doesn't come from a query, Follow nullability invariants.
-            val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
-            txn.updateMetadataForNewTable(newMetadata)
-            protocol.foreach { protocol =>
-              txn.updateProtocol(protocol)
-            }
-            val op = getOperation(newMetadata, isManagedTable, None
-            )
-            val actionsToCommit = Seq.empty[Action]
-            txn.commit(actionsToCommit, op)
-          } else {
-            verifyTableMetadata(txn, tableWithLocation)
-          }
-        }
-        // We are defining a table using the Create or Replace Table statements.
-        operation match {
-          case TableCreationModes.Create =>
-            require(!tableExists, "Can't recreate a table when it exists")
-            createTransactionLogOrVerify()
-
-          case TableCreationModes.CreateOrReplace if !tableExists =>
-            // If the table doesn't exist, CREATE OR REPLACE must provide a schema
-            if (tableWithLocation.schema.isEmpty) {
-              throw DeltaErrors.schemaNotProvidedException
-            }
-            createTransactionLogOrVerify()
-          case _ =>
-            // When the operation is a REPLACE or CREATE OR REPLACE, then the schema shouldn't be
-            // empty, since we'll use the entry to replace the schema
-            if (tableWithLocation.schema.isEmpty) {
-              throw DeltaErrors.schemaNotProvidedException
-            }
-            // We need to replace
-            replaceMetadataIfNecessary(txn, tableWithLocation, options, tableWithLocation.schema)
-            // Truncate the table
-            val operationTimestamp = System.currentTimeMillis()
-            var actionsToCommit = Seq.empty[Action]
-            val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
-            actionsToCommit = removes
-            val op = getOperation(txn.metadata, isManagedTable, None
-            )
-            txn.commit(actionsToCommit, op)
-        }
+        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
       }
 
       // We would have failed earlier on if we couldn't ignore the existence of the table
@@ -279,6 +205,100 @@ case class CreateDeltaTableCommand(
       }
 
       result
+    }
+  }
+
+  /**
+   * Handles the transaction logic for CREATE OR REPLACE TABLE statement
+   * without the AS [CLONE, SELECT] clause.
+   */
+  private def handleCreateTable(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      tableWithLocation: CatalogTable,
+      fs: FileSystem,
+      hadoopConf: Configuration): Unit = {
+
+    val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
+    val tableLocation = new Path(tableWithLocation.location)
+    val tableExists = existingTableOpt.isDefined
+    val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+
+    def createTransactionLogOrVerify(): Unit = {
+      if (isManagedTable) {
+        // When creating a managed table, the table path should not exist or is empty, or
+        // users would be surprised to see the data, or see the data directory being dropped
+        // after the table is dropped.
+        assertPathEmpty(hadoopConf, tableWithLocation)
+      }
+
+      // However, if we allow creating an empty schema table and indeed the table is new, we
+      // would need to make sure txn.readVersion <= 0 so we are either:
+      // 1) Creating a new empty schema table (version = -1) or
+      // 2) Restoring an existing empty schema table at version 0. An empty schema table should
+      //    not have versions > 0 because it must be written with schema changes after initial
+      //    creation.
+      val emptySchemaTableFlag = sparkSession.sessionState.conf
+        .getConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE)
+      val allowRestoringExistingEmptySchemaTable =
+        emptySchemaTableFlag && txn.metadata.schema.isEmpty && txn.readVersion == 0
+      val allowCreatingNewEmptySchemaTable =
+        emptySchemaTableFlag && tableWithLocation.schema.isEmpty && txn.readVersion == -1
+
+      // This is either a new table, or, we never defined the schema of the table. While it is
+      // unexpected that `txn.metadata.schema` to be empty when txn.readVersion >= 0, we still
+      // guard against it, in case of checkpoint corruption bugs.
+      val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
+      if (noExistingMetadata && !allowRestoringExistingEmptySchemaTable) {
+        assertTableSchemaDefined(
+          fs, tableLocation, tableWithLocation, sparkSession,
+          allowCreatingNewEmptySchemaTable
+        )
+        assertPathEmpty(hadoopConf, tableWithLocation)
+        // This is a user provided schema.
+        // Doesn't come from a query, Follow nullability invariants.
+        val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
+        txn.updateMetadataForNewTable(newMetadata)
+        protocol.foreach { protocol =>
+          txn.updateProtocol(protocol)
+        }
+        val op = getOperation(newMetadata, isManagedTable, None
+        )
+        val actionsToCommit = Seq.empty[Action]
+        txn.commit(actionsToCommit, op)
+      } else {
+        verifyTableMetadata(txn, tableWithLocation)
+      }
+    }
+
+    // We are defining a table using the Create or Replace Table statements.
+    operation match {
+      case TableCreationModes.Create =>
+        require(!tableExists, "Can't recreate a table when it exists")
+        createTransactionLogOrVerify()
+
+      case TableCreationModes.CreateOrReplace if !tableExists =>
+        // If the table doesn't exist, CREATE OR REPLACE must provide a schema
+        if (tableWithLocation.schema.isEmpty) {
+          throw DeltaErrors.schemaNotProvidedException
+        }
+        createTransactionLogOrVerify()
+      case _ =>
+        // When the operation is a REPLACE or CREATE OR REPLACE, then the schema shouldn't be
+        // empty, since we'll use the entry to replace the schema
+        if (tableWithLocation.schema.isEmpty) {
+          throw DeltaErrors.schemaNotProvidedException
+        }
+        // We need to replace
+        replaceMetadataIfNecessary(txn, tableWithLocation, options, tableWithLocation.schema)
+        // Truncate the table
+        val operationTimestamp = System.currentTimeMillis()
+        var actionsToCommit = Seq.empty[Action]
+        val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
+        actionsToCommit = removes
+        val op = getOperation(txn.metadata, isManagedTable, None
+        )
+        txn.commit(actionsToCommit, op)
     }
   }
 
@@ -442,7 +462,8 @@ case class CreateDeltaTableCommand(
       spark: SparkSession,
       table: CatalogTable,
       snapshot: Snapshot,
-      txn: OptimisticTransaction): Unit = {
+      txn: OptimisticTransaction
+    ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path

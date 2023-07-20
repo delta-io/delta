@@ -76,6 +76,19 @@ case class CheckpointInstance(
       : UninitializedCheckpointProvider = {
     val logPath = deltaLog.logPath
     val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
+    val cpFiles = filterFiles(deltaLog, filesForCheckpointConstruction)
+    format match {
+      case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
+        PreloadedCheckpointProvider(cpFiles, lastCheckpointInfo)
+      case CheckpointInstance.Format.SENTINEL =>
+        throw DeltaErrors.assertionFailedError(
+          s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")
+    }
+  }
+
+  def filterFiles(deltaLog: DeltaLog,
+                  filesForCheckpointConstruction: Seq[FileStatus]) : Seq[FileStatus] = {
+    val logPath = deltaLog.logPath
     format match {
       case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
         val filePaths = if (format == CheckpointInstance.Format.WITH_PARTS) {
@@ -89,7 +102,7 @@ case class CheckpointInstance(
           "Failed in getting the file information for:\n" +
             filePaths.mkString(" -", "\n -", "") + "\namong\n" +
             filesForCheckpointConstruction.map(_.getPath).mkString(" -", "\n -", ""))
-        PreloadedCheckpointProvider(newCheckpointFileArray, lastCheckpointInfo)
+        newCheckpointFileArray
       case CheckpointInstance.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
           s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")
@@ -242,8 +255,11 @@ trait Checkpoints extends DeltaLogging {
     withCheckpointExceptionHandling(deltaLog, "delta.lastCheckpoint.write.error") {
       val suppressOptionalFields = spark.sessionState.conf.getConf(
         DeltaSQLConf.SUPPRESS_OPTIONAL_LAST_CHECKPOINT_FIELDS)
+      val lastCheckpointInfoToWrite = lastCheckpointInfo
       val json = LastCheckpointInfo.serializeToJson(
-        lastCheckpointInfo, addChecksum, suppressOptionalFields)
+        lastCheckpointInfoToWrite,
+        addChecksum,
+        suppressOptionalFields)
       store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
     }
   }
@@ -353,7 +369,7 @@ trait Checkpoints extends DeltaLogging {
    * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
    * later than `notLaterThan`.
    */
-  protected def getLatestCompleteCheckpointFromList(
+  protected[delta] def getLatestCompleteCheckpointFromList(
       instances: Array[CheckpointInstance],
       notLaterThanVersion: Option[Long] = None): Option[CheckpointInstance] = {
     val sentinelCv = CheckpointInstance.sentinelValue(notLaterThanVersion)
