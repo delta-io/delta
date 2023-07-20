@@ -212,18 +212,18 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
   ddlTest("REPLACE COLUMNS - drop column") {
     // Column Mapping allows columns to be dropped
     def checkReplace(
-                      text: String,
-                      tableName: String,
-                      columnDropped: Seq[String],
-                      messages: String*): Unit = {
-      if (!columnMappingEnabled) {
-        assertNotSupported(text, messages: _*)
-      } else {
+        text: String,
+        tableName: String,
+        columnDropped: Seq[String],
+        messages: String*): Unit = {
+      if (columnMappingEnabled) {
         spark.sql(text)
         val deltaLog = getDeltaLog(tableName)
         val field = deltaLog.snapshot.schema
           .findNestedField(columnDropped, includeCollections = true)
         assert(field.isEmpty, "Column was not deleted")
+      } else {
+        assertNotSupported(text, messages: _*)
       }
     }
 

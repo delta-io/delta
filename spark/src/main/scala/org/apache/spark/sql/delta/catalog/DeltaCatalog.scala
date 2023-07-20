@@ -550,28 +550,26 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
     var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
-    val isReplaceColumnsCommand = {
-      // Decide from the provided table change operations, whether this is a replace columns
-      // command. Replace columns is represented as removing all existing columns and then adding
-      // one or more new columns.
-      if (!grouped.contains(classOf[AddColumn]) || !grouped.contains(classOf[DeleteColumn])) {
+    val isReplaceColumnsCommand = grouped.get(classOf[DeleteColumn]) match {
+      case Some(deletes: Seq[DeleteColumn]) if grouped.contains(classOf[AddColumn]) =>
+        // Normally we can do a zip, but using a zip and ensuring that all columns in the table
+        // are removed to decide whether this is a replace columns command
+        val tableSchema = table.schema().fieldNames
+        val deleteSet = deletes.map(_.fieldNames()).toSet
+        tableSchema.forall(f => deleteSet.contains(Array(f)))
+      case _ =>
         false
-      } else {
-        val tableSchema = table.schema().fieldNames.toSeq
-        // Now ensure that ALL columns are dropped, which is the behavior of REPLACE COLUMNS
-        val deletes = grouped(classOf[DeleteColumn]).asInstanceOf[Seq[DeleteColumn]]
-        deletes.length == tableSchema.length && deletes.zip(tableSchema).forall { case (c, name) =>
-          c.fieldNames().length == 1 && c.fieldNames().head == name
-        }
-      }
     }
 
-    if (isReplaceColumnsCommand) {
+    if (isReplaceColumnsCommand &&
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REPLACE_COLUMNS_SAFE)) {
       // The new schema is essentially the AddColumn operators
       val tableToUpdate = table
       val colsToAdd = grouped(classOf[AddColumn]).asInstanceOf[Seq[AddColumn]]
       val structFields = colsToAdd.map { col =>
-        var field = StructField(col.fieldNames().last, col.dataType, col.isNullable)
+        assert(
+          col.fieldNames().length == 1, "We don't expect replace to provide nested column adds")
+        var field = StructField(col.fieldNames().head, col.dataType, col.isNullable)
         Option(col.comment()).foreach { comment =>
           field = field.withComment(comment)
         }
