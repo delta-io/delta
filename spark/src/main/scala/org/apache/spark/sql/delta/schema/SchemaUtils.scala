@@ -777,7 +777,7 @@ object SchemaUtils extends DeltaLogging {
       to: DataType,
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
-      columnPath: Seq[String] = Seq.empty,
+      columnPath: Seq[String] = Nil,
       failOnAmbiguousChanges: Boolean = false): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {

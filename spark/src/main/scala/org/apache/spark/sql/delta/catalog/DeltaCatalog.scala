@@ -553,7 +553,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val isReplaceColumnsCommand = {
       // Decide from the provided table change operations, whether this is a replace columns
       // command. Replace columns is represented as removing all existing columns and then adding
-      // all new columns.
+      // one or more new columns.
       if (!grouped.contains(classOf[AddColumn]) || !grouped.contains(classOf[DeleteColumn])) {
         false
       } else {

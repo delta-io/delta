@@ -557,8 +557,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.replaceColumns") {
+    recordDeltaOperation(table.deltaLog, "delta.ddl.alter.replaceColumns") {
       val txn = startTransaction(sparkSession)
 
       val metadata = txn.metadata
@@ -583,7 +582,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 
-      Seq.empty[Row]
+      Nil
     }
   }
 }
