@@ -22,7 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -170,45 +170,15 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       createTimingMetric(sc, "time taken to rewrite the matched files")
   )
 
+  /**
+   * Collects the merge operation stats and metrics into a [[MergeStats]] object that can be
+   * recorded with `recordDeltaEvent`. Merge stats should be collected after committing all new
+   * actions as metrics may still be updated during commit.
+   */
   protected def collectMergeStats(
-      spark: SparkSession,
       deltaTxn: OptimisticTransaction,
-      startTime: Long,
-      mergeActions: Seq[Action],
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason,
-      tags: Map[String, String] = Map.empty)
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
     : MergeStats = {
-    val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
-    // Metrics should be recorded before commit (where they are written to delta logs).
-    metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
-    deltaTxn.registerSQLMetrics(spark, metrics)
-
-    // We only detect changes in the number of source rows. This is a best-effort detection; a
-    // more comprehensive solution would be to checksum the values for the columns that we read
-    // in both jobs.
-    // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
-    // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
-      log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
-        s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
-      if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
-        throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
-      }
-    }
-
-    deltaTxn.commitIfNeeded(
-      finalActions,
-      DeltaOperations.Merge(
-        Option(condition),
-        matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
-        notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
-        notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))
-      ),
-      tags)
-
-    // Record metrics.
     val stats = MergeStats.fromMergeSQLMetrics(
       metrics,
       condition,

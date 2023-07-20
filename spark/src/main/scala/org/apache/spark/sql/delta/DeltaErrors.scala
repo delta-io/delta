@@ -2659,21 +2659,27 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
-  def streamingSchemaEvolutionException(newSchema: StructType): Throwable = {
+  def streamingMetadataEvolutionException(
+      newSchema: StructType,
+      newConfigs: Map[String, String],
+      newProtocol: Protocol): Throwable = {
     new DeltaRuntimeException(
-      errorClass = "DELTA_STREAMING_SCHEMA_EVOLUTION",
-      messageParameters = Array(formatSchema(newSchema)))
+      errorClass = "DELTA_STREAMING_METADATA_EVOLUTION",
+      messageParameters = Array(
+        formatSchema(newSchema),
+        newConfigs.map { case (k, v) =>
+          s"$k:$v"
+        }.mkString(", "),
+        newProtocol.simpleString
+      ))
   }
 
-  def streamingSchemaLogInitFailedIncompatibleSchemaException(
+  def streamingMetadataLogInitFailedIncompatibleMetadataException(
       startVersion: Long,
       endVersion: Long): Throwable = {
     new DeltaRuntimeException(
-      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_SCHEMA",
-      messageParameters = Array(
-        startVersion.toString, endVersion.toString,
-        DeltaSQLConf.
-          DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START.key)
+      errorClass = "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA",
+      messageParameters = Array(startVersion.toString, endVersion.toString)
     )
   }
 

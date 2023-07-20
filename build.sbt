@@ -221,6 +221,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
   .dependsOn(kernelApi)
   .dependsOn(spark % "test")
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-default",
     commonSettings,
@@ -396,6 +397,7 @@ lazy val hiveAssembly = (project in file("connectors/hive-assembly"))
   )
 
 lazy val hiveTest = (project in file("connectors/hive-test"))
+  .dependsOn(goldenTables % "test")
   .settings (
     name := "hive-test",
     // Make the project use the assembly jar to ensure we are testing the assembly jar that users
@@ -496,6 +498,7 @@ lazy val hiveTez = (project in file("connectors/hive-tez"))
 
 
 lazy val hive2MR = (project in file("connectors/hive2-mr"))
+  .dependsOn(goldenTables % "test")
   .settings (
     name := "hive2-mr",
     commonSettings,
@@ -524,7 +527,8 @@ lazy val hive2MR = (project in file("connectors/hive2-mr"))
     )
   )
 
-lazy val hive2Tez = (project in file("hive2-tez"))
+lazy val hive2Tez = (project in file("connectors/hive2-tez"))
+  .dependsOn(goldenTables % "test")
   .settings (
     name := "hive2-tez",
     commonSettings,
@@ -670,6 +674,7 @@ lazy val standaloneWithoutParquetUtils = project
 
 lazy val standalone = (project in file("connectors/standalone"))
   .dependsOn(storage)
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-standalone-original",
     commonSettings,
@@ -784,21 +789,22 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
   )
  */
 
-lazy val goldenTables = (project in file("connectors/golden-tables")) settings (
-  name := "golden-tables",
-  commonSettings,
-  skipReleaseSettings,
-  libraryDependencies ++= Seq(
-    // Test Dependencies
-    "org.scalatest" %% "scalatest" % "3.1.0" % "test",
-    "io.delta" % "delta-core_2.12" % "1.1.0" % "test",
-    "commons-io" % "commons-io" % "2.8.0" % "test",
-    "org.apache.spark" %% "spark-sql" % sparkVersion % "test",
-    "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-    "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-    "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
+lazy val goldenTables = (project in file("connectors/golden-tables"))
+  .dependsOn(spark % "test") // depends on delta-spark
+  .settings(
+    name := "golden-tables",
+    commonSettings,
+    skipReleaseSettings,
+    libraryDependencies ++= Seq(
+      // Test Dependencies
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "commons-io" % "commons-io" % "2.8.0" % "test",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
+    )
   )
-)
 
 def sqlDeltaImportScalaVersion(scalaBinaryVersion: String): String = {
   scalaBinaryVersion match {

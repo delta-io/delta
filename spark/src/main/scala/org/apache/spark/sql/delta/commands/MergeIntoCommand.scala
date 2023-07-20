@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.commands.merge.{ClassicMergeExecutor, InsertOnlyMergeExecutor}
+import org.apache.spark.sql.delta.actions.FileAction
+import org.apache.spark.sql.delta.commands.merge.{ClassicMergeExecutor, InsertOnlyMergeExecutor, MergeIntoMaterializeSourceReason}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -101,7 +104,7 @@ case class MergeIntoCommand(
           notMatchedClauses,
           isInsertOnly)
 
-        val deltaActions = {
+        val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
             metrics("numSourceRowsInSecondScan").set(-1)
@@ -124,15 +127,12 @@ case class MergeIntoCommand(
             }
           }
         }
-        val stats = collectMergeStats(
+        commitAndRecordStats(
           spark,
           deltaTxn,
+          mergeActions,
           startTime,
-          deltaActions,
           materializeSourceReason)
-
-        recordDeltaEvent(targetFileIndex.deltaLog, "delta.dml.merge.stats", data = stats)
-
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
@@ -140,5 +140,38 @@ case class MergeIntoCommand(
     Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
             metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
             metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
+  }
+
+  /**
+   * Finalizes the merge operation before committing it to the delta log and records merge metrics:
+   *   - Checks that the source table didn't change during the merge operation.
+   *   - Register SQL metrics to be updated during commit.
+   *   - Commit the operations.
+   *   - Collects final merge stats and record them with a Delta event.
+   */
+  private def commitAndRecordStats(
+      spark: SparkSession,
+      deltaTxn: OptimisticTransaction,
+      mergeActions: Seq[FileAction],
+      startTime: Long,
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
+    : Unit = {
+    checkNonDeterministicSource(spark)
+
+    // Metrics should be recorded before commit (where they are written to delta logs).
+    metrics("executionTimeMs").set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime))
+    deltaTxn.registerSQLMetrics(spark, metrics)
+
+    val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
+    deltaTxn.commitIfNeeded(
+      actions = finalActions,
+      DeltaOperations.Merge(
+        predicate = Option(condition),
+        matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
+        notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
+        notMatchedBySourcePredicates =
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
+    val stats = collectMergeStats(deltaTxn, materializeSourceReason)
+    recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }
 }

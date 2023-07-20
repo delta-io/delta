@@ -196,7 +196,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
           if (isPathIdentifier(ident)) {
             newDeltaPathTable(ident)
           } else if (isIcebergPathIdentifier(ident)) {
-            IcebergTablePlaceHolder(TableIdentifier(ident.name(), Some("iceberg")))
+            newIcebergPathTable(ident)
           } else {
             throw e
           }
@@ -509,7 +509,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     override def abortStagedChanges(): Unit = {}
 
-    override def capabilities(): util.Set[TableCapability] = Set(V1_BATCH_WRITE).asJava
+    override def capabilities(): util.Set[TableCapability] = {
+      Set(V1_BATCH_WRITE).asJava
+    }
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
       writeOptions = info.options.asCaseSensitiveMap().asScala.toMap
@@ -722,6 +724,10 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
 
   protected def isIcebergPathIdentifier(ident: Identifier): Boolean = {
     hasIcebergNamespace(ident) && new Path(ident.name()).isAbsolute
+  }
+
+  protected def newIcebergPathTable(ident: Identifier): IcebergTablePlaceHolder = {
+    IcebergTablePlaceHolder(TableIdentifier(ident.name(), Some("iceberg")))
   }
 
   protected def isPathIdentifier(ident: Identifier): Boolean = {

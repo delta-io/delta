@@ -158,6 +158,9 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
+  protected def multipleSourceRowMatchingTargetRowInMergeUrl: String =
+    "/delta-update.html#upsert-into-a-table-using-merge"
+
   test("test DeltaErrors methods -- part 1") {
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2038,8 +2041,10 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE")
       assert(e.getSqlState == "21506")
 
-      val docLink = generateDocsLink(spark.sparkContext.getConf,
-        "/delta-update.html#upsert-into-a-table-using-merge", skipValidation = true)
+      val docLink = generateDocsLink(
+        spark.sparkContext.getConf,
+        multipleSourceRowMatchingTargetRowInMergeUrl,
+        skipValidation = true)
       val msg =
         s"""Cannot perform Merge as multiple source rows matched and attempted to modify the same
            |target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,

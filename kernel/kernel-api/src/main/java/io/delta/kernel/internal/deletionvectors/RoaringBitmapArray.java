@@ -214,7 +214,7 @@ public final class RoaringBitmapArray {
             int minimumArraySize = (int) numberOfBitmaps;
             ArrayList<RoaringBitmap> bitmaps = new ArrayList(minimumArraySize);
             int lastIndex = 0;
-            for (long _ = 0; _ < numberOfBitmaps; _ ++) {
+            for (long i = 0; i < numberOfBitmaps; i++) {
                 int key = buffer.getInt();
                 if (key < 0L) {
                     throw new IOException(String.format(

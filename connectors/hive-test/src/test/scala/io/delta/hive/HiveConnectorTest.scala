@@ -20,6 +20,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.UUID
 
+import io.delta.golden.GoldenTableUtils
 import io.delta.hive.test.HiveTest
 import io.delta.hive.util.JavaUtils
 import org.apache.commons.io.FileUtils
@@ -27,7 +28,8 @@ import org.scalatest.BeforeAndAfterEach
 
 abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
-  val hiveGoldenTable = new File("../golden-tables/src/test/resources/golden/hive").getCanonicalFile
+  val hiveGoldenTable =
+    new File(GoldenTableUtils.goldenResourceURL.getFile, "hive").getCanonicalFile
 
   /**
    * Create the full table path for the given golden table and execute the test function. The caller

@@ -1715,11 +1715,14 @@
     ],
     "sqlState" : "42KD4"
   },
-  "DELTA_STREAMING_SCHEMA_EVOLUTION" : {
+  "DELTA_STREAMING_METADATA_EVOLUTION" : {
     "message" : [
-      "The schema of your Delta table has changed during streaming, and the schema tracking log has been updated",
-      "Please restart the stream to continue processing using the updated schema:",
-      "<schema>"
+      "The schema, table configuration or protocol of your Delta table has changed during streaming.",
+      "The schema or metadata tracking log has been updated.",
+      "Please restart the stream to continue processing using the updated metadata.",
+      "Updated schema: <schema>.",
+      "Updated table configurations: <config>.",
+      "Updated table protocol: <protocol>"
     ],
     "sqlState" : "22000"
   },
@@ -1760,11 +1763,10 @@
     ],
     "sqlState" : "22000"
   },
-  "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_SCHEMA" : {
+  "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA" : {
     "message" : [
-      "We could not initialize the Delta streaming source schema log with a valid schema because",
-      "we detected an incompatible schema change while serving a streaming batch from table version <a> to <b>.",
-      "To continue processing the stream with latest schema, please turn on <config>."
+      "We could not initialize the Delta streaming source schema log because",
+      "we detected an incompatible schema or protocol change while serving a streaming batch from table version <a> to <b>."
     ],
     "sqlState" : "22000"
   },
