@@ -103,7 +103,7 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectors(spark, delete = true)
   }
 
   override def excluded: Seq[String] = super.excluded ++

@@ -995,6 +995,6 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectorsForAllOperations(spark)
   }
 }
