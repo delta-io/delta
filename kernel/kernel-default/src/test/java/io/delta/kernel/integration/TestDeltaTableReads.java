@@ -23,6 +23,7 @@ import java.util.List;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import static io.delta.golden.GoldenTableUtils.goldenTablePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.DefaultTableClient;
@@ -30,7 +31,6 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.integration.DataBuilderUtils.TestColumnBatchBuilder;
 import io.delta.kernel.types.*;
-import static io.delta.golden.GoldenTableUtils.goldenTablePath;
 import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import static io.delta.kernel.integration.DataBuilderUtils.row;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
