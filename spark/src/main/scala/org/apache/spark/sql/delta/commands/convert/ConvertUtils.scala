@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands.convert
 
 import java.lang.reflect.InvocationTargetException
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -34,7 +34,7 @@ import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 object ConvertUtils extends ConvertUtilsBase
 
@@ -219,14 +219,45 @@ trait ConvertUtilsBase extends DeltaLogging {
   }
 
   /**
-   * A helper function to check whether a file should be included during conversion.
+   * A helper function to check whether a directory should be skipped during conversion.
    *
-   * @param fileName: the file name to check.
-   * @return true if file should be included for conversion, otherwise false.
+   * @param dirName: the directory name to check.
+   * @return true if directory should be skipped for conversion, otherwise false.
    */
-  def hiddenDirNameFilter(fileName: String): Boolean = {
+  def dirNameFilter(dirName: String): Boolean = {
     // Allow partition column name starting with underscore and dot
-    DeltaFileOperations.defaultHiddenFileFilter(fileName) && !fileName.contains("=")
+    DeltaFileOperations.defaultHiddenFileFilter(dirName) && !dirName.contains("=")
+  }
+
+  /**
+   * Lists directories non-recursively in the distributed manner.
+   *
+   * @param spark: the spark session to use.
+   * @param rootDir: the root directory of all directories to list
+   * @param dirs: the list of directories to list.
+   * @param serializableConf: the hadoop configure to use.
+   * @return a dataset of files from the listing.
+   */
+  def listDirsInParallel(
+      spark: SparkSession,
+      rootDir: String,
+      dirs: Seq[String],
+      serializableConf: SerializableConfiguration): Dataset[SerializableFileStatus] = {
+
+    import org.apache.spark.sql.delta.implicits._
+
+    val conf = spark.sparkContext.broadcast(serializableConf)
+    val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+
+    val rdd = spark.sparkContext.parallelize(dirs, math.min(parallelism, dirs.length))
+      .mapPartitions { batch =>
+        batch.flatMap { dir =>
+          DeltaFileOperations
+            .localListDirs(conf.value.value, Seq(dir), recursive = false)
+            .filter(!_.isDir)
+        }
+      }
+    spark.createDataset(rdd)
   }
 
   /**
@@ -286,4 +317,3 @@ case class ParquetSchemaFetchConfig(
   assumeBinaryIsString: Boolean,
   assumeInt96IsTimestamp: Boolean,
   ignoreCorruptFiles: Boolean)
-
