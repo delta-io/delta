@@ -552,11 +552,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
     val isReplaceColumnsCommand = grouped.get(classOf[DeleteColumn]) match {
       case Some(deletes: Seq[DeleteColumn]) if grouped.contains(classOf[AddColumn]) =>
-        // Normally we can do a zip, but using a zip and ensuring that all columns in the table
-        // are removed to decide whether this is a replace columns command
-        val tableSchema = table.schema().fieldNames
-        val deleteSet = deletes.map(_.fieldNames()).toSet
-        tableSchema.forall(f => deleteSet.contains(Array(f)))
+        // Convert to Seq so that contains method works
+        val deleteSet = deletes.map(_.fieldNames().toSeq).toSet
+        // Ensure that all the table top level columns are being deleted
+        table.schema().fieldNames.forall(f => deleteSet.contains(Seq(f)))
       case _ =>
         false
     }
