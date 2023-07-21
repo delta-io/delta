@@ -308,6 +308,7 @@ class DeletionVectorsSuite extends QueryTest
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
           assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 1)
           assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
 
         {
@@ -316,8 +317,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
-          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 1)
-          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 1)
         }
 
         {
@@ -328,6 +330,7 @@ class DeletionVectorsSuite extends QueryTest
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
           assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
           assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
       }
     }

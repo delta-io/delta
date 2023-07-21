@@ -234,7 +234,8 @@ class DeleteMetricsSuite extends QueryTest
     scanTimeMs = 0,
     rewriteTimeMs = 0,
     numDeletionVectorsAdded = 0,
-    numDeletionVectorsRemoved = 0
+    numDeletionVectorsRemoved = 0,
+    numDeletionVectorsUpdated = 0
   )
 
 

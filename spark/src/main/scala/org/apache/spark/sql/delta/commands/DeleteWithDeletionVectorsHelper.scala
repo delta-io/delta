@@ -181,12 +181,20 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
-    val numDeletionVectorsAdded: Long = dvAddFiles.count(_.deletionVector != null)
-    val numDeletionVectorsRemoved: Long = dvRemoveFiles.count(_.deletionVector != null) +
+    var (numDeletionVectorsAdded: Long, numDeletionVectorsRemoved: Long
+    , numDeletionVectorsUpdated: Long) =
+      dvUpdates.foldLeft((0L, 0L, 0L)) {
+        case ((added, removed, updated), (t1, t2)) =>
+          (added + (if (t1.deletionVector != null && t2.deletionVector == null) 1 else 0),
+            removed + (if (t1.deletionVector == null && t2.deletionVector != null) 1 else 0),
+            updated + (if (t1.deletionVector != null && t2.deletionVector != null) 1 else 0))
+      }
+    numDeletionVectorsRemoved = numDeletionVectorsRemoved +
       fullyRemoved.count(_.deletionVector != null)
     val metricMap = Map("numDeletedRows" -> numDeletedRows, "numRemovedFiles" -> numRemovedFiles,
       "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
-      "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved)
+      "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved,
+      "numDeletionVectorsUpdated" -> numDeletionVectorsUpdated)
     (fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles, metricMap)
   }
 
