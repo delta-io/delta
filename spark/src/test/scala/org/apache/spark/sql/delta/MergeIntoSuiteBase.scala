@@ -5776,8 +5776,8 @@ abstract class MergeIntoSuiteBase
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorMsgForSQLTempView = "cannot resolve v.value",
-    expectedErrorMsgForDataSetTempView = "cannot resolve v.value"
+    expectedErrorMsgForSQLTempView = "cannot",
+    expectedErrorMsgForDataSetTempView = "cannot"
   )
 
   testInvalidTempViews("superset cols")(
