@@ -49,6 +49,7 @@ import scala.util.Try
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 import org.apache.hadoop.fs.Path
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
@@ -406,7 +407,9 @@ private[delta] object PartitionUtils {
   }
 
   def getPathFragment(spec: TablePartitionSpec, partitionColumns: Seq[Attribute]): String = {
-    getPathFragment(spec, StructType.fromAttributes(partitionColumns))
+    getPathFragment(
+      spec,
+      StructType.fromAttributes(partitionColumns))
   }
 
   /**
