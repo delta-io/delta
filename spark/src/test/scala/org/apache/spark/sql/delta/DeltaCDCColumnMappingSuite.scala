@@ -785,3 +785,10 @@ class DeltaCDCNameColumnMappingSuite extends DeltaCDCScalaSuite
   with DeltaCDCColumnMappingScalaSuiteBase
   with DeltaColumnMappingEnableNameMode
 
+class DeltaCDCSQLIdColumnMappingSuite extends DeltaCDCSQLSuite
+  with DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode
+
+class DeltaCDCSQLNameColumnMappingSuite extends DeltaCDCSQLSuite
+  with DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableNameMode

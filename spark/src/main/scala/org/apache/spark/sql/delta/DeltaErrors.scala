@@ -499,9 +499,13 @@ trait DeltaErrorsBase
 
   def notADeltaTableException(
       operation: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
+    notADeltaTableException(operation, deltaTableIdentifier.toString)
+  }
+
+  def notADeltaTableException(operation: String, tableName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ONLY_OPERATION",
-      messageParameters = Array(s"$deltaTableIdentifier", s"$operation"))
+      messageParameters = Array(tableName, operation))
   }
 
   def notADeltaTableException(operation: String): Throwable = {
