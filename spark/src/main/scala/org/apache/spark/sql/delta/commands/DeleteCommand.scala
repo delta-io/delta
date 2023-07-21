@@ -340,7 +340,7 @@ case class DeleteCommand(
               numDeletedRows = Some(metrics("numDeletedRows").value)
               numCopiedRows =
                 Some(metrics("numTouchedRows").value - metrics("numDeletedRows").value)
-
+              numDeletionVectorsRemoved = removedFiles.count(_.deletionVector != null)
               val operationTimestamp = System.currentTimeMillis()
               removeFilesFromPaths(
                 deltaLog, nameToAddFileMap, filesToRewrite, operationTimestamp) ++ rewrittenActions
