@@ -407,9 +407,7 @@ private[delta] object PartitionUtils {
   }
 
   def getPathFragment(spec: TablePartitionSpec, partitionColumns: Seq[Attribute]): String = {
-    getPathFragment(
-      spec,
-      StructType.fromAttributes(partitionColumns))
+    getPathFragment(spec, StructType.fromAttributes(partitionColumns))
   }
 
   /**
