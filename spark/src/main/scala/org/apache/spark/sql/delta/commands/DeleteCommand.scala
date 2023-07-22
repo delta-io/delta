@@ -177,6 +177,7 @@ case class DeleteCommand(
         val allFiles = txn.filterFiles(Nil, keepNumRecords = reportRowLevelMetrics)
 
         numRemovedFiles = allFiles.size
+        numDeletionVectorsRemoved = allFiles.count(_.deletionVector != null)
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
         val (numBytes, numPartitions) = totalBytesAndDistinctPartitionValues(allFiles)
         numRemovedBytes = numBytes
