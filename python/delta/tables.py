@@ -223,11 +223,15 @@ class DeltaTable(object):
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
-    def vacuum(self, retentionHours: Optional[float] = None) -> DataFrame:
+    def vacuum(
+            self,
+            retentionHours: Optional[float] = None,
+            subDirs: Optional[list[str]] = None) -> DataFrame:
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
-        empty DataFrame on successful completion.
+        empty DataFrame on successful completion. If subDirs are given, delete only under the
+        directories.
 
         Example::
 
@@ -235,18 +239,23 @@ class DeltaTable(object):
 
             deltaTable.vacuum(100)  # vacuum files not required by versions more than 100 hours old
 
+            deltaTable.vacuum(['YM=202201']) # vacuum files under tableLocation/YM=202201,
+                                             #   not required by versions more than 7 days old
+
         :param retentionHours: Optional number of hours retain history. If not specified, then the
                                default retention period of 168 hours (7 days) will be used.
         """
         jdt = self._jdt
+        subDirsSeq = _to_seq(self._spark._sc, [] if subDirs is None else subDirs)
+
         if retentionHours is None:
             return DataFrame(
-                jdt.vacuum(),
+                jdt.vacuum(subDirsSeq),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
-                jdt.vacuum(float(retentionHours)),
+                jdt.vacuum(float(retentionHours), subDirsSeq),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 

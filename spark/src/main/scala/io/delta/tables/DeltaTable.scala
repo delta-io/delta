@@ -113,6 +113,20 @@ class DeltaTable private[tables](
     executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
+  def vacuum(retentionHours: Double, subDirs: Seq[String]): DataFrame = {
+    executeVacuum(
+      deltaLog,
+      Some(retentionHours),
+      subDirs)
+  }
+
+  def vacuum(subDirs: Seq[String]): DataFrame = {
+    executeVacuum(
+      deltaLog,
+      None,
+      subDirs)
+  }
+
   /**
    * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
    * The information is in reverse chronological order.

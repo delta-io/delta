@@ -146,7 +146,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       deltaLog: DeltaLog,
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
-      clock: Clock = new SystemClock): DataFrame = {
+      clock: Clock = new SystemClock,
+      subDirs: Seq[String] = Nil): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
       val path = deltaLog.dataPath
@@ -172,6 +173,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val parallelDeletePartitions =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
+
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
 
       val validFiles =
@@ -187,9 +189,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
 
+      val targetDirs = if (subDirs.isEmpty) {
+        Seq(basePath)
+      } else {
+        subDirs.map(dir => new Path(basePath, new Path(dir)).toString)
+      }
       val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
-          Seq(basePath),
+          targetDirs,
           hadoopConf,
           hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
@@ -204,6 +211,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       try {
         allFilesAndDirs.cache()
+        logInfo("VACUUM candidate file count: " + allFilesAndDirs.count)
 
         implicit val fileNameAndSizeEncoder = org.apache.spark.sql.Encoders.product[FileNameAndSize]
 

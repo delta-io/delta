@@ -987,6 +987,53 @@ class DeltaVacuumSuite
     }
   }
 
+  test("vacuum with subDir parameters") {
+    withEnvironment { (tempDir, _) =>
+      import testImplicits._
+      val path = tempDir.getCanonicalPath
+      Seq((1, "a a", "c c"), (2, "b b", "c c")).toDF("v1", "v2", "_v3")
+        .write
+        .format("delta")
+        .partitionBy("v2", "_v3")
+        .save(path)
+
+      val removeFileA =
+        spark.read.format("delta").load(path).filter("""v2="a a" AND _v3="c c"""").inputFiles
+      val removeFileB =
+        spark.read.format("delta").load(path).filter("""v2="b b"""").inputFiles
+      assert(removeFileA.length == 1)
+      assert(removeFileB.length == 1)
+
+       Seq((1, "a a", "c c"), (2, "b b", "c c")).toDF("v1", "v2", "_v3")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .partitionBy("v2", "_v3")
+        .save(path)
+
+      val newFileA =
+        spark.read.format("delta").load(path).filter("""v2="a a" AND _v3="c c"""").inputFiles
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+      // scalastyle:off deltahadoopconfiguration
+      val fs = new Path(path).getFileSystem(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+
+      def checkFile(checkPath: String, exists: Boolean): Unit = {
+        assert(fs.exists(new Path(checkPath)) == exists)
+      }
+
+      checkFile(removeFileA.head, true)
+      checkFile(newFileA.head, true)
+      deltaTable.vacuum(0, Seq("v2=a a/_v3=c c"))
+      checkFile(removeFileA.head, false)
+      checkFile(newFileA.head, true)
+      checkFile(removeFileB.head, true)
+      deltaTable.vacuum(0, Seq("v2=a a/_v3=c c", "v2=b b"))
+      checkFile(removeFileB.head, false)
+    }
+  }
+
   test("vacuum a non-existent path and a non Delta table") {
     def assertNotADeltaTableException(path: String): Unit = {
       for (table <- Seq(s"'$path'", s"delta.`$path`")) {
