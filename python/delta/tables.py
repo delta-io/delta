@@ -223,7 +223,7 @@ class DeltaTable(object):
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
-    def vacuum(self, retentionHours: Optional[float] = None) -> DataFrame:
+    def vacuum(self, retentionHours: Optional[float] = None, dryRun: bool = False) -> DataFrame:
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
@@ -241,12 +241,12 @@ class DeltaTable(object):
         jdt = self._jdt
         if retentionHours is None:
             return DataFrame(
-                jdt.vacuum(),
+                jdt.vacuum(dryRun),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
-                jdt.vacuum(float(retentionHours)),
+                jdt.vacuum(float(retentionHours), dryRun),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 

@@ -274,8 +274,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             timeTakenForDelete = 0L)
 
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-          logConsole(s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
-            s"a total of $dirCounts directories that are safe to delete.")
+          val msg = s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
+            s"a total of $dirCounts directories that are safe to delete."
+          logConsole(msg)
+          logInfo(msg) // For Python API
 
           return diffFiles.map(f => stringToPath(f).toString).toDF("path")
         }
@@ -310,7 +312,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           timeTakenForDelete = timeTakenForDelete)
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
         logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
-
 
         spark.createDataset(Seq(basePath)).toDF("path")
       } finally {
