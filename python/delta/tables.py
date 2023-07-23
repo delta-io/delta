@@ -230,7 +230,7 @@ class DeltaTable(object):
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
-        empty DataFrame on successful completion. If subDirs are given, delete only under the
+        empty DataFrame on successful completion. If subDirs are given, delete files only under the
         directories.
 
         Example::
