@@ -214,6 +214,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
@@ -240,6 +241,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",

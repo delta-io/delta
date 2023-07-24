@@ -17,12 +17,16 @@
 package io.delta.kernel.internal.snapshot;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.delta.kernel.fs.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 
 public class LogSegment {
     public final Path logPath;
@@ -31,6 +35,9 @@ public class LogSegment {
     public final List<FileStatus> checkpoints;
     public final Optional<Long> checkpointVersionOpt;
     public final long lastCommitTimestamp;
+
+    private final Lazy<List<FileStatus>> allFiles;
+    private final Lazy<List<FileStatus>> allFilesReversed;
 
     public static LogSegment empty(Path logPath) {
         return new LogSegment(
@@ -71,5 +78,37 @@ public class LogSegment {
         this.checkpoints = checkpoints;
         this.checkpointVersionOpt = checkpointVersionOpt;
         this.lastCommitTimestamp = lastCommitTimestamp;
+
+        this.allFiles = new Lazy<>(() ->
+            Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList())
+        );
+
+        this.allFilesReversed = new Lazy<>(() ->
+            allFiles
+                .get()
+                .stream()
+                .sorted(
+                    Comparator
+                        .comparing((FileStatus a) -> new Path(a.getPath()).getName())
+                        .reversed()
+                )
+                .collect(Collectors.toList())
+        );
+    }
+
+    /**
+     * @return all deltas (.json) and checkpoint (.checkpoint.parquet) files in this LogSegment,
+     *         with no ordering guarantees.
+     */
+    public List<FileStatus> allLogFilesUnsorted() {
+        return allFiles.get();
+    }
+
+    /**
+     * @return all deltas (.json) and checkpoint (.checkpoint.parquet) files in this LogSegment,
+     *         sorted in reverse (00012.json, 00011.json, 00010.checkpoint.parquet) order.
+     */
+    public List<FileStatus> allLogFilesReversed() {
+        return allFilesReversed.get();
     }
 }

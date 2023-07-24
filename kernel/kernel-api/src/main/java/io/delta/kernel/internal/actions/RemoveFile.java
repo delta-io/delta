@@ -29,7 +29,11 @@ import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.fs.Path;
 
+/**
+ * Delta log action representing a `RemoveFile`
+ */
 public class RemoveFile extends FileAction {
+
     public static RemoveFile fromRow(Row row) {
         if (row == null) {
             return null;

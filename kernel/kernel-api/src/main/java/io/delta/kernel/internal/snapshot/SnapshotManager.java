@@ -478,7 +478,14 @@ public class SnapshotManager
                 new HashSet<>(newCheckpoint.getCorrespondingFiles(logPath));
             final List<FileStatus> newCheckpointFileList = checkpoints
                 .stream()
-                .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
+                .filter(f -> {
+                    // TODO: this is a temporary workaround until #1956 is fixed
+                    String fPath = f.getPath();
+                    if (fPath.startsWith("file:")) {
+                        fPath = fPath.substring(5);
+                    }
+                    return newCheckpointPaths.contains(new Path(fPath));
+                })
                 .collect(Collectors.toList());
 
             if (newCheckpointFileList.size() != newCheckpointPaths.size()) {
