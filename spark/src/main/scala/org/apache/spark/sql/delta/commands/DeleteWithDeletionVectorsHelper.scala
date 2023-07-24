@@ -184,7 +184,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     var (numDeletionVectorsAdded: Long, numDeletionVectorsRemoved: Long
     , numDeletionVectorsUpdated: Long) =
       dvUpdates.foldLeft((0L, 0L, 0L)) {
-        case ((added, removed, updated), (t1, t2)) =>
+        case ((added, removed, updated), (addFile, removeFile)) =>
           (added + (if (t1.deletionVector != null && t2.deletionVector == null) 1 else 0),
             removed + (if (t1.deletionVector == null && t2.deletionVector != null) 1 else 0),
             updated + (if (t1.deletionVector != null && t2.deletionVector != null) 1 else 0))
