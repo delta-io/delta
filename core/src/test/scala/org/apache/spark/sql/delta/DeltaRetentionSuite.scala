@@ -150,6 +150,82 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
+  def removeFileCountFromUnderlyingCheckpoint(snapshot: Snapshot): Long = {
+    assert(snapshot.logSegment.checkpoint.size === 1)
+    val checkpointFilePath = snapshot.logSegment.checkpoint.head.getPath.toString
+    spark.read.parquet(checkpointFilePath).where("remove is not null").count()
+  }
+
+  testQuietly("retention timestamp is picked properly by the cold snapshot initialization") {
+    withTempDir { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
+
+      // Create table with 30 day tombstone retention.
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 30 days')
+       """.stripMargin)
+
+
+      // 1st day - commit 10 new files and remove them also same day.
+      clock.advance(intervalStringToMillis("interval 1 days"))
+      val files1 = (1 to 4).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+      deltaLog.startTransaction().commit(files1, testOp)
+      val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
+      deltaLog.startTransaction().commit(files2, testOp)
+
+      // Advance clock by 10 days.
+      clock.advance(intervalStringToMillis("interval 10 days"))
+      DeltaLog.clearCache()
+      deltaLog.checkpoint()
+      DeltaLog.clearCache() // Clear cache and reinitialize snapshot with latest checkpoint.
+      assert(removeFileCountFromUnderlyingCheckpoint(deltaLog.unsafeVolatileSnapshot) === 4)
+
+      // Advance clock by 21 more days. Now checkpoint should stop tracking remove tombstones.
+      clock.advance(intervalStringToMillis("interval 21 days"))
+      deltaLog.startTransaction().commit(Seq.empty, testOp)
+      DeltaLog.clearCache()
+      deltaLog.checkpoint(deltaLog.unsafeVolatileSnapshot)
+      DeltaLog.clearCache() // Clear cache and reinitialize snapshot with latest checkpoint.
+      assert(removeFileCountFromUnderlyingCheckpoint(deltaLog.unsafeVolatileSnapshot) === 0)
+    }
+  }
+
+
+  testQuietly("retention timestamp is lesser than the default value") {
+    withTempDir { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
+
+      // Create table with 2 day tombstone retention.
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 2 days')
+       """.stripMargin)
+
+
+      // 1st day - commit 10 new files and remove them also same day.
+      {
+        clock.advance(intervalStringToMillis("interval 1 days"))
+        val txn = deltaLog.startTransaction()
+        val files1 = (1 to 4).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+        txn.commit(files1, testOp)
+        val txn2 = deltaLog.startTransaction()
+        val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
+        txn2.commit(files2, testOp)
+      }
+
+
+      // Advance clock by 4 days.
+      clock.advance(intervalStringToMillis("interval 4 days"))
+      DeltaLog.clearCache()
+      deltaLog.checkpoint(deltaLog.unsafeVolatileSnapshot)
+      DeltaLog.clearCache() // Clear cache and reinitialize snapshot with latest checkpoint.
+      assert(removeFileCountFromUnderlyingCheckpoint(deltaLog.unsafeVolatileSnapshot) === 0)
+    }
+  }
+
   testQuietly("RemoveFiles get deleted during checkpoint if retention time has passed") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
