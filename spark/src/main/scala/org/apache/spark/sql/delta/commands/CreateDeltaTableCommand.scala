@@ -105,26 +105,7 @@ case class CreateDeltaTableCommand(
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
-      val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
-      val result = handleCommit(sparkSession, txn, deltaLog, tableWithLocation)
-
-      // We would have failed earlier on if we couldn't ignore the existence of the table
-      // In addition, we just might using saveAsTable to append to the table, so ignore the creation
-      // if it already exists.
-      // Note that someone may have dropped and recreated the table in a separate location in the
-      // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      val opStartTs = TimeUnit.NANOSECONDS.toMillis(txn.txnStartTimeNs)
-      val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
-      val didNotChangeMetadata = txn.metadata == txn.snapshot.metadata
-      updateCatalog(sparkSession, tableWithLocation, snapshot, didNotChangeMetadata)
-
-
-      if (UniversalFormat.icebergEnabled(snapshot.metadata)) {
-        deltaLog.icebergConverter.convertSnapshot(snapshot, None)
-      }
-
-      result
+      handleCommit(sparkSession, deltaLog, tableWithLocation)
     }
   }
 
@@ -133,13 +114,13 @@ case class CreateDeltaTableCommand(
    */
   private def handleCommit(
       sparkSession: SparkSession,
-      txn: OptimisticTransaction,
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable): Seq[Row] = {
     val tableExistsInCatalog = existingTableOpt.isDefined
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val tableLocation = new Path(tableWithLocation.location)
     val fs = tableLocation.getFileSystem(hadoopConf)
+    val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
     def checkPathEmpty(): Unit = {
       // Verify the table does not exist.
@@ -155,7 +136,7 @@ case class CreateDeltaTableCommand(
         }
       }
     }
-    query match {
+    val result = query match {
       // CLONE handled separately from other CREATE TABLE syntax
       case Some(cmd: CloneTableCommand) =>
         checkPathEmpty()
@@ -183,6 +164,33 @@ case class CreateDeltaTableCommand(
       case _ =>
         handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
         Nil
+    }
+
+    runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
+
+    result
+  }
+
+  /**
+   * Runs updates post table creation commit, such as updating the catalog
+   * with relevant information.
+   */
+  private def runPostCommitUpdates(
+      sparkSession: SparkSession,
+      txnUsedForCommit: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      tableWithLocation: CatalogTable): Unit = {
+    // Note that someone may have dropped and recreated the table in a separate location in the
+    // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
+    logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+    val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
+    val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+    val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
+    updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
+
+
+    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
+      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, None)
     }
   }
 
