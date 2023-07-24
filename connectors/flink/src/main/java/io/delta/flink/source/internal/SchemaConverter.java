@@ -99,7 +99,7 @@ public class SchemaConverter {
             case TIMESTAMP:
                 return new TimestampType(nullable, TimestampType.DEFAULT_PRECISION);
             case STRING:
-                return new VarCharType(nullable, VarCharType.DEFAULT_LENGTH);
+                return new VarCharType(nullable, VarCharType.MAX_LENGTH);
             case STRUCT:
                 return toRowType((StructType) deltaType, nullable);
             default:
