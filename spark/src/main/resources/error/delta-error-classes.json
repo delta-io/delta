@@ -1478,6 +1478,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
+    "message" : [
+      "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
