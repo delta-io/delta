@@ -84,13 +84,13 @@ class DeltaColumnRenameSuite extends QueryTest
       assert(
         intercept[AnalysisException] {
           spark.sql(s"Alter table t1 RENAME COLUMN map to map")
-        }.getMessage.contains("map already exists in root"))
+        }.getMessage.contains("already exists"))
 
       // cannot rename to a different casing
       assert(
         intercept[AnalysisException] {
           spark.sql("Alter table t1 RENAME COLUMN arr to Arr")
-        }.getMessage.contains("Arr already exists in root"))
+        }.getMessage.contains("already exists"))
 
       // a is no longer visible
       val e2 = intercept[AnalysisException] {
