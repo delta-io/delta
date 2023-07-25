@@ -590,9 +590,86 @@ class DeltaVacuumSuite
     }
   }
 
+  test("vacuum using a partition filter on non partitioned table") {
+    withEnvironment { (tempDir, _) =>
+      import testImplicits._
+      val path = tempDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+        .write
+        .format("delta")
+        .save(path)
+
+      val ex = intercept[IllegalArgumentException] {
+        sql(s"vacuum delta.`$path` where v1=1 retain 0 hours")
+      }
+      assert(ex.getMessage.contains(
+        s"""Delta Vacuum filtering clause expects partition predicates
+           |and only supports partitioned tables""".stripMargin))
+    }
+  }
+
+  test("vacuum using a wrong partition filter on partitioned table") {
+    withEnvironment { (tempDir, _) =>
+      import testImplicits._
+      val path = tempDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+        .write
+        .partitionBy("v1")
+        .format("delta")
+        .save(path)
+
+      val ex = intercept[DeltaAnalysisException] {
+        sql(s"vacuum delta.`$path` where v2='a' retain 0 hours")
+      }
+      assert(ex.getMessage.contains(
+        s"""Predicate references non-partition column 'v2'.""".stripMargin))
+    }
+  }
+
+  test("vacuum using partition filter on a partitioned table") {
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      withEnvironment { (tempDir, clock) =>
+        import testImplicits._
+        val data = Seq(
+          (10, 1, "a"),
+          (10, 2, "a"),
+          (10, 3, "a"),
+          (10, 4, "a"),
+          (10, 5, "a"),
+          (20, 1, "b"),
+          (20, 2, "b"),
+          (20, 3, "b"),
+          (20, 4, "b"),
+          (20, 5, "b")
+        )
+        val path = tempDir.getCanonicalPath
+        data.toDF("v1", "v2", "v3")
+          .write
+          .partitionBy("v1", "v2")
+          .format("delta")
+          .save(path)
+        sql(s"delete from delta.`$path` where v1=20")
+        sql(s"vacuum delta.`$path` where v1=20 and v2>=3 retain 0 hours")
+        // As we are checking at directory level in the assertion,
+        // need to trigger twice for removing empty dirs as they are removed only in second pass
+        sql(s"vacuum delta.`$path` where v1=20 and v2>=3 retain 0 hours")
+        val dirsGCed = data.filter(p => p._1==20 && p._2>=3)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val dirsNotGCed = data.filter(p => p._1==20 && p._2<3)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val dirWithActiveReference = data.filter(p => p._1==10)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val deltaLog = DeltaLog.forTable(spark, path)
+        gcTest(deltaLog, clock)(
+          CheckFiles(dirsNotGCed),
+          CheckFiles(dirWithActiveReference),
+          CheckFiles(dirsGCed, false)
+        )
+      }
+    }
+  }
+
   test("GC by partition predicate filter") {
-    // We should be able to see inside partition directories to GC them, even if they'd normally
-    // be considered invisible because of their name.
     withEnvironment { (tempDir, clock) =>
       val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
       val txn = deltaLog.startTransaction()

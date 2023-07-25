@@ -322,7 +322,7 @@ object DeltaFileOperations extends DeltaLogging {
       subDirs: Seq[String],
       dirFilter: String => Boolean = defaultHiddenFileFilter,
       fileFilter: String => Boolean = defaultHiddenFileFilter,
-      fileListingParallelism: Option[Int] = None): Array[String] = {
+      fileListingParallelism: Option[Int] = None): Array[SerializableFileStatus] = {
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
     spark.sparkContext.parallelize(subDirs, listParallelism)
       .mapPartitions { dirs =>
@@ -333,8 +333,6 @@ object DeltaFileOperations extends DeltaLogging {
         dirs,
         recurse = false,
         dirFilter, fileFilter)
-    }.map {
-      case fileStatus => fileStatus.path
     }.collect
   }
 

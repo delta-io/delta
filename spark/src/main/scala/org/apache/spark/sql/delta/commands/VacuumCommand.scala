@@ -30,13 +30,13 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
+import org.apache.spark.sql.catalyst.expressions.{Expression, GenericInternalRow}
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, sum}
-import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
@@ -78,6 +78,24 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         |
         |If you are not sure, please use a value not less than "$configuredRetentionHours hours".
        """.stripMargin)
+  }
+
+  private def getValidPredicateFilterExpression(
+      spark: SparkSession,
+      partitionColumns: Seq[String],
+      userPartitionPredicates: Seq[String]
+      ): Seq[Expression] = {
+    require(userPartitionPredicates.isEmpty || partitionColumns.nonEmpty,
+      s"""Delta Vacuum filtering clause expects partition predicates
+         |and only supports partitioned tables""".stripMargin)
+    userPartitionPredicates.flatMap { predicate =>
+      val predicates = parsePredicates(spark, predicate)
+      verifyPartitionPredicates(
+        spark,
+        partitionColumns,
+        predicates)
+      predicates
+    }
   }
 
   /**
@@ -176,7 +194,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
-
+      val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
+      val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+      val filters =
+        getValidPredicateFilterExpression(spark, partitionColumns, userPartitionPredicates)
       val validFiles =
         getValidFilesFromSnapshot(
           spark,
@@ -186,13 +207,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           hadoopConf,
           clock,
           checkAbsolutePathOnly = false)
-
-      val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
-      val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-
+      val rootDirStatus = SerializableFileStatus(basePath, 0L, true, 0L)
       val allFilesAndDirs = if (partitionColumns.nonEmpty) {
-        val dirsInFs = partitionColumns.foldLeft(Seq(basePath)) {
-          case (parentPaths, partition) =>
+        // Enable parallel listing within directory levels controlled
+        // by current partition column count
+        val dirsInFs = partitionColumns.foldLeft(Seq(rootDirStatus)) {
+          case (parentStatues, partition) =>
+            val parentPaths = parentStatues.map(_.path)
             DeltaFileOperations.listDirs(
               spark,
               hadoopConf,
@@ -201,44 +222,59 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               fileFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
               fileListingParallelism = Option(parallelism))
         }
-        val vacuumFolders = if (userPartitionPredicates.nonEmpty) {
-          val filters = userPartitionPredicates.flatMap { predicate =>
-            val predicates = parsePredicates(spark, predicate)
-            verifyPartitionPredicates(
-              spark,
-              partitionColumns,
-              predicates)
-            predicates
-          }
-          val pSchema = StructType(snapshot.metadata.partitionSchema
-            .map(f => StructField(f.name, f.dataType, true)))
-          val parts = dirsInFs.filter(p => p.contains(partitionColumns(0)))
-            .map(p => new Path(p))
-          val partitionRows = PartitionUtils.parsePartitions(parts, true,
-            Set(new Path(basePath)), Option(pSchema), true, false, "UTC")
-            .partitions
+        if (filters.nonEmpty) {
+          // Create a dataframe combining FileListingStatus and Partition Spec
+          val partitionDirectoryDF = spark.internalCreateDataFrame(
+            spark.sparkContext.parallelize(
+            dirsInFs
+            .filter(_.path.contains(s"/${partitionColumns.head}="))
+            .map {
+              p =>
+                val partitionRows = PartitionUtils.parsePartitions(
+                  Seq(new Path(p.path)), true,
+                  Set(new Path(basePath)), Option(snapshot.metadata.partitionSchema),
+                  true, false, "UTC")
+                val colsFromPartSpec = partitionRows.partitions.head.values
+                  .toSeq(snapshot.metadata.partitionSchema).toArray
+                val colsFromDirStatus = (UTF8String.fromString(p.path),
+                  p.length, p.isDir, p.modificationTime).productIterator.toArray
+                new GenericInternalRow(colsFromPartSpec ++ colsFromDirStatus)
+            }), StructType( snapshot.metadata.partitionSchema.fields
+              ++ Array(
+              StructField("path", StringType, false),
+              StructField("length", LongType, false),
+              StructField("isDir", BooleanType, false),
+              StructField("modificationTime", LongType, false)
+            )))
+          // Create a dataset of partition folder File Status matching filtering condition
+          val filteredDirsDS = Dataset.ofRows(spark,
+            filters.foldLeft(partitionDirectoryDF.logicalPlan) {
+              (plan, expr) => spark.sessionState.analyzer.execute(Filter(expr, plan))
+            })
+            .selectExpr("path", "length", "isDir", "modificationTime")
             .map(p =>
-              new GenericInternalRow(p.values.toSeq(pSchema).toArray
-                ++ Seq(UTF8String.fromString(p.pathStr)))
-            )
-          val newSchema = StructType(pSchema.fields ++ Seq(StructField("path", StringType, false)))
-          val listingPlan = spark.internalCreateDataFrame(
-            spark.sparkContext.parallelize(partitionRows), newSchema).logicalPlan
-          val filteredListingPlan = filters.foldLeft(listingPlan)((plan, filter)
-          => spark.sessionState.analyzer.execute(Filter(filter, plan)))
-          val filteredPaths = Dataset.ofRows(spark, filteredListingPlan)
-          filteredPaths.select("path").collect().map(_.getString(0)).toSeq
+              SerializableFileStatus(p.getString(0), p.getLong(1), p.getBoolean(2), p.getLong(3)
+              ))
+          DeltaFileOperations.recursiveListDirs(
+            spark,
+            filteredDirsDS.collect().map(_.path),
+            hadoopConf,
+            hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+            hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+            fileListingParallelism = Option(parallelism)
+          ).union(filteredDirsDS) // Adding directories back to use in stats
         } else {
-          dirsInFs
+          DeltaFileOperations.recursiveListDirs(
+            spark,
+            dirsInFs.map(_.path),
+            hadoopConf,
+            hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+            hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+            fileListingParallelism = Option(parallelism)
+          ).union(
+            spark.createDataset[SerializableFileStatus](dirsInFs.filter(_.isDir))
+          ) // Adding directories back to use in stats
         }
-        DeltaFileOperations.recursiveListDirs(
-          spark,
-          vacuumFolders,
-          hadoopConf,
-          hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          fileListingParallelism = Option(parallelism)
-        )
       } else {
         DeltaFileOperations.recursiveListDirs(
           spark,
@@ -293,7 +329,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           }.groupBy(col("path")).agg(count(new Column("*")).as("count"), sum("length").as("length"))
           .join(validFiles, Seq("path"), "leftanti")
           .where(col("count") === 1)
-
 
         val sizeOfDataToDeleteRow = diff.agg(sum("length").cast("long")).first
         val sizeOfDataToDelete = if (sizeOfDataToDeleteRow.isNullAt(0)) {
