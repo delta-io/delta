@@ -406,6 +406,26 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       }
     }
   }
+
+  /**
+   * Throws an exception if merge metrics indicate that the source table changed between the first
+   * and the second source table scans.
+   */
+  protected def checkNonDeterministicSource(spark: SparkSession): Unit = {
+    // We only detect changes in the number of source rows. This is a best-effort detection; a
+    // more comprehensive solution would be to checksum the values for the columns that we read
+    // in both jobs.
+    // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
+    // In that case we have only read the source table once.
+    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
+      metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+      log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
+        s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
+      if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
+        throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
+      }
+    }
+  }
 }
 
 object MergeIntoCommandBase {
