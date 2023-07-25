@@ -51,6 +51,7 @@ import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
@@ -58,7 +59,8 @@ import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, In
 trait DeltaErrorsSuiteBase
     extends QueryTest
     with SharedSparkSession    with GivenWhenThen
-    with SQLTestUtils {
+    with SQLTestUtils
+    with QueryErrorsBase {
 
   val MAX_URL_ACCESS_RETRIES = 3
   val path = "/sample/path"
@@ -285,6 +287,19 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "0A000")
       assert(
         e.getMessage == s"$table is a view. Writes to a view are not supported.")
+    }
+    {
+      val sourceType = IntegerType
+      val targetType = DateType
+      val columnName = "column_name"
+      val e = intercept[DeltaArithmeticException] {
+        throw DeltaErrors.castingCauseOverflowErrorInTableWrite(sourceType, targetType, columnName)
+      }
+      assert(e.getErrorClass == "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+      assert(e.getSqlState == "22003")
+      assert(e.getMessageParameters.get("sourceType") == toSQLType(sourceType))
+      assert(e.getMessageParameters.get("targetType") == toSQLType(targetType))
+      assert(e.getMessageParameters.get("columnName") == toSQLId(columnName))
     }
     {
       val e = intercept[DeltaAnalysisException] {
