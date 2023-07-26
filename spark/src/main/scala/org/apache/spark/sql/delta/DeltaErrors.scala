@@ -2471,6 +2471,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def deltaDynamicPartitionOverwriteDisabled(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED"
+    )
+  }
+
   def incorrectArrayAccessByName(rightName: String, wrongName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
