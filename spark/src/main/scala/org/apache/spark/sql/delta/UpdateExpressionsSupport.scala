@@ -114,6 +114,31 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   ArrayType(toEt, containsNull = true)
                 )
             }
+          case (from: MapType, to: MapType) if !Cast.canCast(from, to) =>
+            // Manually convert map keys and values if the types are not compatible to allow schema
+            // evolution. This is slower than direct cast so we only do it when required.
+            def createMapConverter(convert: (Expression, Expression) => Expression): Expression = {
+              val keyVar = NamedLambdaVariable("keyVar", from.keyType, nullable = false)
+              val valueVar =
+                NamedLambdaVariable("valueVar", from.valueType, from.valueContainsNull)
+              LambdaFunction(convert(keyVar, valueVar), Seq(keyVar, valueVar))
+            }
+
+            var transformedKeysAndValues = fromExpression
+            if (from.keyType != to.keyType) {
+              transformedKeysAndValues =
+                TransformKeys(transformedKeysAndValues, createMapConverter {
+                  (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution)
+                })
+            }
+
+            if (from.valueType != to.valueType) {
+              transformedKeysAndValues =
+                TransformValues(transformedKeysAndValues, createMapConverter {
+                  (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution)
+                })
+            }
+            cast(transformedKeysAndValues, to)
           case (from: StructType, to: StructType)
             if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

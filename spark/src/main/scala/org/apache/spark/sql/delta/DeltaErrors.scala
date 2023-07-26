@@ -2176,6 +2176,41 @@ trait DeltaErrorsBase
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
+  def dropTableFeatureNonRemovableFeature(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureConflictRevalidationFailed(
+      conflictingCommit: Option[CommitInfo] = None): DeltaTableFeatureException = {
+    val concurrentCommit = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf, "", conflictingCommit)
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL",
+      messageParameters = Array(concurrentCommit))
+  }
+
+  def dropTableFeatureLegacyFeature(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_LEGACY_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFeatureNotSupportedByClient(
+      feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFeatureNotSupportedByProtocol(
+      feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+      messageParameters = Array(feature))
+  }
+
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,
@@ -2809,6 +2844,27 @@ trait DeltaErrorsBase
 
   def rowIdAssignmentWithoutStats: Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
+  }
+
+  def addingColumnWithInternalNameFailed(colName: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def materializedRowIdMetadataMissing(tableName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row ID", tableName)
+    )
+  }
+
+  def materializedRowCommitVersionMetadataMissing(tableName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+      messageParameters = Array("Row Commit Version", tableName)
+    )
   }
 
   def domainMetadataDuplicate(domainName: String): Throwable = {

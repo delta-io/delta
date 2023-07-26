@@ -11,6 +11,12 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED" : {
+    "message" : [
+      "Failed to add column <colName> because the name is reserved."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ADDING_DELETION_VECTORS_DISALLOWED" : {
     "message" : [
       "The current operation attempted to add a deletion vector to a table that does not permit the creation of new deletion vectors. Please file a bug report."
@@ -720,6 +726,39 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL" : {
+    "message" : [
+      "Cannot drop feature because a concurrent transaction modified the table.",
+      "Please try the operation again.",
+      "<concurrentCommit>"
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
+    "message" : [
+      "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_LEGACY_FEATURE" : {
+    "message" : [
+      "Cannot drop <feature> because it is implicitly supported by the table protocol version."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE" : {
+    "message" : [
+      "Cannot drop <feature> because removing this feature is not supported."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE" : {
+    "message" : [
+      "Cannot drop <feature> because it is not supported by this Delta version.",
+      "Consider using Delta with a higher version."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
@@ -1078,6 +1117,12 @@
       "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"
     ],
     "sqlState" : "42K03"
+  },
+  "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING" : {
+    "message" : [
+      "Materialized <rowTrackingColumn> column name missing for <tableName>."
+    ],
+    "sqlState" : "22000"
   },
   "DELTA_MAX_ARRAY_SIZE_EXCEEDED" : {
     "message" : [

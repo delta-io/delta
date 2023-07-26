@@ -510,6 +510,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(4)
 
+  val MERGE_MATERIALIZE_SOURCE_EAGER =
+    buildConf("merge.materializeSource.eager")
+      .internal()
+      .doc("Materialize the source eagerly before Job 1")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
@@ -1211,6 +1218,15 @@ trait DeltaSQLConfBase {
           |Only change this for testing!""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val TABLE_FEATURE_DROP_ENABLED =
+    buildConf("tableFeatures.dropEnabled")
+      .internal()
+      .doc("""Controls whether table feature removal is allowed.
+             |Table feature removal is currently a feature in development.
+             |This is a dev only config.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")

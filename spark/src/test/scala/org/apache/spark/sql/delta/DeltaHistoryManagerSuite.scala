@@ -37,6 +37,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
@@ -524,19 +525,19 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       generateCommits(tblName, start, start + 20.minutes)
 
       // These all actually fail parsing
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"insert into ${versionAsOf(tblName, 0)} values (11, 12, 13)")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"update ${versionAsOf(tblName, 0)} set id = id - 1 where id < 10")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"delete from ${versionAsOf(tblName, 0)} id < 10")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"""merge into ${versionAsOf(tblName, 0)} old
                |using $tblName new
                |on old.id = new.id
